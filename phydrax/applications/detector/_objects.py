@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import math
+
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -24,6 +26,7 @@ class ReconstructedParticleBank(StrictModule, NonTrainableState):
     active: Array
     valid: Array
     provider_id: str = eqx.field(static=True)
+    speed_of_light: float = eqx.field(static=True)
 
     def __init__(
         self,
@@ -37,6 +40,7 @@ class ReconstructedParticleBank(StrictModule, NonTrainableState):
         source_cluster_indices: ArrayLike,
         active: ArrayLike,
         provider_id: str,
+        speed_of_light: float,
     ):
         event_ids_ = jnp.asarray(event_ids)
         pdg = jnp.asarray(pdg_hypotheses, dtype=jnp.int32)
@@ -59,12 +63,15 @@ class ReconstructedParticleBank(StrictModule, NonTrainableState):
         ):
             raise ValueError("Reconstructed particle fields must align.")
         provider = str(provider_id).strip()
+        light = float(speed_of_light)
         if not provider:
             raise ValueError("provider_id must be non-empty.")
+        if not math.isfinite(light) or light <= 0.0:
+            raise ValueError("speed_of_light must be finite and positive.")
         valid = (
             jnp.all(jnp.isfinite(momenta_), axis=-1)
             & jnp.isfinite(energies_)
-            & (energies_ >= jnp.linalg.norm(momenta_, axis=-1))
+            & (energies_ >= light * jnp.linalg.norm(momenta_, axis=-1))
             & jnp.isfinite(charges_)
             & ((tracks >= 0) | (clusters >= 0))
         )
@@ -78,6 +85,7 @@ class ReconstructedParticleBank(StrictModule, NonTrainableState):
         self.active = active_
         self.valid = jnp.where(active_, valid, True)
         self.provider_id = provider
+        self.speed_of_light = light
 
 
 def particles_from_straight_tracks(
@@ -87,14 +95,27 @@ def particles_from_straight_tracks(
     pdg_hypothesis: int,
     rest_energy: float,
     charge: float,
+    speed_of_light: float = 1.0,
 ) -> ReconstructedParticleBank:
     """Construct charged candidates from the velocity part of fixed-association fits."""
     if not isinstance(tracks, ReconstructedTrackBank):
         raise TypeError("tracks must be ReconstructedTrackBank.")
-    direction = tracks.parameters[..., 3:6]
-    magnitude = jnp.linalg.norm(direction, axis=-1)
-    momenta = direction
-    energy = jnp.sqrt(magnitude * magnitude + float(rest_energy) ** 2)
+    velocity = tracks.parameters[..., 3:6]
+    light = float(speed_of_light)
+    rest = float(rest_energy)
+    if not math.isfinite(light) or light <= 0.0:
+        raise ValueError("speed_of_light must be finite and positive.")
+    if not math.isfinite(rest) or rest <= 0.0:
+        raise ValueError("rest_energy must be finite and positive.")
+    speed_squared = jnp.sum(velocity * velocity, axis=-1)
+    subluminal = speed_squared < light * light
+    gamma = jnp.where(
+        subluminal,
+        1.0 / jnp.sqrt(jnp.maximum(1.0 - speed_squared / light**2, 0.0)),
+        jnp.nan,
+    )
+    momenta = rest * gamma[..., None] * velocity / light**2
+    energy = rest * gamma
     shape = tracks.active.shape
     indices = jnp.broadcast_to(jnp.arange(shape[1], dtype=jnp.int32), shape)
     return ReconstructedParticleBank(
@@ -106,6 +127,7 @@ def particles_from_straight_tracks(
         source_track_indices=indices,
         source_cluster_indices=jnp.full(shape, -1, dtype=jnp.int32),
         active=tracks.active & tracks.valid,
+        speed_of_light=light,
         provider_id=tracks.plan_id,
     )
 

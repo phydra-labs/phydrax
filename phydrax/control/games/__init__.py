@@ -169,6 +169,7 @@ from ._multiplicative_lq import (
     MultiplicativeLQFeedbackNashStatus,
 )
 from ._nonlinear import (
+    BoundGameInputPolicy,
     DeterministicFeedbackGameProblem,
     evaluate_game_policy,
     GamePolicyEvaluation,
@@ -253,6 +254,7 @@ __all__ = [
     "CoupledHJBUpdate",
     "CoverageMethod",
     "DISCRETE_EMPIRICAL_LAW_NEIGHBOR_TRANSFER_DIFFERENCE",
+    "BoundGameInputPolicy",
     "DeterministicFeedbackGameProblem",
     "DiscreteCoupledHJBEvidence",
     "DiscreteCoupledHJBProblem",

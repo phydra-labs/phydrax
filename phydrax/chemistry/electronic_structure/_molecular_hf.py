@@ -50,6 +50,7 @@ from ._mean_field import (
     GeneralizedMeanFieldState,
     InitialGuessKind,
     InitialGuessPlan,
+    mean_field_owner_id,
     RestrictedMeanFieldState,
     SCFAccelerationKind,
     SCFAccelerationPlan,
@@ -575,6 +576,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 state.entropy,
                 state.free_energy,
                 evidence,
+                state.owner_id,
                 reference=state.reference,
             )
         if self.reference is ElectronicReferenceKind.UNRESTRICTED:
@@ -725,6 +727,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             entropy,
             free,
             evidence,
+            mean_field_owner_id(self.plan_id, positions),
         )
 
     def _solve_unrestricted(
@@ -943,6 +946,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             entropy,
             free,
             evidence,
+            mean_field_owner_id(self.plan_id, positions),
         )
 
     def _solve_rohf(
@@ -1140,6 +1144,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             jnp.asarray(0.0, dtype=core.real.dtype),
             electronic + nuclear,
             evidence,
+            mean_field_owner_id(self.plan_id, positions),
             reference=ElectronicReferenceKind.RESTRICTED_OPEN_SHELL,
         )
 
@@ -1301,6 +1306,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             electronic,
             electronic + nuclear,
             evidence,
+            mean_field_owner_id(self.plan_id, positions),
         )
 
     def stability_analysis(
@@ -1313,6 +1319,8 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             state.reference is not ElectronicReferenceKind.RESTRICTED
         ):
             raise TypeError("Current stability analysis requires a restricted state.")
+        if state.owner_id != mean_field_owner_id(self.plan_id, positions):
+            raise ValueError("Stability state belongs to another HF plan or geometry.")
         if self.occupations.kind is not ElectronicOccupationKind.INTEGER:
             raise ValueError("Orbital-Hessian stability requires integer occupations.")
         coordinate = jnp.asarray(positions)
@@ -1406,6 +1414,8 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         self, positions: ArrayLike, state, /
     ) -> MolecularGradientResult:
         coordinate = jnp.asarray(positions)
+        if state.owner_id != mean_field_owner_id(self.plan_id, coordinate):
+            raise ValueError("Gradient state belongs to another HF plan or geometry.")
         if isinstance(state, GeneralizedMeanFieldState):
             raise ValueError(
                 "GHF analytic gradients require spinor response and are not admitted."

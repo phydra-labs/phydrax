@@ -19,6 +19,7 @@ import phydrax.ein as ein
 from phydrax.domain import DomainFunction
 
 from .._frozendict import frozendict
+from .._probability import _leading_shape
 from .._strict import StrictModule
 from ._jump import JumpEventBatch
 from ._realization import is_stochastic_realization, StochasticRealization
@@ -324,10 +325,13 @@ def _pointwise_values(
     key: Array,
     output_shape: tuple[int, ...],
 ) -> Array:
+    leading_shape = _leading_shape(
+        states.shape,
+        problem.state_shape,
+        owner="BSDE predictor states",
+    )
     flat_states = states.reshape((-1,) + problem.state_shape)
-    flat_times = jnp.broadcast_to(
-        times, states.shape[: -len(problem.state_shape)]
-    ).reshape((-1,))
+    flat_times = jnp.broadcast_to(times, leading_shape).reshape((-1,))
     keys = jr.split(key, flat_states.shape[0])
     values = jax.vmap(
         lambda time, state, point_key: _predictor_value(
@@ -339,7 +343,7 @@ def _pointwise_values(
         raise ValueError(
             f"BSDE predictor must return trailing shape {output_shape}; got {values.shape}."
         )
-    return values.reshape(states.shape[: -len(problem.state_shape)] + output_shape)
+    return values.reshape(leading_shape + output_shape)
 
 
 def autodiff_bsde_control(
@@ -390,21 +394,20 @@ def _pointwise_autodiff_control(
     *,
     key: Array,
 ) -> Array:
+    leading_shape = _leading_shape(
+        states.shape,
+        problem.state_shape,
+        owner="BSDE autodiff-control states",
+    )
     flat_states = states.reshape((-1,) + problem.state_shape)
-    flat_times = jnp.broadcast_to(
-        times, states.shape[: -len(problem.state_shape)]
-    ).reshape((-1,))
+    flat_times = jnp.broadcast_to(times, leading_shape).reshape((-1,))
     keys = jr.split(key, flat_states.shape[0])
     values = jax.vmap(
         lambda time, state, point_key: autodiff_bsde_control(
             predictor, time, state, problem, key=point_key
         )
     )(flat_times, flat_states, keys)
-    return values.reshape(
-        states.shape[: -len(problem.state_shape)]
-        + problem.output_shape
-        + problem.noise_shape
-    )
+    return values.reshape(leading_shape + problem.output_shape + problem.noise_shape)
 
 
 class BSDEEvaluation(StrictModule):

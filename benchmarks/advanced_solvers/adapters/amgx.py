@@ -43,7 +43,7 @@ class _AmgxState:
     preparation_host_to_device_bytes: int = 0
     solve_host_to_device_bytes: int = 0
     solve_device_to_host_bytes: int = 0
-    jax_result_device_bytes: int = 0
+    warmup_count: int = 0
 
 
 class AmgxAdapter(BenchmarkAdapter):
@@ -147,6 +147,9 @@ class AmgxAdapter(BenchmarkAdapter):
         )
         return compiled_state
 
+    def mark_warmup(self, prepared_state: _AmgxState, count: int, /) -> None:
+        prepared_state.warmup_count = count
+
     def solve(self, prepared_state: _AmgxState, /) -> SolveResult:
         jnp = import_module("jax.numpy")
         problem = prepared_state.spec.problem
@@ -156,13 +159,12 @@ class AmgxAdapter(BenchmarkAdapter):
             prepared_state.prepared,
             prepared_state.rhs,
         )
-        prepared_state.solve_host_to_device_bytes = int(
+        prepared_state.solve_host_to_device_bytes += int(
             result.transfers.host_to_device_bytes
         )
-        prepared_state.solve_device_to_host_bytes = int(
+        prepared_state.solve_device_to_host_bytes += int(
             result.transfers.device_to_host_bytes
         )
-        prepared_state.jax_result_device_bytes = _jax_array_bytes(result)
         iterations = result.diagnostics.iterations
         return SolveResult(
             solution=result.value,
@@ -214,14 +216,14 @@ class AmgxAdapter(BenchmarkAdapter):
         )
         return prepared_state, RefreshEvidence(
             applicable=True,
-            symbolic_reused=True,
+            symbolic_reused=None,
             numeric_refreshed=True,
             symbolic_refresh_count=0,
             numeric_refresh_count=1,
             evidence=(
-                "Phydrax public AmgX refresh preserved the canonical CSR pattern and "
-                "plan while rebinding a deterministic 1% numeric perturbation; the "
-                "previous explicit AmgX preparation was released"
+                "The public AmgX refresh API rebound a deterministic 1% numeric "
+                "perturbation and the refreshed problem is independently certified; "
+                "the provider does not expose direct symbolic-reuse evidence"
             ),
         )
 
@@ -265,20 +267,25 @@ class AmgxAdapter(BenchmarkAdapter):
         host_to_device = (
             prepared_state.preparation_host_to_device_bytes
             + prepared_state.solve_host_to_device_bytes
-            + prepared_state.jax_result_device_bytes
         )
         device_to_host = prepared_state.solve_device_to_host_bytes + device_to_host_bytes
         return TransferEvidence(
             input_origin="numpy-host",
             host_to_device_bytes=host_to_device,
-            host_to_device_timing_phase=("preparation+solve+refresh+refreshed_solve"),
+            host_to_device_timing_phase=(
+                "preparation+warmup+solve+refresh+refreshed_solve"
+                if prepared_state.warmup_count
+                else "preparation+solve+refresh+refreshed_solve"
+            ),
             device_to_host_bytes=device_to_host,
             device_to_host_timing_phase=(
-                "solve+refreshed_solve+verification+refreshed_verification"
+                "warmup+solve+refreshed_solve+verification+refreshed_verification"
+                if prepared_state.warmup_count
+                else "solve+refreshed_solve+verification+refreshed_verification"
             ),
             evidence=(
                 "exact public-backend matrix, RHS, initial-vector, and result transfer "
-                "bytes accumulated across preparation, solve, numeric refresh, "
+                "bytes accumulated across preparation, warmup, solve, numeric refresh, "
                 "refreshed solve, verification, and refreshed verification; '+' "
                 "separates measured phases"
             ),

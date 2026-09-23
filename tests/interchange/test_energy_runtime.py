@@ -5,12 +5,15 @@
 import hashlib
 import importlib.util
 import json
+import socket
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import jax
 import pytest
 
+import phydrax._external_runtime as external_runtime
 from phydrax._external_runtime import (
     EnergyRuntimeError,
     ExternalExecutionPolicy,
@@ -19,6 +22,7 @@ from phydrax._external_runtime import (
     run_energy_command,
     run_opendss,
 )
+from phydrax._external_worker import _OpenDSSWorker, _send_packet
 
 
 @pytest.fixture
@@ -89,9 +93,16 @@ def test_nonzero_exit_and_missing_output_do_not_report_success(python_executable
 
 
 def test_untrusted_paths_symlinks_and_pin_mismatch_fail_closed(python_executable):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="bounded relative POSIX file path"):
         run_energy_command(
             python_executable, ("-c", "sum(range(10))"), inputs={"../escape": b"x"}
+        )
+    with pytest.raises(ValueError, match="reserved"):
+        run_energy_command(
+            python_executable,
+            ("-c", "pass"),
+            inputs={},
+            outputs=(".phydrax-stdout",),
         )
     with pytest.raises(EnergyRuntimeError) as caught:
         run_energy_command(
@@ -112,6 +123,97 @@ def test_untrusted_paths_symlinks_and_pin_mismatch_fail_closed(python_executable
     assert caught.value.result.returncode is None
 
 
+def test_execution_uses_private_snapshot_when_original_is_mutated_in_place(
+    monkeypatch,
+    tmp_path,
+):
+    executable_path = tmp_path / "provider"
+    executable_path.write_text("#!/bin/sh\nprintf old > result\n")
+    executable_path.chmod(0o700)
+    replacement_bytes = b"#!/bin/sh\nprintf new > result\n"
+    executable = pin_energy_executable(
+        executable_path, version="test", license_id="test-only"
+    )
+    popen = external_runtime.subprocess.Popen
+
+    def mutate_before_exec(*args, **kwargs):
+        executable_path.write_bytes(replacement_bytes)
+        executable_path.chmod(0o700)
+        return popen(*args, **kwargs)
+
+    monkeypatch.setattr(external_runtime.subprocess, "Popen", mutate_before_exec)
+    result = run_energy_command(executable, (), inputs={}, outputs=("result",))
+
+    assert result.output("result") == b"old"
+
+
+def test_log_bytes_are_read_from_held_descriptors(python_executable):
+    result = run_energy_command(
+        python_executable,
+        (
+            "-c",
+            "import os; os.unlink('.phydrax-stdout'); "
+            "os.symlink('/etc/hosts','.phydrax-stdout'); print('held-log')",
+        ),
+        inputs={},
+    )
+
+    assert result.stdout == b"held-log\n"
+
+
+def test_worker_sender_rejects_oversized_response_before_sending():
+    sender, receiver = socket.socketpair()
+    try:
+        with pytest.raises(ValueError, match="cardinality limit"):
+            _send_packet(
+                sender,
+                {"ok": True, "value": [None] * 1024},
+                64,
+            )
+        receiver.setblocking(False)
+        with pytest.raises(BlockingIOError):
+            receiver.recv(1)
+    finally:
+        sender.close()
+        receiver.close()
+
+
+def test_opendss_worker_rejects_oversized_circuit_before_collections():
+    materialized = False
+
+    def materialize():
+        nonlocal materialized
+        materialized = True
+        return []
+
+    circuit = SimpleNamespace(
+        NumBuses=lambda: 1,
+        NumNodes=lambda: 100,
+        NumCktElements=lambda: 0,
+        AllElementNames=materialize,
+        AllBusNames=materialize,
+        AllNodeNames=materialize,
+    )
+    worker = _OpenDSSWorker()
+    worker.engine = SimpleNamespace(
+        Text=SimpleNamespace(Command=lambda command: None),
+        Error=SimpleNamespace(Number=lambda: 0),
+        Basic=SimpleNamespace(NumCircuits=lambda: 1),
+        Circuit=circuit,
+    )
+
+    with pytest.raises(ValueError, match="cardinality limit"):
+        worker.call(
+            "run",
+            {
+                "commands": (),
+                "response_limits": {"max_bytes": 1024, "max_items": 16},
+            },
+        )
+
+    assert materialized is False
+
+
 def test_collected_output_bound_is_enforced(python_executable):
     with pytest.raises(EnergyRuntimeError) as caught:
         run_energy_command(
@@ -125,12 +227,17 @@ def test_collected_output_bound_is_enforced(python_executable):
     assert caught.value.result.outputs == ()
 
 
-def test_isolated_execution_uses_environment_allowlist_and_records_policy(
-    python_executable,
-):
+def test_unenforced_isolation_and_network_denial_fail_closed(python_executable):
+    with pytest.raises(ValueError, match="enforcing launcher"):
+        ExternalExecutionPolicy(
+            "sandboxed",
+            network_access=False,
+            inherit_environment=False,
+        )
+    with pytest.raises(ValueError, match="Network denial"):
+        ExternalExecutionPolicy(network_access=False)
+
     policy = ExternalExecutionPolicy(
-        "sandboxed",
-        network_access=False,
         inherit_environment=False,
         allowed_environment_variables=("QUALIFICATION_TOKEN",),
     )
@@ -138,7 +245,8 @@ def test_isolated_execution_uses_environment_allowlist_and_records_policy(
         python_executable,
         (
             "-c",
-            "import os,pathlib; pathlib.Path('value').write_text(os.environ.get('QUALIFICATION_TOKEN','missing'))",
+            "import os,pathlib; pathlib.Path('value').write_text("
+            "os.environ.get('QUALIFICATION_TOKEN','missing'))",
         ),
         inputs={},
         outputs=("value",),
@@ -148,6 +256,14 @@ def test_isolated_execution_uses_environment_allowlist_and_records_policy(
 
     assert result.output("value") == b"bounded"
     assert result.artifact.status == "complete"
+    assert result.execution_policy_id == policy.policy_id
+    assert result.isolation == "trusted-local"
+    assert result.network_access is True
+    assert result.enforcement == (
+        "trusted-local-verified-path"
+        if sys.platform == "darwin"
+        else "trusted-local-direct-descriptor"
+    )
     with pytest.raises(ValueError, match="allowlist"):
         run_energy_command(
             python_executable,

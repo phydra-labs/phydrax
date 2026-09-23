@@ -114,15 +114,19 @@ def precondition_global_fluxes(
         raise TypeError("model must be a PreparedGlobalAtmosphere.")
     if not isinstance(continuation, GlobalAtmosphereContinuation):
         raise TypeError("continuation must be a GlobalAtmosphereContinuation.")
-    steps = int(maximum_steps)
+    if continuation.prepared_id != model.prepared_id:
+        raise ValueError("Continuation belongs to another prepared atmosphere runtime.")
+    if isinstance(maximum_steps, bool) or not isinstance(maximum_steps, int):
+        raise TypeError("maximum_steps must be an integer.")
+    steps = maximum_steps
     scales = (
         float(flux_tolerance_w_per_m2),
         float(maximum_air_temperature_shift),
         float(maximum_surface_temperature_shift),
         float(maximum_jacobian_condition),
     )
-    if steps != maximum_steps or steps < 1:
-        raise ValueError("maximum_steps must be a positive integer.")
+    if steps < 1:
+        raise ValueError("maximum_steps must be positive.")
     if any(not math.isfinite(value) or value <= 0 for value in scales):
         raise ValueError(
             "Flux, shift, and conditioning limits must be positive and finite."

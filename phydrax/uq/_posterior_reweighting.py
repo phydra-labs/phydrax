@@ -224,6 +224,17 @@ def reweight_posterior(
         if not bool(weight_valid)
         else "insufficient-overlap"
     )
+    source_support = (
+        jnp.ones(shape, dtype=jnp.bool_)
+        if target.support_valid is None
+        else jnp.broadcast_to(
+            jnp.asarray(target.support_valid, dtype=jnp.bool_),
+            shape,
+        )
+    )
+    reweighted_support = source_support & (
+        ~active.reshape(shape) | new_usable.reshape(shape)
+    )
     restored_weights = _restore_log_weights(target, normalized, shape)
     reweighted = WeightedSampleTarget(
         target.samples,
@@ -231,7 +242,7 @@ def reweight_posterior(
         normalized=True,
         independent=target.independent,
         ancestry=target.ancestry,
-        support_valid=valid,
+        support_valid=reweighted_support,
         stratum_ids=target.stratum_ids,
         pair_ids=target.pair_ids,
         replicate_ids=target.replicate_ids,

@@ -10,15 +10,40 @@ from jaxtyping import Array
 import phydrax as phx
 
 
+def _scale_operator_contract(model):
+    return phx.nn.operator.ConfiguredOperatorContract(
+        architecture="test-scale-operator",
+        configuration=(),
+        capabilities=model.capability,
+        training=model.training,
+    )
+
+
 class _ScaleOperator(phx.nn.operator.AbstractOperatorModel):
     operator_architecture = "test-scale-operator"
+    _operator_contract_builder = staticmethod(_scale_operator_contract)
 
     scale: Array
+    capability: phx.nn.operator.OperatorCapabilitySpec = eqx.field(static=True)
+    training: phx.nn.operator.OperatorTrainingRequirement = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, scale):
+    def __init__(self, scale, *, capability=None, training=None):
         self.scale = jnp.asarray(scale)
+        self.capability = (
+            phx.nn.operator.OperatorCapabilitySpec(
+                source_geometries=("abstract",),
+                query_geometries=("abstract",),
+            )
+            if capability is None
+            else capability
+        )
+        self.training = (
+            phx.nn.operator.OperatorTrainingRequirement()
+            if training is None
+            else training
+        )
         self.in_size = 1
         self.out_size = 1
 
@@ -88,6 +113,63 @@ def test_fidelity_correction_operator_adds_baseline_and_correction():
     source = dataset.batch.input("state").values
     assert source is not None
     assert jnp.allclose(values, 3.0 * source)
+
+
+def test_fidelity_contract_intersects_both_child_capabilities():
+    baseline_capability = phx.nn.operator.OperatorCapabilitySpec(
+        source_geometries=("tensor_grid",),
+        query_geometries=("tensor_grid",),
+        spatial_dimensions=(2,),
+        axis_requirement="uniform",
+        quadrature="physical_required",
+        masks="all_valid_only",
+        resolution_transfer=True,
+        multiple_queries=True,
+    )
+    correction_capability = phx.nn.operator.OperatorCapabilitySpec(
+        source_geometries=("tensor_grid", "point_cloud"),
+        query_geometries=("tensor_grid", "point_cloud"),
+        spatial_dimensions=(2, 3),
+        quadrature="optional",
+        masks="supported",
+        resolution_transfer=False,
+        multiple_queries=False,
+    )
+    model = phx.nn.operator.architectures.FidelityCorrectionOperator(
+        _ScaleOperator(1.0, capability=baseline_capability),
+        _ScaleOperator(2.0, capability=correction_capability),
+        _path(),
+    )
+    capability = model.operator_contract.capabilities
+
+    assert capability.source_geometries == ("tensor_grid",)
+    assert capability.query_geometries == ("tensor_grid",)
+    assert capability.spatial_dimensions == (2,)
+    assert capability.axis_requirement == "uniform"
+    assert capability.quadrature == "physical_required"
+    assert capability.masks == "all_valid_only"
+    assert not capability.resolution_transfer
+    assert not capability.multiple_queries
+
+
+def test_fidelity_contract_rejects_unrepresentable_training_requirements():
+    baseline = _ScaleOperator(
+        1.0,
+        training=phx.nn.operator.OperatorTrainingRequirement(),
+    )
+    correction = _ScaleOperator(
+        2.0,
+        training=phx.nn.operator.OperatorTrainingRequirement(
+            regime="pretrained_system",
+            pretrained_weights_required=True,
+        ),
+    )
+    with pytest.raises(ValueError, match="training requirement"):
+        phx.nn.operator.architectures.FidelityCorrectionOperator(
+            baseline,
+            correction,
+            _path(),
+        )
 
 
 def test_fidelity_operator_preparation_pairs_physical_cases_explicitly():

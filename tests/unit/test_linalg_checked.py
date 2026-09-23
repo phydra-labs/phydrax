@@ -3,6 +3,7 @@
 #
 
 import jax.numpy as jnp
+import pytest
 
 import phydrax.linalg as la
 from phydrax.linalg._certificates import StabilityLowerBound
@@ -490,3 +491,30 @@ def test_checked_solve_exposes_conditional_and_certified_forward_error_bounds():
     )
     assert asserted.forward_error_bound_available
     assert not asserted.forward_error_bound_certified
+
+
+def test_hermitian_square_root_rejects_indefinite_inputs():
+    indefinite = la.hermitian_sqrt(
+        jnp.asarray([[-1.0]]),
+        tolerance=1.0e-8,
+    )
+    semidefinite = la.hermitian_sqrt(
+        jnp.asarray([[0.0, 0.0], [0.0, 4.0]]),
+        tolerance=1.0e-8,
+    )
+
+    assert not bool(indefinite.valid)
+    assert bool(semidefinite.valid)
+    assert jnp.allclose(
+        semidefinite.value @ semidefinite.value,
+        semidefinite.spectrum.reconstruct(),
+    )
+
+
+def test_block_scaled_contraction_rejects_complex_operands():
+    with pytest.raises(TypeError, match="operands must be real"):
+        la.contract_block_scaled(
+            "i,i->",
+            jnp.asarray([1.0 + 2.0j]),
+            jnp.asarray([3.0]),
+        )

@@ -94,6 +94,10 @@ class GlobalAtmosphereProcesses(StrictModule):
             thermodynamics, MoistThermodynamicPlan
         ):
             raise TypeError("thermodynamics must be MoistThermodynamicPlan or None.")
+        if type(held_suarez) is not bool:
+            raise TypeError("held_suarez must be a bool.")
+        if isinstance(cadence, bool) or not isinstance(cadence, int):
+            raise TypeError("cadence must be an integer.")
         if surface_physics is not None:
             if not isinstance(surface_physics, GlobalSurfacePhysics):
                 raise TypeError("surface_physics must be GlobalSurfacePhysics or None.")
@@ -132,17 +136,13 @@ class GlobalAtmosphereProcesses(StrictModule):
             raise ValueError(
                 "Invalid temperature, relaxation, mixing or evaporation parameter."
             )
-        if (
-            min(condensation_timescale, precipitation_timescale) <= 0
-            or int(cadence) != cadence
-            or cadence < 1
-        ):
+        if min(condensation_timescale, precipitation_timescale) <= 0 or cadence < 1:
             raise ValueError(
                 "Phase-change timescales and integer cadence must be positive."
             )
         if thermodynamics is None and evaporation_flux != 0:
             raise ValueError("Evaporation requires moist thermodynamics.")
-        self.thermodynamics, self.held_suarez = thermodynamics, bool(held_suarez)
+        self.thermodynamics, self.held_suarez = thermodynamics, held_suarez
         self.surface_physics = surface_physics
         self.equilibrium_temperature, self.radiative_timescale = (
             float(equilibrium_temperature),
@@ -157,7 +157,7 @@ class GlobalAtmosphereProcesses(StrictModule):
             float(sensible_heat_flux),
             float(evaporation_flux),
         )
-        self.cadence = int(cadence)
+        self.cadence = cadence
         self.process_id = canonical_fingerprint(
             {
                 "kind": "global-atmosphere-stage-processes",

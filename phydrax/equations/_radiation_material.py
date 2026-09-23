@@ -137,6 +137,8 @@ class RadiationCoefficientTable(StrictModule, NonTrainableState):
             or pressure.ndim != 1
             or temperature.size < 2
             or pressure.size < 2
+            or np.any(~np.isfinite(temperature))
+            or np.any(~np.isfinite(pressure))
             or np.any(np.diff(temperature) <= 0.0)
             or np.any(np.diff(pressure) <= 0.0)
             or values.shape

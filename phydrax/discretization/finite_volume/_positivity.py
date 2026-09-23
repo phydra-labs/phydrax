@@ -903,7 +903,10 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
                 )
             )
 
-        def make_ledger(blocks) -> ConservationStageLedger:
+        def make_ledger(
+            blocks,
+            blend_factors,
+        ) -> ConservationStageLedger:
             return ConservationStageLedger(
                 tuple(blocks),
                 high.source_rate,
@@ -914,9 +917,17 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
                 evidence_policy_id=high.evidence_policy_id,
                 evidence_version=high.evidence_version,
                 topology_epoch_id=high.topology_epoch_id,
+                high_order_blocks=high.blocks,
+                low_order_blocks=fallback.blocks,
+                blend_factors=tuple(blend_factors),
+                entropy_production=high.entropy_production,
+                troubled_cell_mask=high.troubled_cell_mask,
+                correction_level=high.correction_level,
+                accepted=high.accepted,
+                differentiability_policy_id=high.differentiability_policy_id,
             )
 
-        preliminary_ledger = make_ledger(preliminary_blocks)
+        preliminary_ledger = make_ledger(preliminary_blocks, face_factors)
         preliminary_content = (
             content + increment * preliminary_ledger.scatter_content_rate()
         )
@@ -938,7 +949,10 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
                     strict=True,
                 )
             )
-            candidate_ledger = make_ledger(candidate_blocks)
+            candidate_ledger = make_ledger(
+                candidate_blocks,
+                tuple(midpoint * factor for factor in face_factors),
+            )
             candidate_content = (
                 content + increment * candidate_ledger.scatter_content_rate()
             )
@@ -977,11 +991,11 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
                 strict=True,
             )
         )
-        limited_ledger = make_ledger(limited_blocks)
+        final_face_factors = tuple(secondary_factor * factor for factor in face_factors)
+        limited_ledger = make_ledger(limited_blocks, final_face_factors)
         limited_content = content + increment * limited_ledger.scatter_content_rate()
         limited_average = cell_average(limited_content)
         limited_valid = jnp.all(admissible_active_cells(limited_average))
-        final_face_factors = tuple(secondary_factor * factor for factor in face_factors)
         active_density = jnp.where(
             active,
             limited_average[..., 0],

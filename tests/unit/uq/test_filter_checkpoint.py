@@ -97,7 +97,7 @@ def test_bellman_filter_checkpoint_replays_and_rejects_changed_numerics(tmp_path
 def test_ensemble_filter_checkpoint_replays_key_and_members(tmp_path):
     problem = _problem()
     initial = phx.uq.initialize_ensemble_filter(
-        jr.key(60),
+        jr.key(60, impl="rbg"),
         problem,
         ensemble_size=16,
         inflation=1.01,
@@ -119,6 +119,7 @@ def test_ensemble_filter_checkpoint_replays_key_and_members(tmp_path):
 
     assert jnp.array_equal(restored.ensemble, state.ensemble)
     assert jnp.array_equal(jr.key_data(restored.root_key), jr.key_data(state.root_key))
+    assert str(jr.key_impl(restored.root_key)) == "rbg"
     assert jnp.array_equal(replay.ensemble, expected.ensemble)
     with pytest.raises(phx.uq.CheckpointCompatibilityError):
         phx.uq.read_ensemble_filter_checkpoint(
@@ -133,7 +134,7 @@ def test_ensemble_filter_checkpoint_replays_key_and_members(tmp_path):
 def test_unified_particle_checkpoint_dispatch(tmp_path):
     problem = _problem()
     state = phx.uq.initialize_particle_filter(
-        jr.key(61),
+        jr.key(61, impl="rbg"),
         problem,
         num_particles=16,
         resampling_policy="always",
@@ -152,3 +153,4 @@ def test_unified_particle_checkpoint_dispatch(tmp_path):
 
     assert jnp.array_equal(restored.particles, state.particles)
     assert jnp.array_equal(restored.log_weights, state.log_weights)
+    assert str(jr.key_impl(restored.root_key)) == "rbg"

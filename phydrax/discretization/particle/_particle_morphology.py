@@ -329,8 +329,18 @@ def fragment_particle_internal_batch(
         or molar.shape != (state.species_amount.shape[-1],)
     ):
         raise ValueError("Fragmentation arrays do not match plan/schema.")
-    safe_children = jnp.where(valid, children, 0)
+    safe_children = jnp.where(
+        valid,
+        jnp.clip(children, 0, state.active.shape[0] - 1),
+        0,
+    )
     indices_valid = (children >= 0) & (children < state.active.shape[0]) & valid
+    sorted_children = jnp.sort(jnp.where(valid, children, state.active.shape[0]))
+    no_duplicate_children = ~jnp.any(
+        (sorted_children[1:] == sorted_children[:-1])
+        & (sorted_children[1:] < state.active.shape[0])
+    )
+    children_not_source = jnp.all((~valid) | (children != source))
     source_mass = jnp.sum(state.species_amount[source] * molar)
     assigned_mass = jnp.sum(jnp.where(valid, masses, 0.0))
     weights = jnp.where(
@@ -397,6 +407,8 @@ def fragment_particle_internal_batch(
     successful = (
         state.active[source]
         & jnp.all(indices_valid | ~valid)
+        & no_duplicate_children
+        & children_not_source
         & jnp.all(~state.active[safe_children] | ~valid)
         & jnp.all(jnp.isfinite(masses) & (~valid | (masses > 0.0)))
         & jnp.all(jnp.isfinite(scales) & (~valid | (scales > 0.0)))

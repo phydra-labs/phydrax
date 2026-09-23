@@ -1233,31 +1233,26 @@ class AbstractBoundedLeastSquaresMethod(AbstractLeastSquaresMethod):
             parameters,
             termination=one_step,
             args=None,
+            initial_state=state,
         )
         diagnostics = result.diagnostics
         next_state = LeastSquaresState(
-            iteration=state.iteration + diagnostics.iterations,
-            initial_optimality_norm=jnp.where(
-                state.iteration == 0,
-                diagnostics.initial_optimality_norm,
-                state.initial_optimality_norm,
-            ),
+            iteration=diagnostics.iterations,
+            initial_optimality_norm=diagnostics.initial_optimality_norm,
             damping=diagnostics.damping,
-            accepted_steps=state.accepted_steps + diagnostics.accepted_steps,
-            rejected_steps=state.rejected_steps + diagnostics.rejected_steps,
-            residual_evaluations=state.residual_evaluations
-            + diagnostics.residual_evaluations,
+            accepted_steps=diagnostics.accepted_steps,
+            rejected_steps=diagnostics.rejected_steps,
+            residual_evaluations=diagnostics.residual_evaluations,
             scalar_evaluations=state.scalar_evaluations,
-            scalar_gradient_evaluations=(state.scalar_gradient_evaluations),
+            scalar_gradient_evaluations=state.scalar_gradient_evaluations,
             scalar_hvp_evaluations=state.scalar_hvp_evaluations,
-            jvp_evaluations=state.jvp_evaluations + diagnostics.jvp_evaluations,
-            vjp_evaluations=state.vjp_evaluations + diagnostics.vjp_evaluations,
-            linear_iterations=state.linear_iterations + diagnostics.linear_iterations,
-            linear_solves=state.linear_solves + diagnostics.linear_solves,
-            direction_fallbacks=state.direction_fallbacks
-            + diagnostics.direction_fallbacks,
-            setup_refreshes=state.setup_refreshes + diagnostics.setup_refreshes,
-            numeric_refreshes=state.numeric_refreshes + diagnostics.numeric_refreshes,
+            jvp_evaluations=diagnostics.jvp_evaluations,
+            vjp_evaluations=diagnostics.vjp_evaluations,
+            linear_iterations=diagnostics.linear_iterations,
+            linear_solves=diagnostics.linear_solves,
+            direction_fallbacks=diagnostics.direction_fallbacks,
+            setup_refreshes=diagnostics.setup_refreshes,
+            numeric_refreshes=diagnostics.numeric_refreshes,
             linear_refresh_state=state.linear_refresh_state,
             metrics=IterativeStepMetrics(
                 objective=result.objective,
@@ -1379,6 +1374,7 @@ def _solve_bounded_least_squares(
     *,
     termination: OptimizationTermination,
     args: Any,
+    initial_state: LeastSquaresState | None = None,
 ) -> LeastSquaresResult:
     if not isinstance(problem, NonlinearLeastSquaresProblem):
         raise TypeError("problem must be NonlinearLeastSquaresProblem.")
@@ -1386,6 +1382,8 @@ def _solve_bounded_least_squares(
         raise ValueError("A bounded least-squares method requires problem.bounds.")
     if not isinstance(termination, OptimizationTermination):
         raise TypeError("termination must be OptimizationTermination.")
+    if initial_state is not None and not isinstance(initial_state, LeastSquaresState):
+        raise TypeError("initial_state must be LeastSquaresState or None.")
     bounds = problem.bounds
     parameters = bounds.project(
         _validate_real_inexact_tree(
@@ -1398,7 +1396,8 @@ def _solve_bounded_least_squares(
         residual, _ = problem.value(candidate, args)
         return residual
 
-    state = method.init(parameters)
+    state = method.init(parameters) if initial_state is None else initial_state
+    iteration_limit = state.iteration + termination.maximum_steps
     initial_status = jnp.where(
         _tree_allfinite(parameters),
         int(OptimizationStatus.ITERATING),
@@ -1414,7 +1413,7 @@ def _solve_bounded_least_squares(
         )
         return (
             (current.status == int(OptimizationStatus.ITERATING))
-            & (current.state.iteration < termination.maximum_steps)
+            & (current.state.iteration < iteration_limit)
             & within_evaluations
         )
 

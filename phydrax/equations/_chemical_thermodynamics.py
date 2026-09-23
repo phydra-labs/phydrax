@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._model import register_artifact_value
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._chemical_species import ChemicalPhaseKind, ChemicalSpeciesSchema
@@ -400,6 +401,20 @@ def _nasa9(coefficients, temperature):
         + a9
     )
     return cp_r, h_rt, s_r
+
+
+for _artifact_value in (
+    NASAPolynomialKind,
+    SpeciesThermodynamicEvaluation,
+    PolynomialSpeciesThermodynamicsPlan,
+    NASASpeciesThermodynamicsPlan,
+):
+    register_artifact_value(
+        f"phydrax.chemistry.thermodynamics:{_artifact_value.__name__}",
+        _artifact_value,
+    )
+
+del _artifact_value
 
 
 __all__ = [

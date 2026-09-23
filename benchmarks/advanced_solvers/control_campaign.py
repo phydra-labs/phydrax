@@ -4,15 +4,21 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
-from benchmarks._runtime import measure_repeated
-
+from benchmarks._runtime import (
+    capture_environment,
+    DurationDistribution,
+    measure_repeated,
+    measure_synchronized,
+)
 
 def _problem(horizon: int, seed: int, /):
     generator = np.random.Generator(np.random.PCG64(seed))
@@ -32,12 +38,23 @@ def _problem(horizon: int, seed: int, /):
 
 
 def _measure(operation, warmup: int, repeats: int, /):
-    result, distribution = measure_repeated(
+    warmup_timing = DurationDistribution(()).to_milliseconds_dict()
+    if warmup:
+        _, warmup_distribution = measure_repeated(
+            operation,
+            warmup=0,
+            repeats=warmup,
+        )
+        warmup_timing = warmup_distribution.to_milliseconds_dict()
+    result, steady_distribution = measure_repeated(
         operation,
-        warmup=warmup,
+        warmup=0,
         repeats=repeats,
     )
-    return result, distribution.to_milliseconds_dict()
+    return result, {
+        "warmup": warmup_timing,
+        "steady": steady_distribution.to_milliseconds_dict(),
+    }
 
 
 def _certificate(problem, result, /):
@@ -61,13 +78,26 @@ def _certificate(problem, result, /):
             initial=0.0,
         )
     )
+    backend_successful = bool(np.asarray(result.successful))
+    objective = float(np.asarray(result.objective))
+    tolerance = 1e-7
+    certified = (
+        backend_successful
+        and np.isfinite(objective)
+        and dynamics_residual <= tolerance
+        and max(lower_violation, upper_violation) <= tolerance
+    )
     return {
-        "successful": bool(np.asarray(result.successful)),
+        "kind": "independent-trajectory-feasibility",
+        "independently_computed": True,
+        "successful": certified,
+        "backend_successful": backend_successful,
         "status": int(np.asarray(result.status)),
-        "objective": float(np.asarray(result.objective)),
+        "objective": objective,
         "dynamics_residual": dynamics_residual,
         "bound_violation": max(lower_violation, upper_violation),
-        "maximum_kkt_residual": float(
+        "tolerance": tolerance,
+        "provider_maximum_kkt_residual": float(
             max(np.asarray(item.kkt_residual_norm) for item in result.qp_results)
         ),
         "iterations": [int(np.asarray(item.iterations)) for item in result.qp_results],
@@ -89,9 +119,16 @@ def run_control_horizon_campaign(
         raise ValueError("horizons must contain positive integers.")
     if warmup < 0 or repeats < 1:
         raise ValueError("warmup must be non-negative and repeats must be positive.")
+    if len(set(values)) != len(values):
+        raise ValueError("horizons must not contain duplicates.")
     rows = []
-    for index, horizon in enumerate(values):
-        problem = _problem(horizon, seed + index)
+    for horizon in values:
+        row_seed = seed + horizon
+        phase_timings: dict[str, Any] = {}
+        problem, sample = measure_synchronized(lambda: _problem(horizon, row_seed))
+        phase_timings["setup"] = DurationDistribution(
+            (sample,)
+        ).to_milliseconds_dict()
         prediction = min(16, horizon)
         policy = phx.optim.ConvexSolvePolicy(
             phx.optim.DensePrimalDualQP(max_kkt_dimension=max(512, 8 * horizon)),
@@ -100,15 +137,30 @@ def run_control_horizon_campaign(
                 maximum_steps=100,
             ),
         )
-        dense_compilation = phx.control.compile_linear_quadratic_control(problem)
-        sparse_compilation = phx.control.compile_linear_quadratic_control(
-            problem,
-            compilation_policy=phx.control.LinearControlCompilationPolicy("sparse"),
+        dense_compilation, dense_compile_sample = measure_synchronized(
+            lambda: phx.control.compile_linear_quadratic_control(problem)
         )
-        sparse_prepared = phx.control.prepare_linear_quadratic_control(
-            problem,
-            compilation_policy=phx.control.LinearControlCompilationPolicy("sparse"),
+        phase_timings["dense_compilation"] = DurationDistribution(
+            (dense_compile_sample,)
+        ).to_milliseconds_dict()
+        sparse_compilation, sparse_compile_sample = measure_synchronized(
+            lambda: phx.control.compile_linear_quadratic_control(
+                problem,
+                compilation_policy=phx.control.LinearControlCompilationPolicy("sparse"),
+            )
         )
+        phase_timings["sparse_compilation"] = DurationDistribution(
+            (sparse_compile_sample,)
+        ).to_milliseconds_dict()
+        sparse_prepared, sparse_prepare_sample = measure_synchronized(
+            lambda: phx.control.prepare_linear_quadratic_control(
+                problem,
+                compilation_policy=phx.control.LinearControlCompilationPolicy("sparse"),
+            )
+        )
+        phase_timings["sparse_preparation"] = DurationDistribution(
+            (sparse_prepare_sample,)
+        ).to_milliseconds_dict()
         sparse_operation = lambda: phx.control.solve_prepared_linear_quadratic_control(
             sparse_prepared
         )
@@ -128,6 +180,18 @@ def run_control_horizon_campaign(
         cold, cold_timing = _measure(cold_operation, warmup, repeats)
         warm, warm_timing = _measure(warm_operation, warmup, repeats)
         sparse_solution, sparse_timing = _measure(sparse_operation, warmup, repeats)
+        cold_certificate, cold_verification = measure_synchronized(
+            lambda: _certificate(problem, cold)
+        )
+        warm_certificate, warm_verification = measure_synchronized(
+            lambda: _certificate(problem, warm)
+        )
+        sparse_certificate, sparse_verification = measure_synchronized(
+            lambda: _certificate(problem, sparse_solution)
+        )
+        phase_timings["verification"] = DurationDistribution(
+            (cold_verification, warm_verification, sparse_verification)
+        ).to_milliseconds_dict()
         dense_program = dense_compilation.program
         sparse_program = sparse_compilation.program
         sparse_quadratic = sparse_program.quadratic
@@ -142,6 +206,9 @@ def run_control_horizon_campaign(
         rows.append(
             {
                 "horizon": horizon,
+                "seed": row_seed,
+                "problem_fingerprint": _problem_fingerprint(problem, row_seed),
+                "phase_timings": phase_timings,
                 "prediction_horizon": prediction,
                 "dense_matrix_bytes": int(
                     dense_program.quadratic.nbytes
@@ -154,26 +221,51 @@ def run_control_horizon_campaign(
                 ),
                 "sparse": {
                     "timing": sparse_timing,
-                    "successful": bool(sparse_solution.successful),
-                    "objective": float(sparse_solution.objective),
+                    "certificate": sparse_certificate,
                 },
                 "cold": {
                     "timing": cold_timing,
-                    "certificate": _certificate(problem, cold),
+                    "certificate": cold_certificate,
                 },
                 "warm": {
                     "timing": warm_timing,
-                    "certificate": _certificate(problem, warm),
+                    "certificate": warm_certificate,
                 },
             }
         )
+    passed = all(
+        path["certificate"]["successful"]
+        for row in rows
+        for path in (row["sparse"], row["cold"], row["warm"])
+    )
     return {
         "campaign": "control-horizon-warm-start",
         "seed": seed,
         "warmup": warmup,
         "repeats": repeats,
+        "environment": capture_environment().to_dict(),
+        "source_fingerprint": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "passed": passed,
         "rows": rows,
     }
+
+
+def _problem_fingerprint(problem: Any, seed: int, /) -> str:
+    digest = hashlib.sha256()
+    digest.update(str(seed).encode("ascii"))
+    digest.update(str(problem.problem_id).encode("utf-8"))
+    for value in (
+        problem.dynamics_matrices,
+        problem.control_matrices,
+        problem.dynamics_bias,
+        problem.control_lower_bounds,
+        problem.control_upper_bounds,
+    ):
+        array = np.asarray(value)
+        digest.update(array.dtype.str.encode("ascii"))
+        digest.update(str(array.shape).encode("ascii"))
+        digest.update(array.tobytes(order="C"))
+    return digest.hexdigest()
 
 
 __all__ = ["run_control_horizon_campaign"]

@@ -32,6 +32,11 @@ Complex Langevin and thimble methods remain research-only and unqualified for a 
 
 ## Qualified EoS tables
 
-`EOSGridPlan` currently materializes an explicit `mu_Q = mu_S = 0` grid from a prepared Taylor potential. `qualify_eos_table` checks finite values, the thermodynamic identity, susceptibility stability, entropy, and grid-line causality. `evaluate_eos_table` requires four valid interpolation corners and never extrapolates or fills holes.
+`EOSGridPlan` currently materializes an explicit `mu_Q = mu_S = 0` grid from a
+prepared Taylor potential. `qualify_eos_table` checks finite values, the
+thermodynamic identity, susceptibility stability, entropy, and grid-line causality.
+`evaluate_eos_table(table, qualification, temperature, baryon_mu)` requires the exact
+successful `EOSQualification` for that table, four valid interpolation corners, and
+never extrapolates or fills holes.
 
 `eos_table_metadata` refuses an unqualified table. The result is a finite-density constitutive artifact, not relativistic hydrodynamics or a transport-coefficient closure.

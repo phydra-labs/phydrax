@@ -153,6 +153,8 @@ def select_interface_acquisition(
             raise ValueError(
                 "existing_points must have non-empty shape (point, candidate_coordinate)."
             )
+        if bool(jnp.any(~jnp.isfinite(existing))):
+            raise ValueError("existing_points must contain only finite coordinates.")
         minimum_distance = jnp.min(_pairwise_distances(points, existing), axis=-1)
     selected = jnp.zeros((candidate_count,), dtype=jnp.bool_)
     selected_indices = []

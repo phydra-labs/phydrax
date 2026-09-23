@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
 from ._compressible_contracts import (
     CompressibleKineticConservationEvidence,
     CompressibleKineticPopulationState,
@@ -89,7 +90,14 @@ class FilteredD3Q33Plan(StrictModule, NonTrainableState):
         if len(rows) != q:
             raise ValueError("D3Q33 moment basis construction was rank deficient.")
         transform = np.vstack(rows)
-        inverse = np.linalg.solve(transform, np.eye(q))
+        inverse_result = solve(
+            LinearSystem(DenseLinearOperator(transform)),
+            np.eye(q),
+            policy=LinearSolvePolicy(DenseLU()),
+        )
+        if not bool(jnp.all(inverse_result.successful)):
+            raise ValueError("D3Q33 moment transform factorization failed.")
+        inverse = np.asarray(inverse_result.value)
         filter_indices = np.asarray(
             [
                 index
@@ -177,6 +185,8 @@ class FilteredD3Q33Plan(StrictModule, NonTrainableState):
             state.frame_velocity,
             state.frame_temperature_scale,
             self.model.layout,
+            self.model.model_id,
+            self.model.rule.rule_id,
         )
         new = self.model.moments(candidate)
         mass_defect = new.density - old.density
@@ -205,6 +215,8 @@ class FilteredD3Q33Plan(StrictModule, NonTrainableState):
             state.frame_velocity,
             state.frame_temperature_scale,
             self.model.layout,
+            self.model.model_id,
+            self.model.rule.rule_id,
         )
         conservation = CompressibleKineticConservationEvidence(
             mass_defect=mass_defect,

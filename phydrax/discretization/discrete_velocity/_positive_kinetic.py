@@ -229,6 +229,8 @@ class PositiveCompressibleKineticPlan(StrictModule, NonTrainableState):
             frame,
             jnp.ones(rho.shape, dtype=rho.dtype),
             self.layout,
+            self.model_id,
+            self.rule.rule_id,
         )
 
     def moments(
@@ -236,8 +238,12 @@ class PositiveCompressibleKineticPlan(StrictModule, NonTrainableState):
         state: CompressibleKineticPopulationState,
         /,
     ) -> CompressibleKineticMacroscopicState:
-        if state.layout.layout_id != self.layout.layout_id:
-            raise ValueError("State population layout does not match this kinetic plan.")
+        if (
+            state.layout.layout_id != self.layout.layout_id
+            or state.model_id != self.model_id
+            or state.rule_id != self.rule.rule_id
+        ):
+            raise ValueError("State identity does not match this kinetic plan.")
         particle = state.population("particle")
         velocities = self.rule.velocities.astype(particle.dtype)
         density = jnp.sum(particle, axis=-1)
@@ -340,23 +346,42 @@ class PositiveCompressibleKineticPlan(StrictModule, NonTrainableState):
             state.frame_velocity,
             state.frame_temperature_scale,
             self.layout,
+            self.model_id,
+            self.rule.rule_id,
         )
         new = self.moments(candidate)
         mass_defect = new.density - old.density
         momentum_defect = jnp.max(jnp.abs(new.momentum - old.momentum), axis=-1)
         energy_defect = new.total_energy - old.total_energy
+        old_safe = jnp.where(old_particle > 0.0, old_particle, 1.0)
         entropy_before = jnp.sum(
-            old_particle * jnp.log(old_particle / self.rule.base_probabilities),
+            jnp.where(
+                old_particle > 0.0,
+                old_particle * jnp.log(old_safe / self.rule.base_probabilities),
+                jnp.inf,
+            ),
             axis=-1,
         )
         particle_candidate = candidates[0]
+        candidate_safe = jnp.where(particle_candidate > 0.0, particle_candidate, 1.0)
         entropy_after = jnp.sum(
-            particle_candidate
-            * jnp.log(particle_candidate / self.rule.base_probabilities),
+            jnp.where(
+                particle_candidate > 0.0,
+                particle_candidate
+                * jnp.log(candidate_safe / self.rule.base_probabilities),
+                jnp.inf,
+            ),
             axis=-1,
         )
         minimum_population = jnp.min(
             jnp.stack(tuple(jnp.min(value, axis=-1) for value in candidates), axis=0),
+            axis=0,
+        )
+        minimum_old_population = jnp.min(
+            jnp.stack(
+                tuple(jnp.min(value, axis=-1) for value in state.populations),
+                axis=0,
+            ),
             axis=0,
         )
         finite = new.finite & jnp.all(
@@ -372,14 +397,26 @@ class PositiveCompressibleKineticPlan(StrictModule, NonTrainableState):
         )
         density_scale = jnp.maximum(old.density, 1.0)
         energy_scale = jnp.maximum(jnp.abs(old.total_energy), 1.0)
+        momentum_scale = jnp.maximum(jnp.max(jnp.abs(old.momentum), axis=-1), 1.0)
+        entropy_tolerance = numerical_tolerance * jnp.maximum(
+            jnp.abs(entropy_before), 1.0
+        )
+        entropy_accepted = (
+            entropy_after <= entropy_before + entropy_tolerance
+            if self.collision_kind == "entropic"
+            else jnp.ones_like(old.admissible)
+        )
         successful = (
             old.admissible
             & new.admissible
             & finite
             & root_success
+            & (minimum_old_population > 0.0)
             & (minimum_population > 0.0)
             & (jnp.abs(mass_defect) <= numerical_tolerance * density_scale)
             & (jnp.abs(energy_defect) <= numerical_tolerance * energy_scale)
+            & (momentum_defect <= numerical_tolerance * momentum_scale)
+            & entropy_accepted
         )
         accepted_populations = tuple(
             jnp.where(successful[..., None], new_value, old_value)
@@ -392,6 +429,8 @@ class PositiveCompressibleKineticPlan(StrictModule, NonTrainableState):
             state.frame_velocity,
             state.frame_temperature_scale,
             self.layout,
+            self.model_id,
+            self.rule.rule_id,
         )
         conservation = CompressibleKineticConservationEvidence(
             mass_defect=mass_defect,

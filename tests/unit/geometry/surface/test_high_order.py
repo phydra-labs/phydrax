@@ -43,3 +43,9 @@ def test_linear_isoparametric_triangle_preserves_authoritative_geometry_and_fram
             jnp.asarray([[0.2, 0.3]]),
             derivative_order=2,
         )
+
+    with pytest.raises(RuntimeError, match="existing high-order charts"):
+        realized.frame(
+            jnp.asarray([-1]),
+            jnp.asarray([[0.2, 0.3]]),
+        )

@@ -245,8 +245,10 @@ class ReactingAMRSynchronizationPlan(StrictModule, NonTrainableState):
         )
         return updated, successful, evidence
 
-    def __call__(self, level, hierarchy, time, step_size, args=None):
-        updated, successful, _ = self.synchronize(level, hierarchy, time, step_size, args)
+    def __call__(self, level, hierarchy, end_time, interval_dt, args=None):
+        updated, successful, _ = self.synchronize(
+            level, hierarchy, end_time, interval_dt, args
+        )
         return updated, successful
 
 

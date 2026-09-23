@@ -2,6 +2,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -50,6 +51,7 @@ def test_surface_image_refits_dynamic_geometry_and_interpolates_vertex_fields():
         realization,
         support,
         camera,
+        realization.model.metadata.coordinate_contract,
         quantity,
         phx.measurement.ValueLayout.scalar(),
         phx.measurement.SamplingSemantics(phx.measurement.SpatialSamplingKind.POINT),
@@ -121,3 +123,58 @@ def test_lidar_surface_prediction_reuses_exact_dynamic_visibility():
         geometry_id="moved-lidar",
     )
     np.testing.assert_allclose(moved.prediction.values, (3.0,))
+
+
+def test_rendering_rejects_coordinate_mismatch_and_unstable_routes():
+    realization, _ = _surface()
+    support = phx.imaging.ImagePlaneSupport((3, 3), detector_frame_id="camera")
+    camera = phx.imaging.camera.CameraModel(
+        phx.imaging.camera.CameraIntrinsics((1.0, 1.0), (1.0, 1.0), image_shape=(3, 3))
+    )
+    quantity = phx.measurement.QuantitySpec(
+        "rendering", "surface-field", "surface-field", phx.units.ONE, "test.surface-field"
+    )
+    mismatch = phx.SpatialCoordinateContract(
+        phx.units.MILLIMETER,
+        coordinate_system="cartesian-world",
+        reference_frame="world",
+    )
+    with pytest.raises(ValueError, match="spatial coordinate contract"):
+        phx.rendering.SurfaceImagePlan(
+            realization,
+            support,
+            camera,
+            mismatch,
+            quantity,
+            phx.measurement.ValueLayout.scalar(),
+            phx.measurement.SamplingSemantics(phx.measurement.SpatialSamplingKind.POINT),
+        )
+    rays = phx.measurement.RaySampleSupport(
+        np.zeros((1, 3)),
+        np.asarray(((0.0, 0.0, 1.0),)),
+        ("ray",),
+        mismatch,
+    )
+    range_quantity = phx.measurement.QuantitySpec(
+        "lidar", "range", "range", phx.units.MILLIMETER, "physical.range"
+    )
+    with pytest.raises(ValueError, match="spatial coordinate contract"):
+        phx.rendering.LidarSurfacePlan(
+            realization,
+            rays,
+            range_quantity,
+            phx.measurement.SamplingSemantics(phx.measurement.SpatialSamplingKind.EVENT),
+        )
+    evidence = phx.rendering.RenderEvidence(
+        True,
+        True,
+        True,
+        True,
+        False,
+        0,
+        approximation="exact",
+        plan_id="plan",
+        support_id="support",
+        geometry_id="geometry",
+    )
+    assert not bool(evidence.successful)

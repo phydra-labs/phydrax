@@ -27,9 +27,20 @@ def _digest(path):
 
 
 def _provider():
-    if os.environ.get("PHYDRAX_RUN_HOMOTOPY_CONTINUATION_LIVE") != "1":
+    required = (
+        "PHYDRAX_JULIA_EXECUTABLE",
+        "PHYDRAX_JULIA_SHA256",
+        "PHYDRAX_JULIA_VERSION",
+        "PHYDRAX_HC_PROJECT",
+        "PHYDRAX_HC_PROJECT_SHA256",
+        "PHYDRAX_HC_MANIFEST_SHA256",
+        "PHYDRAX_HC_UUID",
+        "PHYDRAX_HC_VERSION",
+    )
+    missing = tuple(name for name in required if not os.environ.get(name))
+    if missing:
         pytest.skip(
-            "Set PHYDRAX_RUN_HOMOTOPY_CONTINUATION_LIVE=1 for the real provider test."
+            "live HomotopyContinuation capability is absent: " + ", ".join(missing)
         )
     executable_path = Path(os.environ["PHYDRAX_JULIA_EXECUTABLE"]).resolve(strict=True)
     executable_digest = _digest(executable_path)

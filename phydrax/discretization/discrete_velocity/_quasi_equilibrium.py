@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
 from .._kinetic_entropy import solve_kinetic_entropy_root
 from ._compressible_contracts import (
     CompressibleKineticConservationEvidence,
@@ -85,19 +86,33 @@ class FullRangeQuasiEquilibriumPlan(StrictModule, NonTrainableState):
             )
         constraints = np.vstack((conserved, slow))
         gram = constraints @ constraints.T
-        if np.linalg.matrix_rank(gram) != gram.shape[0]:
+        solved = solve(
+            LinearSystem(DenseLinearOperator(gram)),
+            np.eye(gram.shape[0]),
+            policy=LinearSolvePolicy(DenseLU()),
+        )
+        if not bool(jnp.all(solved.successful)):
             raise ValueError(
                 "Velocity rule cannot represent the quasi-equilibrium moments."
             )
-        inverse = np.linalg.solve(gram, np.eye(gram.shape[0]))
-        lift = constraints.T @ inverse
+        lift = constraints.T @ np.asarray(solved.value)
         slow_lift = lift[:, conserved.shape[0] :]
         internal_constraints = np.vstack(
             (np.ones(model.rule.population_count), velocities.T)
         )
         internal_gram = internal_constraints @ internal_constraints.T
-        internal_inverse = np.linalg.solve(internal_gram, np.eye(internal_gram.shape[0]))
-        internal_lift = (internal_constraints.T @ internal_inverse)[:, 1:]
+        internal_solved = solve(
+            LinearSystem(DenseLinearOperator(internal_gram)),
+            np.eye(internal_gram.shape[0]),
+            policy=LinearSolvePolicy(DenseLU()),
+        )
+        if not bool(jnp.all(internal_solved.successful)):
+            raise ValueError(
+                "Velocity rule cannot represent internal quasi-equilibrium moments."
+            )
+        internal_lift = (internal_constraints.T @ np.asarray(internal_solved.value))[
+            :, 1:
+        ]
         self.model = model
         self.particle_lift = jnp.asarray(slow_lift)
         self.internal_lift = jnp.asarray(internal_lift)
@@ -203,6 +218,8 @@ class FullRangeQuasiEquilibriumPlan(StrictModule, NonTrainableState):
             state.frame_velocity,
             state.frame_temperature_scale,
             self.model.layout,
+            self.model.model_id,
+            self.model.rule.rule_id,
         )
         new = self.model.moments(candidate)
         mass_defect = new.density - old.density
@@ -222,6 +239,12 @@ class FullRangeQuasiEquilibriumPlan(StrictModule, NonTrainableState):
             8.0 * self.model.family.solve_plan.residual_tolerance,
         )
         density_scale = jnp.maximum(old.density, 1.0)
+        momentum_scale = jnp.maximum(jnp.max(jnp.abs(old.momentum), axis=-1), 1.0)
+        slow_moment_defect = jnp.max(
+            jnp.abs(self._particle_slow_moments(particle_quasi) - current_slow),
+            axis=-1,
+        )
+        slow_scale = jnp.maximum(jnp.max(jnp.abs(current_slow), axis=-1), 1.0)
         successful = (
             root_success
             & old.admissible
@@ -230,6 +253,8 @@ class FullRangeQuasiEquilibriumPlan(StrictModule, NonTrainableState):
             & (minimum_candidate > 0.0)
             & (jnp.abs(mass_defect) <= numerical_tolerance * density_scale)
             & (jnp.abs(energy_defect) <= numerical_tolerance * scale)
+            & (momentum_defect <= numerical_tolerance * momentum_scale)
+            & (slow_moment_defect <= numerical_tolerance * slow_scale)
         )
         accepted = CompressibleKineticPopulationState(
             tuple(
@@ -243,6 +268,8 @@ class FullRangeQuasiEquilibriumPlan(StrictModule, NonTrainableState):
             state.frame_velocity,
             state.frame_temperature_scale,
             self.model.layout,
+            self.model.model_id,
+            self.model.rule.rule_id,
         )
         conservation = CompressibleKineticConservationEvidence(
             mass_defect=mass_defect,
@@ -266,10 +293,7 @@ class FullRangeQuasiEquilibriumPlan(StrictModule, NonTrainableState):
             requested_prandtl=jnp.broadcast_to(prandtl, rate.shape),
             beta_one=beta_one,
             beta_two=beta_two,
-            slow_moment_defect=jnp.max(
-                jnp.abs(self._particle_slow_moments(particle_quasi) - current_slow),
-                axis=-1,
-            ),
+            slow_moment_defect=slow_moment_defect,
             conserved_moment_defect=jnp.maximum(
                 jnp.abs(mass_defect), jnp.maximum(momentum_defect, jnp.abs(energy_defect))
             ),

@@ -57,3 +57,29 @@ def test_phase_quenched_reweighting_abstains_when_average_phase_vanishes():
     assert result.status == int(ComplexWeightStatus.INSUFFICIENT_OVERLAP)
     assert not result.successful
     assert jnp.isnan(jnp.real(result.value))
+
+
+def test_zero_weight_observations_do_not_poison_complex_reweighting():
+    measure = complex_weight_measure(
+        jnp.asarray([[0.0], [1.0], [2.0]]),
+        jnp.asarray([1.0 + 0.0j, 0.0 + 0.0j, 1.0 + 0.0j]),
+        source_id="zero-weight-observation",
+    )
+    prepared = prepare_phase_quenched_reweighting(
+        measure,
+        PhaseQuenchedReweightingPlan(
+            minimum_average_phase=0.1,
+            minimum_effective_sample_size=2.0,
+            maximum_samples=8,
+        ),
+    )
+
+    result = phase_quenched_reweight(
+        prepared,
+        jnp.asarray([1.0, jnp.nan, 3.0]),
+    )
+
+    assert result.status == int(ComplexWeightStatus.SUCCESS)
+    assert result.successful
+    assert jnp.allclose(result.value, 2.0)
+    assert jnp.isfinite(result.uncertainty.standard_error)

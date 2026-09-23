@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
@@ -64,6 +65,7 @@ def test_uvlm_sheds_only_on_accepted_step_and_fails_closed_on_capacity():
 
     assert bool(first.successful)
     assert not bool(second.successful)
+    assert eqx.tree_equal(second.state, first.state)
     np.testing.assert_allclose(
         second.state.wake.circulation, first.state.wake.circulation
     )
@@ -137,3 +139,32 @@ def test_wall_transfer_overflow_preserves_the_accepted_pool():
     assert int(result.overflow_count) == geometry.length.size - 2
     np.testing.assert_array_equal(result.accepted.active, initial.active)
     np.testing.assert_allclose(result.accepted.circulation, initial.circulation)
+
+
+def test_rejected_wall_flux_cannot_commit_emitted_particles():
+    angle = jnp.linspace(0.0, 2.0 * jnp.pi, 9)
+    geometry = phx.operators.FlowPanelGeometry2D.from_vertices(
+        jnp.stack((jnp.cos(angle), jnp.sin(angle)), axis=-1)
+    )
+    flux_plan = phx.solver.BoundaryIntegralVorticityFluxPlan2D(geometry)
+    flux = flux_plan.solve(
+        jnp.zeros_like(geometry.control),
+        jnp.zeros_like(geometry.control),
+        0.1,
+    )
+    rejected_flux = eqx.tree_at(
+        lambda value: value.successful,
+        flux,
+        jnp.asarray(False),
+    )
+    transfer = phx.discretization.BoundarySheetParticleTransferPlan2D(
+        geometry.length.size,
+        0.1,
+        0.15,
+    )
+    initial = transfer.initialize(dtype=jnp.float64)
+    result = flux_plan.transfer(rejected_flux, initial, transfer)
+    assert not bool(result.successful)
+    np.testing.assert_array_equal(result.accepted.active, initial.active)
+    np.testing.assert_allclose(result.accepted.circulation, initial.circulation)
+    assert result.emitted_circulation == 0.0

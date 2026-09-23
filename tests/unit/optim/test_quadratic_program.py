@@ -526,3 +526,26 @@ def test_configuration_and_shape_guards_are_explicit():
         )
     with pytest.raises(ValueError, match="Unknown convex-program differentiation mode"):
         phx.optim.ConvexDifferentiationPolicy("unsupported")
+
+
+def test_barrier_kkt_differentiates_inequality_free_quadratic_program():
+    differentiation = phx.optim.ConvexDifferentiationPolicy(
+        "barrier-kkt",
+        barrier=1e-4,
+        centering_tolerance=1e-10,
+        maximum_centering_steps=4,
+    )
+
+    def solution(linear):
+        return phx.optim.solve_quadratic_program_primal(
+            phx.optim.QuadraticProgram(jnp.eye(1), linear.reshape((1,))),
+            differentiation=differentiation,
+        )[0]
+
+    value, tangent = jax.jvp(
+        solution,
+        (jnp.asarray(-2.0),),
+        (jnp.asarray(1.0),),
+    )
+    np.testing.assert_allclose(value, 2.0, atol=1e-8)
+    np.testing.assert_allclose(tangent, -1.0, atol=1e-8)

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -123,12 +124,13 @@ def _campaign(criteria):
 
 
 def _reference():
+    payload = b"synthetic-full-dark-sector-reference-fixture"
     return ReferenceArtifactManifest(
-        "benchmark-full-dark-sector-reference",
+        "synthetic-benchmark-full-dark-sector-reference",
         checksum_algorithm="sha256",
-        checksum="0" * 64,
-        size_bytes=1,
-        license_id="benchmark-internal",
+        checksum=hashlib.sha256(payload).hexdigest(),
+        size_bytes=len(payload),
+        license_id="synthetic-benchmark-nonqualification",
         commercial_use_permitted=False,
         redistribution_permitted=False,
         training_use_permitted=False,
@@ -136,7 +138,7 @@ def _reference():
         export_classification="benchmark-local",
         nondimensionalization={"energy": 1.0},
         uncertainty={"relative": 0.0},
-        lineage_ids=("benchmark-reference",),
+        lineage_ids=("synthetic-benchmark-reference",),
     )
 
 
@@ -216,6 +218,8 @@ def main() -> None:
             "frame_realization_id": frame.realization_id(),
             "frame_snapshot_token": int(frame.frame_token),
             "reference_manifest_id": reference.manifest_id,
+            "reference_source_kind": "synthetic-benchmark-fixture",
+            "qualification_eligible": False,
             "fixed_capacity": True,
             "semantic_unboundedness": "durable-finite-epoch-chain",
         },
@@ -256,11 +260,13 @@ def main() -> None:
         },
         "successful": successful,
     }
-    text = json.dumps(payload, indent=2, sort_keys=True)
+    text = json.dumps(payload, allow_nan=False, indent=2, sort_keys=True)
     if arguments.output is None:
         print(text)
     else:
-        arguments.output.write_text(text + "\n", encoding="utf-8")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
     if not successful:
         raise SystemExit(1)
 

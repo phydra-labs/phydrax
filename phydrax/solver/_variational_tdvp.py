@@ -208,6 +208,7 @@ def solve_variational_tdvp(
         current = state
     _validate_state_compatibility(problem, current)
     _validate_model_coordinates(problem, current)
+    start_iteration = int(current.iteration)
 
     coordinate_history = [current.parameter_coordinates]
     energies: list[Array] = []
@@ -312,11 +313,16 @@ def solve_variational_tdvp(
         energy_imag_tolerance=policy.energy_imag_tolerance,
         compute_chain_diagnostics=policy.final_chain_diagnostics,
     )
-    completed = len(statuses)
+    completed = int(current.iteration)
     return VariationalTDVPResult(
         final_state=current,
         final_estimate=final_estimate,
-        times=policy.step_size * jnp.arange(len(coordinate_history), dtype=jnp.float64),
+        times=policy.step_size
+        * jnp.arange(
+            start_iteration,
+            start_iteration + len(coordinate_history),
+            dtype=jnp.float64,
+        ),
         parameter_trajectory=jnp.stack(coordinate_history),
         energy_history=jnp.stack(energies)
         if energies

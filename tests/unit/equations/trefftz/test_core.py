@@ -136,6 +136,25 @@ def test_helmholtz_basis_canonicalizes_orientation_and_is_exact():
         phx.equations.HelmholtzPlaneWaveBasis(3, 0.0, directions)
 
 
+def test_trial_space_audit_requires_supported_evaluation_accuracy():
+    report = phx.equations.TrialSpaceAuditReport(
+        finite=True,
+        maximum_residual=0.0,
+        root_mean_square_residual=0.0,
+        reference_scale=1.0,
+        tolerance=1.0e-8,
+        point_count=1,
+        certificate_id="synthetic-certificate",
+        point_fingerprint="synthetic-point",
+        pde_membership_valid=True,
+        evaluation_accuracy_supported=False,
+        admissibility_report_id="unsupported-evaluation",
+    )
+
+    assert not bool(report.valid)
+    assert not bool(report.evaluation_accuracy_supported)
+
+
 def test_bound_trial_metadata_provenance_audit_and_enforcement_guard():
     domain = phx.domain.HyperRectangle((-1.0, -1.0), (1.0, 1.0))
     model = phx.equations.LinearTrefftzField(

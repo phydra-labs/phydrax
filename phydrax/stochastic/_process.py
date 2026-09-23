@@ -18,7 +18,7 @@ from jaxtyping import Array, ArrayLike, Key
 
 import phydrax.ein as ein
 
-from .._probability import DiagonalNormalLaw
+from .._probability import _leading_shape, DiagonalNormalLaw
 from .._strict import StrictModule
 from ._trajectory import _TrajectoryRecord, StochasticTrajectory
 from ._wiener import WienerRealization
@@ -81,11 +81,6 @@ def _positive_shape(values: Sequence[int], /, *, name: str) -> tuple[int, ...]:
     if any(size <= 0 for size in shape):
         raise ValueError(f"{name} dimensions must be positive.")
     return shape
-
-
-def _trailing_shape(array: Array, shape: tuple[int, ...], /, *, name: str) -> None:
-    if array.ndim < len(shape) or tuple(array.shape[-len(shape) :]) != shape:
-        raise ValueError(f"{name} must end in shape {shape}; got {array.shape}.")
 
 
 def _reduce(value: Array, reduction: ProcessReduction, /) -> Array:
@@ -158,8 +153,11 @@ class GaussianProcessDistribution(AbstractProcessDistribution):
         events = _positive_shape(event_shape, name="event_shape")
         size = prod(events)
         mean_array = jnp.asarray(mean)
-        _trailing_shape(mean_array, events, name="Gaussian process mean")
-        batches = tuple(mean_array.shape[: -len(events)])
+        batches = _leading_shape(
+            mean_array.shape,
+            events,
+            owner="Gaussian process mean",
+        )
         covariance_array = jnp.asarray(covariance, dtype=mean_array.dtype)
         expected = batches + (size, size)
         if covariance_array.shape == (size, size):
@@ -496,10 +494,16 @@ class LatentGaussianCoefficientProcess(
         duration = _duration(t0, t1)
         state_array = jnp.asarray(state, dtype=self.drift.dtype)
         increment = jnp.asarray(driver_increment, dtype=self.drift.dtype)
-        _trailing_shape(state_array, self.state_shape, name="process state")
-        _trailing_shape(increment, self.driver_shape, name="driver increment")
-        state_batch = tuple(state_array.shape[: -len(self.state_shape)])
-        driver_batch = tuple(increment.shape[: -len(self.driver_shape)])
+        state_batch = _leading_shape(
+            state_array.shape,
+            self.state_shape,
+            owner="process state",
+        )
+        driver_batch = _leading_shape(
+            increment.shape,
+            self.driver_shape,
+            owner="driver increment",
+        )
         batch = jnp.broadcast_shapes(state_batch, driver_batch)
         state_flat = jnp.broadcast_to(
             state_array,
@@ -524,8 +528,16 @@ class LatentGaussianCoefficientProcess(
     ) -> Array:
         first_array = jnp.asarray(first, dtype=self.drift.dtype)
         second_array = jnp.asarray(second, dtype=self.drift.dtype)
-        _trailing_shape(first_array, self.driver_shape, name="first driver segment")
-        _trailing_shape(second_array, self.driver_shape, name="second driver segment")
+        _leading_shape(
+            first_array.shape,
+            self.driver_shape,
+            owner="first driver segment",
+        )
+        _leading_shape(
+            second_array.shape,
+            self.driver_shape,
+            owner="second driver segment",
+        )
         return first_array + second_array
 
     def marginal_transition(
@@ -538,7 +550,11 @@ class LatentGaussianCoefficientProcess(
     ) -> GaussianProcessDistribution:
         duration = _duration(t0, t1)
         state_array = jnp.asarray(state, dtype=self.drift.dtype)
-        _trailing_shape(state_array, self.state_shape, name="process state")
+        _leading_shape(
+            state_array.shape,
+            self.state_shape,
+            owner="process state",
+        )
         mean = state_array + duration * self.drift
         diffusion = self.diffusion.reshape(
             (prod(self.state_shape), prod(self.driver_shape))

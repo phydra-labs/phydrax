@@ -43,10 +43,12 @@ _, accepted_inspection = phx.equations.flip_inspection_frames(
     result,
     result_id="flip-dam-break-step",
 )
+if not bool(result.successful):
+    raise RuntimeError("FLIP dam-break step failed")
 
 print(
     {
-        "successful": bool(result.successful),
+        "successful": True,
         "liquid_cells": int(result.diagnostics.liquid_count),
         "divergence": float(result.diagnostics.divergence_norm),
         "volume_defect": float(result.diagnostics.mass_balance_defect),

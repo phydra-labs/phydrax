@@ -126,3 +126,20 @@ def test_graph_domain_residual_penalty_is_zero():
 
     loss = term.loss({"u": u}, key=jr.key(2))
     assert loss < 1e-12
+
+
+def test_graph_domain_support_identity_includes_topology_values():
+    first_graph = _make_graph()
+    rerouted_graph = phx.graph.GraphIR(
+        nodes=first_graph.nodes,
+        edges=first_graph.edges,
+        senders=jnp.asarray([0, 2, 1], dtype=jnp.int32),
+        receivers=first_graph.receivers,
+        globals=first_graph.globals,
+        n_node=first_graph.n_node,
+        n_edge=first_graph.n_edge,
+    )
+    first = phx.domain.GraphDomain(first_graph)
+    rerouted = phx.domain.GraphDomain(rerouted_graph)
+
+    assert not first.same_support(rerouted)

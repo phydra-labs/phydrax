@@ -6,6 +6,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
 
 from phydrax.nn.layers import (
@@ -76,41 +77,35 @@ class TestRandomFourierFeatureEmbeddings:
         assert jnp.allclose(output, expected)
 
     def test_custom_mu_sigma(self):
-        """Test with custom mu and sigma values."""
-        # Create embeddings with custom mu and sigma
         key = jr.key(2)
         in_size = 2
         out_size = 6
-        mu = 1.0
-        sigma = 2.0
         embeddings = RandomFourierFeatureEmbeddings(
             in_size=in_size,
             out_size=out_size,
-            mu=mu,
-            sigma=sigma,
+            mu=1.0,
+            sigma=2.0,
             key=key,
         )
-
-        # Test with input
+        standard = RandomFourierFeatureEmbeddings(
+            in_size=in_size,
+            out_size=out_size,
+            key=key,
+        )
+        expected_wavevectors = 2.0 * standard.embedding_matrix + 1.0
         x = jnp.array([0.5, 1.0])
-        output = embeddings(x)
+        phases = expected_wavevectors @ x
+        expected = jnp.concatenate((jnp.cos(phases), jnp.sin(phases)))
 
-        # Check output shape
-        assert output.shape == (out_size,)
-
-        # We can't easily predict the exact output due to randomness,
-        # but we can check that the output is consistent for the same input
-        output2 = embeddings(x)
-        assert jnp.allclose(output, output2)
+        np.testing.assert_allclose(embeddings.embedding_matrix, expected_wavevectors)
+        np.testing.assert_allclose(embeddings(x), expected)
 
     def test_multiscale_embeddings(self):
-        """Test with multiscale embeddings (multiple mu and sigma values)."""
-        # Create embeddings with multiple mu and sigma values
         key = jr.key(3)
         in_size = 2
         out_size = 24
-        mu = [0.0, 1.0]
-        sigma = [1.0, 2.0]
+        mu = (0.0, 1.0)
+        sigma = (1.0, 2.0)
         embeddings = RandomFourierFeatureEmbeddings(
             in_size=in_size,
             out_size=out_size,
@@ -119,15 +114,22 @@ class TestRandomFourierFeatureEmbeddings:
             key=key,
         )
 
-        # Check output size (base_rows * num_mu * num_sigma * 2 for cos and sin)
-        assert embeddings.out_size == out_size
-
-        # Test with input
+        keys = jr.split(key, len(mu) * len(sigma))
+        blocks = tuple(
+            jr.normal(subkey, (3, in_size)) * deviation + mean
+            for subkey, (mean, deviation) in zip(
+                keys,
+                ((mean, deviation) for mean in mu for deviation in sigma),
+                strict=True,
+            )
+        )
+        expected_wavevectors = jnp.concatenate(blocks, axis=0)
         x = jnp.array([0.5, 1.0])
-        output = embeddings(x)
+        phases = expected_wavevectors @ x
+        expected = jnp.concatenate((jnp.cos(phases), jnp.sin(phases)))
 
-        # Check output shape
-        assert output.shape == (out_size,)
+        np.testing.assert_allclose(embeddings.embedding_matrix, expected_wavevectors)
+        np.testing.assert_allclose(embeddings(x), expected)
 
     def test_trainable(self):
         """Test that embedding matrix is trainable when specified."""

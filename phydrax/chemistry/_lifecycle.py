@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Native lifecycle records and archives for molecular electronic results."""
+"""Native lifecycle records and archives for molecular and periodic electronic results."""
 
 from __future__ import annotations
 
@@ -39,9 +39,10 @@ from ._result import (
     ElectronicEvaluation,
     ElectronicEvaluationHeader,
     ElectronicGroundStatePropertyEvaluation,
+    ElectronicPeriodicEvaluation,
     ElectronicWorkEvidence,
 )
-from ._units import dipole_unit, hessian_unit
+from ._units import dipole_unit, hessian_unit, polarization_density_unit, stress_unit
 
 
 _SEMANTICS_KEY = "computational_chemistry"
@@ -50,11 +51,12 @@ _RESULT_TYPES = (
     ElectronicEnergyForceEvaluation,
     ElectronicEnergyForceHessianEvaluation,
     ElectronicGroundStatePropertyEvaluation,
+    ElectronicPeriodicEvaluation,
 )
 
 
 class ChemistryRunEnvelope(StrictModule, NonTrainableState):
-    """Lifecycle records for one completed molecular electronic evaluation."""
+    """Lifecycle records for one completed electronic evaluation."""
 
     analysis: AnalysisPlan = eqx.field(static=True)
     execution: ExecutionPlan = eqx.field(static=True)
@@ -127,6 +129,17 @@ def _result_arrays(result: ElectronicEvaluation, /) -> dict[str, np.ndarray]:
         arrays["hessian"] = np.asarray(result.hessian)
     if isinstance(result, ElectronicGroundStatePropertyEvaluation):
         arrays["dipole"] = np.asarray(result.dipole)
+    if isinstance(result, ElectronicPeriodicEvaluation):
+        for name in (
+            "forces",
+            "stress",
+            "band_energies",
+            "density_matrices",
+            "polarization",
+        ):
+            value = getattr(result, name)
+            if value is not None:
+                arrays[name] = np.asarray(value)
     return arrays
 
 
@@ -136,7 +149,9 @@ def _finite_or_none(value: object, /) -> float | None:
 
 
 def _descriptor(result: ElectronicEvaluation, /) -> dict[str, object]:
-    if isinstance(result, ElectronicEnergyForceHessianEvaluation):
+    if isinstance(result, ElectronicPeriodicEvaluation):
+        kind = "periodic"
+    elif isinstance(result, ElectronicEnergyForceHessianEvaluation):
         kind = "energy-force-hessian"
     elif isinstance(result, ElectronicGroundStatePropertyEvaluation):
         kind = "ground-state-properties"
@@ -194,6 +209,14 @@ def _manifest(
         field_units["hessian"] = hessian_unit(units).unit_id
     if "dipole" in arrays:
         field_units["dipole"] = dipole_unit(units).unit_id
+    if "stress" in arrays:
+        field_units["stress"] = stress_unit(units).unit_id
+    if "band_energies" in arrays:
+        field_units["band_energies"] = units.scale.energy_unit.unit_id
+    if "density_matrices" in arrays:
+        field_units["density_matrices"] = "1"
+    if "polarization" in arrays:
+        field_units["polarization"] = polarization_density_unit(units).unit_id
     return ResultManifest(
         result.result_id,
         run_id,
@@ -225,8 +248,25 @@ def chemistry_lifecycle(
         raise TypeError("calculation must be ElectronicCalculationPlan.")
     if not isinstance(result, _RESULT_TYPES):
         raise TypeError("result must be a supported electronic evaluation.")
-    if result.header.system_id != calculation.system.system_id:
-        raise ValueError("Electronic result belongs to another calculation system.")
+    header = result.header
+    if (
+        header.system_id != calculation.system.system_id
+        or header.state_id != calculation.state.prepared_id
+        or header.model_chemistry_id != calculation.model_chemistry.model_chemistry_id
+        or header.task_id != calculation.task.task_id
+        or header.units.unit_system_id != calculation.system.units.unit_system_id
+        or not np.array_equal(
+            np.asarray(header.stable_particle_ids),
+            np.asarray(calculation.system.particle_ids),
+        )
+        or not np.array_equal(
+            np.asarray(header.active_mask),
+            np.asarray(calculation.system.active_mask),
+        )
+    ):
+        raise ValueError(
+            "Electronic result does not match the calculation state, model, task, units, or particle support."
+        )
     capability = str(provider_capability_id).strip()
     if not capability:
         raise ValueError("provider_capability_id must be non-empty.")
@@ -375,6 +415,16 @@ def read_electronic_result_archive(path: str | Path, /) -> ElectronicEvaluation:
     elif kind == "ground-state-properties":
         result = ElectronicGroundStatePropertyEvaluation(
             header, arrays["energy"], arrays["forces"], arrays["dipole"]
+        )
+    elif kind == "periodic":
+        result = ElectronicPeriodicEvaluation(
+            header,
+            arrays["energy"],
+            forces=arrays.get("forces"),
+            stress=arrays.get("stress"),
+            band_energies=arrays.get("band_energies"),
+            density_matrices=arrays.get("density_matrices"),
+            polarization=arrays.get("polarization"),
         )
     else:
         raise ValueError("Unknown electronic result kind in archive.")

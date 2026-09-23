@@ -51,6 +51,8 @@ def test_distance_constrained_lagrangian_modes_remove_one_internal_degree():
         1,
         True,
         units,
+        system.system_id,
+        structure.structure_id,
         ("analytic-hessian",),
         "analytic-hessian-plan",
     )
@@ -93,6 +95,8 @@ def test_anchored_cartesian_restraint_removes_only_tangent_rigid_modes():
         1,
         True,
         units,
+        system.system_id,
+        structure.structure_id,
         ("anchored-cartesian-hessian",),
         "anchored-cartesian-hessian-plan",
     )
@@ -211,6 +215,8 @@ def test_climbing_image_neb_finds_double_well_saddle():
         successful=True,
         stationary_point=phx.chemistry.StationaryPointKind.FIRST_ORDER_SADDLE,
         units=units,
+        source_system_id=system.system_id,
+        source_geometry_id=reactant.structure_id,
         plan_id="double-well-saddle",
     )
     qualification = phx.chemistry.ReactionPathQualificationResult(

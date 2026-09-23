@@ -12,11 +12,12 @@ import importlib.util
 from typing import Any
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ...units import BOHR, conversion_factor, ELEMENTARY_CHARGE, HARTREE
+from ...units import BOHR, conversion_factor, derived_unit, ELEMENTARY_CHARGE, HARTREE
 from .._calculation import ElectronicCalculationPlan, make_electronic_evaluation
 from .._model import (
     ElectronicMethodFamily,
@@ -187,6 +188,8 @@ class PreparedPySCFCalculation(AbstractPreparedElectronicCalculation):
             dipole=dipole,
             convergence=ElectronicConvergenceEvidence(
                 converged,
+                energy_residual=0.0 if converged else jnp.nan,
+                density_residual=0.0 if converged else jnp.nan,
                 message="pyscf-converged" if converged else "pyscf-not-converged",
             ),
             work=ElectronicWorkEvidence(
@@ -198,7 +201,24 @@ class PreparedPySCFCalculation(AbstractPreparedElectronicCalculation):
             source_unit_ids=(
                 ("charge", ELEMENTARY_CHARGE.unit_id),
                 ("energy", HARTREE.unit_id),
+                (
+                    "forces",
+                    derived_unit("hartree/bohr", ((HARTREE, 1), (BOHR, -1))).unit_id,
+                ),
                 ("length", BOHR.unit_id),
+                *(
+                    ()
+                    if dipole is None
+                    else (
+                        (
+                            "dipole",
+                            derived_unit(
+                                "elementary-charge*bohr",
+                                ((ELEMENTARY_CHARGE, 1), (BOHR, 1)),
+                            ).unit_id,
+                        ),
+                    )
+                ),
             ),
             artifact_ids=(artifact_id,),
         )

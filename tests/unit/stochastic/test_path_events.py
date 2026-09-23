@@ -87,6 +87,13 @@ def test_terminal_and_accumulated_events_use_complete_path_semantics():
     assert scores.shape == (4, 3)
     assert jnp.isneginf(scores[3, 1])
 
+    no_hit = phx.stochastic.TerminalSetEvent(
+        lambda _time, _state: jnp.asarray(False),
+        event_id="never",
+    )
+    no_hit_scores = phx.stochastic.path_event_scores(trajectory, no_hit)
+    assert jnp.all(no_hit_scores[trajectory.valid] < 0.0)
+
 
 def test_competing_events_report_earliest_event_code_with_stable_ties():
     times = jnp.broadcast_to(jnp.asarray([0.0, 1.0, 2.0]), (2, 3))

@@ -97,8 +97,6 @@ def test_separable_scan_matches_loop_for_point_and_separable_tuple():
         split_input=split_input,
         scan=True,
     )
-    assert scan_model._scan_enabled_regular
-    assert all(scan_model._scan_enabled_clone_groups)
 
     x_point = jnp.array([0.2, -0.1], dtype="float64")
     y_point_loop = loop_model(x_point)
@@ -138,6 +136,6 @@ def test_separable_scan_falls_back_for_heterogeneous_models():
         scan=True,
     )
     assert model.scan
-    assert not model._scan_enabled_regular
+
     y = model(jnp.array([0.1, 0.2]))
     assert y.shape == (2,)

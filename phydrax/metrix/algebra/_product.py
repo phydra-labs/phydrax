@@ -255,7 +255,15 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
         leading = tuple(leading_shape)
         if any(size <= 0 for size in leading):
             raise ValueError("Lowered algebra leading shape must be positive.")
-        value_shape = leading + (self.algebra.coordinate_dimension,)
+        value_rank = len(leading) + 1
+        algebra_axis = self.layout.algebra_axis
+        if algebra_axis < 0:
+            algebra_axis += value_rank
+        if algebra_axis < 0 or algebra_axis >= value_rank:
+            raise ValueError("Lowered algebra_axis is out of range for the value rank.")
+        dimension = self.algebra.coordinate_dimension
+        value_shape = leading[:algebra_axis] + (dimension,) + leading[algebra_axis:]
+        canonical_shape = leading + (dimension,)
         dtype_ = np.dtype(dtype)
         if self.fractional_coefficients and not np.issubdtype(dtype_, np.inexact):
             raise TypeError(
@@ -268,14 +276,14 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
         terms = self.algebra.structure.terms
 
         def numpy_action(state):
-            left = np.asarray(state["left"])
-            right = np.asarray(state["right"])
+            left = np.moveaxis(np.asarray(state["left"]), algebra_axis, -1)
+            right = np.moveaxis(np.asarray(state["right"]), algebra_axis, -1)
             output_dtype = (
                 np.result_type(left, right, np.float64)
                 if self.fractional_coefficients
                 else np.result_type(left, right)
             )
-            output = np.zeros(value_shape, dtype=output_dtype)
+            output = np.zeros(canonical_shape, dtype=output_dtype)
             for left_index, right_index, output_index, numerator, denominator in terms:
                 output[..., output_index] += (
                     left[..., left_index]
@@ -283,7 +291,7 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
                     * numerator
                     / denominator
                 )
-            return {"output": output}
+            return {"output": np.moveaxis(output, -1, algebra_axis)}
 
         buffers = (
             LoweredBufferSpec("left", value_shape, dtype_),

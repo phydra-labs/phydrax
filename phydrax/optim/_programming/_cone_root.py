@@ -153,7 +153,7 @@ def safeguarded_newton_bisection(
             active & ~converged,
         )
 
-    lower_, upper_, _, _, root, iterations, _ = jax.lax.fori_loop(
+    lower_, upper_, f_lower, f_upper, root, iterations, _ = jax.lax.fori_loop(
         0,
         steps,
         body,

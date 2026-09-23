@@ -79,7 +79,9 @@ class AffineSubspaceLayout(StrictModule):
             {
                 "kind": "affine-subspace-layout",
                 "event_shape": list(events),
-                "rank": rank,
+                "origin": center,
+                "basis": vectors,
+                "quadrature_weights": weights,
             }
         )
         self.origin = center

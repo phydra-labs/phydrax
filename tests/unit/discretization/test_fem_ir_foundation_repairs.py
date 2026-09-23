@@ -95,6 +95,65 @@ def test_material_evaluate_uses_implicit_root_derivative():
     assert jnp.allclose(tangent, 0.25, atol=1.0e-8)
 
 
+def test_local_implicit_material_preserves_response_metadata_and_failed_status():
+    diagnostic = phx.equations.ConstitutiveResponse(
+        jnp.asarray((0.0,)),
+        jnp.asarray((0.0,)),
+    ).diagnostic
+
+    def response(state, target):
+        del target
+        return phx.equations.ConstitutiveResponse(
+            2.0 * state,
+            state + 1.0,
+            consistent_tangent=jnp.asarray(((3.0,),)),
+            energy=jnp.asarray(1.25),
+            dissipation=jnp.asarray(0.75),
+            valid=jnp.asarray(True),
+            diagnostic=diagnostic,
+            diagnostics={"callback": jnp.asarray(7)},
+        )
+
+    material = phx.equations.fem.LocalImplicitMaterial(
+        lambda state, target: state**2 - target,
+        response,
+        state_shape=(1,),
+        max_steps=1,
+        model_id="nonconverged-rich-response",
+    )
+    result = material.evaluate(jnp.asarray((1.0,)), jnp.asarray((4.0,)))
+
+    assert not bool(result.valid)
+    assert result.diagnostic is diagnostic
+    assert not bool(result.diagnostics["converged"])
+    assert bool(result.diagnostics["finite"])
+    assert int(result.diagnostics["callback"]) == 7
+    assert jnp.allclose(result.response, 5.0)
+    assert jnp.allclose(result.trial_state, 3.5)
+    assert jnp.allclose(result.consistent_tangent, 3.0)
+    assert jnp.allclose(result.energy, 1.25)
+    assert jnp.allclose(result.dissipation, 0.75)
+
+
+def test_local_implicit_material_preserves_callback_invalidity():
+    material = phx.equations.fem.LocalImplicitMaterial(
+        lambda state, target: state - target,
+        lambda state, target: phx.equations.ConstitutiveResponse(
+            state,
+            state,
+            valid=jnp.asarray(False),
+        ),
+        state_shape=(1,),
+        max_steps=1,
+        model_id="invalid-callback-response",
+    )
+
+    result = material.evaluate(jnp.asarray((1.0,)), jnp.asarray((2.0,)))
+
+    assert bool(result.diagnostics["converged"])
+    assert not bool(result.valid)
+
+
 def test_smoothing_certificate_checks_full_affine_identity():
     mesh = _tri_mesh()
     smoothing = phx.discretization.fem.smoothing
@@ -120,7 +179,7 @@ def test_smoothing_certificate_checks_full_affine_identity():
     assert jnp.max(evidence.closure_defect) < 1.0e-12
 
 
-def test_ir_workset_is_the_compiled_executor_program():
+def test_ir_workset_program_preserves_lowered_ir_identity():
     mesh = _tri_mesh()
     field = phx.discretization.FiniteElementFieldSpec(
         "u", phx.discretization.lagrange_element("triangle", 1)
@@ -131,10 +190,11 @@ def test_ir_workset_is_the_compiled_executor_program():
         "u",
         (phx.equations.DiffusionAction("u"),),
     )
-    compiled = phx.equations.compile_finite_element_problem(form, discretization)
     action_ir = phx.equations.fem.lower_finite_element_form(form, discretization)
+    workset_program = phx.equations.fem.compile_workset_program(
+        action_ir, form, discretization
+    )
 
     assert action_ir.ir_id
-    assert compiled._action_ir.ir_id == action_ir.ir_id
-    assert compiled._kernel_table.table_id
-    assert compiled._workset_program.ir.ir_id == action_ir.ir_id
+    assert workset_program.ir.ir_id == action_ir.ir_id
+    assert workset_program.program_id

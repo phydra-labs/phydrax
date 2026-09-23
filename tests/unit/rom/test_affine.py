@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -134,12 +135,22 @@ def test_affine_rom_archive_and_certificate_are_content_bound(tmp_path):
         model,
         analysis_plan_id="affine-test-analysis",
     )
-    restored = phx.rom.read_affine_linear_rom(path, model)
+    restored = phx.rom.read_affine_linear_rom(
+        path,
+        model,
+        analysis_plan_id="affine-test-analysis",
+    )
     inputs = jnp.asarray([0.75], dtype=jnp.float64)
     np.testing.assert_allclose(
         restored.evaluate(inputs, reconstruct=True).reconstructed_state,
         model.evaluate(inputs, reconstruct=True).reconstructed_state,
     )
+    with pytest.raises(ValueError, match="lifecycle identity"):
+        phx.rom.read_affine_linear_rom(
+            path,
+            model,
+            analysis_plan_id="another-analysis",
+        )
 
     residual = phx.rom.prepare_residual_dual_norm(problem, model)
     stability = phx.rom.ArrayAffineStabilityBound(

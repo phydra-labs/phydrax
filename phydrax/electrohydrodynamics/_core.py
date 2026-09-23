@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
+import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -20,7 +22,12 @@ class ElectricMaterial:
     conductivity_s_m: float
 
     def __post_init__(self) -> None:
-        if self.permittivity_f_m <= 0.0 or self.conductivity_s_m < 0.0:
+        if (
+            not isfinite(self.permittivity_f_m)
+            or self.permittivity_f_m <= 0.0
+            or not isfinite(self.conductivity_s_m)
+            or self.conductivity_s_m < 0.0
+        ):
             raise ValueError("Electric material parameters are outside physical bounds.")
 
 
@@ -29,11 +36,19 @@ def maxwell_stress(
 ) -> Array:
     field = jnp.asarray(electric_field_v_m)
     permittivity = jnp.asarray(permittivity_f_m)
+    if field.ndim == 0 or field.shape[-1] == 0:
+        raise ValueError("Electric field must have a nonempty component axis.")
+    field = eqx.error_if(
+        field,
+        jnp.any(~jnp.isfinite(field) | ~jnp.isfinite(permittivity) | (permittivity <= 0)),
+        "Electric field/permittivity must be finite with positive permittivity.",
+    )
     identity = jnp.eye(field.shape[-1], dtype=field.dtype)
-    outer = field[..., :, None] * field[..., None, :]
-    magnitude = jnp.sum(field * field, axis=-1)
-    return permittivity[..., None, None] * (
-        outer - 0.5 * magnitude[..., None, None] * identity
+    outer = field[..., :, None] * jnp.conj(field[..., None, :])
+    magnitude = jnp.sum(field * jnp.conj(field), axis=-1)
+    return jnp.real(
+        permittivity[..., None, None]
+        * (outer - 0.5 * magnitude[..., None, None] * identity)
     )
 
 

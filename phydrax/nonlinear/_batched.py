@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from math import isfinite
 from typing import Any, Callable
 
 import equinox as eqx
@@ -106,6 +107,7 @@ class SmallRootKernel(StrictModule):
     absolute_tolerance: float = eqx.field(static=True)
     relative_tolerance: float = eqx.field(static=True)
     minimum_damping: float = eqx.field(static=True)
+    damping_rates: tuple[float, ...] = eqx.field(static=True)
     precision: NonlinearPrecisionPolicy
 
     def __init__(
@@ -124,8 +126,20 @@ class SmallRootKernel(StrictModule):
             raise TypeError("residual must be callable.")
         dimension = int(maximum_dimension)
         steps = int(maximum_steps)
+        minimum_damping_ = float(minimum_damping)
         if dimension < 1 or steps < 1:
             raise ValueError("Small-root dimensions and steps must be positive.")
+        if (
+            not isfinite(minimum_damping_)
+            or minimum_damping_ <= 0.0
+            or minimum_damping_ > 1.0
+        ):
+            raise ValueError("minimum_damping must be finite and lie in (0, 1].")
+        rates = [1.0]
+        while 0.5 * rates[-1] >= minimum_damping_:
+            rates.append(0.5 * rates[-1])
+        if rates[-1] > minimum_damping_:
+            rates.append(minimum_damping_)
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, NonlinearPrecisionPolicy):
             raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
@@ -135,7 +149,8 @@ class SmallRootKernel(StrictModule):
         self.maximum_steps = steps
         self.absolute_tolerance = float(absolute_tolerance)
         self.relative_tolerance = float(relative_tolerance)
-        self.minimum_damping = float(minimum_damping)
+        self.minimum_damping = minimum_damping_
+        self.damping_rates = tuple(rates)
         self.precision = precision_
 
     def solve(self, initial_states: Any, args: Any, /) -> BatchedRootResult:
@@ -224,10 +239,7 @@ class SmallRootKernel(StrictModule):
                     policy=self.precision.bind_linear(LinearSolvePolicy(DenseLU())),
                 ).value
             )
-            rates = jnp.asarray(
-                [1.0, 0.5, 0.25, 0.125, 0.0625],
-                dtype=states.dtype,
-            )
+            rates = jnp.asarray(self.damping_rates, dtype=states.dtype)
             trial_states = jnp.asarray(
                 current.states[None, :, :]
                 + rates[:, None, None] * directions[None, :, :],
@@ -271,7 +283,8 @@ class SmallRootKernel(StrictModule):
                 next_residuals,
                 next_active,
                 current.iterations + current.active.astype(jnp.int32),
-                current.evaluations + 5 * current.active.astype(jnp.int32),
+                current.evaluations
+                + len(self.damping_rates) * current.active.astype(jnp.int32),
                 current.jacobian_evaluations + current.active.astype(jnp.int32),
                 current.accepted_steps + accepted.astype(jnp.int32),
                 current.jacobian_fallback | (current.active & ~automatic_finite),
@@ -604,10 +617,7 @@ class SmallRootKernel(StrictModule):
                     policy=self.precision.bind_linear(LinearSolvePolicy(DenseLU())),
                 ).value
             )
-            rates = jnp.asarray(
-                [1.0, 0.5, 0.25, 0.125, 0.0625],
-                dtype=tasks.dtype,
-            )
+            rates = jnp.asarray(self.damping_rates, dtype=tasks.dtype)
             trial_states = jnp.asarray(
                 states[None, :, :] + rates[:, None, None] * directions[None, :, :],
                 dtype=tasks.dtype,
@@ -650,7 +660,9 @@ class SmallRootKernel(StrictModule):
                 residuals,
             )
             next_iterations = iterations + step_mask.astype(jnp.int32)
-            next_evaluations = evaluations + 5 * step_mask.astype(jnp.int32)
+            next_evaluations = evaluations + len(self.damping_rates) * step_mask.astype(
+                jnp.int32
+            )
             next_jacobians = jacobian_evaluations + step_mask.astype(jnp.int32)
             next_accepted = accepted_steps + accepted.astype(jnp.int32)
             next_norms = _axis_norm(next_residuals, 1, self.precision)

@@ -104,6 +104,24 @@ def fermionic_keldysh_from_propagators(
         )
     if not str(source_id):
         raise ValueError("source_id must be non-empty.")
+    symmetric_density = 0.5 * (density + jnp.conj(density.T))
+    eigenvalues = jnp.linalg.eigvalsh(symmetric_density)
+    tolerance = (
+        64.0
+        * jnp.finfo(jnp.real(density).dtype).eps
+        * jnp.maximum(jnp.max(jnp.abs(eigenvalues), initial=0.0), 1.0)
+    )
+    physical = (
+        jnp.all(jnp.isfinite(density))
+        & (jnp.max(jnp.abs(density - jnp.conj(density.T)), initial=0.0) <= tolerance)
+        & (jnp.min(eigenvalues) >= -tolerance)
+        & (jnp.max(eigenvalues) <= 1.0 + tolerance)
+    )
+    density = eqx.error_if(
+        density,
+        ~physical,
+        "initial_density must be Hermitian with eigenvalues in [0, 1].",
+    )
     modes = density.shape[0]
     identity = jnp.eye(modes, dtype=jnp.result_type(propagator, density, jnp.complex128))
     lesser = 1j * contract(

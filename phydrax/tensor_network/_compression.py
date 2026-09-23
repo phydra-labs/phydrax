@@ -6,8 +6,11 @@
 
 from __future__ import annotations
 
+from numbers import Integral
+
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array
 
 from .._strict import StrictModule
@@ -29,16 +32,32 @@ class LPDOCompressionPlan(StrictModule):
         tolerance: float = 1e-10,
         maximum_dense_amplitude_elements: int = 1_000_000,
     ):
+        if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for value in (
+                maximum_bond_dimension,
+                maximum_purification_dimension,
+                maximum_dense_amplitude_elements,
+            )
+        ):
+            raise TypeError("LPDO compression dimensions and budgets must be integers.")
         bond, purification = (
             int(maximum_bond_dimension),
             int(maximum_purification_dimension),
         )
         dense = int(maximum_dense_amplitude_elements)
-        if bond <= 0 or purification <= 0 or tolerance < 0.0 or dense <= 0:
+        tolerance_ = float(tolerance)
+        if (
+            bond <= 0
+            or purification <= 0
+            or not np.isfinite(tolerance_)
+            or tolerance_ < 0.0
+            or dense <= 0
+        ):
             raise ValueError("LPDO compression capacities/tolerance are invalid.")
         self.maximum_bond_dimension = bond
         self.maximum_purification_dimension = purification
-        self.tolerance = float(tolerance)
+        self.tolerance = tolerance_
         self.maximum_dense_amplitude_elements = dense
 
 
@@ -51,7 +70,9 @@ class LPDOCompressionCertificate(StrictModule):
     discarded_bond_norm: Array
     purification_overlap: Array
     trace_distance_upper_bound: Array
+    tolerance_satisfied: Array
     valid: Array
+    requested_tolerance: float = eqx.field(static=True)
     positive_by_construction: bool = eqx.field(static=True)
     claim: str = eqx.field(static=True)
 
@@ -136,13 +157,18 @@ def compress_lpdo(
     compressed_trace = compressed_norm**2
     overlap = jnp.sum(jnp.conj(original_amplitude) * padded)
     trace_distance_bound = difference_norm * (original_norm + compressed_norm)
-    valid = (
+    finite_physical = (
         jnp.all(jnp.isfinite(original_amplitude))
         & jnp.all(jnp.isfinite(compressed_amplitude))
+        & jnp.isfinite(original_trace)
+        & jnp.isfinite(compressed_trace)
         & jnp.isfinite(trace_distance_bound)
+        & (original_trace >= 0.0)
         & (compressed_trace >= 0.0)
         & (trace_distance_bound >= 0.0)
     )
+    tolerance_satisfied = trace_distance_bound <= plan.tolerance
+    valid = finite_physical & tolerance_satisfied
     return LPDOCompressionCertificate(
         state=compressed,
         original_trace=original_trace,
@@ -152,7 +178,9 @@ def compress_lpdo(
         discarded_bond_norm=jnp.sqrt(discarded_bond_squared),
         purification_overlap=overlap,
         trace_distance_upper_bound=trace_distance_bound,
+        tolerance_satisfied=tolerance_satisfied,
         valid=valid,
+        requested_tolerance=plan.tolerance,
         positive_by_construction=True,
         claim="finite-lpdo-purification-factor-compression-not-arbitrary-mpo",
     )

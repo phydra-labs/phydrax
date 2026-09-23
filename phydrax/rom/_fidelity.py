@@ -49,6 +49,23 @@ class AffineLinearROMFidelityEvaluator(StrictModule, NonTrainableState):
             raise ValueError(
                 "Fidelity level model_id must equal the prepared ROM model_id."
             )
+        if level.observable_id != observable_:
+            raise ValueError(
+                "Fidelity level observable_id must equal the selected ROM observable."
+            )
+        expected_contract = (
+            model.reduction.trial_state_contract_id
+            if observable_ == "state"
+            else next(
+                item.observation_id
+                for item in model.observations
+                if item.name == observable_
+            )
+        )
+        if level.observable_contract_id != expected_contract:
+            raise ValueError(
+                "Fidelity level observable contract does not match the prepared ROM output."
+            )
         identifier = (
             f"affine-rom:{model.model_id}:{observable_}"
             if evaluator_id is None

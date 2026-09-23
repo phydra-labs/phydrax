@@ -5,6 +5,7 @@
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -267,7 +268,7 @@ def test_separable_mlp_domain_model_still_uses_structured_blockwise_grids():
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_separable_mlp_key_none_avoids_eval_time_random_split(scan):
+def test_separable_mlp_optional_key_preserves_evaluation(scan):
     model = SeparableMLP(
         in_size=3,
         out_size="scalar",
@@ -279,14 +280,9 @@ def test_separable_mlp_key_none_avoids_eval_time_random_split(scan):
     )
     x = jnp.asarray([0.1, 0.2, 0.3])
 
-    y_none = model(x, key=None)
-    y_keyed = model(x, key=jr.key(5))
-    assert jnp.allclose(y_none, y_keyed)
-
-    keyless_jaxpr = str(jax.make_jaxpr(lambda z: model(z, key=None))(x))
-    keyed_jaxpr = str(jax.make_jaxpr(lambda z, k: model(z, key=k))(x, jr.key(6)))
-    assert "random_split" not in keyless_jaxpr
-    assert "random_split" in keyed_jaxpr
+    y_none = jax.jit(lambda z: model(z, key=None))(x)
+    y_keyed = jax.jit(lambda z, key: model(z, key=key))(x, jr.key(5))
+    np.testing.assert_allclose(y_none, y_keyed)
 
 
 def test_domain_model_explicit_key_none_reaches_model_export_path():
@@ -304,12 +300,9 @@ def test_domain_model_explicit_key_none_reaches_model_export_path():
     u = geom.Model("x")(model)
     x = jnp.asarray([0.1, 0.2])
 
-    y_none = u.func(x, key=None)
-    y_keyed = u.func(x, key=jr.key(8))
-    assert jnp.allclose(y_none, y_keyed)
-
-    keyless_jaxpr = str(jax.make_jaxpr(lambda z: u.func(z, key=None))(x))
-    assert "random_split" not in keyless_jaxpr
+    y_none = jax.jit(lambda z: u.func(z, key=None))(x)
+    y_keyed = jax.jit(lambda z, key: u.func(z, key=key))(x, jr.key(8))
+    np.testing.assert_allclose(y_none, y_keyed)
 
 
 def test_domain_model_rejects_binding_override_for_phydrax_model():

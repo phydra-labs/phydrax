@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
@@ -275,4 +276,115 @@ def test_elimination_junction_law_and_map_bounds_are_truthful():
             resources=phx.pgm.FactorGraphResourcePolicy(
                 maximum_elimination_elements=1,
             ),
+        )
+
+
+def test_explicit_evidence_must_match_structure_and_flat_state_axis():
+    graph = _chain_graph(2)
+    prepared = phx.pgm.prepare_belief_propagation(graph)
+    wrong_structure = phx.pgm.VariableStateValues(
+        jnp.zeros((graph.num_variable_states,)),
+        structure_id="another-graph",
+    )
+    wrong_shape = phx.pgm.VariableStateValues(
+        jnp.zeros((graph.num_variable_states - 1,)),
+        structure_id=graph.structure_id,
+    )
+
+    with pytest.raises(ValueError, match="structure"):
+        phx.pgm.solve_smooth_dual_lp(
+            prepared,
+            phx.pgm.SmoothDualLP(),
+            evidence=wrong_structure,
+        )
+    with pytest.raises(ValueError, match="shape"):
+        phx.pgm.initialize_belief_propagation(prepared, evidence=wrong_shape)
+    with pytest.raises(ValueError, match="shape"):
+        phx.pgm.solve_smooth_dual_lp(
+            prepared,
+            phx.pgm.SmoothDualLP(),
+            evidence=wrong_shape,
+        )
+    batched = phx.pgm.VariableStateValues(
+        jnp.zeros((2, graph.num_variable_states)),
+        structure_id=graph.structure_id,
+    )
+    with pytest.raises(ValueError, match="shape"):
+        phx.pgm.solve_smooth_dual_lp(
+            prepared,
+            phx.pgm.SmoothDualLP(),
+            evidence=batched,
+        )
+
+    malformed = phx.pgm.BeliefPropagationState(
+        jnp.zeros((prepared.message_count,)),
+        wrong_shape,
+    )
+    with pytest.raises(ValueError, match="shape"):
+        phx.pgm.run_belief_propagation(prepared, malformed)
+    with pytest.raises(ValueError, match="shape"):
+        phx.pgm.run_implicit_belief_propagation(prepared, malformed)
+
+
+def test_implicit_bp_preserves_feasible_negative_infinity_support():
+    variables = phx.pgm.DiscreteVariableGroup("x", shape=(2,), num_states=2)
+    factor = phx.pgm.DenseTableFactorGroup(
+        (
+            phx.pgm.VariableSelection(variables, [0]),
+            phx.pgm.VariableSelection(variables, [1]),
+        ),
+        jnp.asarray([[[0.0, -jnp.inf], [-jnp.inf, 0.0]]]),
+    )
+    graph = phx.pgm.DiscreteFactorGraph((variables,), (factor,))
+    prepared = phx.pgm.prepare_belief_propagation(graph)
+    result = phx.pgm.run_implicit_belief_propagation(
+        prepared,
+        phx.pgm.initialize_belief_propagation(prepared),
+    ).inference
+
+    assert bool(result.successful)
+    assert result.status == int(phx.pgm.BeliefPropagationStatus.SUCCESS)
+
+    impossible_factor = phx.pgm.DenseTableFactorGroup(
+        factor.selections,
+        jnp.full((1, 2, 2), -jnp.inf),
+    )
+    impossible_graph = phx.pgm.DiscreteFactorGraph(
+        (variables,),
+        (impossible_factor,),
+    )
+    impossible_prepared = phx.pgm.prepare_belief_propagation(impossible_graph)
+    impossible = phx.pgm.run_implicit_belief_propagation(
+        impossible_prepared,
+        phx.pgm.initialize_belief_propagation(impossible_prepared),
+    ).inference
+    assert impossible.status == int(phx.pgm.BeliefPropagationStatus.INFEASIBLE)
+
+
+def test_bethe_likelihood_rejects_unconverged_inference():
+    graph = _triangle_graph()
+    prepared = phx.pgm.prepare_belief_propagation(graph)
+    inference = phx.pgm.run_belief_propagation(
+        prepared,
+        phx.pgm.initialize_belief_propagation(prepared),
+    )
+    unconverged = eqx.tree_at(
+        lambda value: (value.converged, value.status),
+        inference,
+        (
+            jnp.asarray(False),
+            jnp.asarray(
+                int(phx.pgm.BeliefPropagationStatus.MAXIMUM_STEPS_REACHED),
+                dtype=jnp.int32,
+            ),
+        ),
+    )
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError),
+        match="converged successful",
+    ):
+        phx.pgm.bethe_negative_log_likelihood(
+            graph,
+            jnp.asarray([[0, 0, 0]]),
+            unconverged,
         )

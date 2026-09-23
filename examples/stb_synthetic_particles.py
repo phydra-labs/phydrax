@@ -88,8 +88,10 @@ observed = phx.rendering.render_camera_stack(
     jnp.asarray([True]),
 ).images
 result = phx.velocimetry.tracking.stb_step(prepared, state, observed, 1.0)
+if not bool(result.successful):
+    raise RuntimeError("STB reconstruction step failed")
 
 print("reconstructed position", result.state.positions_xyz[result.state.active])
 print("residual energy", float(jnp.sum(result.residual * result.residual)))
 print("promoted track id", result.state.track_ids[result.state.active])
-print("successful", bool(result.successful))
+print("successful", True)

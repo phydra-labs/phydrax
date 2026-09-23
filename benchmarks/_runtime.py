@@ -168,7 +168,8 @@ class CompilerEvidence:
             self.generated_code_bytes,
         )
         if any(
-            value is not None and (isinstance(value, bool) or int(value) < 0)
+            value is not None
+            and (isinstance(value, bool) or not isinstance(value, int) or value < 0)
             for value in values
         ):
             raise ValueError(

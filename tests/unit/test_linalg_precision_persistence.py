@@ -165,6 +165,15 @@ def test_traced_sparse_value_refresh_preserves_solves_gradients_and_batch_failur
     )
     assert jnp.allclose(singular.value[0], result.value[0])
 
+    factor = la.refresh_sparse_factorization_values(plan, values)
+    nonfinite_rhs = rhs.at[1].set(jnp.nan)
+    nonfinite = factor.solve(nonfinite_rhs)
+    assert jnp.all(
+        nonfinite.factorization_status == int(la.SparseFactorizationStatus.SUCCESS)
+    )
+    assert jnp.all(nonfinite.status == int(la.SparseFactorizationStatus.NONFINITE))
+    assert jnp.all(nonfinite.lower_status == int(la.SparseTriangularStatus.NONFINITE))
+
 
 def test_numeric_sparse_refresh_accepts_traced_routes_and_coalesces_duplicates():
     relation = phx.sparse.EdgeRelation(
@@ -372,6 +381,10 @@ def test_coordinate_tree_and_full_complex_training_checkpoint_round_trip(tmp_pat
     loaded = phx.export.read_complex_training_checkpoint(str(destination), prepared)
     restored = phx.export.import_complex_training_state(prepared, loaded)
     assert restored.step == 7
+    assert jax.tree.all(jax.tree.map(jnp.array_equal, restored.parameters, model))
+    assert jax.tree.all(
+        jax.tree.map(jnp.array_equal, restored.auxiliary_state, auxiliary)
+    )
     assert jax.tree.all(
         jax.tree.map(jnp.array_equal, restored.optimizer_state, optimizer_state)
     )

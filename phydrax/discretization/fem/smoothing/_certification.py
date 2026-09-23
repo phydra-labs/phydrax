@@ -65,7 +65,6 @@ def certify_smoothing_operator(
         geometry.boundary_lengths[..., None] * geometry.boundary_normals,
         axis=1,
     )
-    affine = jnp.sum(boundary_moment(layout, geometry), axis=1)
     total_measure = jnp.sum(geometry.area)
     partition_defect = jnp.abs(total_measure - jnp.asarray(expected_total_measure))
     return SmoothingEvidence(

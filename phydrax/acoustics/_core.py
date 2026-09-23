@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
+import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -22,7 +24,10 @@ class AcousticMedium:
 
     def __post_init__(self) -> None:
         if (
-            self.density_kg_m3 <= 0.0
+            not isfinite(self.density_kg_m3)
+            or not isfinite(self.sound_speed_m_s)
+            or not isfinite(self.attenuation_np_m)
+            or self.density_kg_m3 <= 0.0
             or self.sound_speed_m_s <= 0.0
             or self.attenuation_np_m < 0.0
         ):
@@ -46,14 +51,25 @@ def monopole_pressure(
     medium: AcousticMedium,
     /,
 ) -> Array:
-    distance = jnp.maximum(jnp.asarray(distance_m), 1.0e-30)
-    omega = 2.0 * jnp.pi * jnp.asarray(frequency_hz)
+    distance = jnp.asarray(distance_m)
+    distance = eqx.error_if(
+        distance,
+        jnp.any(~jnp.isfinite(distance) | (distance <= 0)),
+        "Acoustic source distances must be finite and positive.",
+    )
+    frequency = jnp.asarray(frequency_hz)
+    frequency = eqx.error_if(
+        frequency,
+        jnp.any(~jnp.isfinite(frequency) | (frequency < 0)),
+        "Acoustic frequencies must be finite and nonnegative.",
+    )
+    omega = 2.0 * jnp.pi * frequency
     return (
         1j
         * omega
         * medium.density_kg_m3
         * jnp.asarray(source_strength_m3_s)
-        * jnp.exp(-1j * medium.wavenumber(frequency_hz) * distance)
+        * jnp.exp(-1j * medium.wavenumber(frequency) * distance)
         / (4.0 * jnp.pi * distance)
     )
 
@@ -63,10 +79,20 @@ def normal_incidence_transmission_loss(
 ) -> Array:
     left = jnp.asarray(impedance_left)
     right = jnp.asarray(impedance_right)
+    left = eqx.error_if(
+        left,
+        jnp.any(~jnp.isfinite(left) | (jnp.real(left) <= 0)),
+        "Left acoustic impedance must be finite and passive.",
+    )
+    right = eqx.error_if(
+        right,
+        jnp.any(~jnp.isfinite(right) | (jnp.real(right) <= 0)),
+        "Right acoustic impedance must be finite and passive.",
+    )
     power_transmission = (
         4.0 * jnp.real(left) * jnp.real(right) / jnp.abs(left + right) ** 2
     )
-    return -10.0 * jnp.log10(jnp.maximum(power_transmission, 1.0e-30))
+    return -10.0 * jnp.log10(power_transmission)
 
 
 def vibroacoustic_power(

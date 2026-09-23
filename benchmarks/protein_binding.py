@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -300,8 +301,14 @@ def main():
         "parameterized_artifact": binding.artifact.artifact_id,
         "trajectory_artifact": workflow.artifact.artifact_id,
         "environment": asdict(capture_environment()),
+        "external_provider": {
+            "name": "OpenMM",
+            "version": importlib.metadata.version("openmm"),
+            "platform": "Reference",
+            "provider_scope": "host reference energy and force generation",
+        },
     }
-    print(json.dumps(report, indent=2))
+    print(json.dumps(report, allow_nan=False, indent=2))
     if (
         not bool(evaluated.successful)
         or not bool(workflow.rollout.successful)

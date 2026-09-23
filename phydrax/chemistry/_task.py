@@ -66,6 +66,11 @@ def _properties(
         and ElectronicProperty.FORCES not in normalized
     ):
         raise ValueError("Hessian tasks must also request forces.")
+    if (
+        ElectronicProperty.DIPOLE in normalized
+        and ElectronicProperty.FORCES not in normalized
+    ):
+        raise ValueError("Dipole tasks must also request forces.")
     return normalized
 
 

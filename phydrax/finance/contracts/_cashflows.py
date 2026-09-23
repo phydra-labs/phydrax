@@ -229,7 +229,14 @@ class CashflowBatch(StrictModule, NonTrainableState):
         return {
             "payment_ordinals": np.asarray(self.payment_ordinals).tolist(),
             "amounts": np.asarray(self.amounts).tolist(),
-            "currencies": [value.code for value in self.currencies],
+            "currencies": [
+                {
+                    "code": value.code,
+                    "minor_unit": value.minor_unit,
+                    "currency_id": value.currency_id,
+                }
+                for value in self.currencies
+            ],
             "currency_index": np.asarray(self.currency_index).tolist(),
             "valid_mask": np.asarray(self.valid_mask).tolist(),
             "status": np.asarray(self.status).tolist(),

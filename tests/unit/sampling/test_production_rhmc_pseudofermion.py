@@ -347,6 +347,17 @@ def test_nested_force_map_is_reversible():
     assert int(forward.force_evaluations) == kernel.plan.force_evaluations
 
 
+def test_nested_force_work_counts_every_term_evaluation():
+    forces = NestedForcePlan(
+        (
+            NestedForcePartition((0, 1), substeps=2),
+            NestedForcePartition((2,), substeps=3),
+        )
+    )
+
+    assert forces.force_evaluations_per_step == 2 * 2 * 2 + 2 * 6
+
+
 def test_acceptance_uses_exact_endpoint_energy_and_rejection_rolls_back():
     kernel = _bosonic_kernel(step_size=0.9, divergence_threshold=1.0e-16)
     initial = jnp.asarray((0.9, -0.7))

@@ -42,9 +42,16 @@ class LambertPlan(StrictModule, NonTrainableState):
         long_way: bool = False,
         plane_normal: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 1.0),
     ):
-        revolutions = int(max_revolutions)
-        grid = int(grid_size)
-        iterations = int(bisection_iterations)
+        for name, value in (
+            ("max_revolutions", max_revolutions),
+            ("grid_size", grid_size),
+            ("bisection_iterations", bisection_iterations),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an integer.")
+        revolutions = max_revolutions
+        grid = grid_size
+        iterations = bisection_iterations
         tolerance = float(relative_tolerance)
         maximum = float(maximum_x)
         normal = np.asarray(plane_normal, dtype=np.float64)

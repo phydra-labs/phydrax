@@ -568,6 +568,40 @@ def test_encoded_reconstructor_reuses_state_across_independent_queries():
     assert bool(state.reports["source"].identified)
 
 
+def test_conditional_function_frame_flow_requires_matching_law_batch_shape():
+    frame = _scalar_frame(frame_id="flow-batch")
+    coordinates = jnp.linspace(0.0, 1.0, 6)
+    query = _samples(jnp.asarray([0.2, 0.8]))
+    coefficients = jnp.asarray([[1.0, -0.5, 0.25], [0.2, 0.3, -0.1]])
+    support_geometry = _samples(coordinates)
+    support = _samples(
+        coordinates,
+        frame.decode(coefficients, support_geometry, case_shape=(2,)),
+    )
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={"source": support},
+        queries={"query": query},
+        case_axes=("case",),
+        case_shape=(2,),
+    )
+    reconstructor = FunctionFrameReconstructor(
+        sources=(FunctionFrameSource("source", frame),),
+        target_frame=frame,
+    )
+    flow = phx.nn.operator.architectures.ConditionalFunctionFrameFlowOperator(
+        reconstructor,
+        lambda _condition: phx.uq.DiagonalNormalLaw(
+            jnp.zeros((frame.rank,)),
+            jnp.ones((frame.rank,)),
+            event_shape=(frame.rank,),
+        ),
+        field_space_id="flow-batch-space",
+    )
+
+    with pytest.raises(ValueError, match="batch shape"):
+        flow.condition(batch)
+
+
 def test_reconstructor_maps_between_frames_with_different_ranks():
     source = _scalar_frame(frame_id="source")
     target = LearnedFunctionFrame(

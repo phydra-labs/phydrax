@@ -127,7 +127,7 @@ def _solve(intervals: int, hessian: str, *, warm_start=None):
     return result, record
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--intervals", nargs="+", type=int, default=(32, 128))
     parser.add_argument(
@@ -161,8 +161,9 @@ def main() -> None:
         "passed": all(record["successful"] for record in records),
     }
     write_json_atomic(arguments.output, artifact)
-    print(json.dumps(artifact, indent=2))
+    print(json.dumps(artifact, indent=2, allow_nan=False))
+    return 0 if artifact["passed"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

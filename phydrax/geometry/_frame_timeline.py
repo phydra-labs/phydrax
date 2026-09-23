@@ -254,7 +254,7 @@ class FrameTransformGraph:
         queue: deque[tuple[str, tuple[int, ...], tuple[bool, ...]]] = deque(
             [(source, (), ())]
         )
-        visited = {source}
+        best_depth = {source: 0}
         solutions: list[tuple[tuple[int, ...], tuple[bool, ...]]] = []
         shortest: int | None = None
         while queue:
@@ -265,10 +265,14 @@ class FrameTransformGraph:
                 shortest = len(indices)
                 solutions.append((indices, reverse))
                 continue
+            candidate_depth = len(indices) + 1
             for neighbor, index, inverted in adjacency.get(frame, ()):
-                if neighbor not in visited or neighbor == target:
-                    visited.add(neighbor)
-                    queue.append((neighbor, indices + (index,), reverse + (inverted,)))
+                known_depth = best_depth.get(neighbor)
+                if known_depth is not None and candidate_depth > known_depth:
+                    continue
+                if known_depth is None or candidate_depth < known_depth:
+                    best_depth[neighbor] = candidate_depth
+                queue.append((neighbor, indices + (index,), reverse + (inverted,)))
         if len(solutions) != 1:
             raise ValueError("Frame route must exist and be uniquely shortest.")
         indices, reverse = solutions[0]

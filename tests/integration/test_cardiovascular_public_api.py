@@ -15,7 +15,6 @@ _SUBPACKAGE_MODULES = {
     "anatomy": (
         "_coordinates",
         "_high_order",
-        "_image_boundary",
         "_microstructure",
         "_purkinje_attachment",
         "_roles",
@@ -79,10 +78,7 @@ _SUBPACKAGE_MODULES = {
         "_cine",
         "_electrograms",
         "_lge",
-        "_metadata",
         "_pressure_volume",
-        "_registration",
-        "_sampling",
         "_strain",
     ),
     "personalization": (

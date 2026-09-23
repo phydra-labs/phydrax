@@ -100,6 +100,7 @@ def _pmns(parameters: NeutrinoOscillationParameters, antineutrino: bool):
 
 
 class OscillationProbabilityResult(StrictModule, NonTrainableState):
+    energies_gev: Array
     probabilities: Array
     row_unitarity_residual: Array
     column_unitarity_residual: Array
@@ -158,6 +159,7 @@ def oscillation_probabilities(
         & (column_residual <= 1.0e-10)
     )
     return OscillationProbabilityResult(
+        energies,
         probabilities,
         row_residual,
         column_residual,

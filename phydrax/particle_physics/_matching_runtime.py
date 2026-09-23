@@ -193,8 +193,66 @@ def _event_identity(event: ParticleEventBatch | HostEventRecord, /) -> str:
                 "event_id": event.event_id,
                 "subevent_id": event.subevent_id,
                 "source_id": event.source_id,
-                "particles": [value.particle_id for value in event.particles],
-                "vertices": [value.vertex_id for value in event.vertices],
+                "provider_status_namespace": event.provider_status_namespace,
+                "particles": [
+                    {
+                        "particle_id": value.particle_id,
+                        "pdg_id": value.pdg_id,
+                        "role": int(value.role),
+                        "provider_status": value.provider_status,
+                        "momentum": list(value.momentum),
+                        "rest_energy": value.rest_energy,
+                        "production_vertex_id": value.production_vertex_id,
+                        "end_vertex_id": value.end_vertex_id,
+                        "color_flow": list(value.color_flow),
+                        "attributes": [
+                            [
+                                attribute.namespace,
+                                attribute.name,
+                                attribute.content_type,
+                                attribute.payload.hex(),
+                            ]
+                            for attribute in value.attributes
+                        ],
+                    }
+                    for value in event.particles
+                ],
+                "vertices": [
+                    {
+                        "vertex_id": value.vertex_id,
+                        "position": list(value.position),
+                        "incoming_particle_ids": list(value.incoming_particle_ids),
+                        "outgoing_particle_ids": list(value.outgoing_particle_ids),
+                        "attributes": [
+                            [
+                                attribute.namespace,
+                                attribute.name,
+                                attribute.content_type,
+                                attribute.payload.hex(),
+                            ]
+                            for attribute in value.attributes
+                        ],
+                    }
+                    for value in event.vertices
+                ],
+                "weights": [
+                    [
+                        value.name,
+                        value.value,
+                        value.variation_kind.value,
+                        value.correlation_group,
+                    ]
+                    for value in event.weights
+                ],
+                "attributes": [
+                    [
+                        value.namespace,
+                        value.name,
+                        value.content_type,
+                        value.payload.hex(),
+                    ]
+                    for value in event.attributes
+                ],
             }
         )
     if isinstance(event, ParticleEventBatch):
@@ -208,8 +266,38 @@ def _event_identity(event: ParticleEventBatch | HostEventRecord, /) -> str:
                         "event_ids": np.asarray(event.event_ids),
                         "subevent_ids": np.asarray(event.subevent_ids),
                         "event_active": np.asarray(event.event_active),
+                        "particle_ids": np.asarray(event.particle_ids),
+                        "pdg_ids": np.asarray(event.pdg_ids),
+                        "roles": np.asarray(event.roles),
+                        "provider_status": np.asarray(event.provider_status),
+                        "momenta": np.asarray(event.momenta),
+                        "rest_energies": np.asarray(event.rest_energies),
+                        "particle_active": np.asarray(event.particle_active),
+                        "mother_indices": np.asarray(event.mother_indices),
+                        "production_vertex_indices": np.asarray(
+                            event.production_vertex_indices
+                        ),
+                        "end_vertex_indices": np.asarray(event.end_vertex_indices),
+                        "color_flow": np.asarray(event.color_flow),
+                        "production_vertices": np.asarray(event.production_vertices),
+                        "vertex_ids": np.asarray(event.vertex_ids),
+                        "vertex_active": np.asarray(event.vertex_active),
+                        "overflow": np.asarray(event.overflow),
+                        "finite": np.asarray(event.finite),
+                        "valid": np.asarray(event.valid),
+                        "status": np.asarray(event.status),
+                        "weight_values": np.asarray(event.weights.values),
+                        "weight_active": np.asarray(event.weights.event_active),
                     }
                 ),
+                "weight_metadata": {
+                    "names": list(event.weights.names),
+                    "variation_kinds": [
+                        value.value for value in event.weights.variation_kinds
+                    ],
+                    "correlation_groups": list(event.weights.correlation_groups),
+                    "nominal_name": event.weights.nominal_name,
+                },
             }
         )
     raise TypeError("event must be ParticleEventBatch or HostEventRecord.")

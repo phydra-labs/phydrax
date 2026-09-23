@@ -147,7 +147,9 @@ class SLDQuantumFisherGeometry(StrictModule):
     ) -> Array:
         value = jnp.trace(
             _adjoint(self.geometry_precision.accumulation(left))
-            @ self.geometry_precision.accumulation(self.sld(density, right))
+            @ self.geometry_precision.accumulation(self.sld(density, right)),
+            axis1=-2,
+            axis2=-1,
         )
         return self.geometry_precision.decision(jnp.real(value))
 
@@ -157,9 +159,9 @@ class SLDQuantumFisherGeometry(StrictModule):
     def sharp(self, density: ArrayLike, cotangent: ArrayLike, /) -> Array:
         rho = jnp.asarray(density)
         covector = 0.5 * (jnp.asarray(cotangent) + _adjoint(jnp.asarray(cotangent)))
-        expectation = jnp.real(jnp.trace(rho @ covector))
+        expectation = jnp.real(jnp.trace(rho @ covector, axis1=-2, axis2=-1))
         identity = jnp.eye(rho.shape[-1], dtype=rho.dtype)
-        centered = covector - expectation * identity
+        centered = covector - expectation[..., None, None] * identity
         return 0.5 * (rho @ centered + centered @ rho)
 
 
@@ -230,11 +232,12 @@ class BuresDensityManifold(AbstractRiemannianManifold):
         return _array_with_trailing_shape(value, self.point_shape, name)
 
     def contains(self, point: ArrayLike, /) -> Array:
-        return FaithfulDensityReport(
+        report = FaithfulDensityReport(
             self._matrix(point, "density"),
             tolerance=self.tolerance,
             precision=self.hermitian_precision,
-        ).valid
+        )
+        return jnp.all(report.valid)
 
     def constraint_residual(self, point: ArrayLike, /) -> Array:
         report = FaithfulDensityReport(
@@ -242,10 +245,11 @@ class BuresDensityManifold(AbstractRiemannianManifold):
             tolerance=self.tolerance,
             precision=self.hermitian_precision,
         )
-        return jnp.maximum(
+        per_point = jnp.maximum(
             jnp.maximum(report.hermiticity_residual, report.trace_residual),
             jnp.maximum(self.tolerance - report.minimum_eigenvalue, 0.0),
         )
+        return jnp.max(per_point)
 
     def project_tangent(self, point: ArrayLike, ambient_vector: ArrayLike, /) -> Array:
         self._matrix(point, "density")
@@ -268,7 +272,7 @@ class BuresDensityManifold(AbstractRiemannianManifold):
         rho = self._matrix(point, "density")
         left = self.project_tangent(rho, left_tangent)
         right = self.project_tangent(rho, right_tangent)
-        return 0.25 * self.sld_geometry.inner(rho, left, right)
+        return jnp.sum(0.25 * self.sld_geometry.inner(rho, left, right))
 
     def retract(self, point: ArrayLike, tangent_step: ArrayLike, /) -> Array:
         rho = self._matrix(point, "density")
@@ -293,7 +297,8 @@ class BuresDensityManifold(AbstractRiemannianManifold):
             @ root
         )
         candidate = 0.5 * (candidate + _adjoint(candidate))
-        normalized = candidate / jnp.trace(candidate)
+        trace = jnp.trace(candidate, axis1=-2, axis2=-1)
+        normalized = candidate / trace[..., None, None]
         return jnp.asarray(normalized, dtype=rho.dtype)
 
     def transport(
@@ -383,26 +388,34 @@ class FixedRankDensityManifold(AbstractRiemannianManifold):
     def contains(self, point: ArrayLike, /) -> Array:
         factor = self._factor(point, "Fixed-rank density factor")
         spectrum = self._spectrum(factor)
-        norm = jnp.real(jnp.vdot(factor, factor))
-        return (
-            jnp.all(jnp.isfinite(factor))
-            & (jnp.min(spectrum) > self.tolerance)
+        norm = jnp.sum(jnp.abs(factor) ** 2, axis=(-2, -1))
+        finite = jnp.all(jnp.isfinite(factor), axis=(-2, -1))
+        per_point = (
+            finite
+            & (jnp.min(spectrum, axis=-1) > self.tolerance)
             & (jnp.abs(norm - 1.0) <= self.tolerance)
         )
+        return jnp.all(per_point)
 
     def constraint_residual(self, point: ArrayLike, /) -> Array:
         factor = self._factor(point, "Fixed-rank density factor")
         spectrum = self._spectrum(factor)
-        return jnp.maximum(
-            jnp.abs(jnp.real(jnp.vdot(factor, factor)) - 1.0),
-            jnp.maximum(self.tolerance - jnp.min(spectrum), 0.0),
+        norm = jnp.sum(jnp.abs(factor) ** 2, axis=(-2, -1))
+        per_point = jnp.maximum(
+            jnp.abs(norm - 1.0),
+            jnp.maximum(self.tolerance - jnp.min(spectrum, axis=-1), 0.0),
         )
+        return jnp.max(per_point)
 
     def project_tangent(self, point: ArrayLike, ambient_vector: ArrayLike, /) -> Array:
         factor = self._factor(point, "Fixed-rank density factor")
         vector = self._factor(ambient_vector, "Fixed-rank density tangent")
         _same_shape(vector, factor, "Fixed-rank density tangent")
-        radial = jnp.real(jnp.vdot(factor, vector))
+        radial = jnp.sum(
+            jnp.real(jnp.conj(factor) * vector),
+            axis=(-2, -1),
+            keepdims=True,
+        )
         sphere_tangent = vector - radial * factor
         gram = _adjoint(factor) @ factor
         right_hand_side = (
@@ -431,16 +444,18 @@ class FixedRankDensityManifold(AbstractRiemannianManifold):
     ) -> Array:
         left = self.project_tangent(point, left_tangent)
         right = self.project_tangent(point, right_tangent)
-        return 4.0 * jnp.real(jnp.vdot(left, right))
+        pointwise = jnp.sum(jnp.real(jnp.conj(left) * right), axis=(-2, -1))
+        return 4.0 * jnp.sum(pointwise)
 
     def retract(self, point: ArrayLike, tangent_step: ArrayLike, /) -> Array:
         factor = self._factor(point, "Fixed-rank density factor")
         candidate = factor + self.project_tangent(factor, tangent_step)
-        candidate = candidate / jnp.sqrt(jnp.real(jnp.vdot(candidate, candidate)))
-        minimum = jnp.min(self._spectrum(candidate))
+        norm = jnp.sum(jnp.abs(candidate) ** 2, axis=(-2, -1), keepdims=True)
+        candidate = candidate / jnp.sqrt(norm)
+        minimum = jnp.min(self._spectrum(candidate), axis=-1)
         return eqx.error_if(
             candidate,
-            minimum <= self.tolerance,
+            jnp.any(minimum <= self.tolerance),
             "Fixed-rank retraction lost the declared support gap.",
         )
 

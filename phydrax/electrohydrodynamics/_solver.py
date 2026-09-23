@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -26,6 +28,7 @@ class ElectrohydrodynamicState:
 @dataclass(frozen=True, slots=True)
 class ElectrohydrodynamicStep:
     state: ElectrohydrodynamicState
+    candidate_state: ElectrohydrodynamicState
     electric_field_v_m: Array
     electric_body_force_n_m3: Array
     charge_balance_residual_c: Array
@@ -42,10 +45,11 @@ class CoupledElectrohydrodynamicSolver:
     poisson_operator: Array
     electric_field_operator: Array
     charge_transport_generator_s_inv: Array
-    fluid_mobility_m3_s_kg: Array
+    fluid_operator_kg_m3_s: Array
     permittivity_f_m: Array
     conductivity_s_m: Array
     spatial_dimension: int
+    tolerance: float
 
     @classmethod
     def create(
@@ -54,7 +58,7 @@ class CoupledElectrohydrodynamicSolver:
         poisson_operator: ArrayLike,
         electric_field_operator: ArrayLike,
         charge_transport_generator_s_inv: ArrayLike,
-        fluid_mobility_m3_s_kg: ArrayLike,
+        fluid_operator_kg_m3_s: ArrayLike,
         permittivity_f_m: ArrayLike,
         conductivity_s_m: ArrayLike,
         spatial_dimension: int,
@@ -66,7 +70,7 @@ class CoupledElectrohydrodynamicSolver:
         poisson = np.asarray(poisson_operator, dtype=np.float64)
         field = np.asarray(electric_field_operator, dtype=np.float64)
         transport = np.asarray(charge_transport_generator_s_inv, dtype=np.float64)
-        mobility = np.asarray(fluid_mobility_m3_s_kg, dtype=np.float64)
+        fluid = np.asarray(fluid_operator_kg_m3_s, dtype=np.float64)
         permittivity = np.broadcast_to(
             np.asarray(permittivity_f_m, dtype=np.float64), volumes.shape
         )
@@ -75,6 +79,23 @@ class CoupledElectrohydrodynamicSolver:
         )
         cells = volumes.size
         vectors = cells * int(spatial_dimension)
+        if (
+            not isfinite(tolerance)
+            or tolerance <= 0
+            or not all(
+                np.all(np.isfinite(value))
+                for value in (
+                    volumes,
+                    poisson,
+                    field,
+                    transport,
+                    fluid,
+                    permittivity,
+                    conductivity,
+                )
+            )
+        ):
+            raise ValueError("EHD operators, fields, and tolerance must be finite.")
         if volumes.ndim != 1 or cells == 0 or np.any(volumes <= 0):
             raise ValueError("EHD cell volumes must be a positive vector.")
         if spatial_dimension not in (1, 2, 3):
@@ -90,12 +111,14 @@ class CoupledElectrohydrodynamicSolver:
             raise ValueError(
                 "EHD implicit charge generator must be positivity preserving."
             )
-        if mobility.shape != (vectors, vectors) or not np.allclose(
-            mobility, mobility.T, atol=tolerance, rtol=0
+        if fluid.shape != (vectors, vectors) or not np.allclose(
+            fluid, fluid.T, atol=tolerance, rtol=0
         ):
             raise ValueError(
-                "EHD fluid mobility must be symmetric on vector coordinates."
+                "EHD fluid operator must be symmetric on vector coordinates."
             )
+        if np.min(np.linalg.eigvalsh(fluid)) <= tolerance:
+            raise ValueError("EHD fluid operator must be positive definite.")
         if np.any(permittivity <= 0) or np.any(conductivity < 0):
             raise ValueError("EHD electric material fields are inadmissible.")
         return cls(
@@ -103,10 +126,11 @@ class CoupledElectrohydrodynamicSolver:
             jnp.asarray(poisson),
             jnp.asarray(field),
             jnp.asarray(transport),
-            jnp.asarray(mobility),
+            jnp.asarray(fluid),
             jnp.asarray(permittivity),
             jnp.asarray(conductivity),
             int(spatial_dimension),
+            float(tolerance),
         )
 
     def _fields(self, charge: Array, fixed_charge: Array, external_body_force: Array):
@@ -120,12 +144,24 @@ class CoupledElectrohydrodynamicSolver:
         )
         electric_body_force = charge[:, None] * electric
         total_body_force = electric_body_force + external_body_force
-        velocity_flat = self.fluid_mobility_m3_s_kg @ total_body_force.reshape((-1,))
+        fluid = solve(
+            LinearSystem(DenseLinearOperator(self.fluid_operator_kg_m3_s)),
+            total_body_force.reshape((-1,)),
+            policy=LinearSolvePolicy(DenseLU()),
+        )
+        velocity_flat = fluid.value
         velocity = velocity_flat.reshape(electric.shape)
         momentum_residual = (
-            velocity_flat - self.fluid_mobility_m3_s_kg @ total_body_force.reshape((-1,))
+            self.fluid_operator_kg_m3_s @ velocity_flat - total_body_force.reshape((-1,))
         )
-        return potential, electric, electric_body_force, velocity, momentum_residual
+        return (
+            potential,
+            fluid,
+            electric,
+            electric_body_force,
+            velocity,
+            momentum_residual,
+        )
 
     def advance(
         self,
@@ -138,7 +174,15 @@ class CoupledElectrohydrodynamicSolver:
     ) -> ElectrohydrodynamicStep:
         charge = jnp.asarray(state.free_charge_density_c_m3)
         fixed = jnp.broadcast_to(jnp.asarray(fixed_charge_density_c_m3), charge.shape)
-        if charge.shape != self.cell_volumes_m3.shape or step_size_s <= 0:
+        source_potential = jnp.asarray(state.electric_potential_v)
+        source_velocity = jnp.asarray(state.velocity_m_s)
+        if (
+            charge.shape != self.cell_volumes_m3.shape
+            or source_potential.shape != charge.shape
+            or source_velocity.shape != (charge.size, self.spatial_dimension)
+            or not isfinite(step_size_s)
+            or step_size_s <= 0
+        ):
             raise ValueError("EHD state shape or step size is invalid.")
         external_force = (
             jnp.zeros((charge.size, self.spatial_dimension), dtype=charge.dtype)
@@ -147,6 +191,17 @@ class CoupledElectrohydrodynamicSolver:
         )
         if external_force.shape != (charge.size, self.spatial_dimension):
             raise ValueError("External EHD body force has incompatible shape.")
+        charge = eqx.error_if(
+            charge,
+            jnp.any(
+                ~jnp.isfinite(charge)
+                | ~jnp.isfinite(fixed)
+                | ~jnp.isfinite(external_force)
+                | ~jnp.isfinite(source_potential[:, None])
+                | ~jnp.isfinite(source_velocity)
+            ),
+            "EHD charge and force fields must be finite.",
+        )
         transport_matrix = jnp.eye(charge.size, dtype=charge.dtype) - float(
             step_size_s
         ) * self.charge_transport_generator_s_inv.astype(charge.dtype)
@@ -156,14 +211,19 @@ class CoupledElectrohydrodynamicSolver:
             policy=LinearSolvePolicy(DenseLU()),
         )
         next_charge = transported.value
-        potential, electric, body_force, velocity, momentum_residual = self._fields(
-            next_charge, fixed, external_force
-        )
+        (
+            potential,
+            fluid,
+            electric,
+            body_force,
+            velocity,
+            momentum_residual,
+        ) = self._fields(next_charge, fixed, external_force)
         initial_charge = contract("q,q->", self.cell_volumes_m3, charge)
         final_charge = contract("q,q->", self.cell_volumes_m3, next_charge)
         charge_residual = final_charge - initial_charge
         electric_magnitude2 = contract("qd,qd->q", electric, electric)
-        force_power_density = contract("qd,qd->q", body_force, velocity)
+        force_power_density = contract("qd,qd->q", body_force + external_force, velocity)
         ledger = ElectrohydrodynamicLedger(
             final_charge,
             jnp.asarray(0.0),
@@ -188,11 +248,30 @@ class CoupledElectrohydrodynamicSolver:
         successful = (
             transported.successful
             & potential.successful
+            & fluid.successful
+            & jnp.all(jnp.isfinite(next_charge))
             & jnp.all(jnp.isfinite(velocity))
+            & jnp.isfinite(charge_residual)
+            & (jnp.abs(charge_residual) <= self.tolerance)
+            & jnp.isfinite(momentum_norm)
+            & (momentum_norm <= self.tolerance * (1.0 + jnp.linalg.norm(body_force)))
             & ledger.finite
+            & (ledger.joule_dissipation_w >= -self.tolerance)
+            & (ledger.mechanical_power_w >= -self.tolerance)
+        )
+        candidate = ElectrohydrodynamicState(next_charge, potential.value, velocity)
+        accepted = ElectrohydrodynamicState(
+            jnp.where(successful, candidate.free_charge_density_c_m3, charge),
+            jnp.where(
+                successful,
+                candidate.electric_potential_v,
+                source_potential,
+            ),
+            jnp.where(successful, candidate.velocity_m_s, source_velocity),
         )
         return ElectrohydrodynamicStep(
-            ElectrohydrodynamicState(next_charge, potential.value, velocity),
+            accepted,
+            candidate,
             electric,
             body_force,
             charge_residual,

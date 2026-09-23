@@ -3,6 +3,7 @@
 #
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -17,7 +18,13 @@ class GaussianMovingSource(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
 
     def __init__(self, power_w, absorptivity, radius_m, /):
-        if power_w < 0 or not 0 <= absorptivity <= 1 or radius_m <= 0:
+        values = (power_w, absorptivity, radius_m)
+        if (
+            not all(np.isfinite(value) for value in values)
+            or power_w < 0
+            or not 0 <= absorptivity <= 1
+            or radius_m <= 0
+        ):
             raise ValueError("Gaussian source parameters invalid.")
         self.power_w = jnp.asarray(power_w)
         self.absorptivity = jnp.asarray(absorptivity)
@@ -52,8 +59,16 @@ class GoldakDoubleEllipsoidSource(StrictModule, NonTrainableState):
     depth_m: Array
 
     def __init__(self, power_w, efficiency, front_m, rear_m, width_m, depth_m, /):
-        if min(power_w, efficiency, front_m, rear_m, width_m, depth_m) <= 0:
-            raise ValueError("Goldak parameters must be positive.")
+        values = (power_w, efficiency, front_m, rear_m, width_m, depth_m)
+        if (
+            not all(np.isfinite(value) for value in values)
+            or power_w <= 0
+            or not 0 < efficiency <= 1
+            or min(front_m, rear_m, width_m, depth_m) <= 0
+        ):
+            raise ValueError(
+                "Goldak parameters must be finite, positive, and efficiency at most one."
+            )
         self.power_w = jnp.asarray(power_w)
         self.efficiency = jnp.asarray(efficiency)
         self.front_m = jnp.asarray(front_m)

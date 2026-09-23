@@ -58,6 +58,8 @@ def _free_scalar_case(draws: int) -> dict:
         (4, dimension),
     )
     state = phx.sampling.initialize_hamiltonian_state(kernel, initial)
+    root_key = jax.random.key(5)
+    adaptation_key, sampling_key = jax.random.split(root_key)
     adaptation = phx.sampling.adapt_hamiltonian_kernel(
         kernel,
         state,
@@ -66,12 +68,12 @@ def _free_scalar_case(draws: int) -> dict:
             minimum_step_size=0.01,
             maximum_step_size=0.3,
         ),
-        key=jax.random.key(5),
+        key=adaptation_key,
     )
     result = phx.sampling.sample_hamiltonian(
         adaptation.kernel,
         adaptation.final_state,
-        key=jax.random.key(5),
+        key=sampling_key,
         num_draws=max(128, draws),
     )
     samples = result.samples.reshape((-1, dimension))
@@ -80,6 +82,11 @@ def _free_scalar_case(draws: int) -> dict:
     covariance_scale = jnp.maximum(jnp.max(jnp.abs(exact_covariance)), 1.0)
     return {
         "sites": dimension,
+        "rng": {
+            "root_seed": 5,
+            "adaptation_stream": 0,
+            "sampling_stream": 1,
+        },
         "draws": result.samples.shape[1],
         "adaptation_valid": bool(jnp.all(adaptation.valid)),
         "acceptance_rate": [float(value) for value in jnp.mean(result.accepted, axis=1)],
@@ -275,11 +282,13 @@ def main() -> None:
         "su2_wilson_hmc": _sun_case(2, arguments.draws, arguments.repeats),
         "su3_wilson_hmc": _sun_case(3, arguments.draws, arguments.repeats),
     }
-    encoded = json.dumps(payload, indent=2)
+    encoded = json.dumps(payload, allow_nan=False, indent=2)
     if arguments.output is None:
         print(encoded)
     else:
-        arguments.output.write_text(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
 
 
 if __name__ == "__main__":

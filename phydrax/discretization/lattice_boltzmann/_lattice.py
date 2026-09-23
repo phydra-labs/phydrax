@@ -217,8 +217,10 @@ class LatticeBoltzmannVelocitySet(StrictModule, NonTrainableState):
         self.opposite = jnp.asarray(opposite_host, dtype=jnp.int32)
         self.sound_speed_squared = jnp.asarray(cs2, dtype=jnp.float64)
         self.capability_evidence = evidence
-        self.velocity_tuples = tuple(tuple(row) for row in velocity_host)
-        self.opposite_indices = tuple(opposite_host)
+        self.velocity_tuples = tuple(
+            tuple(int(value) for value in row) for row in velocity_host
+        )
+        self.opposite_indices = tuple(int(value) for value in opposite_host)
         self.name = name_
         self.dimension = dimension
         self.population_count = q

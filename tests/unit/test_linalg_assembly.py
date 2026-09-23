@@ -340,6 +340,22 @@ def test_structured_local_block_solve_is_exact_resource_bounded_and_differentiab
     assert jnp.all(jnp.isfinite(gradient))
 
 
+def test_local_elimination_preserves_trailing_right_hand_side_axes():
+    plan = la.LocalEliminationPlan(3, jnp.asarray([1, 2]))
+    matrix = jnp.asarray([[[4.0, 1.0, -1.0], [1.0, 3.0, 0.5], [-1.0, 0.5, 2.5]]])
+    right_hand_side = jnp.asarray([[[1.0, -2.0], [3.0, 0.5], [-1.0, 4.0]]])
+
+    condensed = plan.condense(matrix, right_hand_side)
+    retained = jnp.linalg.solve(condensed.schur[0], condensed.right_hand_side[0])[
+        None, ...
+    ]
+    solution = plan.reconstruct(retained, condensed)
+
+    assert condensed.right_hand_side.shape == (1, 2, 2)
+    assert solution.shape == right_hand_side.shape
+    assert jnp.allclose(matrix[0] @ solution[0], right_hand_side[0])
+
+
 def test_sparse_assembly_handles_canonical_algebraic_graphs_and_weighted_adjoint():
     weights = jnp.asarray([2.0, 3.0, 5.0])
     space = la.ArraySpace(
@@ -456,6 +472,70 @@ def test_sparse_assembly_refresh_reuses_structure_and_rejects_pattern_changes():
                 jnp.asarray([7.0, 11.0, 13.0, 17.0, 19.0]),
             ),
         )
+
+
+def test_sparse_assembly_refresh_uses_current_numeric_property_evidence():
+    space = la.ArraySpace((2,), dtype=jnp.float64)
+    relation = phx.sparse.EdgeRelation(
+        jnp.asarray([0, 1]),
+        jnp.asarray([0, 1]),
+        source_size=2,
+        target_size=2,
+    )
+    positive = la.OperatorProperties(
+        self_adjoint=True,
+        positive_definite=True,
+        evidence={
+            "self_adjoint": "construction",
+            "positive_definite": "construction",
+        },
+    )
+    indefinite = la.OperatorProperties(
+        self_adjoint=True,
+        evidence={"self_adjoint": "construction"},
+    )
+    initial = phx.sparse.SparseCoordinateOperator(
+        relation,
+        jnp.asarray([2.0, 3.0]),
+        source=space,
+        target=space,
+        properties=positive,
+    )
+    refreshed_operator = phx.sparse.SparseCoordinateOperator(
+        relation,
+        jnp.asarray([-2.0, -3.0]),
+        source=space,
+        target=space,
+        properties=indefinite,
+    )
+    prepared = la.prepare_sparse_assembly(la.plan_sparse_assembly(initial), initial)
+
+    refreshed = la.refresh_sparse_assembly(prepared, refreshed_operator)
+
+    assert prepared.operator.properties.certifies("positive_definite")
+    assert not refreshed.operator.properties.positive_definite
+    assert refreshed.operator.properties.certifies("self_adjoint")
+
+
+def test_spineax_storage_rejects_complex_values_before_provider_analysis():
+    from phydrax.linalg.backends._spineax import _storage
+
+    space = la.ArraySpace((2,), dtype=jnp.complex128)
+    relation = phx.sparse.EdgeRelation(
+        jnp.asarray([0, 1]),
+        jnp.asarray([0, 1]),
+        source_size=2,
+        target_size=2,
+    )
+    operator = phx.sparse.SparseCoordinateOperator(
+        relation,
+        jnp.asarray([1.0 + 0.0j, 2.0 + 0.0j]),
+        source=space,
+        target=space,
+    )
+
+    with pytest.raises(ValueError, match="real-valued CSR"):
+        _storage(la.LinearSystem(operator))
 
 
 def test_sparse_assembly_dense_fallback_is_explicit_and_resource_bounded():

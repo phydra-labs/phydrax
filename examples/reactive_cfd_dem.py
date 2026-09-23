@@ -149,7 +149,9 @@ result = phx.solver.advance_reactive_cfd_dem_window(
     jnp.asarray(0.0),
     jnp.asarray(1.0e-5),
 )
-print(f"successful={bool(result.successful)}")
+if not bool(result.successful):
+    raise RuntimeError("Reactive CFD-DEM window failed")
+print("successful=True")
 print(
     f"momentum_residual={float(jnp.linalg.norm(result.evaluation.momentum_residual)):.6e}"
 )

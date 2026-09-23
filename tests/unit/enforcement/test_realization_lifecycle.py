@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax.conditions import (
     ArrayCodomain,
     Condition,
@@ -9,10 +10,15 @@ from phydrax.conditions import (
     MatrixLinearFunctional,
     ProductFieldSpec,
 )
+from phydrax.domain import Boundary, Interval1d
 from phydrax.enforcement import (
     CallerRealizationSource,
+    commit_enforcement_step,
     commit_refresh,
     ConditionEvaluationContext,
+    EnforcementProgram,
+    EnforcementSpec,
+    EnforcementState,
     FixedRealizationSource,
     propose_refresh,
     RealizationLifecyclePhase,
@@ -67,3 +73,21 @@ def test_missing_required_caller_source_fails_without_candidate_values():
     state = commit_refresh(None, proposal, validation)
     assert state.phase is RealizationLifecyclePhase.FAILED
     assert not state.values
+
+
+def test_local_enforcement_step_is_a_changed_transaction():
+    domain = Interval1d(0.0, 1.0)
+    field = domain.Function("x")(lambda x: x[0])
+    boundary = domain.component({"x": Boundary()})
+    program = EnforcementProgram.build(
+        functions={"u": field},
+        specs=(EnforcementSpec(phx.conditions.Dirichlet("u", boundary, target=1.0)),),
+        num_reference=16,
+    )
+    state = EnforcementState({"u": field})
+
+    prepared = program.prepare_step({"u": field}, state=state)
+    committed = commit_enforcement_step(state, prepared)
+
+    assert prepared.status is RealizationStatus.SUCCESS
+    assert committed.generation == state.generation + 1

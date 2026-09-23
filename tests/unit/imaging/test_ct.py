@@ -6,6 +6,7 @@ from phydrax.imaging._ct import (
     apply_hu_calibration,
     HUCalibrationAnchor,
     HUToMaterialCalibration,
+    HUToMaterialResult,
 )
 
 
@@ -113,3 +114,13 @@ def test_hu_calibration_preserves_support_and_material_basis_order():
 def test_hu_calibration_refuses_values_outside_closed_support():
     with pytest.raises(ValueError, match="clamping and extrapolation are not permitted"):
         apply_hu_calibration(_asset((-1000.0, 1000.1)), _calibration())
+
+
+def test_hu_material_result_rejects_unrelated_calibration_identity():
+    calibrated = apply_hu_calibration(_asset((0.0,)), _calibration())
+    with pytest.raises(ValueError, match="calibration_id"):
+        HUToMaterialResult(
+            calibrated.density,
+            calibrated.material_fractions,
+            "unrelated-calibration",
+        )

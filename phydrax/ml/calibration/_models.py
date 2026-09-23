@@ -17,6 +17,7 @@ from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
+    _protocol_model,
     AbstractRecipe,
     DecisionFunctionModel,
     FitResult,
@@ -1123,10 +1124,11 @@ class SmoothIsotonicCalibrationRecipe(AbstractRecipe):
 
 
 def _base_logits(model: AbstractArrayModel, x: Any) -> Array:
-    if isinstance(model, DecisionFunctionModel):
-        return model.decision_function(x)
-    if isinstance(model, LogProbabilityModel):
-        return model.predict_log_proba(x)
+    protocol_model = _protocol_model(model)
+    if isinstance(protocol_model, DecisionFunctionModel):
+        return protocol_model.decision_function(x)
+    if isinstance(protocol_model, LogProbabilityModel):
+        return protocol_model.predict_log_proba(x)
     probability = model(x)
     return jnp.log(jnp.maximum(probability, jnp.finfo(probability.dtype).tiny))
 
@@ -1187,8 +1189,9 @@ class CalibratedClassifierModel(AbstractArrayModel):
             x,
             _flat_input_size(self.calibration_model, "CalibratedClassifierModel"),
         )
-        if isinstance(self.calibration_model, DecisionFunctionModel):
-            return self.calibration_model.decision_function(logits)
+        protocol_model = _protocol_model(self.calibration_model)
+        if isinstance(protocol_model, DecisionFunctionModel):
+            return protocol_model.decision_function(logits)
         return jnp.log(
             jnp.maximum(self.calibration_model(logits), jnp.finfo(logits.dtype).tiny)
         )

@@ -379,14 +379,17 @@ state-dependent, so its `log_prob` implements both directions and the existing
 
 `VariationalMonteCarloProblem` combines the amplitude, any local operator, fixed
 `MetropolisHastings` kernel, initial chains, and explicit complex-parameter mode. The
-default full target remains `2 * log_abs`. A model with prepared local updates may
-instead provide a model-to-`IncrementalMarkovTarget` factory and a stable factory
-identity. `solve_variational_monte_carlo` preserves walker positions and semantic
-transition addresses while rebinding values and caches to every frozen model; a cache
-from pre-update parameters is never reused as current. It uses the shared training
-lifecycle, builds the score as a `JacobianLinearOperator`, the centered
-stochastic-reconfiguration metric as `EmpiricalGramLinearOperator`, and solves through
-`phydrax.linalg`; it does not materialize a sample-by-parameter Jacobian.
+default full target is an explicit `FullMarkovTarget` for `2 * log_abs`, bound to the
+problem's stable target identity; it is not a raw callable with an inferred identity.
+A model with prepared local updates may instead provide a
+model-to-`IncrementalMarkovTarget` factory and a stable factory identity.
+`solve_variational_monte_carlo` preserves walker positions and semantic transition
+addresses while rebinding values and caches to every frozen model; a cache from
+pre-update parameters is never reused as current.
+It uses the shared training lifecycle, builds the score as a
+`JacobianLinearOperator`, the centered stochastic-reconfiguration metric as
+`EmpiricalGramLinearOperator`, and solves through `phydrax.linalg`; it does not
+materialize a sample-by-parameter Jacobian.
 
 The parameter modes are `real`, `holomorphic`, and `nonholomorphic` (independent
 real coordinates for complex parameters). `FiniteSignedPermutationSymmetry` and

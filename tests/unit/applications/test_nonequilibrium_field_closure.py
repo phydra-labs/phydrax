@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -26,6 +27,20 @@ def test_closed_time_path_and_free_keldysh_identities():
         jnp.sin(0.2 * frequencies) / frequencies,
     )
     np.testing.assert_allclose(functions.retarded[jnp.triu_indices(11, 1)], 0.0, atol=0.0)
+
+
+def test_fermionic_keldysh_rejects_pauli_forbidden_density():
+    grid = nef.ClosedTimePathPlan(
+        jnp.linspace(0.0, 1.0, 3), maximum_two_point_elements=100
+    ).prepare()
+    propagators = jnp.broadcast_to(jnp.eye(2), (3, 2, 2))
+    with pytest.raises(eqx.EquinoxRuntimeError, match="eigenvalues"):
+        nef.fermionic_keldysh_from_propagators(
+            grid,
+            propagators,
+            2.0 * jnp.eye(2),
+            source_id="pauli-forbidden",
+        )
 
 
 def test_finite_kadanoff_baym_memory_is_causal_and_free_energy_is_conserved():

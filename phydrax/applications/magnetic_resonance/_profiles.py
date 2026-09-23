@@ -49,6 +49,11 @@ class ExactSingleCrystalEPRProfile(StrictModule):
         )
         if electron_count != 1:
             raise ValueError("The EPR profile requires exactly one electron spin site.")
+        if any(
+            site.isotope.particle_kind not in ("electron", "nucleus")
+            for site in system.sites
+        ):
+            raise ValueError("The EPR profile accepts electron and nuclear sites only.")
         sites = {site.site_id: site for site in system.sites}
         for interaction in system.interactions:
             if isinstance(interaction, HyperfineCoupling):

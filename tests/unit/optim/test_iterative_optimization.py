@@ -415,3 +415,28 @@ def test_scipy_minimize_accepts_fused_explicit_host_gradients():
             args=target,
             method=phx.optim.ProjectedLBFGS(),
         )
+
+
+def test_newton_krylov_backtracking_uses_only_remaining_evaluation_budget():
+    method = phx.optim.NewtonKrylov()
+    parameters = jnp.asarray([2.0])
+    state = method.init(parameters)
+    state = eqx.tree_at(
+        lambda current: current.objective_evaluations,
+        state,
+        jnp.asarray(1, dtype=jnp.int32),
+    )
+    _, next_state, _ = method.step(
+        lambda value: jnp.sum(value**4),
+        parameters,
+        state,
+        termination=phx.optim.OptimizationTermination(
+            absolute_optimality=0.0,
+            relative_optimality=0.0,
+            maximum_steps=10,
+            maximum_evaluations=2,
+        ),
+    )
+
+    assert int(next_state.objective_evaluations) == 2
+    assert not bool(next_state.metrics.accepted)

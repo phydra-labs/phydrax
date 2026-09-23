@@ -93,8 +93,7 @@ def test_scenario_evaluation_reduction_and_reweighting_preserve_meaning():
         jnp.asarray((0.5, 0.25, 0.25)),
         jnp.asarray((0.0, 1.0)),
         jnp.ones((3, 2), dtype="bool"),
-        "physical",
-        "factors",
+        _physical(),
         "returns",
         "sample-a",
     )
@@ -112,6 +111,13 @@ def test_scenario_evaluation_reduction_and_reweighting_preserve_meaning():
         numeric_id="sample-reweighted",
     )
     np.testing.assert_allclose(reweighted.scenarios.weights, jnp.asarray((0.4, 0.4, 0.2)))
+    zeroed = reweight_scenarios(
+        scenarios,
+        jnp.asarray((1.0, 0.0, 1.0)),
+        numeric_id="sample-zero-support",
+    )
+    np.testing.assert_allclose(zeroed.scenarios.weights, jnp.asarray((2 / 3, 1 / 3, 0.0)))
+    assert zeroed.scenarios.scenario_active.tolist() == [True, True, False]
 
 
 def test_stress_law_is_distinct_and_pnl_explanation_reconciles():

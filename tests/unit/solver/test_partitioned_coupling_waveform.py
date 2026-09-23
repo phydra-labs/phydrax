@@ -171,7 +171,7 @@ def test_waveform_fixed_point_and_jit_certify_every_canonical_sample():
 
 def test_fixed_grid_subcycling_adapter_samples_each_substep_endpoint():
     waveform_plan = cpl.CouplingWaveformPlan(
-        3, 1, (0.0, 0.5, 1.0), plan_id="subcycle-grid"
+        4, 1, (0.0, 0.5, 1.0), plan_id="subcycle-grid"
     )
     grid = waveform_plan.initial_grid()
     space = phx.linalg.ArraySpace((1,), dtype=jnp.float64, space_id="subcycle-scalar")
@@ -218,7 +218,7 @@ def test_fixed_grid_subcycling_adapter_samples_each_substep_endpoint():
     assert bool(result.successful)
     assert int(result.work) == 2
     assert jnp.allclose(result.candidate_state, 1.0)
-    assert jnp.allclose(result.outputs[0].values[:, 0], jnp.asarray([0.0, 0.5, 1.0]))
+    assert jnp.allclose(result.outputs[0].values[:, 0], jnp.asarray([0.0, 0.5, 1.0, 1.0]))
 
 
 def test_fixed_grid_subcycling_stops_work_after_the_first_failed_substep():
@@ -479,11 +479,17 @@ def test_coupling_epoch_transition_is_explicit_and_atomic():
         prepared,
         ("a-epoch-0", "b-epoch-0"),
         ("waveform-capacity-0",),
+        participant_epoch_codes=(0, 0),
+        waveform_required_samples=(2, 2),
+        topology_code=0,
     )
     target_epoch = cpl.PreparedCouplingEpoch(
         prepared,
         ("a-epoch-1", "b-epoch-1"),
         ("waveform-capacity-1",),
+        participant_epoch_codes=(1, 1),
+        waveform_required_samples=(3, 3),
+        topology_code=1,
     )
     request = cpl.CouplingTopologyRequest(
         True,
@@ -559,3 +565,50 @@ def test_coupling_epoch_transition_is_explicit_and_atomic():
     assert not ignored.successful
     assert ignored.epoch.epoch_id == current_epoch.epoch_id
     assert ignored.state is prepared.reference_state
+
+
+def test_coupling_epoch_transition_rejects_stale_request_contract():
+    graph, states, values = _waveform_graph()
+    prepared = cpl.prepare_coupling(
+        graph, states, values, policy=_waveform_fixed_point_policy()
+    )
+    current = cpl.PreparedCouplingEpoch(
+        prepared,
+        ("a-0", "b-0"),
+        ("wave-0",),
+        participant_epoch_codes=(0, 0),
+        waveform_required_samples=(2, 2),
+        topology_code=0,
+    )
+    target = cpl.PreparedCouplingEpoch(
+        prepared,
+        ("a-1", "b-1"),
+        ("wave-1",),
+        participant_epoch_codes=(1, 1),
+        waveform_required_samples=(3, 3),
+        topology_code=1,
+    )
+    identity = cpl.IdentityCouplingEpochTransfer()
+    transition = cpl.CouplingEpochTransitionPlan(
+        (identity, identity),
+        (identity, identity),
+        (),
+        (),
+        source_subsystem_ids=prepared.reference_state.subsystem_ids,
+        target_subsystem_ids=prepared.reference_state.subsystem_ids,
+        source_exchange_ids=prepared.reference_state.exchange_ids,
+        target_exchange_ids=prepared.reference_state.exchange_ids,
+        transition_id="stale-request",
+    )
+    stale = cpl.CouplingTopologyRequest(True, (1, 0), (3, 3), 1)
+    result = cpl.transition_coupling_epoch(
+        current,
+        prepared.reference_state,
+        target,
+        transition,
+        stale,
+        accepted_window=True,
+    )
+    assert not result.successful
+    assert result.epoch.epoch_id == current.epoch_id
+    assert result.state is prepared.reference_state

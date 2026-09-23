@@ -312,3 +312,16 @@ def test_probability_current_divergence_is_fokker_planck_operator():
         forward.func(point),
         -phx.operators.div(current, var="x").func(point),
     )
+
+
+def test_probability_density_products_count_all_coord_separable_axes():
+    density = _square_function(lambda x: 1.0 + x[0] ** 2 + x[1] ** 2)
+    drift = _square_function(lambda x: jnp.asarray([1.0, -0.5]))
+    x_axis = jnp.linspace(-0.5, 0.5, 3)
+    y_axis = jnp.linspace(-0.25, 0.25, 4)
+
+    current = phx.operators.probability_current(density, drift)
+    forward = phx.operators.fokker_planck_operator(density, drift)
+
+    assert current.func((x_axis, y_axis)).shape == (3, 4, 2)
+    assert forward.func((x_axis, y_axis)).shape == (3, 4)

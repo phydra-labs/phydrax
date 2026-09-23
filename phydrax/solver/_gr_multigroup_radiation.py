@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -182,12 +183,17 @@ class FixedGridGRMultigroupM1SSPRK3Plan(StrictModule, NonTrainableState):
             jnp.where(accepted, end, state.time),
             state.accepted_steps + accepted.astype(jnp.int32),
         )
+        projection_geometry = (
+            stage_geometries[-1]
+            if bool(jax.device_get(accepted))
+            else stage_geometries[0]
+        )
         local = (
             accepted_moments
-            / stage_geometries[-1].cell.sqrt_det_spatial_metric[..., None, None]
+            / projection_geometry.cell.sqrt_det_spatial_metric[..., None, None]
         )
         projection = self.system.stress_energy_projection(
-            self.system.flatten_groups(local), stage_geometries[-1].cell
+            self.system.flatten_groups(local), projection_geometry.cell
         )
         finite = jnp.all(jnp.stack(tuple(value.finite for value in group_results)))
         physical = jnp.all(

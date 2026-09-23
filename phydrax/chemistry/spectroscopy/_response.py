@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...units import UnitDefinition
+from ...units import ANGLE, DIMENSIONLESS, ENERGY, FREQUENCY, LENGTH, TIME, UnitDefinition
 
 
 class SpectralResponseConvention(StrEnum):
@@ -142,6 +142,23 @@ class SpectralResponseProduct(StrictModule, NonTrainableState):
             or not parent_id
         ):
             raise ValueError("Spectral response metadata are invalid.")
+        spectral_dimensions = {
+            ENERGY,
+            FREQUENCY,
+            ANGLE / TIME,
+            DIMENSIONLESS / LENGTH,
+        }
+        if coordinate_unit.dimension not in spectral_dimensions:
+            raise ValueError(
+                "Spectral coordinate units must be energy, frequency, angular frequency, or inverse length."
+            )
+        if (
+            response_unit.dimension != DIMENSIONLESS
+            and response_unit.reference_system_id != coordinate_unit.reference_system_id
+        ):
+            raise ValueError(
+                "Spectral coordinate and response units must share a reference system."
+            )
         if bool(jnp.any(~jnp.isfinite(coordinate))) or bool(
             jnp.any(~jnp.isfinite(response))
         ):

@@ -107,10 +107,9 @@ class MPMRunSupervisor:
         )
 
     def advance(self, step_size: Any):
-        if self.status in (
-            MPMOperationalStatus.FAILED,
-            MPMOperationalStatus.QUARANTINED,
-            MPMOperationalStatus.RELEASED,
+        if self.status not in (
+            MPMOperationalStatus.PREPARED,
+            MPMOperationalStatus.RUNNING,
         ):
             raise RuntimeError(f"Supervisor cannot advance from {self.status.name}.")
         self.status = MPMOperationalStatus.RUNNING
@@ -211,8 +210,11 @@ class MPMRunSupervisor:
         return state
 
     def complete(self):
-        if self.status == MPMOperationalStatus.FAILED:
-            raise RuntimeError("Failed MPM run cannot be marked complete.")
+        if self.status not in (
+            MPMOperationalStatus.PREPARED,
+            MPMOperationalStatus.RUNNING,
+        ):
+            raise RuntimeError(f"MPM run cannot be completed from {self.status.name}.")
         self.status = MPMOperationalStatus.COMPLETED
         self._event("completed")
 

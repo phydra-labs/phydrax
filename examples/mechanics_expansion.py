@@ -72,10 +72,12 @@ def main():
         rod, rod.initialize_state()
     )
 
-    print("planar step successful:", bool(step.successful))
+    if not bool(step.successful & friction.successful[0] & rod_evaluation.valid):
+        raise RuntimeError("Expanded mechanics step, friction, or rod evidence failed")
+    print("planar step successful:", True)
     print("prismatic coordinate:", float(coordinates.prismatic_position[0]))
-    print("friction cone successful:", bool(friction.successful[0]))
-    print("rod evaluation valid:", bool(rod_evaluation.valid))
+    print("friction cone successful:", True)
+    print("rod evaluation valid:", True)
     print("rod rest energy:", float(rod_evaluation.potential_energy))
 
 

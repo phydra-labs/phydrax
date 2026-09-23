@@ -145,8 +145,24 @@ class BoundaryIntegralVorticityFluxPlan2D(StrictModule, NonTrainableState):
         ):
             raise TypeError("Wall transfer requires flux result and transfer plan.")
         result = transfer.transfer(pool, self.geometry, flux.vortex_sheet_strength)
-        return eqx.tree_at(
-            lambda value: value.successful, result, result.successful & flux.successful
+        successful = result.successful & flux.successful
+        accepted = WallVortexPoolState(
+            jnp.where(successful, result.candidate.position, pool.position),
+            jnp.where(successful, result.candidate.circulation, pool.circulation),
+            jnp.where(successful, result.candidate.core_radius, pool.core_radius),
+            jnp.where(successful, result.candidate.active, pool.active),
+            jnp.where(successful, result.candidate.next_event_id, pool.next_event_id),
+        )
+        zero = jnp.asarray(0.0, dtype=result.emitted_circulation.dtype)
+        return BoundarySheetParticleTransferResult(
+            result.candidate,
+            accepted,
+            jnp.where(successful, result.emitted_circulation, zero),
+            jnp.where(successful, result.circulation_residual, zero),
+            result.overflow_count,
+            result.clearance_minimum,
+            successful,
+            result.transfer_id,
         )
 
 

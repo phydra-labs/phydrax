@@ -16,10 +16,13 @@ from ..._strict import StrictModule
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
+    DecisionFunctionModel,
     FitResult,
     GradientContract,
     ML_NONFINITE,
     ML_SUCCESS,
+    PredictionModel,
+    ProbabilityModel,
 )
 from ._splits import (
     _require_key,
@@ -48,6 +51,8 @@ class _WeightedScoreResult(_ScoreResult, Protocol):
 
 @runtime_checkable
 class _Scorer(Protocol):
+    response_method: str
+
     def score(
         self,
         predictions: Any,
@@ -184,40 +189,97 @@ def _validation_mask(batch: MLBatch, /) -> Any:
 
 
 def _call_scorer(scorer: Any, predictions: Any, batch: MLBatch, /) -> ScoreRecord:
-    targets = batch.require_targets()
-    if isinstance(scorer, _Scorer):
-        result = scorer.score(
-            predictions,
-            targets,
-            sample_weight=batch.sample_weight,
-            mask=_validation_mask(batch),
+    if not isinstance(scorer, _Scorer):
+        raise TypeError(
+            "scorer must implement the explicit scorer protocol; wrap target-first "
+            "metric callables in FunctionScorer."
         )
-    elif callable(scorer):
-        result = scorer(
-            predictions,
-            targets,
-            sample_weight=batch.sample_weight,
-            mask=_validation_mask(batch),
-        )
-    else:
-        raise TypeError("scorer must be callable or expose a callable score method.")
+    result = scorer.score(
+        predictions,
+        batch.require_targets(),
+        sample_weight=batch.sample_weight,
+        mask=_validation_mask(batch),
+    )
     return _normalize_score(result)
 
 
-def _predict(fit_result: FitResult, batch: MLBatch, /, *, key: Any) -> Any:
+def _named_response(
+    response: Callable[[Any], Any],
+    features: Any,
+    /,
+    *,
+    batch_mode: str,
+) -> Any:
+    if batch_mode == "blockwise":
+        return response(features)
+    array = jnp.asarray(features)
+    if array.ndim < 1:
+        raise ValueError("Pointwise scorer responses require a final feature axis.")
+    leading = array.shape[:-1]
+    flat = array.reshape((-1, array.shape[-1]))
+    mapped = jax.vmap(response)(flat)
+    return jnp.asarray(mapped).reshape(leading + tuple(mapped.shape[1:]))
+
+
+def _predict(
+    fit_result: FitResult,
+    batch: MLBatch,
+    scorer: _Scorer,
+    /,
+    *,
+    key: Any,
+) -> Any:
     model = fit_result.as_trainable()
     binding = model.input_binding()
     if binding.batch_mode == "axis":
         raise NotImplementedError(
             "Axis-bound models cannot be scored from an MLBatch without a named-axis domain."
         )
-    return binding.call(
-        model,
-        batch.features,
-        key=key,
-        iter_=None,
-        kwargs={},
-    )
+    match scorer.response_method:
+        case "call":
+            return binding.call(
+                model,
+                batch.features,
+                key=key,
+                iter_=None,
+                kwargs={},
+            )
+        case "predict":
+            if not isinstance(model, PredictionModel):
+                raise TypeError(
+                    f"{type(model).__name__} does not provide the requested predict response."
+                )
+            return _named_response(
+                model.predict,
+                batch.features,
+                batch_mode=binding.batch_mode,
+            )
+        case "predict_proba":
+            if not isinstance(model, ProbabilityModel):
+                raise TypeError(
+                    f"{type(model).__name__} does not provide the requested "
+                    "predict_proba response."
+                )
+            return _named_response(
+                model.predict_proba,
+                batch.features,
+                batch_mode=binding.batch_mode,
+            )
+        case "decision_function":
+            if not isinstance(model, DecisionFunctionModel):
+                raise TypeError(
+                    f"{type(model).__name__} does not provide the requested "
+                    "decision_function response."
+                )
+            return _named_response(
+                model.decision_function,
+                batch.features,
+                batch_mode=binding.batch_mode,
+            )
+        case _:
+            raise ValueError(
+                f"Unsupported scorer response method {scorer.response_method!r}."
+            )
 
 
 class FoldEvaluation(StrictModule):
@@ -418,6 +480,15 @@ def _cross_validate_materialized(
             "cross-validation requires an unfitted AbstractRecipe; fitted models and "
             "preprocessed estimators are rejected to prevent leakage."
         )
+    if not recipe.is_fresh_fit:
+        raise ValueError(
+            "cross-validation requires a fresh-fit recipe without learned prior state."
+        )
+    if not isinstance(scorer, _Scorer):
+        raise TypeError(
+            "scorer must implement the explicit scorer protocol; wrap target-first "
+            "metric callables in FunctionScorer."
+        )
     if not isinstance(batch, MLBatch):
         raise TypeError("batch must be an MLBatch.")
     if not isinstance(split_result, SplitPlanResult):
@@ -432,7 +503,7 @@ def _cross_validate_materialized(
         fit_result = recipe.fit_batch(train_batch, key=fit_key)
         if not isinstance(fit_result, FitResult):
             raise TypeError("Recipe.fit_batch must return a FitResult.")
-        predictions = _predict(fit_result, validation_batch, key=prediction_key)
+        predictions = _predict(fit_result, validation_batch, scorer, key=prediction_key)
         score = _call_scorer(scorer, predictions, validation_batch)
         evaluations.append(
             FoldEvaluation(

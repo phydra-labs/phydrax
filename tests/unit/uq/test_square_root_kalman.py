@@ -204,6 +204,33 @@ def test_regular_filter_and_rts_match_covariance_form_with_provenance():
     assert square_root_smoother.execution_method == "sequential"
 
 
+def test_square_root_smoother_starts_each_case_at_its_last_active_step():
+    step_valid = jnp.asarray(
+        [[True, True, True, True], [True, True, True, False]],
+        dtype=jnp.bool_,
+    )
+    problem = _problem(case_shape=(2,), step_valid=step_valid)
+    covariance = phx.uq.kalman_filter(
+        problem,
+        method="sequential",
+        covariance_form="covariance",
+    )
+    square_root = phx.uq.kalman_filter(
+        problem,
+        method="sequential",
+        covariance_form="square_root",
+    )
+    expected = phx.uq.rts_smoother(covariance, covariance_form="covariance")
+    actual = phx.uq.rts_smoother(square_root, covariance_form="square_root")
+
+    assert jnp.array_equal(actual.valid, step_valid)
+    assert jnp.allclose(
+        actual.means[step_valid],
+        expected.means[step_valid],
+        atol=3e-5,
+    )
+
+
 def test_square_root_smoother_propagates_factor_diagnostics_backward():
     result = phx.uq.kalman_filter(
         _problem(),

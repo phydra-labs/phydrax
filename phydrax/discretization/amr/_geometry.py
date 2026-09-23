@@ -22,6 +22,34 @@ from ._variable import VariablePatchHierarchyTopology
 
 
 CoordinateMap = Callable[[Array, Array, object], Array]
+_INT32_MAX = np.iinfo(np.int32).max
+
+
+def _validated_revision(value: ArrayLike, /) -> Array:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError("Patch geometry revision must be a scalar signed integer.")
+    if isinstance(value, (int, np.integer)):
+        integer = int(value)
+        if integer < 0 or integer > _INT32_MAX:
+            raise ValueError(
+                "Patch geometry revision must be nonnegative and representable as int32."
+            )
+    elif isinstance(value, np.ndarray):
+        if value.shape != () or value.dtype.kind != "i":
+            raise ValueError("Patch geometry revision must be a scalar signed integer.")
+        integer = int(value.item())
+        if integer < 0 or integer > _INT32_MAX:
+            raise ValueError(
+                "Patch geometry revision must be nonnegative and representable as int32."
+            )
+    revision = jnp.asarray(value)
+    if revision.shape != () or revision.dtype.kind != "i":
+        raise ValueError("Patch geometry revision must be a scalar signed integer.")
+    return eqx.error_if(
+        revision,
+        (revision < 0) | (revision > _INT32_MAX),
+        "Patch geometry revision must be nonnegative and representable as int32.",
+    ).astype(jnp.int32)
 
 
 def _corners(vertices: Array, dimension: int, /) -> Array:
@@ -352,9 +380,9 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
         revision: ArrayLike = 0,
     ) -> VariablePatchGeometryState:
         time_ = jnp.asarray(time)
-        revision_ = jnp.asarray(revision, dtype=jnp.int32)
-        if time_.shape != () or revision_.shape != ():
-            raise ValueError("Patch geometry time and revision must be scalar.")
+        revision_ = _validated_revision(revision)
+        if time_.shape != ():
+            raise ValueError("Patch geometry time must be scalar.")
         vertices_by_level = []
         centers_by_level = []
         volumes_by_level = []

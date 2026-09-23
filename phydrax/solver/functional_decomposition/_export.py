@@ -20,11 +20,11 @@ from ..._model._structure import deserialize_model_leaf, serialize_model_leaf
 from ..._strict import StrictModule
 from ..._trainable import is_non_trainable_leaf
 from ..._training_checkpoint import (
+    _open_verified_state,
     _prune_state_files,
     _publish_manifest,
     _publish_state,
     _read_manifest,
-    _verify_state,
 )
 from ...domain import (
     broken_field,
@@ -282,14 +282,17 @@ def load_decomposition_artifact(
         raise ValueError("Deployment cover identity mismatch.")
     if manifest["assembly"] != artifact_like.assembly:
         raise ValueError("Deployment assembly mismatch.")
-    state_path = source / manifest["state_file"]
-    _verify_state(state_path, manifest["state_sha256"])
-    return eqx.tree_deserialise_leaves(
-        state_path,
-        artifact_like,
-        filter_spec=deserialize_model_leaf,
-        is_leaf=is_non_trainable_leaf,
-    )
+    with _open_verified_state(
+        source,
+        manifest["state_file"],
+        manifest["state_sha256"],
+    ) as state_stream:
+        return eqx.tree_deserialise_leaves(
+            state_stream,
+            artifact_like,
+            filter_spec=deserialize_model_leaf,
+            is_leaf=is_non_trainable_leaf,
+        )
 
 
 __all__ = [

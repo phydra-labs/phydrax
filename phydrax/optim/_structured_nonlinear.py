@@ -953,6 +953,7 @@ class StructuredNonlinearResult(StrictModule):
     work: StructuredOptimizationWork
     numeric_version: Array
     structure_id: str = eqx.field(static=True)
+    numeric_binding_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
@@ -965,6 +966,7 @@ class StructuredNonlinearResult(StrictModule):
         *,
         numeric_version: Any,
         structure_id: str,
+        numeric_binding_id: str,
         method_id: str,
     ):
         if not isinstance(optimization, MinimizationResult):
@@ -974,6 +976,7 @@ class StructuredNonlinearResult(StrictModule):
         if not isinstance(work, StructuredOptimizationWork):
             raise TypeError("work must be StructuredOptimizationWork.")
         structure = _identifier(structure_id, "structure_id")
+        numeric_binding = _identifier(numeric_binding_id, "numeric_binding_id")
         method = _identifier(method_id, "method_id")
         if warm_start.structure_id != structure:
             raise ValueError("Warm-start structure does not match result structure.")
@@ -990,11 +993,13 @@ class StructuredNonlinearResult(StrictModule):
         self.work = work
         self.numeric_version = version
         self.structure_id = structure
+        self.numeric_binding_id = numeric_binding
         self.method_id = method
         self.result_id = canonical_fingerprint(
             {
                 "kind": "structured-nonlinear-result",
                 "structure": structure,
+                "numeric_binding": numeric_binding,
                 "method": method,
                 "warm_start": warm_start.warm_start_id,
             }

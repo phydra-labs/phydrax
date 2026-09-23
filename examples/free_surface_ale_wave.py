@@ -48,8 +48,10 @@ def run():
     view = phx.applications.hydrodynamics.free_surface_diagnostic_view(
         hydrodynamics, result.accepted_state
     )
+    if not bool(result.successful):
+        raise RuntimeError("Free-surface ALE step failed")
     return {
-        "successful": bool(result.successful),
+        "successful": True,
         "maximum_eta": float(jnp.max(jnp.abs(view.eta))),
         "volume_change": float(result.accepted_state.ledger.volume_change),
         "divergence_residual": float(result.accepted_state.ledger.divergence_residual),

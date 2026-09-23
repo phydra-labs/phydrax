@@ -8,11 +8,15 @@ from collections.abc import Callable, Sequence
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._probability import _event_axes, _leading_shape
+from .._strict import StrictModule
+from ._jump import AbstractJumpProcess
 from ._process import AbstractPathwiseTransition
 from ._state_space import (
     AbstractTransitionKernel,
@@ -38,17 +42,17 @@ def _name(value: str, /, *, owner: str) -> str:
     return value
 
 
-def _interval(
-    t0: ArrayLike, t1: ArrayLike, /
-) -> tuple[Array, Array, tuple[float, float]]:
+def _interval(t0: ArrayLike, t1: ArrayLike, /) -> tuple[Array, Array]:
     start = jnp.asarray(t0, dtype=jnp.float64)
     end = jnp.asarray(t1, dtype=jnp.float64)
     if start.shape != () or end.shape != ():
         raise ValueError("Transition solver times must be scalar.")
-    support = (float(start), float(end))
-    if not np.isfinite(support).all() or not support[1] > support[0]:
-        raise ValueError("Transition solver times require finite t1 > t0.")
-    return start, end, support
+    end = eqx.error_if(
+        end,
+        ~(jnp.isfinite(start) & jnp.isfinite(end) & (end > start)),
+        "Transition solver times require finite t1 > t0.",
+    )
+    return start, end
 
 
 def _array_interval(t0: ArrayLike, t1: ArrayLike, /) -> tuple[Array, Array]:
@@ -62,6 +66,94 @@ def _array_interval(t0: ArrayLike, t1: ArrayLike, /) -> tuple[Array, Array]:
         "Transition solver times require finite t1 > t0.",
     )
     return start, end
+
+
+class _NormalizedDrift(StrictModule):
+    function: Callable = eqx.field(static=True)
+    start: Array
+    duration: Array
+
+    def __call__(self, time, state, args):
+        physical_time = self.start + self.duration * time
+        return self.duration * jnp.asarray(self.function(physical_time, state, args))
+
+
+class _NormalizedWienerCoefficient(StrictModule):
+    coefficient: Callable = eqx.field(static=True)
+    start: Array
+    duration: Array
+
+    def __call__(self, time, state, args):
+        physical_time = self.start + self.duration * time
+        return jnp.sqrt(self.duration) * self.coefficient(physical_time, state, args)
+
+
+class _NormalizedJumpProcess(AbstractJumpProcess):
+    process: AbstractJumpProcess
+    start: Array
+    duration: Array
+    state_shape: tuple[int, ...] = eqx.field(static=True)
+    num_channels: int = eqx.field(static=True)
+    mark_shape: tuple[int, ...] = eqx.field(static=True)
+    process_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        process: AbstractJumpProcess,
+        start: Array,
+        duration: Array,
+        /,
+    ):
+        self.process = process
+        self.start = start
+        self.duration = duration
+        self.state_shape = process.state_shape
+        self.num_channels = process.num_channels
+        self.mark_shape = process.mark_shape
+        self.process_id = process.process_id
+
+    def _physical_time(self, time: ArrayLike, /) -> Array:
+        return self.start + self.duration * jnp.asarray(time)
+
+    def intensities(self, time, state, args=None, /):
+        return self.duration * self.process.intensities(
+            self._physical_time(time),
+            state,
+            args,
+        )
+
+    def jump(self, state, channel, mark, args=None, /):
+        return self.process.jump(state, channel, mark, args)
+
+    def sample_mark(self, key, time, state, channel, args=None, /):
+        return self.process.sample_mark(
+            key,
+            self._physical_time(time),
+            state,
+            channel,
+            args,
+        )
+
+
+def _normalized_wiener_terms(
+    terms: tuple[Any, ...],
+    start: Array,
+    duration: Array,
+    /,
+) -> tuple[Any, ...]:
+    from ..solver import WienerTerm
+
+    return tuple(
+        WienerTerm(
+            term.name,
+            _NormalizedWienerCoefficient(term.coefficient, start, duration),
+            term.noise_shape,
+            structure=term.structure,
+            basis_id=term.basis_id,
+            representation=term.representation,
+        )
+        for term in terms
+    )
 
 
 def _transition_sample(
@@ -94,71 +186,50 @@ def _input_controller(
     rtol: float,
     atol: float,
 ) -> tuple[Any, Array | None]:
-    """Force solver steps across every declared exogenous-input breakpoint."""
+    """Map physical input breakpoints onto one normalized solver interval."""
     import diffrax as dfx
 
-    breakpoint_mask = np.asarray(context.input_breakpoint_valid, dtype=np.bool_)
-    if not np.any(breakpoint_mask):
-        return controller, dt0
-    breakpoints = np.asarray(context.input_breakpoints, dtype=np.float64)[breakpoint_mask]
+    duration = end - start
+    normalized_dt0 = None if dt0 is None else dt0 / duration
+    resolved = controller
+    if isinstance(resolved, dfx.StepTo):
+        raise ValueError(
+            "Dynamic solver transitions do not support StepTo; use an adaptive "
+            "or constant-step controller."
+        )
+    if context.input_signal is None:
+        return resolved, normalized_dt0
+
+    if resolved is None:
+        resolved = (
+            dfx.ConstantStepSize()
+            if stochastic
+            else dfx.PIDController(rtol=rtol, atol=atol)
+        )
+    breakpoints = (context.input_breakpoints - start) / duration
+    breakpoint_mask = context.input_breakpoint_valid
+    safe_breakpoints = jnp.where(breakpoint_mask, breakpoints, jnp.inf)
     signal = context.input_signal
     discontinuous = (
         isinstance(signal, SampledStateSpaceInput)
         and signal.interpolation == "zero-order-hold"
     )
-
-    resolved = controller
-    if resolved is None and not stochastic:
-        resolved = dfx.PIDController(rtol=rtol, atol=atol)
-    if isinstance(resolved, dfx.AbstractAdaptiveStepSizeController):
-        return (
-            dfx.ClipStepSizeController(
-                resolved,
-                jump_ts=breakpoints if discontinuous else None,
-                step_ts=None if discontinuous else breakpoints,
-            ),
-            dt0,
-        )
-
-    if resolved is None:
-        resolved = dfx.ConstantStepSize()
-    if isinstance(resolved, dfx.StepTo):
-        base_times = np.asarray(resolved.ts, dtype=np.float64)
-    elif isinstance(resolved, dfx.ConstantStepSize):
-        if dt0 is None:
-            raise ValueError(
-                "Fixed-step input breakpoints require an explicit transition dt0."
-            )
-        start_value = float(start)
-        end_value = float(end)
-        step = abs(float(dt0))
-        step_count = int(np.ceil((end_value - start_value) / step))
-        base_times = np.linspace(start_value, end_value, step_count + 1)
-    else:
-        raise TypeError(
-            "Input breakpoints require an adaptive, ConstantStepSize, or StepTo transition controller."
-        )
-
     if discontinuous:
-        breakpoint_steps = np.concatenate(
+        safe_breakpoints = jnp.concatenate(
             (
-                np.nextafter(breakpoints, -np.inf),
-                np.nextafter(breakpoints, np.inf),
+                jnp.nextafter(safe_breakpoints, -jnp.inf),
+                jnp.nextafter(safe_breakpoints, jnp.inf),
             )
         )
-    else:
-        breakpoint_steps = breakpoints
-    schedule = np.unique(
-        np.concatenate(
-            (
-                base_times,
-                breakpoint_steps,
-                np.asarray([float(start), float(end)]),
-            )
-        )
+    safe_breakpoints = jax.lax.stop_gradient(safe_breakpoints)
+    return (
+        dfx.ClipStepSizeController(
+            resolved,
+            jump_ts=safe_breakpoints if discontinuous else None,
+            step_ts=None if discontinuous else safe_breakpoints,
+        ),
+        normalized_dt0,
     )
-    schedule = schedule[(schedule >= float(start)) & (schedule <= float(end))]
-    return dfx.StepTo(ts=jnp.asarray(schedule, dtype=start.dtype)), None
 
 
 class DifferentialTransitionKernel(AbstractTransitionKernel):
@@ -247,7 +318,10 @@ class DifferentialTransitionKernel(AbstractTransitionKernel):
             raise ValueError(
                 f"state must have shape {self.state_shape}; got {state_array.shape}."
             )
-        start, end, support = _interval(t0, t1)
+        start, end = _interval(t0, t1)
+        duration = end - start
+        normalized_start = jnp.zeros_like(start)
+        normalized_end = jnp.ones_like(end)
         controller, dt0 = _input_controller(
             context,
             self.stepsize_controller,
@@ -259,29 +333,36 @@ class DifferentialTransitionKernel(AbstractTransitionKernel):
             atol=self.atol,
         )
         problem = DifferentialProblem(
-            self.drift,
+            _NormalizedDrift(self.drift, start, duration),
             state_array,
-            t0=start,
-            t1=end,
+            t0=normalized_start,
+            t1=normalized_end,
             args=context,
-            wiener_terms=self.wiener_terms,
+            wiener_terms=_normalized_wiener_terms(
+                self.wiener_terms,
+                start,
+                duration,
+            ),
             interpretation=self.interpretation,
+            problem_id=f"{self.process_id}:normalized-transition",
         )
         realization = (
             WienerRealization(
                 key,
                 problem.noise_shape,
-                support=support,
+                support=(0.0, 1.0),
                 tolerance=self.wiener_tolerance,
                 noise_id=problem.noise_id,
                 label=f"{self.process_id}:transition",
+                coupling_id=f"{self.process_id}:normalized-transition",
+                _realization_id=f"{self.process_id}:normalized-transition",
             )
             if problem.stochastic
             else None
         )
         solution = solve_diffrax(
             problem,
-            save_times=jnp.asarray([end]),
+            save_times=jnp.asarray([normalized_end]),
             realization=realization,
             solver=self.solver,
             stepsize_controller=controller,
@@ -362,30 +443,41 @@ class JumpTransitionKernel(AbstractTransitionKernel):
             raise ValueError(
                 f"state must have shape {self.state_shape}; got {state_array.shape}."
             )
-        start, end, support = _interval(t0, t1)
+        start, end = _interval(t0, t1)
+        duration = end - start
+        normalized_start = jnp.zeros_like(start)
+        normalized_end = jnp.ones_like(end)
+        process = _NormalizedJumpProcess(self.process, start, duration)
         realization = PoissonClockRealization(
             key,
-            self.process.num_channels,
-            support=support,
+            process.num_channels,
+            support=(0.0, 1.0),
             max_events_per_channel=self.max_events_per_channel,
             process_id=self.process_id,
             label=f"{self.process_id}:transition",
+            coupling_id=f"{self.process_id}:normalized-transition",
+            _realization_id=f"{self.process_id}:normalized-transition",
         )
         solve = (
             solve_next_reaction if self.algorithm == "next_reaction" else solve_direct_ssa
         )
         solution = solve(
-            self.process,
+            process,
             realization,
             state_array,
-            t0=start,
-            t1=end,
-            save_times=jnp.asarray([end]),
+            t0=normalized_start,
+            t1=normalized_end,
+            save_times=jnp.asarray([normalized_end]),
             args=context,
             max_events=self.max_events,
         )
         values = solution.states[-1]
-        valid = solution.valid[-1] & solution.successful & jnp.all(jnp.isfinite(values))
+        valid = (
+            context.input_valid
+            & solution.valid[-1]
+            & solution.successful
+            & jnp.all(jnp.isfinite(values))
+        )
         return _transition_sample(
             values,
             valid,
@@ -515,7 +607,10 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
             raise ValueError(
                 f"state must have shape {self.state_shape}; got {state_array.shape}."
             )
-        start, end, support = _interval(t0, t1)
+        start, end = _interval(t0, t1)
+        duration = end - start
+        normalized_start = jnp.zeros_like(start)
+        normalized_end = jnp.ones_like(end)
         controller, dt0 = _input_controller(
             context,
             self.stepsize_controller,
@@ -527,34 +622,46 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
             atol=self.atol,
         )
         differential = DifferentialProblem(
-            self.drift,
+            _NormalizedDrift(self.drift, start, duration),
             state_array,
-            t0=start,
-            t1=end,
+            t0=normalized_start,
+            t1=normalized_end,
             args=context,
-            wiener_terms=self.wiener_terms,
+            wiener_terms=_normalized_wiener_terms(
+                self.wiener_terms,
+                start,
+                duration,
+            ),
             interpretation=self.interpretation,
+            problem_id=f"{self.process_id}:normalized-transition",
         )
+        jump_process = _NormalizedJumpProcess(self.jump_process, start, duration)
         problem = JumpDifferentialProblem(
-            differential, self.jump_process, process_id=self.process_id
+            differential,
+            jump_process,
+            process_id=self.process_id,
         )
         poisson_key, wiener_key = jr.split(key)
         poisson = PoissonClockRealization(
             poisson_key,
-            self.jump_process.num_channels,
-            support=support,
+            jump_process.num_channels,
+            support=(0.0, 1.0),
             max_events_per_channel=self.max_events_per_channel,
-            process_id=self.jump_process.process_id,
+            process_id=jump_process.process_id,
             label=f"{self.process_id}:jump-transition",
+            coupling_id=f"{self.process_id}:normalized-jump-transition",
+            _realization_id=f"{self.process_id}:normalized-jump-transition",
         )
         wiener = (
             WienerRealization(
                 wiener_key,
                 differential.noise_shape,
-                support=support,
+                support=(0.0, 1.0),
                 tolerance=self.wiener_tolerance,
                 noise_id=differential.noise_id,
                 label=f"{self.process_id}:wiener-transition",
+                coupling_id=f"{self.process_id}:normalized-wiener-transition",
+                _realization_id=f"{self.process_id}:normalized-wiener-transition",
             )
             if differential.stochastic
             else None
@@ -562,7 +669,7 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
         solution = solve_jump_differential(
             problem,
             poisson,
-            save_times=jnp.asarray([start, end]),
+            save_times=jnp.asarray([normalized_start, normalized_end]),
             wiener_realization=wiener,
             solver=self.solver,
             stepsize_controller=controller,
@@ -626,12 +733,11 @@ class FiniteStateTransitionKernel(AbstractTransitionKernel):
 
     def _indices(self, state: ArrayLike, /) -> tuple[Array, Array, tuple[int, ...]]:
         values = jnp.asarray(state)
-        if (
-            values.ndim < len(self.state_shape)
-            or tuple(values.shape[-len(self.state_shape) :]) != self.state_shape
-        ):
-            raise ValueError("state has an incompatible trailing state shape.")
-        batch_shape = values.shape[: -len(self.state_shape)]
+        batch_shape = _leading_shape(
+            values.shape,
+            self.state_shape,
+            owner="finite-state transition state",
+        )
         flat = values.reshape((-1,) + self.state_shape)
         state_axes = tuple(range(2, 2 + len(self.state_shape)))
         matches = jnp.all(
@@ -724,13 +830,23 @@ class PathwiseTransitionKernel(AbstractTransitionKernel):
 
     def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
         state_array = jnp.asarray(state)
-        if tuple(state_array.shape[-len(self.state_shape) :]) != self.state_shape:
-            raise ValueError("state has an incompatible trailing state shape.")
+        batch_shape = _leading_shape(
+            state_array.shape,
+            self.state_shape,
+            owner="pathwise transition state",
+        )
         driver = jnp.asarray(
             self.driver_sampler(key, jnp.asarray(t0), jnp.asarray(t1), context)
         )
-        if tuple(driver.shape[-len(self.law.driver_shape) :]) != self.law.driver_shape:
-            raise ValueError("driver_sampler returned an incompatible driver shape.")
+        driver_batch_shape = _leading_shape(
+            driver.shape,
+            self.law.driver_shape,
+            owner="pathwise transition driver",
+        )
+        if driver_batch_shape != batch_shape:
+            raise ValueError(
+                "driver_sampler batch shape must match the transition state batch shape."
+            )
         values = jnp.asarray(
             self.law.pathwise_transition(
                 state_array,
@@ -739,7 +855,16 @@ class PathwiseTransitionKernel(AbstractTransitionKernel):
                 driver_increment=driver,
             )
         )
-        valid = jnp.all(jnp.isfinite(values))
+        value_batch_shape = _leading_shape(
+            values.shape,
+            self.state_shape,
+            owner="pathwise transition result",
+        )
+        if value_batch_shape != batch_shape:
+            raise ValueError("pathwise_transition must preserve the state batch shape.")
+        finite = jnp.isfinite(values)
+        axes = _event_axes(values.ndim, self.state_shape)
+        valid = finite if not axes else jnp.all(finite, axis=axes)
         return _transition_sample(
             values,
             valid,

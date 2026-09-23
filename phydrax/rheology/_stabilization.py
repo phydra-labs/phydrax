@@ -15,11 +15,12 @@ class ConformationTransformResult:
 
 def log_conformation_with_status(conformation: ArrayLike, /):
     values, vectors = jnp.linalg.eigh(jnp.asarray(conformation))
-    positive = jnp.all(values > 0)
-    safe = jnp.where(positive, values, 1.0)
+    positive = jnp.all(jnp.isfinite(values) & (values > 0), axis=-1)
+    safe = jnp.where(positive[..., None], values, 1.0)
     result = (vectors * jnp.log(safe)[..., None, :]) @ jnp.swapaxes(vectors, -1, -2)
     return ConformationTransformResult(
-        jnp.where(positive, result, jnp.zeros_like(result)), positive
+        jnp.where(positive[..., None, None], result, jnp.zeros_like(result)),
+        positive,
     )
 
 

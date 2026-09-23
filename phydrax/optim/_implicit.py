@@ -269,6 +269,11 @@ def implicit_least_squares(
         raise TypeError("termination must be an OptimizationTermination or None.")
     if not isinstance(policy, LinearSolvePolicy):
         raise TypeError("linear_policy must be a LinearSolvePolicy or None.")
+    if problem.bounds is not None:
+        raise ValueError(
+            "implicit_least_squares supports only unconstrained problems; "
+            "use a constrained KKT sensitivity path for bounded problems."
+        )
     initial = _validate_real_inexact_tree(
         initial_parameters,
         name="initial_parameters",

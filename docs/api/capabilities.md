@@ -4,7 +4,7 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `edd1efe539519f3b0b597adff1bf086ee195a72be869de4e26711cf87423cca6`
+Catalog ID: `5952379b4ccdc26e0950ad3beede095fb1c148f6169d87faada49052462fe921`
 
 ## Dispositions
 
@@ -12,7 +12,7 @@ Catalog ID: `edd1efe539519f3b0b597adff1bf086ee195a72be869de4e26711cf87423cca6`
 | --- | ---: |
 | released | 0 |
 | candidate | 201 |
-| research | 166 |
+| research | 167 |
 | internal | 5 |
 | retired | 0 |
 
@@ -81,6 +81,7 @@ Catalog ID: `edd1efe539519f3b0b597adff1bf086ee195a72be869de4e26711cf87423cca6`
 | `application.porous-media` | `phydrax.applications.porous_media` | research | application-research | 0 |
 | `application.power` | `phydrax.applications.power` | research | application-research | 0 |
 | `application.protein-folding` | `phydrax.applications.protein_folding` | research | application-research | 0 |
+| `application.quantum-hall` | `phydrax.applications.quantum_hall` | research | application-research | 0 |
 | `application.radiation-biophysics` | `phydrax.applications.radiation_biophysics` | research | application-research | 0 |
 | `application.radiation-transport` | `phydrax.applications.radiation_transport` | research | application-research | 0 |
 | `application.reacting-flow` | `phydrax.applications.reacting_flow` | research | application-research | 0 |

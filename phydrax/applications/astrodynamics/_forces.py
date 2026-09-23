@@ -11,7 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...dynamics import ContinuousSystem
 from ._context import AstrodynamicsContext
@@ -65,18 +65,20 @@ class PointMassGravity(AbstractAstrodynamicsForce):
     ):
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
-        coupling = jnp.asarray(mu).reshape(())
-        self.mu = coupling
+        coupling_host = jnp.asarray(mu).reshape(())
+        self.mu = coupling_host
         self.context = context
-        generated = canonical_fingerprint(
+        declared = None if force_id is None else str(force_id).strip()
+        if declared == "":
+            raise ValueError("force_id must be non-empty when supplied.")
+        self.force_id = canonical_fingerprint(
             {
                 "kind": "point-mass-gravity",
+                "declared_id": declared,
                 "context": context.context_id,
+                "mu": array_tree_fingerprint(coupling_host),
             }
         )
-        self.force_id = generated if force_id is None else str(force_id)
-        if not self.force_id:
-            raise ValueError("force_id must be non-empty.")
 
     def evaluate(self, time, state, args=None, /) -> AstrodynamicsForceEvaluation:
         del time, args

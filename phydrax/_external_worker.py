@@ -27,6 +27,7 @@ from typing import Any
 
 
 _DEFAULT_BYTES = 64 * 1024 * 1024
+_ERROR_PACKET_BYTES = 8 * 1024
 
 
 def _relative_path(name: str) -> str:
@@ -75,12 +76,78 @@ def _package_identity(distribution: str, expected_version: str | None) -> dict[s
     }
 
 
-def _send_packet(connection: socket.socket, value: Any) -> None:
-    data = json.dumps(value, allow_nan=False, separators=(",", ":")).encode()
+def _validate_packet(value: Any, maximum: int, /) -> None:
+    if type(maximum) is not int or maximum <= 0:
+        raise ValueError("External runtime message limit must be a positive integer.")
+    maximum_nodes = min(maximum, 1_000_000)
+    nodes = 0
+    text_bytes = 0
+    pending = [(value, 0)]
+    while pending:
+        item, depth = pending.pop()
+        nodes += 1
+        if nodes > maximum_nodes:
+            raise ValueError("External runtime response exceeds its cardinality limit.")
+        if depth > 64:
+            raise ValueError("External runtime response exceeds its nesting limit.")
+        if item is None or isinstance(item, bool):
+            continue
+        if isinstance(item, int):
+            if item.bit_length() > maximum * 3:
+                raise ValueError("External runtime integer exceeds its message limit.")
+            continue
+        if isinstance(item, float):
+            if not math.isfinite(item):
+                raise ValueError("External runtime response contains a non-finite value.")
+            continue
+        if isinstance(item, str):
+            text_bytes += len(item.encode("utf-8"))
+            if text_bytes > maximum:
+                raise ValueError("External runtime text exceeds its message limit.")
+            continue
+        if isinstance(item, Mapping):
+            if len(item) > maximum_nodes - nodes:
+                raise ValueError(
+                    "External runtime response exceeds its cardinality limit."
+                )
+            for key, child in item.items():
+                if not isinstance(key, str):
+                    raise TypeError("External runtime response keys must be strings.")
+                pending.append((key, depth + 1))
+                pending.append((child, depth + 1))
+            continue
+        if isinstance(item, (list, tuple)):
+            if len(item) > maximum_nodes - nodes:
+                raise ValueError(
+                    "External runtime response exceeds its cardinality limit."
+                )
+            pending.extend((child, depth + 1) for child in item)
+            continue
+        raise TypeError(
+            f"External runtime response contains unsupported {type(item).__name__}."
+        )
+
+
+def _send_packet(
+    connection: socket.socket, value: Any, maximum: int = _DEFAULT_BYTES
+) -> None:
+    _validate_packet(value, maximum)
+    data = bytearray()
+    encoder = json.JSONEncoder(allow_nan=False, separators=(",", ":"), ensure_ascii=False)
+    for text in encoder.iterencode(value):
+        chunk = text.encode("utf-8")
+        if len(data) > maximum - len(chunk):
+            raise ValueError("External runtime response exceeds the message limit.")
+        data.extend(chunk)
     connection.sendall(struct.pack("!Q", len(data)) + data)
 
 
-def _receive_packet(connection: socket.socket, maximum: int) -> Any:
+def _receive_packet(
+    connection: socket.socket,
+    maximum: int,
+    *,
+    include_size: bool = False,
+) -> Any:
     timeout = connection.gettimeout()
     deadline = None if timeout is None else time.monotonic() + timeout
 
@@ -101,7 +168,8 @@ def _receive_packet(connection: socket.socket, maximum: int) -> Any:
     length = struct.unpack("!Q", receive(8))[0]
     if length > maximum:
         raise ValueError("External runtime response exceeds the message limit.")
-    return json.loads(receive(length))
+    payload = json.loads(receive(length))
+    return (payload, length) if include_size else payload
 
 
 def _archive_members(
@@ -142,8 +210,14 @@ def _worker_main(descriptor: int) -> None:
     """Child-only dispatch. Native imports and mutable vendor handles stay here."""
     connection = socket.socket(fileno=descriptor)
     handler = None
+    maximum_response_bytes = _DEFAULT_BYTES
     try:
         request = _receive_packet(connection, _DEFAULT_BYTES)
+        maximum_response_bytes = request["maximum_response_bytes"]
+        if type(maximum_response_bytes) is not int or maximum_response_bytes <= 0:
+            raise ValueError(
+                "External runtime response limit must be a positive integer."
+            )
         payload = request["payload"]
         kind = payload["kind"]
         if kind == "fmi":
@@ -154,21 +228,52 @@ def _worker_main(descriptor: int) -> None:
             handler = _OpenDSSWorker()
         else:
             raise ValueError(f"Unknown runtime kind {kind!r}.")
-        _send_packet(connection, {"ok": True, "value": handler.open(payload["config"])})
+        _send_packet(
+            connection,
+            {"ok": True, "value": handler.open(payload["config"])},
+            maximum_response_bytes,
+        )
         while True:
             request = _receive_packet(connection, _DEFAULT_BYTES)
+            if request["maximum_response_bytes"] != maximum_response_bytes:
+                raise ValueError(
+                    "External runtime response limit changed during the session."
+                )
             operation = request["operation"]
             if operation == "close":
                 handler.close()
                 handler = None
-                _send_packet(connection, {"ok": True, "value": None})
+                _send_packet(
+                    connection,
+                    {"ok": True, "value": None},
+                    maximum_response_bytes,
+                )
                 break
-            result = handler.call(operation, request["payload"])
-            _send_packet(connection, {"ok": True, "value": result})
+            operation_payload = request["payload"]
+            if kind == "opendss":
+                expected_limits = {
+                    "max_bytes": maximum_response_bytes,
+                    "max_items": max(1, min(1_000_000, maximum_response_bytes // 16)),
+                }
+                if operation_payload.get("response_limits") != expected_limits:
+                    raise ValueError(
+                        "OpenDSS response limits differ from the transport budget."
+                    )
+            result = handler.call(operation, operation_payload)
+            _send_packet(
+                connection,
+                {"ok": True, "value": result},
+                maximum_response_bytes,
+            )
     except BaseException as failure:
-        # Exceptions are detached as text, never pickled vendor objects.
+        # Exceptions are detached as bounded text, never pickled vendor objects.
+        error = f"{type(failure).__name__}: {failure}"
+        if len(error.encode("utf-8")) > 4096:
+            error = error.encode("utf-8")[:4096].decode("utf-8", errors="ignore")
         _send_packet(
-            connection, {"ok": False, "error": f"{type(failure).__name__}: {failure}"}
+            connection,
+            {"ok": False, "error": error},
+            _ERROR_PACKET_BYTES,
         )
     finally:
         if handler is not None:
@@ -200,6 +305,42 @@ class _OpenDSSWorker:
     def call(self, operation: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         if operation != "run":
             raise ValueError(f"Unsupported OpenDSS operation {operation!r}.")
+        response_limits = payload["response_limits"]
+        if not isinstance(response_limits, Mapping) or set(response_limits) != {
+            "max_bytes",
+            "max_items",
+        }:
+            raise ValueError("OpenDSS response limits must be canonical.")
+        maximum_bytes = response_limits["max_bytes"]
+        maximum_items = response_limits["max_items"]
+        if (
+            type(maximum_bytes) is not int
+            or maximum_bytes <= 0
+            or type(maximum_items) is not int
+            or maximum_items <= 0
+        ):
+            raise ValueError("OpenDSS response limits must be positive integers.")
+        remaining_bytes = maximum_bytes
+        remaining_items = maximum_items
+
+        def account(items: int, bytes_: int, owner: str, /) -> None:
+            nonlocal remaining_bytes, remaining_items
+            if (
+                type(items) is not int
+                or items < 0
+                or type(bytes_) is not int
+                or bytes_ < 0
+            ):
+                raise ValueError(f"OpenDSS returned an invalid {owner} count.")
+            if items > remaining_items:
+                raise ValueError(
+                    f"OpenDSS {owner} exceeds the response cardinality limit."
+                )
+            if bytes_ > remaining_bytes:
+                raise ValueError(f"OpenDSS {owner} exceeds the response byte limit.")
+            remaining_items -= items
+            remaining_bytes -= bytes_
+
         dss = self.engine
         for command in payload["commands"]:
             dss.Text.Command(command)
@@ -208,27 +349,90 @@ class _OpenDSSWorker:
                 raise RuntimeError(f"OpenDSS error {number}: {dss.Error.Description()}")
         if dss.Basic.NumCircuits() != 1:
             raise ValueError("The command sequence must create exactly one circuit.")
+        bus_count = dss.Circuit.NumBuses()
+        node_count = dss.Circuit.NumNodes()
+        element_count = dss.Circuit.NumCktElements()
+        if any(
+            type(count) is not int or count < 0
+            for count in (bus_count, node_count, element_count)
+        ):
+            raise ValueError("OpenDSS returned invalid circuit cardinality.")
+        account(
+            bus_count + 4 * node_count + element_count + 5,
+            (3 * node_count + 4) * 32,
+            "circuit collections",
+        )
+        element_names = dss.Circuit.AllElementNames()
+        bus_names = dss.Circuit.AllBusNames()
+        node_names = dss.Circuit.AllNodeNames()
+        name_collections = (element_names, bus_names, node_names)
+        if (
+            len(element_names) != element_count
+            or len(bus_names) != bus_count
+            or len(node_names) != node_count
+            or any(
+                not isinstance(name, str) for names in name_collections for name in names
+            )
+        ):
+            raise ValueError("OpenDSS collection cardinality changed during extraction.")
+        account(
+            0,
+            sum(
+                len(name.encode("utf-8")) for names in name_collections for name in names
+            ),
+            "collection names",
+        )
+
         elements = []
-        for name in dss.Circuit.AllElementNames():
+        for name in element_names:
             dss.Circuit.SetActiveElement(name)
+            terminal_count = dss.CktElement.NumTerminals()
+            conductor_count = dss.CktElement.NumConductors()
+            if (
+                type(terminal_count) is not int
+                or terminal_count < 0
+                or type(conductor_count) is not int
+                or conductor_count < 0
+                or (
+                    terminal_count and conductor_count > remaining_items // terminal_count
+                )
+            ):
+                raise ValueError("OpenDSS returned invalid element cardinality.")
+            power_count = terminal_count * conductor_count
+            account(2 * power_count, 2 * power_count * 32, "element powers")
             powers = dss.CktElement.Powers()
+            if len(powers) != 2 * power_count:
+                raise ValueError(
+                    "OpenDSS element-power cardinality changed during extraction."
+                )
             elements.append(
                 [
                     name,
-                    dss.CktElement.NumTerminals(),
-                    dss.CktElement.NumConductors(),
+                    terminal_count,
+                    conductor_count,
                     list(zip(powers[::2], powers[1::2])),
                 ]
             )
+
         volts = dss.Circuit.AllBusVolts()
+        voltage_pu = dss.Circuit.AllBusMagPu()
+        total_power = dss.Circuit.TotalPower()
+        losses = dss.Circuit.Losses()
+        if (
+            len(volts) != 2 * node_count
+            or len(voltage_pu) != node_count
+            or len(total_power) != 2
+            or len(losses) != 2
+        ):
+            raise ValueError("OpenDSS numeric cardinality changed during extraction.")
         return {
             "converged": bool(dss.Solution.Converged()),
-            "bus_names": dss.Circuit.AllBusNames(),
-            "node_names": dss.Circuit.AllNodeNames(),
+            "bus_names": bus_names,
+            "node_names": node_names,
             "node_voltages": list(zip(volts[::2], volts[1::2])),
-            "node_voltages_pu": dss.Circuit.AllBusMagPu(),
-            "total_power": dss.Circuit.TotalPower(),
-            "losses": dss.Circuit.Losses(),
+            "node_voltages_pu": voltage_pu,
+            "total_power": total_power,
+            "losses": losses,
             "element_powers": elements,
         }
 

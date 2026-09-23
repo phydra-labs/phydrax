@@ -19,6 +19,26 @@ from ._bspline import BSplineJetStencil
 MultiIndex = tuple[int, ...]
 
 
+def _validated_multi_index(
+    value: Sequence[int],
+    dimension: int,
+    name: str,
+    /,
+) -> MultiIndex:
+    components = tuple(value)
+    if len(components) != dimension:
+        raise ValueError(f"{name} must match the parameter dimension.")
+    if any(
+        isinstance(component, bool) or not isinstance(component, Integral)
+        for component in components
+    ):
+        raise TypeError(f"{name} components must be integers.")
+    result = tuple(int(component) for component in components)
+    if any(component < 0 for component in result):
+        raise ValueError(f"{name} components must be nonnegative.")
+    return result
+
+
 def _complete_multi_indices(dimension: int, maximum_order: int) -> tuple[MultiIndex, ...]:
     def fixed_total(total: int, remaining: int) -> tuple[MultiIndex, ...]:
         if remaining == 1:
@@ -73,18 +93,20 @@ class TensorBSplineJetPlan(StrictModule):
                 raise ValueError("maximum_order must be a nonnegative integer.")
             indices = _complete_multi_indices(dimension, int(maximum_order))
         else:
-            indices = tuple(tuple(value) for value in multi_indices)
-            if not indices:
+            supplied_indices = tuple(multi_indices)
+            if not supplied_indices:
                 raise ValueError("Tensor B-spline multi_indices must be non-empty.")
-            if any(
-                len(value) != dimension or any(order < 0 for order in value)
-                for value in indices
-            ):
-                raise ValueError(
-                    "Each tensor B-spline multi-index must be nonnegative and match the parameter dimension."
+            indices = tuple(
+                _validated_multi_index(
+                    value,
+                    dimension,
+                    "Tensor B-spline multi-index",
                 )
+                for value in supplied_indices
+            )
             if len(set(indices)) != len(indices):
                 raise ValueError("Tensor B-spline multi_indices must be unique.")
+            indices = tuple(sorted(indices, key=sum))
             order_lookup = set(indices)
             for value in indices:
                 for axis, order in enumerate(value):
@@ -146,9 +168,11 @@ class TensorBSplineJetPlan(StrictModule):
 
     def basis(self, multi_index: Sequence[int], /) -> Array:
         """Materialize one local tensor basis derivative in row-major local order."""
-        derivative = tuple(multi_index)
-        if len(derivative) != self.dimension or any(order < 0 for order in derivative):
-            raise ValueError("Tensor B-spline derivative multi-index is invalid.")
+        derivative = _validated_multi_index(
+            multi_index,
+            self.dimension,
+            "Tensor B-spline derivative multi-index",
+        )
         if any(
             derivative[axis] > stencil.maximum_order
             for axis, stencil in enumerate(self.axis_stencils)

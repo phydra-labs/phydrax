@@ -5,6 +5,7 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from phydrax.applications.semiconductor._optical_response import (
     ActiveRegionOpticalProjection,
@@ -21,7 +22,10 @@ from phydrax.applications.semiconductor._traveling_wave import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+@pytest.fixture(autouse=True)
+def _double_precision():
+    with jax.enable_x64(True):
+        yield
 
 
 def test_projected_semiconductor_state_drives_replayable_reduced_laser_workflow():

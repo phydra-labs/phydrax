@@ -231,8 +231,9 @@ class JaxAdapter(BenchmarkAdapter):
     ) -> dict[str, Any]:
         del result
         return {
-            "matrix_bytes": prepared_state.matrix.nbytes,
-            "setup_bytes": 0,
+            "matrix_bytes": prepared_state.matrix.nbytes
+            + (0 if prepared_state.rhs is None else prepared_state.rhs.nbytes),
+            "setup_bytes": None,
             "peak_estimate_bytes": None,
             "evidence": (
                 "exact retained dense device input bytes; XLA temporary and output "
@@ -264,7 +265,11 @@ class JaxAdapter(BenchmarkAdapter):
 
 
 def _version_evidence() -> dict[str, str]:
-    return {"jax": importlib.metadata.version("jax")}
+    try:
+        version = importlib.metadata.version("jax")
+    except importlib.metadata.PackageNotFoundError:
+        version = "installed; distribution metadata unavailable"
+    return {"jax": version}
 
 
 __all__ = ["JaxAdapter"]

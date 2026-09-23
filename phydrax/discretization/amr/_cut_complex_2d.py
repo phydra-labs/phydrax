@@ -423,6 +423,8 @@ class MultivaluedCutCell2DPlan(StrictModule, NonTrainableState):
         cut_count = 0
         multivalued_count = 0
         minimum_margin = np.inf
+        physical_aperture_counts: dict[tuple[int, tuple[int, ...], int, int], int] = {}
+        embedded_face_counts: dict[tuple[int, tuple[int, ...]], int] = {}
 
         def vertex_id(vertex: _Vertex2D) -> int:
             if vertex.key not in global_vertices:
@@ -564,6 +566,26 @@ class MultivaluedCutCell2DPlan(StrictModule, NonTrainableState):
                 ]
                 if any(edge.kind == _FACE_INTERNAL for edge in shell):
                     raise ValueError("2-D cut component has unresolved internal edge.")
+                cell_key = (level_index, cell_coordinate)
+                for edge in shell:
+                    if edge.kind == _FACE_PHYSICAL:
+                        aperture_key = cell_key + (edge.axis, edge.side)
+                        aperture_count = physical_aperture_counts.get(aperture_key, 0) + 1
+                        if aperture_count > self.resources.maximum_apertures_per_face:
+                            raise ValueError(
+                                "2-D cut cell exceeds its local physical-face aperture capacity."
+                            )
+                        physical_aperture_counts[aperture_key] = aperture_count
+                    elif edge.kind == _FACE_EMBEDDED:
+                        embedded_count = embedded_face_counts.get(cell_key, 0) + 1
+                        if (
+                            embedded_count
+                            > self.resources.maximum_embedded_faces_per_cell
+                        ):
+                            raise ValueError(
+                                "2-D cut cell exceeds its local embedded-face capacity."
+                            )
+                        embedded_face_counts[cell_key] = embedded_count
                 component_edges.append(tuple(shell))
                 component_triangles.append(tuple(triangles))
                 levels.append(level_index)

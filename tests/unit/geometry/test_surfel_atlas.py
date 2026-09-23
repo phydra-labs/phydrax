@@ -3,6 +3,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -64,3 +65,16 @@ def test_atlas_surfel_materialization_adapts_to_marker_kinematics() -> None:
     kinematics = materialized.marker_kinematics(markers)
     np.testing.assert_allclose(kinematics.position, materialized.geometry.position)
     np.testing.assert_allclose(kinematics.velocity, materialized.velocity)
+
+
+def test_marker_materialization_rejects_out_of_range_chart_indices():
+    atlas, _, _ = _atlas_plan()
+    invalid = phx.geometry.ImmersedMarkerQuadraturePlan(
+        jnp.asarray((0,)),
+        jnp.asarray((atlas.num_charts,)),
+        jnp.asarray(((0.5,),)),
+        jnp.asarray((1.0,)),
+    )
+
+    with pytest.raises(RuntimeError, match="existing atlas charts"):
+        invalid.materialize(atlas, 0.0)

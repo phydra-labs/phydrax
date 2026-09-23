@@ -513,7 +513,11 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         runtime_assignment = self.splat.plan.assignment.update_input(
             position_, deformation, assignment_input
         )
-        routes = self.splat.build(position_, assignment_input=runtime_assignment)
+        routes = self.splat.build(
+            position_,
+            assignment_input=runtime_assignment,
+            active_mask=active,
+        )
         storage_state = self._build_storage(routes)
         valid = (
             jnp.all((~active) | self.particle_domain.contains(position_))
@@ -736,6 +740,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         routes = self.splat.build(
             state.particles.position,
             assignment_input=state.assignment_input,
+            active_mask=active,
         )
         storage_state = self._build_storage(routes, state.storage_state)
         domain_ok = jnp.all(
@@ -1046,6 +1051,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                         second_routes = self.splat.build(
                             candidate_position,
                             assignment_input=second_input,
+                            active_mask=active,
                         )
                     second_execution_routes = self._mapped_routes(
                         second_routes, storage_state

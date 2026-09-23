@@ -59,13 +59,17 @@ class PrivacyCertificate:
         sensitivity = finite_real_scalar(
             self.query_l2_sensitivity, "query_l2_sensitivity"
         )
-        planned_iterations = int(self.planned_iterations)
+        if type(self.planned_iterations) is not int:
+            raise TypeError("planned_iterations must be an integer.")
+        planned_iterations = self.planned_iterations
         if sensitivity <= 0.0:
             raise ValueError("query_l2_sensitivity must be positive.")
         if planned_iterations < self.trace.repetitions:
             raise ValueError(
                 "planned_iterations cannot be smaller than the mechanism trace."
             )
+        if type(self.qualification_released) is not bool:
+            raise TypeError("qualification_released must be a boolean.")
         profile_id = self.qualification_profile_id
         if profile_id is not None:
             profile_id = canonical_identifier(profile_id, "qualification profile ID")
@@ -75,6 +79,16 @@ class PrivacyCertificate:
             )
         if not isinstance(self.randomness, RandomnessAssurance):
             raise TypeError("randomness must be a RandomnessAssurance.")
+        expected_guarantee = account_mechanism_traces(
+            (self.trace,),
+            self.scope.definition,
+            PrivacyBudget(1.7976931348623157e308, self.guarantee.delta),
+            method=self.guarantee.accounting_method,
+        )
+        if expected_guarantee != self.guarantee:
+            raise ValueError(
+                "Privacy guarantee is not the exact native accounting result for its trace."
+            )
         object.__setattr__(self, "provider_id", provider_id)
         object.__setattr__(self, "provider_version", provider_version)
         object.__setattr__(self, "mechanism_id", mechanism_id)
@@ -157,12 +171,15 @@ class PrivacyCertificate:
             str(record["mechanism_id"]),
             str(record["mechanism_plan_id"]),
             float(record["query_l2_sensitivity"]),
-            int(record["planned_iterations"]),
+            _exact_integer(record["planned_iterations"], "planned_iterations"),
             RandomnessAssurance(str(record["randomness"])),
             None if profile_id is None else str(profile_id),
-            bool(record["qualification_released"]),
+            _exact_bool(record["qualification_released"], "qualification_released"),
         )
-        if bool(record["public_release_allowed"]) != value.public_release_allowed:
+        if (
+            _exact_bool(record["public_release_allowed"], "public_release_allowed")
+            != value.public_release_allowed
+        ):
             raise ValueError("Serialized certificate has an invalid release disposition.")
         recorded_id = record.get("certificate_id")
         if recorded_id is not None and str(recorded_id) != value.certificate_id:
@@ -212,6 +229,7 @@ class PrivacyReleaseLedger:
     budget: PrivacyBudget
     accounting_method: AccountingMethod = AccountingMethod.PLD
     receipts: tuple[PrivacyReleaseReceipt, ...] = ()
+    parent_ledger_id: str | None = None
     ledger_id: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -232,6 +250,14 @@ class PrivacyReleaseLedger:
                 != self.scope.scope_contract_id
             ):
                 raise ValueError("Every release receipt must use the ledger data scope.")
+        if self.receipts and self.parent_ledger_id is None:
+            raise ValueError(
+                "A nonempty privacy ledger requires its parent ledger identity."
+            )
+        if not self.receipts and self.parent_ledger_id is not None:
+            raise ValueError("An empty privacy ledger cannot declare a parent.")
+        if self.parent_ledger_id is not None:
+            canonical_identifier(self.parent_ledger_id, "parent ledger ID")
         if self.receipts:
             account_mechanism_traces(
                 tuple(value.certificate.trace for value in self.receipts),
@@ -275,7 +301,30 @@ class PrivacyReleaseLedger:
             self.budget,
             self.accounting_method,
             self.receipts + (receipt,),
+            self.ledger_id,
         )
+
+    def require_successor(self, previous: PrivacyReleaseLedger, /) -> None:
+        """Reject rollback, fork, or accounting regression from a persisted ledger head."""
+
+        if not isinstance(previous, PrivacyReleaseLedger):
+            raise TypeError("previous must be a PrivacyReleaseLedger.")
+        if (
+            self.scope.scope_contract_id != previous.scope.scope_contract_id
+            or self.budget != previous.budget
+            or self.accounting_method is not previous.accounting_method
+            or self.parent_ledger_id != previous.ledger_id
+            or self.receipts[:-1] != previous.receipts
+        ):
+            raise ValueError("Privacy ledger does not monotonically extend its parent.")
+        current_spent = self.spent
+        previous_spent = previous.spent
+        if previous_spent is not None and (
+            current_spent is None
+            or current_spent.delta != previous_spent.delta
+            or current_spent.epsilon + 1e-12 < previous_spent.epsilon
+        ):
+            raise ValueError("Privacy accounting cannot regress across ledger commits.")
 
     def _content_record(self) -> dict[str, object]:
         return {
@@ -283,6 +332,7 @@ class PrivacyReleaseLedger:
             "scope_contract_id": self.scope.scope_contract_id,
             "budget": self.budget.to_record(),
             "accounting_method": self.accounting_method.value,
+            "parent_ledger_id": self.parent_ledger_id,
             "receipts": [value.to_record() for value in self.receipts],
         }
 
@@ -294,7 +344,13 @@ class PrivacyReleaseLedger:
         }
 
     @classmethod
-    def from_record(cls, record: Mapping[str, Any], /) -> PrivacyReleaseLedger:
+    def from_record(
+        cls,
+        record: Mapping[str, Any],
+        /,
+        *,
+        previous: PrivacyReleaseLedger | None = None,
+    ) -> PrivacyReleaseLedger:
         _require_record(
             record,
             "privacy-release-ledger",
@@ -305,6 +361,7 @@ class PrivacyReleaseLedger:
                     "accounting_method",
                     "receipts",
                     "scope",
+                    "parent_ledger_id",
                 )
             ),
             optional=frozenset(("ledger_id",)),
@@ -312,6 +369,9 @@ class PrivacyReleaseLedger:
         scope = record["scope"]
         budget = record["budget"]
         receipts = record["receipts"]
+        parent_ledger_id = record["parent_ledger_id"]
+        if parent_ledger_id is not None and type(parent_ledger_id) is not str:
+            raise TypeError("Serialized parent ledger identity must be a string or null.")
         if not isinstance(scope, dict) or not isinstance(budget, Mapping):
             raise TypeError("Serialized ledger scope and budget must be mappings.")
         if not isinstance(receipts, list):
@@ -351,10 +411,21 @@ class PrivacyReleaseLedger:
             PrivacyBudget.from_record(budget),
             AccountingMethod(str(record["accounting_method"])),
             tuple(receipt_values),
+            parent_ledger_id,
         )
+        if record["scope_contract_id"] != value.scope.scope_contract_id:
+            raise ValueError("Serialized privacy ledger data-scope identity changed.")
         recorded_id = record.get("ledger_id")
         if recorded_id is not None and str(recorded_id) != value.ledger_id:
             raise ValueError("Serialized privacy ledger has an invalid content address.")
+        if value.receipts:
+            if previous is None:
+                raise ValueError(
+                    "Nonempty privacy ledger loading requires the exact previous head."
+                )
+            value.require_successor(previous)
+        elif previous is not None:
+            raise ValueError("Privacy ledger does not monotonically extend its parent.")
         return value
 
 
@@ -390,6 +461,18 @@ def certify_private_release(
         randomness,
         qualification_profile_id,
     )
+
+
+def _exact_bool(value: object, name: str, /) -> bool:
+    if type(value) is not bool:
+        raise TypeError(f"{name} must be a boolean.")
+    return value
+
+
+def _exact_integer(value: object, name: str, /) -> int:
+    if type(value) is not int:
+        raise TypeError(f"{name} must be an integer.")
+    return value
 
 
 __all__ = [

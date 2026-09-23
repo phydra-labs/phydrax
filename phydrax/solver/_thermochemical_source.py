@@ -141,7 +141,8 @@ class FixedWorkThermochemicalSourcePlan(StrictModule, NonTrainableState):
             species_rate = evaluation.species_amount_rate * molar_masses
             return jnp.concatenate((species_rate, evaluation.mode_energy_rate))
 
-        def one_substep(_, state):
+        def one_substep(_, carry):
+            state, maximum_residual = carry
             initial_unknown = jnp.concatenate(
                 (state[:species_count], state[system.mode_slice])
             )
@@ -177,20 +178,16 @@ class FixedWorkThermochemicalSourcePlan(StrictModule, NonTrainableState):
                 initial_unknown,
             )
             candidate = assemble(state, unknown)
-            return candidate
+            substep_residual = jnp.max(jnp.abs(residual(unknown)))
+            return candidate, jnp.maximum(maximum_residual, substep_residual)
 
-        state = jax.lax.fori_loop(0, self.substeps, one_substep, incoming)
-        final_unknown = jnp.concatenate((state[:species_count], state[system.mode_slice]))
-        initial_unknown = jnp.concatenate(
-            (incoming[:species_count], incoming[system.mode_slice])
+        state, residual_norm = jax.lax.fori_loop(
+            0,
+            self.substeps,
+            one_substep,
+            (incoming, jnp.asarray(0.0, dtype=incoming.dtype)),
         )
-        substep = step
-        residual = (
-            final_unknown
-            - initial_unknown
-            - self.substeps * substep * source(final_unknown, incoming)
-        )
-        return state, jnp.max(jnp.abs(residual))
+        return state, residual_norm
 
     def advance(
         self,

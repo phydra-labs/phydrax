@@ -531,8 +531,14 @@ class LinearLogODE(AbstractRoughSolver):
                     & jnp.all(jnp.isfinite(result.diagnostics.residual_estimate))
                 )
                 admissible_breakdown = (
-                    (result.diagnostics.breakdown_status == int(KrylovBreakdownStatus.NONE))
-                    | (result.diagnostics.breakdown_status == int(KrylovBreakdownStatus.HAPPY))
+                    (
+                        result.diagnostics.breakdown_status
+                        == int(KrylovBreakdownStatus.NONE)
+                    )
+                    | (
+                        result.diagnostics.breakdown_status
+                        == int(KrylovBreakdownStatus.HAPPY)
+                    )
                     | (
                         result.diagnostics.breakdown_status
                         == int(KrylovBreakdownStatus.RANK_DEFICIENT_START)

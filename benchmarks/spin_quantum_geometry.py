@@ -7,7 +7,12 @@ from __future__ import annotations
 import argparse
 import json
 
-from benchmarks._runtime import capture_environment, logical_array_bytes, measure_host
+from benchmarks._runtime import (
+    capture_environment,
+    logical_array_bytes,
+    measure_host,
+    measure_synchronized,
+)
 from phydrax.applications import spin_foam, spin_network
 from phydrax.operators.quantum.lattice import SU2SectorResourcePolicy
 
@@ -44,7 +49,7 @@ def benchmark_case(twice_spin: int, quadrature_order: int):
             tolerance=1e-10,
         )
     )
-    booster, booster_seconds = measure_host(
+    booster, booster_seconds = measure_synchronized(
         lambda: spin_foam.evaluate_zero_spin_b4_booster(booster_plan)
     )
     return {
@@ -89,19 +94,24 @@ def main() -> None:
         or arguments.quadrature_order < 16
     ):
         raise ValueError("Spin/booster benchmark axes are invalid.")
+    cases = [
+        benchmark_case(value, arguments.quadrature_order)
+        for value in arguments.twice_spins
+    ]
     payload = {
         "environment": capture_environment().to_dict(),
-        "cases": [
-            benchmark_case(value, arguments.quadrature_order)
-            for value in arguments.twice_spins
-        ],
+        "cases": cases,
+        "passed": all(case["successful"] for case in cases),
     }
-    encoded = json.dumps(payload, indent=2, sort_keys=True)
+    encoded = json.dumps(payload, allow_nan=False, indent=2, sort_keys=True)
     if arguments.output:
-        with open(arguments.output, "w", encoding="utf-8") as stream:
-            stream.write(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
     else:
         print(encoded)
+    if not payload["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -967,6 +967,14 @@ def _state_space_gp_status(
 
 def state_space_gaussian_process_status_name(value: int, /) -> str:
     code = int(value)
+    if code == 10:
+        return "laplace_curvature_failure"
+    if code == 11:
+        return "laplace_site_failure"
+    if code == 12:
+        return "laplace_convergence_failure"
+    if code == 13:
+        return "laplace_gaussian_failure"
     if code == STATE_SPACE_GP_SMOOTHER_FAILURE:
         return "smoother_failure"
     return kalman_status_name(code)

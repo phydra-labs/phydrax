@@ -65,3 +65,25 @@ def test_canonicalization_preserves_state_and_precision():
     assert evidence.valid
     assert jnp.allclose(canonical.to_dense(), state.to_dense() / state.norm())
     assert canonical.precision.policy_id == state.precision.policy_id
+
+
+def test_chain_tensors_reject_zero_physical_and_auxiliary_dimensions():
+    with pytest.raises(ValueError, match="positive"):
+        tn.MatrixProductState((jnp.empty((1, 0, 1)),))
+    with pytest.raises(ValueError, match="positive"):
+        tn.MatrixProductOperator((jnp.empty((1, 2, 0, 1)),))
+    with pytest.raises(ValueError, match="positive"):
+        tn.LocallyPurifiedDensity((jnp.empty((1, 2, 0, 1)),))
+    with pytest.raises(ValueError, match="positive"):
+        tn.UniformMatrixProductState((jnp.empty((1, 0, 1)),))
+
+
+def test_canonical_evidence_requires_residuals_within_tolerance():
+    evidence = tn.MPSCanonicalEvidence(
+        jnp.asarray([1e-2]),
+        jnp.asarray([0.0]),
+        jnp.asarray(1.0),
+        center=0,
+        tolerance=1e-6,
+    )
+    assert not evidence.valid

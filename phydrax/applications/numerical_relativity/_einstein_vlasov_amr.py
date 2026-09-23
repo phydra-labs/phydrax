@@ -777,6 +777,7 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
         *,
         writer_id: str,
         attempt_id: str | None = None,
+        parent_manifest: CheckpointManifest | None = None,
     ) -> ProcessCheckpointPublication:
         restart_state, payload = self._encoded(state, route)
         return publish_distributed_numerical_relativity_checkpoint(
@@ -786,6 +787,7 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
             writer_id=writer_id,
             runtime_args=payload,
             attempt_id=attempt_id,
+            parent_manifest=parent_manifest,
         )
 
     def assemble(
@@ -795,7 +797,7 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
         /,
         *,
         expected_process_count: int,
-        parent_checkpoint_id: str | None = None,
+        parent_manifest: CheckpointManifest | None = None,
         diagnostic_ids: Sequence[str] = (),
     ) -> CheckpointManifest:
         return assemble_distributed_numerical_relativity_checkpoint(
@@ -803,7 +805,7 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
             self.numerical_relativity,
             publications,
             expected_process_count=expected_process_count,
-            parent_checkpoint_id=parent_checkpoint_id,
+            parent_manifest=parent_manifest,
             diagnostic_ids=diagnostic_ids,
         )
 
@@ -816,6 +818,7 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
         /,
         *,
         target_placement_id: str | None = None,
+        parent_manifest: CheckpointManifest | None = None,
     ) -> EinsteinVlasovCheckpointRestore:
         placement = (
             self.placement_id
@@ -831,6 +834,7 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
             self.numerical_relativity,
             restart_template,
             runtime_args_template=payload_template,
+            parent_manifest=parent_manifest,
         )
         return self._decode(
             restored,

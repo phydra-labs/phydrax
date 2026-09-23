@@ -123,7 +123,7 @@ def _slice_support(support, start: int, stop: int | None):
             sample_times=None
             if support.sample_times is None
             else support.sample_times[selection],
-            time_unit_id=support.time_unit_id,
+            time_unit=support.time_unit,
             active_mask=support.active_mask[selection],
         )
     if isinstance(support, RaySampleSupport):
@@ -135,7 +135,7 @@ def _slice_support(support, start: int, stop: int | None):
             sample_times=None
             if support.sample_times is None
             else support.sample_times[selection],
-            time_unit_id=support.time_unit_id,
+            time_unit=support.time_unit,
             active_mask=support.active_mask[selection],
             near=support.near[selection],
             far=support.far[selection],

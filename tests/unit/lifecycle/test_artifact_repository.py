@@ -500,6 +500,40 @@ def test_active_lease_and_legal_hold_pin_tombstoned_artifact(
         repository.get_manifest("checkpoint-a")
 
 
+def test_posix_repository_rejects_symlinked_ancestors_and_replaced_layout(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked_parent = tmp_path / "linked-parent"
+    linked_parent.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="real directories"):
+        POSIXArtifactRepository(linked_parent / "repository", _posix_policy())
+
+    root = tmp_path / "repository"
+    repository = POSIXArtifactRepository(root, _posix_policy())
+    (root / "locks" / "repository.lock").unlink()
+    (root / "locks").rmdir()
+    (root / "locks").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(RepositoryCorruptionError, match="layout"):
+        repository.begin("checkpoint", "writer", started_at=1)
+
+    second_root = tmp_path / "repository-replaced"
+    second = POSIXArtifactRepository(second_root, _posix_policy("posix.replaced"))
+    transaction, chunk = _stage(
+        second,
+        "checkpoint-a",
+        "attempt-a",
+        b"state",
+        started_at=1,
+    )
+    second.commit(transaction, (chunk,), committed_at=2)
+    (second_root / "artifacts").rename(second_root / "artifacts-original")
+    (second_root / "artifacts").mkdir()
+    with pytest.raises(RepositoryCorruptionError, match="layout"):
+        second.get_manifest("checkpoint-a")
+
+
 def _support(topology: str) -> SupportTuple:
     return SupportTuple(
         "artifact.restart",

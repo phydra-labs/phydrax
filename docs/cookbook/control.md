@@ -204,11 +204,18 @@ rollout and compares each direct discrete payoff with its initial value.
 
 ## Audit and solve a nonlinear feedback game
 
-Start from one `DeterministicFeedbackGameProblem`, an identified joint
-`AffineFeedbackPolicy`, and physical scales. Keep evaluation, one-step modeling,
-and the iterative solve visible:
+Start from one `DeterministicFeedbackGameProblem`, an initial joint-control callback,
+and physical scales. Bind the callback to that exact problem before evaluation; an
+unbound generic policy is rejected. Keep evaluation, one-step modeling, and the
+iterative solve visible:
 
 ```python
+initial_policy = phx.control.games.BoundGameInputPolicy(
+    initial_policy_callback,
+    game_problem,
+    policy_id="nonlinear-game-initial-policy",
+)
+
 scaling = phx.control.games.ILQGameScaling(
     jnp.ones(game_problem.state_size),
     jnp.ones(game_problem.control_size),

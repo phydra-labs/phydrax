@@ -66,6 +66,7 @@ def test_asymmetric_workset_accepts_independent_side_widths_and_mortar_data():
         ir_semantics_id="interior-action",
         local_kernel="mortar",
         neighbor_local_widths={"u": 2},
+        neighbor_block_name="right-block",
     )
     workset = CompiledWorkset(
         signature,

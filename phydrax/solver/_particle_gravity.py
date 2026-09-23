@@ -1995,6 +1995,7 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
         self,
         position: Array,
         mass: Array,
+        active: Array,
     ) -> tuple[Array, Array, Array, Array]:
         target = position[:, None, None, :]
         source = position[None, :, None, :] + self.real_offsets[None, None, :, :]
@@ -2005,12 +2006,14 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             jnp.arange(self.real_offsets.shape[0], dtype=jnp.int32)
             == self.zero_offset_index
         )
+        active_pair = active[:, None, None] & active[None, :, None]
         self_pair = (
             jnp.eye(position.shape[0], dtype=jnp.bool_)[:, :, None]
             & zero_offset[None, None, :]
         )
+        excluded = ~active_pair | self_pair
         inverse_cube = jnp.where(
-            self_pair,
+            excluded,
             0.0,
             self._screening(distance) / distance**3,
         )
@@ -2021,10 +2024,10 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             * inverse_cube[..., None],
             axis=(1, 2),
         )
-        required = jnp.sum(~self_pair, dtype=jnp.int32)
-        capacity = jnp.asarray(
-            position.shape[0] * position.shape[0] * self.real_offsets.shape[0],
-            dtype=jnp.int32,
+        required = jnp.sum(~excluded, dtype=jnp.int32)
+        active_count = jnp.sum(active, dtype=jnp.int32)
+        capacity = (active_count * active_count * self.real_offsets.shape[0]).astype(
+            jnp.int32
         )
         return acceleration, required, capacity, jnp.asarray(False)
 
@@ -2032,6 +2035,7 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
         self,
         position: Array,
         mass: Array,
+        active: Array,
     ) -> tuple[Array, Array, Array, Array]:
         count = position.shape[0]
         capacity = (
@@ -2065,6 +2069,8 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
                 wrapped + offset,
                 wrapped,
                 self.real_cutoff,
+                source_mask=active,
+                target_mask=active,
                 source_stable_ids=identifiers,
                 target_stable_ids=identifiers,
                 exclude_self=offset_index == self.zero_offset_index,
@@ -2096,7 +2102,14 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             overflow,
         )
 
-    def evaluate(self, positions: ArrayLike, masses: ArrayLike, /) -> PeriodicEwaldResult:
+    def evaluate(
+        self,
+        positions: ArrayLike,
+        masses: ArrayLike,
+        /,
+        *,
+        active_mask: ArrayLike | None = None,
+    ) -> PeriodicEwaldResult:
         position = jnp.asarray(positions)
         mass = jnp.asarray(masses, dtype=position.dtype)
         if (
@@ -2105,20 +2118,30 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             or mass.shape != (position.shape[0],)
         ):
             raise ValueError("Periodic Ewald positions/masses have incompatible shapes.")
+        active = (
+            jnp.ones(mass.shape, dtype=jnp.bool_)
+            if active_mask is None
+            else jnp.asarray(active_mask, dtype=jnp.bool_)
+        )
+        if active.shape != mass.shape:
+            raise ValueError("Periodic Ewald active_mask must match masses.")
+        invalid = jnp.any(
+            jnp.where(active[:, None], ~jnp.isfinite(position), False)
+        ) | jnp.any(jnp.where(active, ~jnp.isfinite(mass) | (mass <= 0.0), False))
         position = eqx.error_if(
             position,
-            jnp.any(~jnp.isfinite(position))
-            | jnp.any(~jnp.isfinite(mass))
-            | jnp.any(mass <= 0.0),
-            "Periodic Ewald inputs must be finite with positive masses.",
+            invalid,
+            "Active periodic Ewald inputs must be finite with positive masses.",
         )
+        position = jnp.where(active[:, None], position, 0.0)
+        mass = jnp.where(active, mass, 0.0)
         if self.real_space_execution == "direct_shells":
             (
                 real_acceleration,
                 required_pairs,
                 pair_capacity,
                 pair_overflow,
-            ) = self._direct_real_space(position, mass)
+            ) = self._direct_real_space(position, mass, active)
             reciprocal_position = position
             real_cutoff = jnp.asarray(jnp.inf, dtype=position.dtype)
         else:
@@ -2127,7 +2150,7 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
                 required_pairs,
                 pair_capacity,
                 pair_overflow,
-            ) = self._screened_radius_real_space(position, mass)
+            ) = self._screened_radius_real_space(position, mass, active)
             reciprocal_position = jnp.mod(
                 position,
                 jnp.asarray(self.box_size, dtype=position.dtype),
@@ -2156,6 +2179,7 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             real_product,
             k,
         )
+        reciprocal_acceleration = jnp.where(active[:, None], reciprocal_acceleration, 0.0)
         acceleration = real_acceleration + reciprocal_acceleration
         acceleration = jnp.where(
             pair_overflow,
@@ -2203,7 +2227,8 @@ class PeriodicBarnesHutPlan(StrictModule, NonTrainableState):
         direct = jnp.sum(
             jnp.where(
                 (
-                    tree.active_mask[None, :]
+                    tree.active_mask[:, None]
+                    & tree.active_mask[None, :]
                     & ~jnp.eye(position.shape[0], dtype=jnp.bool_)
                 )[..., None],
                 self.barnes_hut.gravitational_constant
@@ -2214,8 +2239,14 @@ class PeriodicBarnesHutPlan(StrictModule, NonTrainableState):
             ),
             axis=1,
         )
-        periodic = self.ewald.evaluate(position, tree.masses)
-        acceleration = approximate.acceleration + periodic.acceleration - direct
+        periodic = self.ewald.evaluate(
+            position, tree.masses, active_mask=tree.active_mask
+        )
+        acceleration = jnp.where(
+            tree.active_mask[:, None],
+            approximate.acceleration + periodic.acceleration - direct,
+            0.0,
+        )
         finite = (
             approximate.successful
             & periodic.successful

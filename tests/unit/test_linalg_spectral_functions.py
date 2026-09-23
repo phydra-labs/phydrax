@@ -311,6 +311,25 @@ def test_generalized_loewner_derivative_and_density_include_metric_tangent(
     assert jnp.allclose(tangent[1], finite_difference[1], rtol=5e-6, atol=5e-7)
 
 
+def test_zeroth_power_has_an_exact_finite_zero_frechet_derivative_at_zero():
+    matrix = jnp.diag(jnp.asarray([0.0, 2.0, 5.0]))
+    perturbation = jnp.asarray([[0.2, -0.1, 0.0], [-0.1, 0.3, 0.2], [0.0, 0.2, -0.4]])
+    policy = eigen.SelfAdjointSpectralOperatorPolicy(differentiation="frechet")
+
+    def operator(current):
+        return eigen.self_adjoint_spectral_operator(
+            _standard_problem(current),
+            eigen.FractionalPowerSpectralFunction(0.0),
+            policy=policy,
+        ).operator
+
+    primal, tangent = jax.jvp(operator, (matrix,), (perturbation,))
+
+    assert jnp.allclose(primal, jnp.eye(3), atol=1e-12)
+    assert jnp.all(jnp.isfinite(tangent))
+    assert jnp.array_equal(tangent, jnp.zeros_like(tangent))
+
+
 def test_builtin_spectral_functions_match_scipy_references():
     matrix = jnp.asarray(
         [
@@ -454,4 +473,51 @@ def test_batched_spectral_functions_preserve_batch_axes_mixed_status_and_loewner
     assert jnp.array_equal(
         mixed.diagnostics.domain_valid,
         jnp.asarray([True, False]),
+    )
+
+    mixed_policy = eigen.SelfAdjointSpectralOperatorPolicy(differentiation="frechet")
+
+    def mixed_operator(matrices):
+        problem = eigen.Eigenproblem(
+            la.DenseLinearOperator(
+                matrices,
+                properties=_self_adjoint_properties(),
+            )
+        )
+        return eigen.self_adjoint_spectral_operator(
+            problem,
+            eigen.LogarithmSpectralFunction(),
+            policy=mixed_policy,
+        ).operator
+
+    _, mixed_tangent = jax.jvp(
+        mixed_operator,
+        (mixed_matrices,),
+        (perturbation,),
+    )
+    _, first_tangent = jax.jvp(
+        lambda matrix: mixed_operator(matrix[None])[0],
+        (mixed_matrices[0],),
+        (perturbation[0],),
+    )
+    assert jnp.allclose(mixed_tangent[0], first_tangent, rtol=1e-10, atol=1e-11)
+    assert jnp.linalg.norm(mixed_tangent[0]) > 0.0
+    assert jnp.array_equal(mixed_tangent[1], jnp.zeros_like(mixed_tangent[1]))
+
+    multi_axis_matrices = jnp.broadcast_to(positive, (2,) + positive.shape)
+    multi_axis_problem = eigen.Eigenproblem(
+        la.DenseLinearOperator(
+            multi_axis_matrices,
+            properties=_self_adjoint_properties(),
+        )
+    )
+    multi_axis = eigen.self_adjoint_spectral_operator(
+        multi_axis_problem,
+        eigen.PolynomialSpectralFunction(jnp.asarray([0.0, 1.0])),
+    )
+    vector = jnp.asarray([1.0, -2.0, 0.5])
+    assert multi_axis.operator.shape == (2, 2, 3, 3)
+    assert jnp.allclose(
+        multi_axis.apply_coordinates(vector),
+        multi_axis.operator @ vector,
     )

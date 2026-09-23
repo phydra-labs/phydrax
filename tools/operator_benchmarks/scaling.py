@@ -51,6 +51,17 @@ def profile_resolution_scaling(
     """Profile one parameterization over increasing query resolutions."""
     if len(evaluations) < 2:
         raise ValueError("Scaling profiles require at least two resolutions.")
+    sample_counts = tuple(
+        int(np.prod(evaluation.batch.require_single_query().sample_shape))
+        for evaluation in evaluations
+    )
+    if any(
+        following <= preceding
+        for preceding, following in zip(sample_counts, sample_counts[1:])
+    ):
+        raise ValueError(
+            "Scaling evaluation sample counts must be strictly increasing and unique."
+        )
     points = []
     for evaluation in evaluations:
         result = evaluate_operator(model, evaluation, repeats=repeats)

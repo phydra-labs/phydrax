@@ -1644,18 +1644,18 @@ class AcceptedStepTriggerGraph(StrictModule, NonTrainableState):
     ) -> tuple[Array, AcceptedStepTriggerGraphState]:
         if len(values) != len(self.triggers):
             raise ValueError("Trigger graph value count changed.")
-        fires = []
+        activities = []
         states = []
         for trigger, value, trigger_state in zip(
             self.triggers, values, state.trigger_states, strict=True
         ):
-            fire, updated = trigger.evaluate(value, trigger_state, accepted=accepted)
-            fires.append(fire)
+            _, updated = trigger.evaluate(value, trigger_state, accepted=accepted)
+            activities.append(updated.latched)
             states.append(updated)
         active = (
-            jnp.all(jnp.stack(tuple(fires)))
+            jnp.all(jnp.stack(tuple(activities)))
             if self.operation == "all"
-            else jnp.any(jnp.stack(tuple(fires)))
+            else jnp.any(jnp.stack(tuple(activities)))
         )
         counter = jnp.where(
             active,
@@ -1665,7 +1665,7 @@ class AcceptedStepTriggerGraph(StrictModule, NonTrainableState):
         fire = (
             jnp.asarray(accepted, dtype=jnp.bool_)
             & active
-            & (counter > self.debounce_steps)
+            & (counter == self.debounce_steps + 1)
         )
         proposed = AcceptedStepTriggerGraphState(
             tuple(states),

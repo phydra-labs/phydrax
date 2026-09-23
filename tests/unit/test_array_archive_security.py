@@ -45,6 +45,7 @@ def _write_raw_archive(
             "member": member,
             "shape": list(value.shape),
             "dtype": value.dtype.str,
+            "order": "C",
             "sha256": hashlib.sha256(payload).hexdigest(),
         }
     manifest = {**(metadata or {}), "arrays": inventory}

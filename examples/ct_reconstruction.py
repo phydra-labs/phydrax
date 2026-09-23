@@ -17,7 +17,7 @@ rays = phx.measurement.RaySampleSupport(
 )
 support = phx.imaging.tomography.ProjectionSupport(rays, (2,), ("view-0", "view-1"))
 transform = phx.imaging.tomography.VoxelXRayTransformPlan(
-    support, (2, 2, 1), (0, 0, 0), (1, 1, 1)
+    support, (2, 2, 1), (0, 0, 0), (1, 1, 1), contract
 )
 truth = np.asarray((1.0, 2.0, 3.0, 4.0)).reshape((2, 2, 1))
 projections = transform.forward(truth)

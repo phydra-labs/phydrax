@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from math import factorial, isfinite, prod
+from types import FunctionType
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -15,7 +16,9 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._frozendict import frozendict
+from .._identity import strict_module_payload
 from .._strict import StrictModule
 from ..uq._gaussian_factor import gaussian_factor_from_covariance, GaussianFactor
 from ._differential import DifferentialProblem
@@ -46,6 +49,51 @@ _NUMERICAL = 0
 _PROCESS = 1
 _OBSERVATION = 2
 _INITIAL_CONDITION = 3
+
+
+def _probabilistic_drift_id(drift: Any, /) -> str:
+    if isinstance(drift, StrictModule):
+        return strict_module_payload(drift)["numeric_content_id"]
+    if isinstance(drift, FunctionType):
+        closure = (
+            ()
+            if drift.__closure__ is None
+            else tuple(cell.cell_contents for cell in drift.__closure__)
+        )
+        static_closure = tuple(
+            value
+            if value is None or isinstance(value, (bool, int, float, str))
+            else {
+                "type": f"{type(value).__module__}.{type(value).__qualname__}",
+                "arrays": array_tree_fingerprint(value),
+            }
+            for value in closure
+        )
+        constants = tuple(
+            value
+            for value in drift.__code__.co_consts
+            if value is None or isinstance(value, (bool, int, float, str))
+        )
+        return canonical_fingerprint(
+            {
+                "kind": "probabilistic-ode-drift",
+                "module": drift.__module__,
+                "qualname": drift.__qualname__,
+                "bytecode": drift.__code__.co_code.hex(),
+                "constants": constants,
+                "closure": static_closure,
+                "defaults": array_tree_fingerprint(drift.__defaults__),
+            }
+        )
+    return canonical_fingerprint(
+        {
+            "kind": "probabilistic-ode-callable",
+            "type": f"{type(drift).__module__}.{type(drift).__qualname__}",
+            "arrays": array_tree_fingerprint(drift),
+        }
+    )
+
+
 _PARAMETER = 4
 
 
@@ -199,6 +247,7 @@ class _ProbabilisticODECheckpoint(StrictModule):
     method_id: str = eqx.field(static=True)
     factorization: ProbabilisticODEFactorization = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    compatibility_id: str = eqx.field(static=True)
 
 
 class ProbabilisticODESolution(StrictModule):
@@ -1428,6 +1477,26 @@ def solve_probabilistic_ode(
     uncertain_flat_args = (
         flat_args if parameter_uncertainty else jnp.zeros((0,), dtype=state.dtype)
     )
+    checkpoint_compatibility_id = canonical_fingerprint(
+        {
+            "kind": "probabilistic-ode-checkpoint",
+            "problem": problem.problem_id,
+            "dynamics": _probabilistic_drift_id(problem.drift),
+            "arguments": array_tree_fingerprint(problem.args),
+            "argument_structure": str(jax.tree.structure(problem.args)),
+            "covariances": array_tree_fingerprint(
+                (
+                    initial_state_covariance,
+                    model_process_covariance,
+                    residual_observation_covariance,
+                    parameter_matrix,
+                )
+            ),
+            "method": selected.method_id,
+            "factorization": selected.factorization,
+            "covariance_output": selected.covariance_output,
+        }
+    )
 
     if checkpoint is None:
         initial_mean = _startup_mean(problem, selected.order, problem.args).reshape(
@@ -1486,6 +1555,10 @@ def solve_probabilistic_ode(
             raise ValueError("checkpoint and factorization do not match.")
         if checkpoint.state_shape != state_shape:
             raise ValueError("checkpoint and problem state shapes do not match.")
+        if checkpoint.compatibility_id != checkpoint_compatibility_id:
+            raise ValueError(
+                "checkpoint does not belong to this probabilistic ODE problem."
+            )
         if step_size is None:
             raise ValueError("Checkpoint resume requires an explicit step_size.")
         initial_time = eqx.error_if(
@@ -1760,6 +1833,7 @@ def solve_probabilistic_ode(
         method_id=selected.method_id,
         factorization=selected.factorization,
         state_shape=state_shape,
+        compatibility_id=checkpoint_compatibility_id,
     )
     stats = frozendict(
         {

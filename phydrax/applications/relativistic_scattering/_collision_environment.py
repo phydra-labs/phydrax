@@ -141,7 +141,10 @@ def assign_collision_pileup(
     )
 
     def draw(event_id):
-        event_key = jr.fold_in(key, jnp.asarray(event_id, dtype=jnp.uint32))
+        identifier = jnp.asarray(event_id, dtype=jnp.uint64)
+        low = identifier.astype(jnp.uint32)
+        high = (identifier >> jnp.asarray(32, dtype=jnp.uint64)).astype(jnp.uint32)
+        event_key = jr.fold_in(jr.fold_in(key, high), low)
         count_key, index_key = jr.split(event_key)
         requested = jr.poisson(count_key, plan.mean_pileup).astype(jnp.int32)
         safe_pool_count = jnp.maximum(active_pool_count, 1)

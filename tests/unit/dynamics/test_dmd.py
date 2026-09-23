@@ -129,3 +129,22 @@ def test_edmd_recovers_quadratic_map_and_decoder():
         phx.dynamics.IterationGrid.from_steps(4, iteration_id="edmd-rollout"),
     )
     assert bool(rollout.successful)
+
+
+def test_edmd_insufficient_samples_has_failed_status_and_validity():
+    layout = phx.dynamics.StateLayout((1,), component_names=("x",))
+    data = phx.dynamics.TrajectoryData(
+        jnp.asarray([0.0, 1.0]),
+        jnp.asarray([[0.25], [0.5]]),
+        state_layout=layout,
+        source_id="insufficient-edmd",
+    )
+    library = phx.dynamics.identification.PolynomialFeatureLibrary(layout, degree=2)
+
+    result = phx.dynamics.identification.fit_edmd(data, library)
+
+    assert not bool(result.valid)
+    assert (
+        int(result.status)
+        == phx.dynamics.identification.IDENTIFICATION_INSUFFICIENT_SAMPLES
+    )

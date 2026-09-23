@@ -55,6 +55,7 @@ class RelaxedChemicalJumpEvidence(StrictModule):
     minimum_state: Array
     event_count: Array
     capacity_exhausted: Array
+    intensity_valid: Array
     successful: Array
     plan_id: str = eqx.field(static=True)
 
@@ -97,6 +98,42 @@ class RelaxedChemicalJumpPlan(StrictModule, NonTrainableState):
             }
         )
 
+    def _relaxed_intensities(
+        self,
+        time: Array,
+        state: Array,
+        runtime: ChemicalJumpRuntime,
+        /,
+    ) -> tuple[Array, Array]:
+        del time
+        counts = jnp.asarray(state)
+        concentration = counts / self.process.system_measure
+        evaluation = self.process.mechanism.evaluate(
+            concentration,
+            runtime.temperature,
+            runtime.pressure,
+            runtime=runtime.rate_runtime,
+        )
+        forward = evaluation.forward_rate_constants[self.process.channel_reaction]
+        reverse = evaluation.reverse_rate_constants[self.process.channel_reaction]
+        constants = jnp.where(self.process.channel_direction > 0, forward, reverse)
+        relaxed_combinatorial = jnp.prod(
+            jnp.maximum(counts, 0.0)[None, :] ** self.process.channel_orders
+            / self.process.channel_normalization,
+            axis=-1,
+        )
+        total_order = jnp.sum(self.process.channel_orders, axis=-1)
+        scaling = self.process.system_measure ** (1.0 - total_order)
+        intensities = constants * scaling * relaxed_combinatorial
+        valid = (
+            evaluation.successful
+            & jnp.all(jnp.isfinite(counts) & (counts >= 0.0))
+            & jnp.all(jnp.isfinite(intensities) & (intensities >= 0.0))
+            & jnp.isfinite(self.process.system_measure)
+            & (self.process.system_measure > 0.0)
+        )
+        return intensities, valid
+
     def simulate(
         self,
         initial_state: ArrayLike,
@@ -115,11 +152,19 @@ class RelaxedChemicalJumpPlan(StrictModule, NonTrainableState):
         channel_indices = jnp.arange(self.process.num_channels, dtype=state.dtype)
 
         def step(carry, event_keys):
-            time, current = carry
-            intensity = self.process.intensities(time, current, runtime)
+            time, current, previous_valid = carry
+            intensity, intensity_valid = self._relaxed_intensities(
+                time,
+                current,
+                runtime,
+            )
             total = jnp.sum(intensity)
+            process_valid = previous_valid & intensity_valid
             active = (
-                (time < self.parameters.final_time) & jnp.isfinite(total) & (total > 0.0)
+                process_valid
+                & (time < self.parameters.final_time)
+                & jnp.isfinite(total)
+                & (total > 0.0)
             )
             waiting_uniform = jax.random.uniform(
                 event_keys[0], (), minval=jnp.finfo(state.dtype).tiny, maxval=1.0
@@ -150,16 +195,20 @@ class RelaxedChemicalJumpPlan(StrictModule, NonTrainableState):
             accepted_state = jnp.where(active, candidate, current)
             accepted_time = jnp.where(active, next_time, time)
             recorded_weights = jnp.where(active, jump_weights, 0.0)
-            return (accepted_time, accepted_state), (
+            return (accepted_time, accepted_state, process_valid), (
                 accepted_time,
                 accepted_state,
                 recorded_weights,
                 active,
             )
 
-        (final_time, final_state), history = jax.lax.scan(
+        (final_time, final_state, intensity_valid), history = jax.lax.scan(
             step,
-            (jnp.asarray(0.0, dtype=state.dtype), state),
+            (
+                jnp.asarray(0.0, dtype=state.dtype),
+                state,
+                jnp.asarray(True),
+            ),
             keys,
         )
         times, states, weights, event_mask = history
@@ -173,12 +222,15 @@ class RelaxedChemicalJumpPlan(StrictModule, NonTrainableState):
             jnp.all(jnp.isfinite(final_state))
             & jnp.isfinite(final_time)
             & ~capacity_exhausted
+            & intensity_valid
+            & (minimum >= 0.0)
         )
         evidence = RelaxedChemicalJumpEvidence(
             nonintegral,
             minimum,
             event_count,
             capacity_exhausted,
+            intensity_valid,
             successful,
             self.plan_id,
         )

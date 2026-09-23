@@ -45,6 +45,7 @@ from .._result import (
 )
 from .._task import ElectronicProperty
 from ..excited._tda import ExcitedStateManifoldPlan, TammDancoffPlan
+from ._mean_field import mean_field_owner_id
 
 
 class SCFState(StrictModule, NonTrainableState):
@@ -56,6 +57,7 @@ class SCFState(StrictModule, NonTrainableState):
     residual: Array
     iterations: Array
     converged: Array
+    owner_id: str = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
     def __init__(
@@ -68,6 +70,7 @@ class SCFState(StrictModule, NonTrainableState):
         residual: ArrayLike,
         iterations: int,
         converged: ArrayLike,
+        owner_id: str,
         /,
     ):
         density_ = jnp.asarray(density)
@@ -79,6 +82,9 @@ class SCFState(StrictModule, NonTrainableState):
             density_.shape[0],
         ):
             raise ValueError("SCF coefficient and orbital axes must match the AO basis.")
+        owner = str(owner_id).strip()
+        if not owner:
+            raise ValueError("SCF owner_id must be non-empty.")
         self.density = density_
         self.coefficients = coefficients_
         self.orbital_energies = orbital_energies_
@@ -89,9 +95,11 @@ class SCFState(StrictModule, NonTrainableState):
         self.residual = jnp.asarray(residual, dtype=density_.dtype).reshape(())
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
         self.converged = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
+        self.owner_id = owner
         self.state_id = canonical_fingerprint(
             {
                 "kind": "native-rhf-state",
+                "owner": owner,
                 "arrays": array_tree_fingerprint(
                     {
                         "density": np.asarray(density_),
@@ -355,6 +363,7 @@ class NativeRHFPlan(StrictModule, NonTrainableState):
             residual,
             completed,
             converged,
+            mean_field_owner_id(self.plan_id, positions),
         )
 
     def evaluate(
@@ -440,6 +449,8 @@ def rhf_tamm_dancoff(
     coordinate_bohr = coordinate * float(
         conversion_factor(plan.system.units.scale.length_unit, BOHR)
     )
+    if state.owner_id != mean_field_owner_id(plan.plan_id, coordinate_bohr):
+        raise ValueError("TDA state belongs to another RHF plan or geometry.")
     charges = jnp.asarray(plan.system.atomic_numbers, dtype=coordinate.dtype)
     integrals = molecular_integrals(plan.basis, coordinate_bohr, charges)
     coefficients = state.coefficients
@@ -558,6 +569,7 @@ class PreparedNativeRHFCalculation(AbstractPreparedElectronicCalculation):
             convergence=ElectronicConvergenceEvidence(
                 kernel.successful,
                 iterations=kernel.iterations,
+                energy_residual=kernel.residual,
                 density_residual=kernel.residual,
                 message=(
                     "native-rhf-converged"
@@ -571,7 +583,27 @@ class PreparedNativeRHFCalculation(AbstractPreparedElectronicCalculation):
                 property_evaluations=int(kernel.dipole is not None),
             ),
             status=status,
-            source_unit_ids=(("energy", HARTREE.unit_id), ("length", BOHR.unit_id)),
+            source_unit_ids=(
+                ("energy", HARTREE.unit_id),
+                (
+                    "forces",
+                    derived_unit("hartree/bohr", ((HARTREE, 1), (BOHR, -1))).unit_id,
+                ),
+                ("length", BOHR.unit_id),
+                *(
+                    ()
+                    if kernel.dipole is None
+                    else (
+                        (
+                            "dipole",
+                            derived_unit(
+                                "elementary-charge*bohr",
+                                ((ELEMENTARY_CHARGE, 1), (BOHR, 1)),
+                            ).unit_id,
+                        ),
+                    )
+                ),
+            ),
             artifact_ids=(state.state_id,),
         )
 

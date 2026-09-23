@@ -1102,6 +1102,81 @@ def _validate_global_manifest(
         )
 
 
+def _validate_parent_manifest(
+    repository: ArtifactRepository,
+    parent_manifest: CheckpointManifest | None,
+    plan: NumericalRelativityCheckpointPlan,
+    /,
+) -> None:
+    if parent_manifest is None:
+        return
+    if (
+        not isinstance(parent_manifest, CheckpointManifest)
+        or not parent_manifest.complete
+    ):
+        raise TypeError("parent_manifest must be a complete CheckpointManifest or None.")
+    if parent_manifest.checkpoint_id == plan.checkpoint_id:
+        raise ValueError("A numerical-relativity checkpoint cannot parent itself.")
+    if (
+        parent_manifest.analysis_plan_id != plan.analysis_plan_id
+        or parent_manifest.numeric_revision_id != plan.numeric_revision_id
+        or parent_manifest.execution_plan_id != plan.execution_plan_id
+    ):
+        raise ValueError("Parent checkpoint has incompatible NR lifecycle ownership.")
+    processes: set[int] = set()
+    for shard in parent_manifest.shards:
+        metadata = dict(shard.metadata)
+        process_record = metadata.get("process_index")
+        artifact_id = metadata.get("artifact_id")
+        if process_record is None or artifact_id is None:
+            raise ValueError("Parent checkpoint shard lacks repository ownership.")
+        if (
+            metadata.get("repository_id") != repository.provider_id
+            or metadata.get("checkpoint_id") != parent_manifest.checkpoint_id
+            or metadata.get("analysis_plan_id") != parent_manifest.analysis_plan_id
+            or metadata.get("numeric_revision_id") != parent_manifest.numeric_revision_id
+            or metadata.get("execution_plan_id") != parent_manifest.execution_plan_id
+        ):
+            raise ValueError("Parent checkpoint shard ownership is invalid.")
+        process_index = int(process_record)
+        if artifact_id != (f"{parent_manifest.checkpoint_id}.process-{process_index}"):
+            raise ValueError("Parent checkpoint shard artifact identity is invalid.")
+        durable = repository.get_manifest(artifact_id)
+        durable_metadata = dict(durable.metadata)
+        if (
+            durable.provider_id != repository.provider_id
+            or durable.artifact_id != artifact_id
+            or durable_metadata.get("repository_id") != repository.provider_id
+            or durable_metadata.get("checkpoint_id") != parent_manifest.checkpoint_id
+            or durable_metadata.get("execution_plan_id")
+            != parent_manifest.execution_plan_id
+            or durable_metadata.get("analysis_plan_id")
+            != parent_manifest.analysis_plan_id
+            or durable_metadata.get("numeric_revision_id")
+            != parent_manifest.numeric_revision_id
+            or durable_metadata.get("process_index") != process_record
+            or not durable.complete
+        ):
+            raise ValueError("Parent checkpoint repository ownership is invalid.")
+        processes.add(process_index)
+    if processes != set(range(len(processes))):
+        raise ValueError("Parent checkpoint process coverage is not contiguous.")
+
+
+def _validate_manifest_parent(
+    manifest: CheckpointManifest,
+    parent_manifest: CheckpointManifest | None,
+    /,
+) -> None:
+    expected = (
+        (None, None)
+        if parent_manifest is None
+        else (parent_manifest.checkpoint_id, parent_manifest.manifest_id)
+    )
+    if (manifest.parent_checkpoint_id, manifest.parent_manifest_id) != expected:
+        raise ValueError("Checkpoint manifest does not bind the exact parent manifest.")
+
+
 def publish_distributed_numerical_relativity_checkpoint(
     repository: ArtifactRepository,
     plan: NumericalRelativityCheckpointPlan,
@@ -1112,22 +1187,27 @@ def publish_distributed_numerical_relativity_checkpoint(
     runtime_args: Any = None,
     attempt_id: str | None = None,
     encoding: ChunkEncoding = "identity",
+    parent_manifest: CheckpointManifest | None = None,
 ) -> ProcessCheckpointPublication:
     """Publish typed state, runtime arguments, and bounded reconstruction metadata."""
 
     if not isinstance(plan, NumericalRelativityCheckpointPlan):
         raise TypeError("plan must be NumericalRelativityCheckpointPlan.")
     plan.validate_state(state)
+    _validate_parent_manifest(repository, parent_manifest, plan)
     tree, _ = _distributed_tree(plan, state, runtime_args)
     publication = publish_process_checkpoint(
         repository,
         plan.checkpoint_id,
         plan.execution_plan_id,
         tree,
+        analysis_plan_id=plan.analysis_plan_id,
+        numeric_revision_id=plan.numeric_revision_id,
         writer_id=writer_id,
         attempt_id=attempt_id,
         topology_epoch=plan.topology_epoch,
         encoding=encoding,
+        parent_manifest=parent_manifest,
     )
     artifact = publication.artifact_manifest
     if artifact is None or (
@@ -1150,6 +1230,7 @@ def _validate_publication(
     plan: NumericalRelativityCheckpointPlan,
     publication: ProcessCheckpointPublication,
     process_index: int,
+    parent_manifest: CheckpointManifest | None,
     /,
 ) -> None:
     if (
@@ -1172,14 +1253,27 @@ def _validate_publication(
     ):
         raise ValueError("Distributed checkpoint artifact/repository binding is invalid.")
     metadata = dict(durable.metadata)
+    supplied_metadata = dict(supplied.metadata)
+    parent_checkpoint_id = (
+        "" if parent_manifest is None else parent_manifest.checkpoint_id
+    )
+    parent_manifest_id = "" if parent_manifest is None else parent_manifest.manifest_id
     expected = {
+        "repository_id": repository.provider_id,
         "checkpoint_id": plan.checkpoint_id,
+        "analysis_plan_id": plan.analysis_plan_id,
+        "numeric_revision_id": plan.numeric_revision_id,
         "execution_plan_id": plan.execution_plan_id,
         "process_index": str(process_index),
         "topology_epoch": str(plan.topology_epoch),
+        "parent_checkpoint_id": parent_checkpoint_id,
+        "parent_manifest_id": parent_manifest_id,
         "shard_count": str(len(publication.shards)),
     }
-    if any(metadata.get(key) != value for key, value in expected.items()):
+    if any(
+        metadata.get(key) != value or supplied_metadata.get(key) != value
+        for key, value in expected.items()
+    ):
         raise ValueError("Distributed checkpoint committed metadata is incompatible.")
     descriptor_payload = metadata["shards"]
     if len(descriptor_payload.encode("utf-8")) > _MAX_RECONSTRUCTION_METADATA_BYTES:
@@ -1218,19 +1312,26 @@ def assemble_distributed_numerical_relativity_checkpoint(
     /,
     *,
     expected_process_count: int,
-    parent_checkpoint_id: str | None = None,
+    parent_manifest: CheckpointManifest | None = None,
     diagnostic_ids: Sequence[str] = (),
 ) -> CheckpointManifest:
     """Assemble only exact committed repository publications for every rank."""
 
     if not isinstance(plan, NumericalRelativityCheckpointPlan):
         raise TypeError("plan must be NumericalRelativityCheckpointPlan.")
+    _validate_parent_manifest(repository, parent_manifest, plan)
     values = tuple(publications)
     if len(values) != int(expected_process_count):
         raise ValueError("Distributed checkpoint publications do not cover every rank.")
     ordered = tuple(sorted(values, key=lambda value: value.process_index))
     for process_index, publication in enumerate(ordered):
-        _validate_publication(repository, plan, publication, process_index)
+        _validate_publication(
+            repository,
+            plan,
+            publication,
+            process_index,
+            parent_manifest,
+        )
     manifest = assemble_distributed_checkpoint_from_repository(
         repository,
         plan.checkpoint_id,
@@ -1238,10 +1339,11 @@ def assemble_distributed_numerical_relativity_checkpoint(
         plan.numeric_revision_id,
         plan.execution_plan_id,
         expected_process_count=expected_process_count,
-        parent_checkpoint_id=parent_checkpoint_id,
+        parent_manifest=parent_manifest,
         diagnostic_ids=diagnostic_ids,
     )
     _validate_global_manifest(manifest, plan)
+    _validate_manifest_parent(manifest, parent_manifest)
     for process_index, publication in enumerate(ordered):
         committed = tuple(
             shard.shard_id
@@ -1259,6 +1361,8 @@ def _validate_manifest_repository_binding(
     plan: NumericalRelativityCheckpointPlan,
     /,
 ) -> None:
+    parent_checkpoint_id = manifest.parent_checkpoint_id or ""
+    parent_manifest_id = manifest.parent_manifest_id or ""
     processes = set()
     durable_by_artifact: dict[str, ArtifactManifest] = {}
     descriptors_by_artifact: dict[str, dict[str, dict[str, Any]]] = {}
@@ -1284,10 +1388,15 @@ def _validate_manifest_repository_binding(
             if (
                 durable.provider_id != repository.provider_id
                 or durable.artifact_id != artifact_id
+                or durable_metadata.get("repository_id") != repository.provider_id
                 or durable_metadata.get("checkpoint_id") != plan.checkpoint_id
+                or durable_metadata.get("analysis_plan_id") != plan.analysis_plan_id
+                or durable_metadata.get("numeric_revision_id") != plan.numeric_revision_id
                 or durable_metadata.get("execution_plan_id") != plan.execution_plan_id
                 or durable_metadata.get("process_index") != process_record
                 or durable_metadata.get("topology_epoch") != str(plan.topology_epoch)
+                or durable_metadata.get("parent_checkpoint_id") != parent_checkpoint_id
+                or durable_metadata.get("parent_manifest_id") != parent_manifest_id
                 or len(descriptor_payload.encode("utf-8"))
                 > _MAX_RECONSTRUCTION_METADATA_BYTES
             ):
@@ -1312,6 +1421,13 @@ def _validate_manifest_repository_binding(
             or int(descriptor.get("byte_count", -1)) != shard.byte_count
             or descriptor.get("layout_id") not in shard.layout_ids
             or metadata.get("logical_name") != descriptor.get("logical_name")
+            or metadata.get("repository_id") != repository.provider_id
+            or metadata.get("parent_checkpoint_id") != parent_checkpoint_id
+            or metadata.get("checkpoint_id") != plan.checkpoint_id
+            or metadata.get("analysis_plan_id") != plan.analysis_plan_id
+            or metadata.get("numeric_revision_id") != plan.numeric_revision_id
+            or metadata.get("execution_plan_id") != plan.execution_plan_id
+            or metadata.get("parent_manifest_id") != parent_manifest_id
         ):
             raise ValueError("Distributed checkpoint manifest shard was substituted.")
     if processes != set(range(len(processes))):
@@ -1349,6 +1465,8 @@ def _restore_tree(
     manifest: CheckpointManifest,
     template: Any,
     /,
+    *,
+    parent_manifest: CheckpointManifest | None = None,
 ) -> Any:
     flattened, structure = jax.tree_util.tree_flatten_with_path(template)
     inventory = _manifest_inventory(manifest)
@@ -1370,7 +1488,11 @@ def _restore_tree(
         )
         leaves.append(
             restore_global_array_from_checkpoint(
-                repository, manifest, array_path, sharding
+                repository,
+                manifest,
+                array_path,
+                sharding,
+                parent_manifest=parent_manifest,
             )
         )
     return jax.tree.unflatten(structure, leaves)
@@ -1384,6 +1506,7 @@ def restore_distributed_numerical_relativity_checkpoint(
     /,
     *,
     runtime_args_template: Any = None,
+    parent_manifest: CheckpointManifest | None = None,
 ) -> DistributedNumericalRelativityRestart:
     """Reconstruct and validate the complete typed state directly from shards."""
 
@@ -1391,13 +1514,20 @@ def restore_distributed_numerical_relativity_checkpoint(
         raise TypeError("plan must be NumericalRelativityCheckpointPlan.")
     plan.validate_state(template)
     _validate_global_manifest(manifest, plan)
+    _validate_parent_manifest(repository, parent_manifest, plan)
+    _validate_manifest_parent(manifest, parent_manifest)
     _validate_manifest_repository_binding(repository, manifest, plan)
     template_tree, expected_metadata = _distributed_tree(
         plan, template, runtime_args_template
     )
     expected_envelope = json.loads(expected_metadata)
     expected_record = expected_envelope["record"]
-    restored_tree = _restore_tree(repository, manifest, template_tree)
+    restored_tree = _restore_tree(
+        repository,
+        manifest,
+        template_tree,
+        parent_manifest=parent_manifest,
+    )
     metadata_array = np.asarray(restored_tree["reconstruction_metadata"])
     observed_metadata = metadata_array.astype(np.uint8, copy=False).tobytes()
     if len(observed_metadata) > _MAX_RECONSTRUCTION_METADATA_BYTES:

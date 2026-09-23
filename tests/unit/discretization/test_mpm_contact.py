@@ -11,6 +11,35 @@ import pytest
 import phydrax as phx
 
 
+class _ZeroNormalGeometry:
+    state = jnp.asarray(0.0)
+
+    @staticmethod
+    def signed_distance(coordinates):
+        return jnp.zeros(coordinates.shape[:-1], dtype=coordinates.dtype)
+
+    @staticmethod
+    def boundary_normal(coordinates):
+        return jnp.zeros_like(coordinates)
+
+
+def test_rigid_contact_rejects_required_zero_normals():
+    plan = phx.discretization.RigidMPMContactPlan(
+        _ZeroNormalGeometry(),
+        phx.discretization.SharpCoulombMPMFrictionPlan(0.0),
+        contact_band=0.1,
+    )
+    result = plan.apply(
+        jnp.asarray(((0.0, 0.0),)),
+        jnp.asarray(((-1.0, 0.0),)),
+        jnp.asarray((1.0,)),
+        0.0,
+        0.01,
+    )
+    assert not bool(result.successful)
+    assert not bool(result.active_mask[0])
+
+
 def test_sharp_rigid_contact_projects_normal_and_coulomb_impulse():
     geometry = phx.geometry.Circle((0.0, 0.0), 0.5).compile()
     plan = phx.discretization.RigidMPMContactPlan(

@@ -12,14 +12,16 @@ from typing import Any
 import equinox as eqx
 from jaxtyping import Array, Key
 
+from ...._model import deserialize_model_leaf, serialize_model_leaf
+from ...._model._structure import preflight_model_tree_serialization
 from ...._training_checkpoint import (
     _deserialize_root_key,
+    _open_verified_state,
     _prune_state_files,
     _publish_manifest,
     _publish_state,
     _read_manifest,
     _serialize_root_key,
-    _state_checksum,
 )
 from ._dtype import OperatorDTypePolicy
 from ._fingerprint import operator_batch_schema
@@ -57,14 +59,15 @@ def save_operator_training_checkpoint(
     metadata: Mapping[str, Any] | None = None,
 ) -> Path:
     """Atomically publish an exact model/optimizer/RNG training checkpoint."""
-    if int(step) < 0:
-        raise ValueError("step must be non-negative.")
+    if type(step) is not int or step < 0:
+        raise ValueError("step must be a non-negative integer.")
     destination = Path(path)
     state_path, checksum = _publish_state(
         destination,
         lambda target: eqx.tree_serialise_leaves(
             target,
             (model, optimizer_state),
+            filter_spec=serialize_model_leaf,
         ),
     )
     state_name = state_path.name
@@ -116,14 +119,41 @@ def _read_operator_training_manifest(
         raise ValueError("File is not a PhydraX operator training checkpoint.")
     if not isinstance(manifest["metadata"], dict):
         raise ValueError("Operator training checkpoint metadata must be an object.")
+    if type(manifest["step"]) is not int or manifest["step"] < 0:
+        raise ValueError("Operator training checkpoint step is invalid.")
+    if any(
+        value is not None and not isinstance(value, dict)
+        for value in (
+            manifest["normalization"],
+            manifest["dtype_policy"],
+            manifest["schema"],
+        )
+    ):
+        raise ValueError("Operator training checkpoint policies are invalid.")
+    key_impl = manifest["key_impl"]
+    key_data = manifest["key_data"]
+    key_words = {"threefry2x32": 2, "rbg": 4, "unsafe_rbg": 4}
+    if (
+        not isinstance(key_impl, str)
+        or key_impl not in key_words
+        or not isinstance(key_data, list)
+        or len(key_data) != key_words[key_impl]
+        or any(type(word) is not int or not 0 <= word <= 0xFFFFFFFF for word in key_data)
+    ):
+        raise ValueError("Operator training checkpoint root key is invalid.")
     state_name = manifest["state_file"]
-    if not isinstance(state_name, str) or not state_name:
-        raise ValueError("Operator training checkpoint state_file must be non-empty.")
-    state_path = source / state_name
-    actual_checksum = _state_checksum(state_path)
-    if actual_checksum != manifest["state_sha256"]:
-        raise ValueError("Operator training checkpoint state checksum mismatch.")
-    return manifest, state_path
+    checksum = manifest["state_sha256"]
+    if (
+        not isinstance(state_name, str)
+        or not state_name
+        or "\\" in state_name
+        or Path(state_name).name != state_name
+        or not isinstance(checksum, str)
+        or len(checksum) != 64
+        or any(character not in "0123456789abcdef" for character in checksum)
+    ):
+        raise ValueError("Operator training checkpoint state identity is invalid.")
+    return manifest, Path(state_name)
 
 
 def load_operator_training_checkpoint(
@@ -136,14 +166,30 @@ def load_operator_training_checkpoint(
 ) -> OperatorTrainingCheckpoint:
     """Verify and restore a checkpoint against explicit PyTree templates."""
     source = Path(path)
-    manifest, state_path = _read_operator_training_manifest(source)
+    manifest, state_name = _read_operator_training_manifest(source)
     if expected_schema is not None and manifest["schema"] != dict(expected_schema):
         raise ValueError("Operator training checkpoint schema mismatch.")
-    model, optimizer_state = eqx.tree_deserialise_leaves(
-        state_path,
-        (model_like, optimizer_state_like),
-    )
-    _prune_state_files(source, state_path.name)
+    with _open_verified_state(
+        source,
+        state_name.as_posix(),
+        manifest["state_sha256"],
+    ) as stream:
+        try:
+            preflight_model_tree_serialization(
+                stream,
+                (model_like, optimizer_state_like),
+            )
+        except (OSError, TypeError, ValueError) as error:
+            raise ValueError(
+                "Operator training checkpoint leaf inventory is invalid."
+            ) from error
+        model, optimizer_state = eqx.tree_deserialise_leaves(
+            stream,
+            (model_like, optimizer_state_like),
+            filter_spec=deserialize_model_leaf,
+        )
+        if stream.read(1):
+            raise ValueError("Operator training checkpoint state has trailing payload.")
     key = _deserialize_root_key(manifest["key_data"], manifest["key_impl"])
     normalization = manifest["normalization"]
     dtype_policy = manifest["dtype_policy"]

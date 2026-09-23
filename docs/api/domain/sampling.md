@@ -46,6 +46,12 @@ when no exact joint transport exists. Sobol, Halton, and Hammersley blocks rejec
 that case rather than silently replacing a multidimensional design with repeated
 one-dimensional sequences.
 
+Hammersley is a count-dependent one-shot design: the first coordinate is normalized
+by the requested total count, so a larger request does not preserve the earlier
+prefix. It is valid for a design materialized once at its final count, but a filtered
+rejection sampler that may need another batch must use a prefix-stable sequence or a
+randomized sampler instead.
+
 ### Axis-based grids
 
 `GridSampling.axes` maps each gridded label to integer counts, axis specs,

@@ -145,6 +145,19 @@ def test_observation_prediction_requires_explicit_sampler_and_valid_draws():
         )
 
 
+@pytest.mark.parametrize("step_size", (jnp.nan, jnp.inf))
+def test_mcmc_rejects_nonfinite_initial_step_size(step_size):
+    with pytest.raises(ValueError, match="finite"):
+        phx.uq.sample_nuts(
+            _observation_problem(),
+            key=jr.key(50),
+            num_chains=2,
+            num_warmup=1,
+            num_samples=4,
+            initial_step_size=step_size,
+        )
+
+
 def test_mcmc_observation_prediction_preserves_chain_and_draw_axes():
     problem = _observation_problem()
     query = jnp.asarray([0.5, 1.0])

@@ -460,6 +460,7 @@ class _KernelLiftAction(StrictModule):
     metric: ProductFieldKernelMetric
     basis_functional: KernelFunctional | None
     direct_operator: PreparedConstraintOperator | None
+    prepared_solve: Any
     condition_codomains: tuple[Any, ...]
     metric_fields: tuple[str, ...] = eqx.field(static=True)
     correction_fields: tuple[str, ...] = eqx.field(static=True)
@@ -669,6 +670,7 @@ class _BaseKernelCorrectionPlan(StrictModule):
             metric=self.metric,
             basis_functional=basis_functional,
             direct_operator=direct_operator,
+            prepared_solve=prepared_solve,
             condition_codomains=assembly.condition_codomains,
             metric_fields=metric_fields,
             correction_fields=fields,
@@ -687,6 +689,7 @@ class _BaseKernelCorrectionPlan(StrictModule):
             exactness_scope=exactness_scope,
             generalized=not check_compatibility,
             numeric_version=numeric_version,
+            exact=exact and check_compatibility,
             identity_defect=(
                 (
                     jnp.inf

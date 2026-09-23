@@ -179,6 +179,7 @@ def open_bounded_resource(
 ) -> Iterator[OpenedResource]:
     """Open one admitted seekable resource without retaining its bytes in memory."""
 
+    consumer_boundary = False
     try:
         with open_regular_beneath(
             path,
@@ -188,17 +189,27 @@ def open_bounded_resource(
             _, manifest = _read_opened_resource(opened, limits=limits, retain=False)
             with opened.duplicate_stream() as stream:
                 stream.seek(0)
+                consumer_boundary = True
                 yield OpenedResource(stream, manifest)
+                consumer_boundary = False
             opened.verify_stable()
     except ResourceReadError:
         raise
     except OverflowError as error:
+        if consumer_boundary:
+            raise
         raise ResourceReadError("limit", str(error)) from error
     except ValueError as error:
+        if consumer_boundary:
+            raise
         raise ResourceReadError("policy", str(error)) from error
     except RuntimeError as error:
+        if consumer_boundary:
+            raise
         raise ResourceReadError("inconsistent", str(error)) from error
     except OSError as error:
+        if consumer_boundary:
+            raise
         reason: _ResourceFailure = (
             "policy" if error.errno in (errno.ELOOP, errno.ENOTDIR) else "malformed"
         )

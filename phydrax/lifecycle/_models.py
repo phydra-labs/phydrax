@@ -28,6 +28,7 @@ class NumericRevision(StrictModule, NonTrainableState):
     content_digest: str = eqx.field(static=True)
     label: str = eqx.field(static=True)
     parent_digest: str | None = eqx.field(static=True)
+    parent_revision_id: str | None = eqx.field(static=True)
     metadata: MetadataRecord = eqx.field(static=True)
     revision_id: str = eqx.field(static=True)
 
@@ -38,6 +39,7 @@ class NumericRevision(StrictModule, NonTrainableState):
         *,
         label: str = "",
         parent_digest: str | None = None,
+        parent_revision_id: str | None = None,
         metadata: Mapping[str, str] | Sequence[tuple[str, str]] = (),
     ):
         digest = _digest("content_digest", content_digest)
@@ -45,12 +47,18 @@ class NumericRevision(StrictModule, NonTrainableState):
         parent = (
             None if parent_digest is None else _digest("parent_digest", parent_digest)
         )
+        parent_revision = _optional_identifier("parent_revision_id", parent_revision_id)
         metadata_ = _metadata(metadata)
+        if (parent is None) != (parent_revision is None):
+            raise ValueError(
+                "Numeric revision parent digest and revision identity must be supplied together."
+            )
         if parent == digest:
-            raise ValueError("A numeric revision cannot parent itself.")
+            raise ValueError("A numeric revision cannot parent its own content.")
         self.content_digest = digest
         self.label = label_
         self.parent_digest = parent
+        self.parent_revision_id = parent_revision
         self.metadata = metadata_
         self.revision_id = canonical_fingerprint(
             {
@@ -58,6 +66,7 @@ class NumericRevision(StrictModule, NonTrainableState):
                 "content_digest": digest,
                 "label": label_,
                 "parent_digest": parent,
+                "parent_revision_id": parent_revision,
                 "metadata": [list(record) for record in metadata_],
             }
         )
@@ -85,7 +94,9 @@ class CheckpointShard(StrictModule, NonTrainableState):
     ):
         shard = _identifier("shard_id", shard_id)
         digest = _digest("payload_digest", payload_digest)
-        count = int(byte_count)
+        if type(byte_count) is not int:
+            raise TypeError("Checkpoint shard byte_count must be an integer.")
+        count = byte_count
         layouts = _identifiers("layout_ids", layout_ids)
         metadata_ = _metadata(metadata)
         if count < 0:
@@ -115,6 +126,7 @@ class CheckpointManifest(StrictModule, NonTrainableState):
     numeric_revision_id: str = eqx.field(static=True)
     execution_plan_id: str = eqx.field(static=True)
     shards: tuple[CheckpointShard, ...]
+    parent_manifest_id: str | None = eqx.field(static=True)
     complete: bool = eqx.field(static=True)
     parent_checkpoint_id: str | None = eqx.field(static=True)
     diagnostic_ids: tuple[str, ...] = eqx.field(static=True)
@@ -130,6 +142,7 @@ class CheckpointManifest(StrictModule, NonTrainableState):
         /,
         *,
         complete: bool,
+        parent_manifest_id: str | None = None,
         parent_checkpoint_id: str | None = None,
         diagnostic_ids: Sequence[str] = (),
     ):
@@ -138,8 +151,11 @@ class CheckpointManifest(StrictModule, NonTrainableState):
         revision = _identifier("numeric_revision_id", numeric_revision_id)
         execution = _identifier("execution_plan_id", execution_plan_id)
         shards_ = tuple(shards)
-        complete_ = bool(complete)
+        if type(complete) is not bool:
+            raise TypeError("Checkpoint completion must be a boolean.")
+        complete_ = complete
         parent = _optional_identifier("parent_checkpoint_id", parent_checkpoint_id)
+        parent_manifest = _optional_identifier("parent_manifest_id", parent_manifest_id)
         diagnostics = _identifiers("diagnostic_ids", diagnostic_ids)
         if not all(isinstance(shard, CheckpointShard) for shard in shards_):
             raise TypeError("Checkpoint shards must contain CheckpointShard values.")
@@ -147,6 +163,10 @@ class CheckpointManifest(StrictModule, NonTrainableState):
             raise ValueError("Checkpoint shard IDs must be unique.")
         if complete_ and not shards_:
             raise ValueError("A complete checkpoint requires at least one shard.")
+        if (parent is None) != (parent_manifest is None):
+            raise ValueError(
+                "Checkpoint parent ID and manifest identity must be supplied together."
+            )
         if parent == checkpoint:
             raise ValueError("A checkpoint cannot parent itself.")
         self.checkpoint_id = checkpoint
@@ -156,6 +176,7 @@ class CheckpointManifest(StrictModule, NonTrainableState):
         self.shards = shards_
         self.complete = complete_
         self.parent_checkpoint_id = parent
+        self.parent_manifest_id = parent_manifest
         self.diagnostic_ids = diagnostics
         self.manifest_id = canonical_fingerprint(
             {
@@ -166,6 +187,7 @@ class CheckpointManifest(StrictModule, NonTrainableState):
                 "execution_plan_id": execution,
                 "shards": [shard.shard_fingerprint for shard in shards_],
                 "complete": complete_,
+                "parent_manifest_id": parent_manifest,
                 "parent_checkpoint_id": parent,
                 "diagnostic_ids": list(diagnostics),
             }
@@ -415,6 +437,7 @@ class ResultRevision(StrictModule, NonTrainableState):
 
     manifest: ResultManifest
     parent_result_id: str | None = eqx.field(static=True)
+    parent_revision_id: str | None = eqx.field(static=True)
     revision_id: str = eqx.field(static=True)
 
     def __init__(
@@ -422,19 +445,28 @@ class ResultRevision(StrictModule, NonTrainableState):
         manifest: ResultManifest,
         parent_result_id: str | None = None,
         /,
+        *,
+        parent_revision_id: str | None = None,
     ):
         if not isinstance(manifest, ResultManifest):
             raise TypeError("manifest must be a ResultManifest.")
         parent = _optional_identifier("parent_result_id", parent_result_id)
+        parent_revision = _optional_identifier("parent_revision_id", parent_revision_id)
+        if (parent is None) != (parent_revision is None):
+            raise ValueError(
+                "Result parent ID and revision identity must be supplied together."
+            )
         if parent == manifest.result_id:
             raise ValueError("A result revision cannot parent itself.")
         self.manifest = manifest
         self.parent_result_id = parent
+        self.parent_revision_id = parent_revision
         self.revision_id = canonical_fingerprint(
             {
                 "kind": "result-revision",
                 "manifest_id": manifest.manifest_id,
                 "parent_result_id": parent,
+                "parent_revision_id": parent_revision,
             }
         )
 

@@ -234,6 +234,29 @@ def test_spde_callable_drift_identities_are_explicit_and_transitive():
     assert semilinear.problem.problem_id != zero_semilinear.problem.problem_id
 
 
+def test_callable_semilinear_operator_rejects_foreign_spectral_representation():
+    operator = phx.linalg.DenseLinearOperator(
+        jnp.eye(2),
+        operator_id="foreign-operator",
+    )
+    spectral = phx.linalg.TransformDiagonalRepresentation(
+        operator,
+        jnp.ones((2,)),
+        jnp.eye(2),
+        jnp.eye(2),
+        representation_id="foreign-spectral",
+    )
+    with pytest.raises(ValueError, match="bind the linear operator"):
+        phx.solver.SemilinearDrift(
+            lambda value: value,
+            None,
+            state_shape=(2,),
+            operator_id="declared-callable",
+            nonlinear_id="zero",
+            spectral_representation=spectral,
+        )
+
+
 def test_exact_modal_stochastic_convolution_replays_and_matches_covariance():
     discretization = _periodic_discretization(4)
     duration = 0.08
@@ -266,6 +289,16 @@ def test_exact_modal_stochastic_convolution_replays_and_matches_covariance():
         )
 
     solution = solve(realization)
+    increments = realization.increments(jnp.asarray([0.0]), jnp.asarray([duration]))[:, 0]
+    expected_terminal = jax.vmap(
+        lambda normal: phx.solver.exact_modal_stochastic_convolution(
+            basis,
+            spde.semilinear_drift.compatible_noise_eigenvalues,
+            duration,
+            normal,
+        )
+    )(increments / jnp.sqrt(duration))
+    assert jnp.allclose(solution.states[:, -1], expected_terminal)
     assert spde.discretization_bundle.record(discretization.key).artifact_id == (
         discretization.prepared_id
     )
@@ -318,6 +351,55 @@ def test_exact_modal_stochastic_convolution_replays_and_matches_covariance():
     assert trajectory.realizations == (realization,)
     assert trajectory.discretization_id == discretization.discretization_id
     assert trajectory.basis_id == basis.basis_id
+
+
+def test_auto_semilinear_route_uses_euler_for_declared_noise_amplitudes():
+    discretization = _periodic_discretization(4)
+    basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
+        discretization,
+        0.03,
+        rank=2,
+    )
+    spde = phx.solver.semidiscretize_reaction_diffusion(
+        jnp.zeros(discretization.state_shape),
+        discretization,
+        t0=0.0,
+        t1=0.1,
+        kappa=0.1,
+        noise_basis=basis,
+        noise_amplitude=lambda time, state, args: jnp.asarray(2.0),
+        noise_structure="additive",
+    )
+    solution = phx.solver.solve_semilinear_spde(
+        spde,
+        save_times=jnp.asarray([0.1]),
+        realization=spde.wiener_realization(jr.key(13)),
+        dt=0.1,
+        fallback="error",
+    )
+
+    assert solution.stats["scheme"] == "exponential_euler"
+    assert solution.stats["exact_stochastic_convolution"] is False
+
+
+def test_semilinear_terminal_state_advances_beyond_last_save_time():
+    discretization = _periodic_discretization(4)
+    initial = jnp.asarray([1.0, -0.5, 0.25, 0.0])
+    spde = phx.solver.semidiscretize_reaction_diffusion(
+        initial,
+        discretization,
+        t0=0.0,
+        t1=0.2,
+        kappa=0.1,
+    )
+    solution = phx.solver.solve_semilinear_spde(
+        spde,
+        save_times=jnp.asarray([0.1]),
+        dt=0.05,
+    )
+    assert solution.times[-1] == 0.1
+    assert solution.terminal_time == 0.2
+    assert not jnp.array_equal(solution.terminal_state, solution.states[-1])
 
 
 def test_spectral_reaction_diffusion_requires_real_diffusivity():

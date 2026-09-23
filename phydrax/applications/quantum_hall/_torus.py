@@ -85,21 +85,29 @@ class TorusOrbitalTerm:
         annihilators: Sequence[int],
         coefficient: complex,
         winding: tuple[int, int],
-        term_id: str,
     ):
         creators_ = tuple(int(value) for value in creators)
         annihilators_ = tuple(int(value) for value in annihilators)
         coefficient_ = complex(coefficient)
         winding_ = tuple(int(value) for value in winding)
-        identifier = str(term_id).strip()
         if (
             not creators_
             or len(creators_) != len(annihilators_)
+            or len(set(creators_)) != len(creators_)
+            or len(set(annihilators_)) != len(annihilators_)
             or len(winding_) != 2
             or not np.isfinite(coefficient_)
-            or not identifier
         ):
             raise ValueError("Torus orbital term is invalid.")
+        identifier = canonical_fingerprint(
+            {
+                "kind": "torus-orbital-term",
+                "creators": creators_,
+                "annihilators": annihilators_,
+                "coefficient": (coefficient_.real, coefficient_.imag),
+                "winding": winding_,
+            }
+        )
         object.__setattr__(self, "creators", creators_)
         object.__setattr__(self, "annihilators", annihilators_)
         object.__setattr__(self, "coefficient", coefficient_)
@@ -147,6 +155,8 @@ class TorusProjectedPlan(StrictModule, NonTrainableState):
             for value in terms_
         ):
             raise ValueError("Torus terms reference unavailable orbitals.")
+        if len({value.term_id for value in terms_}) != len(terms_):
+            raise ValueError("Torus orbital term identities must be unique.")
         if maximum_basis_dimension < 1 or maximum_terms < len(terms_):
             raise ValueError("Torus resource limits are invalid.")
         self.particle_count = particles
@@ -163,7 +173,20 @@ class TorusProjectedPlan(StrictModule, NonTrainableState):
                 "geometry": geometry.geometry_id,
                 "component": component.key_id,
                 "momentum_sector": self.momentum_sector,
-                "terms": tuple(value.term_id for value in terms_),
+                "terms": tuple(
+                    {
+                        "id": value.term_id,
+                        "creators": value.creators,
+                        "annihilators": value.annihilators,
+                        "coefficient": (value.coefficient.real, value.coefficient.imag),
+                        "winding": value.winding,
+                    }
+                    for value in terms_
+                ),
+                "resources": (
+                    int(maximum_basis_dimension),
+                    int(maximum_terms),
+                ),
             }
         )
 

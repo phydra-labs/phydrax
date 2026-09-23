@@ -8,6 +8,8 @@ from io import BytesIO
 import h5py
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -118,6 +120,28 @@ def test_calorimeter_response_and_observables_are_conditioned_on_live_cells():
     assert jnp.isclose(observables.total_energy[0], 2.0)
     assert int(observables.occupancy[0]) == 1
     assert not bool(response.digits.active[0, 1])
+    other_geometry = detector.calorimetry.CalorimeterGeometry(
+        cell_ids=jnp.asarray([10, 11]),
+        channel_ids=jnp.asarray([0, 1]),
+        layer_ids=jnp.asarray([0, 1]),
+        subdetector_ids=jnp.zeros(2, dtype=jnp.int32),
+        material_ids=jnp.zeros(2, dtype=jnp.int32),
+        readout_ids=jnp.zeros(2, dtype=jnp.int32),
+        centroids=geometry.centroids + 1.0,
+        volumes=jnp.ones(2),
+        active=jnp.ones(2, dtype="bool"),
+        dead=jnp.asarray([False, True]),
+        senders=jnp.asarray([0, 1]),
+        receivers=jnp.asarray([1, 0]),
+        conditions_id=conditions.conditions_id,
+    )
+    clustering = detector.calorimetry.CalorimeterClusteringPlan(
+        other_geometry,
+        jnp.asarray([0, -1]),
+        cluster_capacity=1,
+    )
+    with pytest.raises(ValueError, match="geometry"):
+        detector.calorimetry.reconstruct_calorimeter_clusters(clustering, response)
 
 
 def test_corpus_split_and_sparse_velocity_preserve_geometry_support():
@@ -199,6 +223,79 @@ def test_fixed_association_track_fit_recovers_observable_trajectory():
     assert jnp.allclose(fitted.parameters[0, 0, :3], intercept, atol=1.0e-10)
     assert jnp.allclose(fitted.parameters[0, 0, 3:], velocity, atol=1.0e-10)
     assert fitted.chi_square[0, 0] < 1.0e-16
+    particles = detector.particles_from_straight_tracks(
+        fitted,
+        pdg_hypothesis=13,
+        rest_energy=4.0,
+        charge=-1.0,
+        speed_of_light=2.0,
+    )
+    speed_squared = jnp.sum(velocity * velocity)
+    gamma = 1.0 / jnp.sqrt(1.0 - speed_squared / 4.0)
+    np.testing.assert_allclose(
+        particles.momenta[0, 0],
+        4.0 * gamma * velocity / 4.0,
+        rtol=1e-12,
+    )
+    np.testing.assert_allclose(particles.energies[0, 0], 4.0 * gamma, rtol=1e-12)
+
+
+def test_detector_conditions_identity_and_energy_loss_are_enforced():
+    detector = phx.applications.detector
+    conditions, _ = _geometry_and_conditions()
+    digits = detector.DigitBank(
+        event_ids=jnp.asarray([1]),
+        digit_ids=jnp.asarray([[0]]),
+        channel_ids=jnp.asarray([[0]]),
+        signals=jnp.asarray([[1.0]]),
+        times=jnp.asarray([[0.0]]),
+        active=jnp.asarray([[True]]),
+        saturated=jnp.asarray([[False]]),
+        conditions_id=conditions.conditions_id,
+    )
+    interval = phx.measurement.OperationalInterval(
+        phx.measurement.OperationalCoordinate("detector", {"run": 1}),
+        phx.measurement.OperationalCoordinate("detector", {"run": 2}),
+    )
+    payload = detector.DetectorCalibrationPayload(
+        jnp.asarray([0]),
+        jnp.asarray([1.0]),
+        jnp.asarray([0.0]),
+        jnp.eye(2),
+        interval,
+        conditions_snapshot_id="different-conditions",
+        authority=detector.CalibrationAuthority.CANDIDATE,
+        source_id="test",
+    )
+    with pytest.raises(ValueError, match="conditions snapshot"):
+        detector.apply_detector_calibration(payload, digits)
+
+    tracks = detector.TransportTrackBank(
+        event_ids=jnp.asarray([1]),
+        track_ids=jnp.asarray([[0]]),
+        parent_track_ids=jnp.asarray([[-1]]),
+        pdg_ids=jnp.asarray([[13]]),
+        positions=jnp.zeros((1, 1, 3)),
+        momenta=jnp.asarray([[[3.0, 0.0, 0.0]]]),
+        rest_energies=jnp.asarray([[4.0]]),
+        charges=jnp.asarray([[0.0]]),
+        active=jnp.asarray([[True]]),
+        conditions_id=conditions.conditions_id,
+    )
+    propagated = detector.propagate_charged_tracks(
+        detector.ChargedPropagationPlan(
+            conditions,
+            step_size=1.0,
+            step_count=1,
+            speed_of_light=1.0,
+            mean_energy_loss_per_length=1.0,
+        ),
+        tracks,
+    )
+    distance = jnp.linalg.norm(propagated.position_history[0, 0, 0])
+    final_momentum = jnp.linalg.norm(propagated.tracks.momenta[0, 0])
+    final_energy = jnp.sqrt(final_momentum**2 + 4.0**2)
+    np.testing.assert_allclose(final_energy, 5.0 - distance, rtol=1e-6)
 
 
 def test_weighted_analysis_retains_negative_bins_and_nested_cutflow():

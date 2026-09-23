@@ -31,6 +31,14 @@ def test_complete_uq_benchmark_matrix_passes_and_writes_machine_report(tmp_path)
         category["failed"] == 0
         for category in payload["summary"]["metric_categories"].values()
     )
+    for scenario, serialized in zip(report.scenarios, payload["scenarios"], strict=True):
+        assert scenario.error_type is None
+        assert scenario.metrics
+        assert all(metric.passed for metric in scenario.metrics.values())
+        assert serialized["passed"]
+        assert serialized["error"] is None
+        assert set(serialized["metrics"]) == set(scenario.metrics)
+        assert all(metric["passed"] for metric in serialized["metrics"].values())
 
 
 @pytest.mark.skipif(

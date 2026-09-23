@@ -20,6 +20,12 @@ Realized performance is not an optimizer echo. `replay_self_financing` uses `Por
 
 Historical and Gaussian VaR/ES are explicit functions (`historical_var_es`, `gaussian_var_es`, `value_at_risk`, `expected_shortfall`). `cvar_atoms`, `entropic_value_at_risk`, `spectral_risk`, `drawdown_risk`, and `kelly_risk` retain their distinct definitions and assumptions.
 
-Scenario work starts from `FinancialScenarioSet` and its law ID. `evaluate_scenarios`, `reweight_scenarios`, `entropy_tilt_scenarios`, and `reduce_scenarios` return new evidence-bearing records. A stress law is not silently treated as P or Q. `market_factor_risk`, `explain_factor_pnl`, `explain_pnl`, `brinson_attribution`, and `stress_test` separate exposure, realized P&L explanation, attribution, and stress results.
+Scenario work starts from a `FinancialScenarioSet` that owns the complete
+`FinancialLaw`, not detached law and factor-layout identifiers.
+`evaluate_scenarios`, `reweight_scenarios`, `entropy_tilt_scenarios`, and
+`reduce_scenarios` return new evidence-bearing records while preserving that exact
+law. A stress law is not silently treated as P or Q. `market_factor_risk`,
+`explain_factor_pnl`, `explain_pnl`, `brinson_attribution`, and `stress_test`
+separate exposure, realized P&L explanation, attribution, and stress results.
 
 `walk_forward_splits`, `nested_backtest_splits`, and `validate_no_lookahead` establish chronological evaluation boundaries; `evaluate_walk_forward` and `evaluate_nested_backtest` report their own decisions and results. Backtests do not establish future performance, data rights, or a compliant production process. Qualification covers only the exact `portfolio_support` tuple and measured scale.

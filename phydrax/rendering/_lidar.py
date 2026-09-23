@@ -32,7 +32,7 @@ from ..measurement import (
     ValueKind,
     ValueLayout,
 )
-from ..units import conversion_factor, LENGTH
+from ..units import conversion_factor, LENGTH, UnitDefinition
 from ._result import RenderEvidence
 
 
@@ -75,6 +75,13 @@ class LidarSurfacePlan(StrictModule, NonTrainableState):
             raise ValueError("quantity must be a length QuantitySpec.")
         if not isinstance(sampling, SamplingSemantics):
             raise TypeError("sampling must be SamplingSemantics.")
+        if (
+            realization.model.metadata.coordinate_contract.spatial_id
+            != rays.coordinate_contract.spatial_id
+        ):
+            raise ValueError(
+                "LiDAR rays and surface geometry must share one spatial coordinate contract."
+            )
         leaf_size_ = int(leaf_size)
         stack_capacity = int(traversal_stack_capacity)
         if leaf_size_ < 1 or stack_capacity < 1:
@@ -140,6 +147,7 @@ class LidarSurfacePlan(StrictModule, NonTrainableState):
             self.rays.support_id,
             self.sampling.sampling_id,
             self.quantity.unit.unit_id,
+            self.quantity.unit,
             canonical_fingerprint(
                 {
                     "kind": "prepared-lidar-surface",
@@ -164,6 +172,7 @@ class PreparedLidarSurface(StrictModule):
     support_id: str = eqx.field(static=True)
     sampling_id: str = eqx.field(static=True)
     unit_id: str = eqx.field(static=True)
+    range_unit: UnitDefinition = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     def predict(

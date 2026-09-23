@@ -66,6 +66,7 @@ def test_tempered_smc_recovers_conjugate_gaussian_and_reports_schedule():
     assert result.acceptance_rates.shape == (result.num_tempering_steps,)
     assert jnp.all(result.divergence_rates == 0.0)
     assert result.num_unique_initial_particles > 100
+    assert jnp.allclose(result.final_weights, 1.0 / result.num_particles)
     assert result.duration_seconds > 0.0
     assert jnp.mean(result.samples) == pytest.approx(posterior_mean, abs=0.04)
     assert jnp.var(result.samples) == pytest.approx(posterior_variance, rel=0.15)

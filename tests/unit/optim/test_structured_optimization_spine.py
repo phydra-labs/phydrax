@@ -311,3 +311,103 @@ def test_bound_form_certificate_splits_two_sided_net_duals_but_rejects_one_sided
         assert certificate.complementarity == 0.0
     else:
         assert certificate.dual_feasibility > 0.0
+
+
+def test_dense_structured_route_rejects_unconsumed_dual_warm_start():
+    compilation = _compilation()
+    dense = opt.PrimalDualInteriorPoint(mode="dense-filter", max_dense_dimension=32)
+    solved = opt.solve_structured_minimization(
+        compilation,
+        method=dense,
+        termination=_termination(),
+    )
+
+    assert not dense.structured_capabilities.portable_warm_start
+    with pytest.raises(ValueError, match="does not support structured dual warm starts"):
+        dense.solve_structured(
+            compilation.prepared,
+            solved.optimization.parameters,
+            termination=_termination(),
+            warm_start=solved.structured.warm_start,
+        )
+
+
+def test_structured_sensitivity_rejects_same_template_different_numeric_binding():
+    compilation = _compilation()
+    solved = opt.solve_structured_minimization(
+        compilation,
+        method=opt.PrimalDualInteriorPoint(
+            mode="dense-filter",
+            max_dense_dimension=32,
+        ),
+        termination=_termination(),
+    )
+    refreshed = opt.refresh_structured_nonlinear(
+        compilation.prepared,
+        jnp.asarray([0.4, 0.6]),
+    )
+
+    with pytest.raises(ValueError, match="numeric binding"):
+        opt.structured_solution_jvp(
+            refreshed,
+            solved.structured,
+            jnp.asarray([1.0, 0.0]),
+        )
+    with pytest.raises(ValueError, match="numeric binding"):
+        opt.structured_parameter_continuation(
+            refreshed,
+            solved.structured,
+            lambda coordinate: jnp.asarray([coordinate, 1.0 - coordinate]),
+        )
+
+
+def test_sparse_structured_ipm_honors_relative_tolerance_and_evaluation_limit():
+    compilation = _compilation()
+    method = opt.PrimalDualInteriorPoint(mode="sparse-augmented")
+    relative = opt.solve_structured_minimization(
+        compilation,
+        method=method,
+        termination=opt.OptimizationTermination(
+            absolute_optimality=0.0,
+            relative_optimality=1.0,
+            maximum_steps=4,
+        ),
+    )
+    exhausted = opt.solve_structured_minimization(
+        compilation,
+        method=method,
+        termination=opt.OptimizationTermination(
+            absolute_optimality=0.0,
+            relative_optimality=0.0,
+            maximum_steps=20,
+            maximum_evaluations=1,
+        ),
+    )
+
+    assert bool(relative.successful)
+    assert int(exhausted.optimization.status) == int(
+        opt.OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
+    )
+    assert int(exhausted.structured.work.backtracking_evaluations) == 0
+
+
+def test_sparse_structured_ipm_counts_each_attempted_line_search_trial():
+    compilation = _compilation()
+    result = opt.solve_structured_minimization(
+        compilation,
+        method=opt.PrimalDualInteriorPoint(
+            mode="sparse-augmented",
+            sufficient_decrease=0.999999,
+            maximum_line_search_steps=3,
+        ),
+        termination=opt.OptimizationTermination(
+            absolute_optimality=0.0,
+            relative_optimality=0.0,
+            maximum_steps=1,
+        ),
+    )
+
+    assert (
+        int(result.structured.work.backtracking_evaluations)
+        == int(result.optimization.diagnostics.objective_evaluations) - 2
+    )

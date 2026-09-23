@@ -415,7 +415,7 @@ def sample_tempered_smc(
         state=state,
         samples=samples,
         unconstrained_samples=unconstrained_samples,
-        final_weights=state.weights,
+        final_weights=jnp.full_like(state.weights, 1.0 / particles_count),
         temperatures=temperatures,
         effective_sample_sizes=effective_sample_sizes,
         acceptance_rates=acceptance_rates,

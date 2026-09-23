@@ -211,6 +211,26 @@ def test_topology_event_journal_capacity_overflow_is_sticky_and_nonmutating():
     assert overflowed.journal_id != full.journal_id
 
 
+def test_topology_event_journal_accepts_one_simultaneous_pending_batch():
+    initial = _epoch("initial")
+    journal = FiniteVolumeTopologyEventJournal.allocate(
+        initial, _artifacts(initial), capacity=3
+    )
+
+    requested = journal.append_requested_batch(
+        (_request(initial, "first"), _request(initial, "second")),
+        4,
+        1.25,
+    )
+
+    assert int(requested.count) == 2
+    assert all(
+        requested.event(index).state is TopologyEventState.REQUESTED for index in range(2)
+    )
+    assert requested.event(0).accepted_step == requested.event(1).accepted_step == 4
+    assert requested.event(0).time == requested.event(1).time == 1.25
+
+
 def test_topology_event_journal_rejects_stale_and_parallel_requests():
     initial = _epoch("initial")
     journal = FiniteVolumeTopologyEventJournal.allocate(

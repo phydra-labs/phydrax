@@ -130,8 +130,10 @@ def main() -> None:
     (value, (initial, evolved)), gradient = jax.value_and_grad(objective, has_aux=True)(
         jnp.asarray(1.0e-7)
     )
-    print("initial_successful", bool(initial.successful))
-    print("completed", bool(evolved.successful))
+    if not bool(initial.successful & evolved.successful):
+        raise RuntimeError("Initial LPT or particle-mesh rollout failed")
+    print("initial_successful", True)
+    print("completed", True)
     print("accepted_steps", int(evolved.diagnostics.accepted_steps))
     print("maximum_mass_defect", float(evolved.diagnostics.maximum_mass_balance_defect))
     print("maximum_net_force_norm", float(evolved.diagnostics.maximum_net_force_norm))

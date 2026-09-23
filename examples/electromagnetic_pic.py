@@ -47,10 +47,12 @@ velocity = jnp.zeros((4, 3))
 dt = 0.02 * maxwell.stable_dt
 state = pic.initialize((position, position), (velocity, velocity), dt)
 result = pic.step_detailed(state, dt)
+if not bool(result.successful):
+    raise RuntimeError("Electromagnetic PIC step failed")
 
 print(
     {
-        "successful": bool(result.successful),
+        "successful": True,
         "continuity_defect": float(result.diagnostics.continuity_defect),
         "gauss_defect": float(result.diagnostics.electric_constraint),
         "magnetic_defect": float(result.diagnostics.magnetic_constraint),

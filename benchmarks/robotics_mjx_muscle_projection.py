@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import importlib.metadata
 import time
 from pathlib import Path
 
@@ -45,11 +46,14 @@ def _xml(muscles: int) -> str:
 """
 
 
-def benchmark(muscles: int, iterations: int) -> dict[str, object]:
+def benchmark(muscles: int, iterations: int, device_kind: str) -> dict[str, object]:
     import mujoco
 
+    devices = [device for device in jax.devices() if device.platform == device_kind]
+    if not devices:
+        raise ValueError(f"requested JAX device platform {device_kind!r} is unavailable")
     model = mujoco.MjModel.from_xml_string(_xml(muscles))
-    adapter = prepare_mjx_adapter(model, device=jax.devices("cpu")[0])
+    adapter = prepare_mjx_adapter(model, device=devices[0])
     projection = adapter.prepare_muscle_projection()
     excitation = jnp.linspace(0.05, 0.95, muscles)
 
@@ -74,6 +78,8 @@ def benchmark(muscles: int, iterations: int) -> dict[str, object]:
             snapshot = projection.snapshot(refreshed.accepted_state)
             return refreshed.accepted_state, (
                 snapshot.raw_force_N.values,
+                stepped.successful,
+                refreshed.successful,
                 snapshot.successful,
             )
 
@@ -83,11 +89,11 @@ def benchmark(muscles: int, iterations: int) -> dict[str, object]:
     action = eqx.filter_jit(rollout)
     start = time.perf_counter()
     first = action(initial)
-    first[1][0].block_until_ready()
+    jax.block_until_ready(first)
     compile_and_first_s = time.perf_counter() - start
     start = time.perf_counter()
     result = action(initial)
-    result[1][0].block_until_ready()
+    jax.block_until_ready(result)
     elapsed = time.perf_counter() - start
     return {
         "device": adapter.device,
@@ -97,9 +103,19 @@ def benchmark(muscles: int, iterations: int) -> dict[str, object]:
         "compile_and_first_seconds": compile_and_first_s,
         "execution_seconds": elapsed,
         "step_forward_snapshot_per_second": iterations / elapsed,
-        "successful": bool(jnp.all(result[1][1])),
+        "successful": bool(
+            jnp.all(result[1][1])
+            & jnp.all(result[1][2])
+            & jnp.all(result[1][3])
+        ),
         "raw_force_checksum_N": float(jnp.sum(result[1][0][-1])),
         "provider": adapter.provenance.provider,
+        "provider_identity": {
+            "mujoco_version": importlib.metadata.version("mujoco"),
+            "jax_version": importlib.metadata.version("jax"),
+            "device": str(devices[0]),
+            "platform": devices[0].platform,
+        },
     }
 
 
@@ -107,6 +123,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--muscles", type=int, default=40)
     parser.add_argument("--iterations", type=int, default=100)
+    parser.add_argument("--device", choices=("cpu", "gpu", "tpu"), default="cpu")
     parser.add_argument(
         "--output",
         type=Path,
@@ -115,9 +132,11 @@ def main() -> None:
     arguments = parser.parse_args()
     if arguments.muscles <= 0 or arguments.iterations <= 0:
         raise ValueError("muscles and iterations must be positive.")
-    payload = benchmark(arguments.muscles, arguments.iterations)
-    arguments.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    print(json.dumps(payload, indent=2, sort_keys=True))
+    payload = benchmark(arguments.muscles, arguments.iterations, arguments.device)
+    from benchmarks._io import write_json_atomic
+
+    write_json_atomic(arguments.output, payload)
+    print(json.dumps(payload, allow_nan=False, indent=2, sort_keys=True))
     if not payload["successful"]:
         raise SystemExit(1)
 

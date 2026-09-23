@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -78,6 +79,7 @@ def test_analytic_adaptive_and_symplectic_propagation_agree():
         times,
         solver=phx.solver.StormerVerlet(3),
         dt0=times[1] - times[0],
+        solver_id="stormer-verlet-order-3",
     ).solve(state)
     assert bool(adaptive.successful)
     assert bool(analytic.successful)
@@ -115,3 +117,29 @@ def test_invalid_two_body_inputs_return_status_without_shape_change():
     )(jnp.asarray(-1.0))
     assert jnp.all(jnp.isnan(tangent))
     assert jnp.isnan(reverse)
+
+
+def test_astrodynamics_static_controls_and_numeric_identities_fail_closed():
+    astro = phx.applications.astrodynamics
+    state = _circular_state()
+    with pytest.raises(TypeError, match="max_iterations"):
+        astro.UniversalKeplerPolicy(max_iterations=True)
+    with pytest.raises(TypeError, match="integer"):
+        astro.LambertPlan(grid_size=64.5)
+    with pytest.raises(ValueError, match="solver_id"):
+        astro.AstrodynamicsPropagationPlan(
+            astro.PointMassGravity(1.0, state.context),
+            jnp.asarray([0.0, 1.0]),
+            solver=phx.solver.StormerVerlet(3),
+            dt0=0.1,
+        )
+
+    first = astro.PointMassGravity(1.0, state.context)
+    second = astro.PointMassGravity(2.0, state.context)
+    assert first.force_id != second.force_id
+    times = jnp.asarray([0.0, 0.5, 1.0])
+    shifted = jnp.asarray([0.0, 0.4, 1.0])
+    assert (
+        astro.AstrodynamicsPropagationPlan(first, times).plan_id
+        != astro.AstrodynamicsPropagationPlan(first, shifted).plan_id
+    )

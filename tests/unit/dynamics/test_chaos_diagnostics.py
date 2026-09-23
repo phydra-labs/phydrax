@@ -75,6 +75,24 @@ def test_recurrence_rqa_preserves_theiler_mask_and_line_statistics():
     assert int(jnp.sum(result.diagonal_length_histogram)) > 0
 
 
+def test_rqa_with_no_recurrences_is_not_successful_with_nan_metrics():
+    data = _scalar_data(
+        jnp.asarray([0.0, 1.0, 3.0, 7.0]),
+        source_id="no-recurrence-rqa",
+    )
+    result = phx.dynamics.analysis.recurrence_quantification(
+        data,
+        1.0e-6,
+        theiler_window=0,
+    )
+
+    assert not bool(result.valid)
+    assert (
+        int(result.status) == phx.dynamics.analysis.CHAOS_DIAGNOSTIC_INSUFFICIENT_SAMPLES
+    )
+    assert jnp.isnan(result.determinism)
+
+
 def test_zero_one_test_separates_periodic_and_logistic_observables():
     count = 1400
     periodic = np.sin(2.0 * np.pi * np.arange(count) / 37.0)
@@ -122,6 +140,23 @@ def test_correlation_dimension_records_fit_window_and_theiler_pairs():
     assert float(result.r_squared) > 0.995
     assert int(jnp.sum(result.fit_mask)) == 11
     assert int(result.eligible_pair_count) > 500_000
+
+
+def test_correlation_dimension_rejects_degenerate_fit_diagnostics():
+    data = _scalar_data(
+        jnp.asarray([0.0, 1.0, 3.0]),
+        source_id="degenerate-correlation-fit",
+    )
+    result = phx.dynamics.analysis.correlation_dimension(
+        data,
+        jnp.asarray([1.1, 1.2, 1.3]),
+        theiler_window=0,
+    )
+
+    assert jnp.isfinite(result.dimension)
+    assert jnp.isnan(result.r_squared)
+    assert not bool(result.valid)
+    assert int(result.status) == phx.dynamics.analysis.CHAOS_DIAGNOSTIC_FIT_FAILED
 
 
 def test_surrogate_protocol_and_uncertainty_summary_preserve_rng_and_sources():

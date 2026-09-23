@@ -321,6 +321,8 @@ class DryAtmospherePlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Boundary pairs must match axes; vertical gravity is not periodic."
             )
+        if isinstance(order, bool) or not isinstance(order, int):
+            raise TypeError("order must be an integer.")
         if order not in (1, 2) or not np.isfinite(cfl) or not 0.0 < cfl <= 0.5:
             raise ValueError("Dry atmosphere requires order one/two and 0 < CFL <= 0.5.")
         data = (
@@ -356,7 +358,7 @@ class DryAtmospherePlan(StrictModule, NonTrainableState):
             tuple(tuple(float(x) for x in row) for row in bounds_),
             pairs,
         )
-        self.prescribed, self.order, self.cfl = data, int(order), float(cfl)
+        self.prescribed, self.order, self.cfl = data, order, float(cfl)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "dry-atmosphere",

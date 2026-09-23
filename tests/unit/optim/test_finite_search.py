@@ -249,3 +249,31 @@ def test_finite_space_cardinality_overflow_is_rejected():
     object.__setattr__(huge, "size", 2**32)
     with pytest.raises(OverflowError, match="64-bit"):
         phx.optim.FiniteProductSpace((huge, huge))
+
+
+def test_precedence_simultaneous_group_branches_atomically_with_combined_resources():
+    space = phx.optim.PrecedenceSpace(
+        (
+            phx.optim.PrecedenceOperation(
+                "left",
+                simultaneous_group="pair",
+                resource_demand={"workers": 1},
+            ),
+            phx.optim.PrecedenceOperation(
+                "right",
+                simultaneous_group="pair",
+                resource_demand={"workers": 2},
+            ),
+        ),
+        resource_limits={"workers": 3},
+    )
+
+    children = space.branch(space.root())
+    assert len(children) == 1
+    assert children[0].completed == ("left", "right")
+
+    blocked = phx.optim.PrecedenceSpace(
+        space.operations,
+        resource_limits={"workers": 2},
+    )
+    assert blocked.branch(blocked.root()) == ()

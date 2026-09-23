@@ -240,3 +240,27 @@ def test_noncompact_finite_features_reuse_weight_space_gp():
     assert isinstance(
         model.factor(state=state), phx.uq.FiniteFeatureGaussianProcessFactor
     )
+
+
+def test_real_noncompact_kernel_families_reject_complex_coordinates():
+    hyperbolic = phx.kernels.HyperbolicRandomFeatureKernel(
+        phx.kernels.hyperbolic_feature_proposal(jax.random.key(20), 2, 8),
+        0.8,
+        1.2,
+    )
+    with pytest.raises(TypeError, match="real coordinates"):
+        hyperbolic.matrix(
+            _hyperbolic_points().astype(jnp.complex128) + 0.1j,
+            _hyperbolic_points(),
+        )
+
+    spd = phx.kernels.SPDRandomFeatureKernel(
+        phx.kernels.spd_feature_proposal(jax.random.key(21), 2, 8),
+        0.9,
+        1.3,
+    )
+    with pytest.raises(TypeError, match="real coordinates"):
+        spd.matrix(
+            _spd_points().astype(jnp.complex128) + 0.1j,
+            _spd_points(),
+        )

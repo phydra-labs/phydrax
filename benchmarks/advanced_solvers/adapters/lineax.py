@@ -147,12 +147,12 @@ class LineaxAdapter(BenchmarkAdapter):
     ) -> dict[str, Any]:
         del result
         return {
-            "matrix_bytes": prepared_state.matrix.nbytes,
-            "setup_bytes": 0,
+            "matrix_bytes": prepared_state.matrix.nbytes + prepared_state.rhs.nbytes,
+            "setup_bytes": None,
             "peak_estimate_bytes": None,
             "evidence": (
-                "exact dense device matrix bytes; Lineax/XLA Krylov and output peak "
-                "allocation is unavailable"
+                "exact dense device matrix bytes; Lineax/XLA compiled storage, Krylov "
+                "workspace, and output peak allocation are unavailable"
             ),
         }
 

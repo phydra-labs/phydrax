@@ -323,7 +323,11 @@ def calibrate_moments_conic(problem, solver=None):
     convex = execution.result
     weights = convex.primal[: problem.source_points]
     finite_positive = jnp.isfinite(weights) & (weights > 0.0)
-    log_weights = jnp.where(finite_positive, jnp.log(weights), -jnp.inf)
+    log_weights = jnp.where(
+        finite_positive,
+        jnp.log(jnp.where(finite_positive, weights, 1.0)),
+        -jnp.inf,
+    )
     achieved = problem.moment_map.mv(weights)
     if isinstance(problem.target, ExactMoments):
         residual = achieved - problem.target.values
@@ -340,6 +344,14 @@ def calibrate_moments_conic(problem, solver=None):
         )
         target_ok = jnp.max(jnp.abs(residual)) <= policy.termination.absolute
     prior = jax.nn.softmax(jnp.where(problem.mask, problem.prior_log_weights, -jnp.inf))
+    ratio_defined = finite_positive & problem.mask & (prior > 0.0)
+    safe_log_weights = jnp.where(ratio_defined, log_weights, 0.0)
+    safe_log_prior = jnp.log(jnp.where(ratio_defined, prior, 1.0))
+    absolute_log_ratio = jnp.where(
+        ratio_defined,
+        jnp.abs(safe_log_weights - safe_log_prior),
+        0.0,
+    )
     prior_moments = problem.moment_map.mv(prior)
     normalization = jnp.abs(jnp.sum(weights) - 1.0)
     valid = convex.successful & target_ok & (normalization <= policy.termination.absolute)
@@ -348,9 +360,7 @@ def calibrate_moments_conic(problem, solver=None):
         int(MomentCalibrationStatus.SUCCESS),
         int(MomentCalibrationStatus.OPTIMIZATION_FAILED),
     ).astype(jnp.int32)
-    relative_entropy = jnp.sum(
-        jnp.where(weights > 0.0, weights * (log_weights - jnp.log(prior)), 0.0)
-    )
+    relative_entropy = jnp.sum(weights * (safe_log_weights - safe_log_prior))
     diagnostics = MomentCalibrationDiagnostics(
         optimizer_status=convex.status,
         optimization=convex,
@@ -373,7 +383,7 @@ def calibrate_moments_conic(problem, solver=None):
         active_support=jnp.sum(weights > 0.0),
         minimum_active_weight=jnp.min(jnp.where(weights > 0.0, weights, jnp.inf)),
         maximum_active_weight=jnp.max(weights),
-        maximum_log_weight_ratio=jnp.max(jnp.abs(log_weights - jnp.log(prior))),
+        maximum_log_weight_ratio=jnp.max(absolute_log_ratio),
         normalization_residual=normalization,
         geometry_finite=jnp.all(jnp.isfinite(weights)),
         spectrum=(),

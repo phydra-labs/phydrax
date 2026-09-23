@@ -156,3 +156,28 @@ def test_resource_and_outside_reconstruction_fail_closed():
         phx.discretization.evaluate_explicit_polygon_h1_reconstruction(
             reconstruction, space, 0, jnp.asarray([[[2.0, 2.0]]])
         )
+
+
+def test_runtime_is_bound_to_the_exact_polygon_plan():
+    points = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+    mesh = phx.discretization.CellMesh.from_polygons(points, ((0, 1, 2, 3),))
+    field = phx.discretization.ExplicitPolygonH1FieldSpec("u")
+    source = phx.discretization.ExplicitPolygonH1Plan(
+        mesh,
+        field,
+        quadrature_policy=phx.discretization.ExplicitPolygonH1QuadraturePolicy(
+            cell_order=3,
+            facet_order=3,
+        ),
+    ).prepare()
+    target = phx.discretization.ExplicitPolygonH1Plan(
+        mesh,
+        field,
+        quadrature_policy=phx.discretization.ExplicitPolygonH1QuadraturePolicy(
+            cell_order=4,
+            facet_order=3,
+        ),
+    ).prepare()
+
+    with pytest.raises(ValueError, match="does not match prepared layout"):
+        target.validate_local_runtime(source.default_runtime)

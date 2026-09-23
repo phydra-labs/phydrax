@@ -249,9 +249,8 @@ def _memory_bytes() -> int | None:
     statistics = jax.devices()[0].memory_stats()
     if statistics is None:
         return None
-    for name in ("peak_bytes_in_use", "bytes_in_use"):
-        if name in statistics:
-            return int(statistics[name])
+    if "peak_bytes_in_use" in statistics:
+        return int(statistics["peak_bytes_in_use"])
     return None
 
 

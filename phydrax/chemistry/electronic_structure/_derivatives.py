@@ -30,6 +30,8 @@ class MolecularHessianResult(StrictModule, NonTrainableState):
     evaluation_count: Array
     successful: Array
     units: AtomisticUnitSystem
+    system_id: str = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
     source_result_ids: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
@@ -42,6 +44,8 @@ class MolecularHessianResult(StrictModule, NonTrainableState):
         evaluation_count: int,
         successful,
         units: AtomisticUnitSystem,
+        system_id: str,
+        geometry_id: str,
         source_result_ids: tuple[str, ...],
         plan_id: str,
         /,
@@ -55,6 +59,10 @@ class MolecularHessianResult(StrictModule, NonTrainableState):
         successful_ = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         if not isinstance(units, AtomisticUnitSystem):
             raise TypeError("units must be AtomisticUnitSystem.")
+        system_id_ = str(system_id).strip()
+        geometry_id_ = str(geometry_id).strip()
+        if not system_id_ or not geometry_id_:
+            raise ValueError("Hessian system and geometry identities must be non-empty.")
         sources = tuple(str(value).strip() for value in source_result_ids)
         if not sources or any(not value for value in sources):
             raise ValueError("Hessian source result IDs must be non-empty.")
@@ -64,6 +72,8 @@ class MolecularHessianResult(StrictModule, NonTrainableState):
         self.evaluation_count = count
         self.successful = successful_
         self.units = units
+        self.system_id = system_id_
+        self.geometry_id = geometry_id_
         self.source_result_ids = sources
         self.plan_id = str(plan_id)
         self.result_id = canonical_fingerprint(
@@ -71,6 +81,8 @@ class MolecularHessianResult(StrictModule, NonTrainableState):
                 "kind": "molecular-hessian-result",
                 "plan": self.plan_id,
                 "units": hessian_unit(units).unit_id,
+                "system": system_id_,
+                "geometry": geometry_id_,
                 "sources": list(sources),
                 "successful": bool(successful_),
                 "arrays": array_tree_fingerprint(
@@ -237,6 +249,8 @@ class MolecularHessianPlan(StrictModule, NonTrainableState):
             count,
             successful,
             self.system.units,
+            self.system.system_id,
+            structure.structure_id,
             sources,
             self.plan_id,
         )

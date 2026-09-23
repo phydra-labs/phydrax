@@ -19,6 +19,7 @@ from jaxtyping import Array, Key
 
 import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
+from phydrax._model import register_artifact_value
 from phydrax._spectral._multiwavelet import AlpertMultiwaveletTransform
 from phydrax._strict import StrictModule
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
@@ -692,6 +693,24 @@ class MultiwaveletOperator(AbstractOperatorModel):
         if not isinstance(x, OperatorBatch):
             raise TypeError("MultiwaveletOperator requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
+
+
+register_artifact_value(
+    "phydrax.operator.internal:WaveletResourcePolicy",
+    WaveletResourcePolicy,
+)
+register_artifact_value(
+    "phydrax.operator.internal:WaveletSubbandMixerND",
+    _WaveletSubbandMixerND,
+)
+register_artifact_value(
+    "phydrax.operator.internal:MultiwaveletSubbandMixer1D",
+    _MultiwaveletSubbandMixer1D,
+)
+register_artifact_value(
+    "phydrax.operator.internal:WaveletDecodePolicy",
+    WaveletDecodePolicy,
+)
 
 
 __all__ = [

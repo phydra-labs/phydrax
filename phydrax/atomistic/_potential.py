@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from abc import abstractmethod
 from enum import StrEnum
 from typing import Any, cast, TypeVar
@@ -93,8 +94,8 @@ class AtomisticPotentialRequirements(StrictModule, NonTrainableState):
         reciprocal_grid: bool = False,
     ):
         cutoff_ = None if cutoff is None else float(cutoff)
-        if cutoff_ is not None and cutoff_ <= 0.0:
-            raise ValueError("Potential cutoff must be positive or None.")
+        if cutoff_ is not None and (not math.isfinite(cutoff_) or cutoff_ <= 0.0):
+            raise ValueError("Potential cutoff must be finite and positive or None.")
         self.cutoff = cutoff_
         self.pair_geometry = bool(pair_geometry)
         self.interaction_site_geometry = bool(interaction_site_geometry)

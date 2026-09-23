@@ -799,7 +799,7 @@ def evolve_variable_sector_tdvp(
     finite_array = jnp.stack(finite_steps)
     status = jnp.where(
         ~tail_evidence.accepted,
-        VARIABLE_SECTOR_VMC_CUTOFF_TAIL_REFUSED,
+        tail_evidence.status,
         jnp.where(
             jnp.all(finite_array),
             VARIABLE_SECTOR_VMC_SUCCESS,

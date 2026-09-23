@@ -59,7 +59,7 @@ class AbstractFlowDistribution(StrictModule, abc.ABC):
 
 class NormalFlowDistribution(AbstractFlowDistribution):
     location: Array
-    scale: Array
+    _raw_scale: Array
     _shape: tuple[int, ...] = eqx.field(static=True)
 
     def __init__(self, location: ArrayLike, scale: ArrayLike, /):
@@ -75,12 +75,16 @@ class NormalFlowDistribution(AbstractFlowDistribution):
             "Normal flow scales must be finite and positive.",
         )
         self.location = location_
-        self.scale = scale_
+        self._raw_scale = scale_ + jnp.log(-jnp.expm1(-scale_))
         self._shape = tuple(location_.shape)
 
     @property
     def shape(self) -> tuple[int, ...]:
         return self._shape
+
+    @property
+    def scale(self) -> Array:
+        return jax.nn.softplus(self._raw_scale) + jnp.finfo(self._raw_scale.dtype).tiny
 
     @property
     def cond_shape(self) -> None:
@@ -139,9 +143,19 @@ class AffineCouplingLayer(StrictModule):
     ):
         event = int(event_size)
         condition = int(condition_size)
-        mask_ = jnp.asarray(mask, dtype=jnp.float64)
-        if mask_.shape != (event,):
+        mask_value = jnp.asarray(mask)
+        if mask_value.shape != (event,):
             raise ValueError("Coupling masks must match the event size.")
+        if not (
+            jnp.issubdtype(mask_value.dtype, jnp.number)
+            or jnp.issubdtype(mask_value.dtype, jnp.bool_)
+        ):
+            raise TypeError("Coupling masks must contain boolean or numeric values.")
+        if not bool(
+            jnp.all(jnp.isfinite(mask_value) & ((mask_value == 0) | (mask_value == 1)))
+        ):
+            raise ValueError("Coupling masks must contain only binary values.")
+        mask_ = mask_value.astype(jnp.bool_)
         self.network = eqx.nn.MLP(
             event + condition,
             2 * event,

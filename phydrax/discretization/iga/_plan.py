@@ -70,19 +70,22 @@ def _cell_gathers(basis: TensorSplineBasisSpec, /) -> np.ndarray:
 
 
 def _facet_routes(
-    basis: TensorSplineBasisSpec, /
+    basis: TensorSplineBasisSpec,
+    overlay_breaks: tuple[tuple[float, ...], ...],
+    /,
 ) -> tuple[np.ndarray, np.ndarray, tuple[tuple[int, int, int, int], ...]]:
     owners: list[int] = []
     local_entities: list[int] = []
     groups = []
     start = 0
+    overlay_shape = tuple(len(values) - 1 for values in overlay_breaks)
     for axis in range(basis.parametric_dimension):
-        tangential_shape = basis.span_shape[:axis] + basis.span_shape[axis + 1 :]
+        tangential_shape = overlay_shape[:axis] + overlay_shape[axis + 1 :]
         for side in (-1, 1):
             for tangential in np.ndindex(tangential_shape):
                 cell = list(tangential)
-                cell.insert(axis, 0 if side < 0 else basis.span_shape[axis] - 1)
-                owners.append(int(np.ravel_multi_index(tuple(cell), basis.span_shape)))
+                cell.insert(axis, 0 if side < 0 else overlay_shape[axis] - 1)
+                owners.append(int(np.ravel_multi_index(tuple(cell), overlay_shape)))
                 local_entities.append(2 * axis + int(side > 0))
             stop = len(owners)
             groups.append((axis, side, start, stop))
@@ -482,7 +485,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
             jnp.asarray(_overlay_gathers(field.basis, overlay_breaks))
             for field in plan.fields
         )
-        facet_owners, facet_local, facet_groups = _facet_routes(basis)
+        facet_owners, facet_local, facet_groups = _facet_routes(basis, overlay_breaks)
         cell_domain = IntegrationDomain(
             "cell",
             np.arange(prod(len(values) - 1 for values in overlay_breaks), dtype=np.int32),
@@ -503,7 +506,11 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
             np.arange(facet_owners.size, dtype=np.int32),
             support.support_id,
             canonical_fingerprint(
-                {"kind": "isogeometric-exterior-facets", "basis": basis.basis_id}
+                {
+                    "kind": "isogeometric-exterior-facets",
+                    "geometry": basis.basis_id,
+                    "breaks": [list(values) for values in overlay_breaks],
+                }
             ),
             owner_cells=facet_owners,
             neighbor_cells=np.full(facet_owners.shape, -1, dtype=np.int32),
@@ -820,17 +827,28 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                 )[active],
                 selection_id=domain.selection_id,
             )
-            tensor, permutation, entity_shape, point_shape, reference_weights = (
-                _query_configuration(
-                    self.basis,
-                    self.quadrature_policy,
-                    facet_axis=axis,
-                    facet_side=side,
-                )
+            (
+                geometry_tensor,
+                permutation,
+                entity_shape,
+                point_shape,
+                reference_weights,
+            ) = _query_configuration(
+                self.basis,
+                self.quadrature_policy,
+                overlay_breaks=self.overlay_breaks,
+                facet_axis=axis,
+                facet_side=side,
             )
             references = tuple(
                 IsogeometricReferenceActions(
-                    tensor,
+                    _query_configuration(
+                        self.fields[self._field_index(name)].basis,
+                        self.quadrature_policy,
+                        overlay_breaks=self.overlay_breaks,
+                        facet_axis=axis,
+                        facet_side=side,
+                    )[0],
                     self.fields[self._field_index(name)].weights,
                     local_rows,
                     permutation,
@@ -848,7 +866,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                 for name in names
             )
             geometry = IsogeometricGeometryActions(
-                tensor,
+                geometry_tensor,
                 local_rows,
                 reference_weights[local_rows],
                 permutation,

@@ -98,14 +98,18 @@ def main() -> None:
     masses = jnp.ones((2,))
     reference_force = force_plan.acceleration(positions, masses)
     force_evidence = force_plan.qualify(positions, masses, reference_force)
+    if not bool(nonlinear.successful):
+        raise RuntimeError("Nonlinear cosmology evaluation failed")
+    if not bool(force_evidence.successful):
+        raise RuntimeError("Periodic force qualification failed")
     print("curved_radial_distance", curved_distance.radial_comoving_distance)
     print("curved_transverse_distance", curved_distance.transverse_comoving_distance)
     print("growth_today", growth.first_order_growth[-1])
-    print("nonlinear_successful", bool(nonlinear.successful))
+    print("nonlinear_successful", True)
     print("halo_sigma", variance)
     print("angular_prediction", angular.values)
     print("primordial_at_pivot", primordial.scalar_power(0.05))
-    print("force_qualification", bool(force_evidence.successful))
+    print("force_qualification", True)
 
 
 if __name__ == "__main__":

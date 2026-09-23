@@ -465,6 +465,13 @@ def _solve_causal_forward(
     probe_key: Array | None,
     /,
 ) -> CausalRecurrenceResult:
+    if (
+        termination.maximum_evaluations is not None
+        and termination.maximum_evaluations < problem.num_steps
+    ):
+        raise ValueError(
+            "maximum_evaluations must permit the initial full recurrence evaluation."
+        )
     trajectory = _initial_flat_trajectory(problem, initial_trajectory)
     residual, _ = problem.evaluate_flat(trajectory)
     initial_norm = _flat_maximum_norm(residual)
@@ -531,7 +538,15 @@ def _solve_causal_forward(
             accepted_history,
             finite_history,
         ) = state
-        active = ~(already_converged | already_failed)
+        evaluation_available = (
+            jnp.asarray(True)
+            if termination.maximum_evaluations is None
+            else (
+                transition_evaluations + problem.num_steps
+                <= termination.maximum_evaluations
+            )
+        )
+        active = ~(already_converged | already_failed) & evaluation_available
 
         def active_iteration(_):
             matrices, jacobian_increment, jvp_increment = _linearize_transitions(
@@ -654,10 +669,19 @@ def _solve_causal_forward(
                             finite_seen | finite_trial,
                         )
 
+                    can_evaluate = ~trial_accepted & (
+                        jnp.asarray(True)
+                        if termination.maximum_evaluations is None
+                        else (
+                            transition_evaluations
+                            + (trial_number + 1) * problem.num_steps
+                            <= termination.maximum_evaluations
+                        )
+                    )
                     return jax.lax.cond(
-                        trial_accepted,
-                        lambda _: trial_state,
+                        can_evaluate,
                         evaluate_trial,
+                        lambda _: trial_state,
                         operand=None,
                     )
 
@@ -679,6 +703,21 @@ def _solve_causal_forward(
                     predicted,
                     finite,
                 ) = trial_final
+            next_transition_evaluations = (
+                transition_evaluations + problem.num_steps * trial_count
+            )
+            budget_exhausted = (
+                jnp.asarray(False)
+                if termination.maximum_evaluations is None
+                else (
+                    ~accepted
+                    & finite
+                    & (
+                        next_transition_evaluations + problem.num_steps
+                        > termination.maximum_evaluations
+                    )
+                )
+            )
 
             next_residual = jnp.where(accepted, candidate_residual, current_residual)
             next_trajectory = jnp.where(accepted, candidate, current)
@@ -701,7 +740,11 @@ def _solve_causal_forward(
             )
             failed_trial = ~accepted
             now_failed = (
-                failed_trial | stagnated | diverged | (~jnp.isfinite(residual_norm))
+                failed_trial
+                | budget_exhausted
+                | stagnated
+                | diverged
+                | (~jnp.isfinite(residual_norm))
             )
             next_status = jnp.where(
                 now_converged,
@@ -710,25 +753,28 @@ def _solve_causal_forward(
                     ~jnp.isfinite(residual_norm),
                     int(NonlinearStatus.NONFINITE_EVALUATION),
                     jnp.where(
-                        failed_trial,
-                        (
-                            int(NonlinearStatus.TRUST_REGION_FAILED)
-                            if isinstance(method, CausalLevenbergMarquardt)
-                            else int(NonlinearStatus.NONFINITE_EVALUATION)
-                        ),
+                        budget_exhausted,
+                        int(NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED),
                         jnp.where(
-                            stagnated,
-                            int(NonlinearStatus.RESIDUAL_STAGNATION),
+                            failed_trial,
+                            (
+                                int(NonlinearStatus.TRUST_REGION_FAILED)
+                                if isinstance(method, CausalLevenbergMarquardt)
+                                else int(NonlinearStatus.NONFINITE_EVALUATION)
+                            ),
                             jnp.where(
-                                diverged,
-                                int(NonlinearStatus.DIVERGENCE),
-                                int(NonlinearStatus.ITERATING),
+                                stagnated,
+                                int(NonlinearStatus.RESIDUAL_STAGNATION),
+                                jnp.where(
+                                    diverged,
+                                    int(NonlinearStatus.DIVERGENCE),
+                                    int(NonlinearStatus.ITERATING),
+                                ),
                             ),
                         ),
                     ),
                 ),
             ).astype(jnp.int32)
-            transition_increment = problem.num_steps * trial_count
             return (
                 next_trajectory,
                 next_residual,
@@ -738,7 +784,7 @@ def _solve_causal_forward(
                 next_damping,
                 accepted_count + accepted.astype(jnp.int32),
                 rejected_count + (trial_count - accepted.astype(jnp.int32)),
-                transition_evaluations + transition_increment,
+                next_transition_evaluations,
                 jacobian_evaluations + jacobian_increment,
                 jvp_evaluations + jvp_increment,
                 residual_history.at[index].set(residual_norm),
@@ -775,13 +821,24 @@ def _solve_causal_forward(
         accepted_history,
         finite_history,
     ) = final
+    evaluation_exhausted = (
+        jnp.asarray(False)
+        if termination.maximum_evaluations is None
+        else (
+            transition_evaluations + problem.num_steps > termination.maximum_evaluations
+        )
+    )
     final_status = jnp.where(
         final_converged,
         int(NonlinearStatus.SUCCESS),
         jnp.where(
             final_failed,
             final_status,
-            int(NonlinearStatus.MAXIMUM_STEPS_REACHED),
+            jnp.where(
+                evaluation_exhausted,
+                int(NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED),
+                int(NonlinearStatus.MAXIMUM_STEPS_REACHED),
+            ),
         ),
     ).astype(jnp.int32)
     iteration_count = jnp.sum(~jnp.isnan(residual_history), dtype=jnp.int32)

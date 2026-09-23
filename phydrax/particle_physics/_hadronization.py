@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from enum import IntEnum
+from numbers import Integral
 
 import equinox as eqx
 import jax
@@ -27,6 +28,16 @@ from ..solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
 from ._species import ParticleSpeciesTable
 
 
+def _pdg_id(value: object, name: str, /) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError(f"{name} must be an integer.")
+    result = int(value)
+    bounds = np.iinfo(np.int32)
+    if result < bounds.min or result > bounds.max:
+        raise OverflowError(f"{name} must fit signed int32.")
+    return result
+
+
 class DarkHadronizationStatus(IntEnum):
     SUCCESS = 0
     NO_CHARGE_CHANNEL = 1
@@ -34,6 +45,7 @@ class DarkHadronizationStatus(IntEnum):
     INVALID_COLOR_SINGLET = 3
     NONFINITE_INPUT = 4
     UNKNOWN_SPECIES = 5
+    INVALID_KINEMATICS = 6
 
 
 class DarkHadronPairChannel(StrictModule, NonTrainableState):
@@ -50,17 +62,15 @@ class DarkHadronPairChannel(StrictModule, NonTrainableState):
         *,
         spectrum_label: str,
     ):
-        identifiers = tuple(pdg_ids)
+        raw_identifiers = tuple(pdg_ids)
+        if len(raw_identifiers) != 2:
+            raise ValueError("A hadron-pair channel requires exactly two species.")
+        identifiers = tuple(_pdg_id(value, "hadron pdg_id") for value in raw_identifiers)
         weight = float(relative_weight)
         label = str(spectrum_label).strip()
-        if (
-            len(identifiers) != 2
-            or not math.isfinite(weight)
-            or weight <= 0.0
-            or not label
-        ):
+        if not math.isfinite(weight) or weight <= 0.0 or not label:
             raise ValueError(
-                "A hadron-pair channel requires two species, positive weight, and spectrum label."
+                "A hadron-pair channel requires positive weight and spectrum label."
             )
         self.pdg_ids = identifiers
         self.relative_weight = weight
@@ -126,6 +136,10 @@ def _validate_common(
         raise TypeError("runtime_plan must be DarkSectorEpochPlan.")
     if not isinstance(species, ParticleSpeciesTable):
         raise TypeError("species must be ParticleSpeciesTable.")
+    if runtime_plan.species_revision_id != species.table_id:
+        raise ValueError(
+            "runtime_plan species revision must match the hadronization species table."
+        )
     if not isinstance(units, RelativisticUnitContract):
         raise TypeError("units must be RelativisticUnitContract.")
     if species.energy_unit.unit_id != units.energy_unit.unit_id:
@@ -426,13 +440,15 @@ def _species_arrays(table: ParticleSpeciesTable, channels):
 
 def _two_body_momenta(units, parent, masses, azimuth_uniform, polar_uniform):
     invariant_squared = units.lorentz_scalar(parent, parent)
-    invariant_mass = jnp.sqrt(jnp.maximum(invariant_squared, 0.0))
+    positive_energy = parent[0] > 0.0
+    timelike = invariant_squared > 0.0
+    safe_invariant_squared = jnp.where(timelike, invariant_squared, 1.0)
+    invariant_mass = jnp.sqrt(safe_invariant_squared)
     m1, m2 = masses[0], masses[1]
-    first = invariant_squared - (m1 + m2) ** 2
-    second = invariant_squared - (m1 - m2) ** 2
-    magnitude = jnp.sqrt(jnp.maximum(first * second, 0.0)) / jnp.maximum(
-        2.0 * invariant_mass, 1e-30
-    )
+    first = safe_invariant_squared - (m1 + m2) ** 2
+    second = safe_invariant_squared - (m1 - m2) ** 2
+    open_channel = first >= 0.0
+    magnitude = jnp.sqrt(jnp.maximum(first * second, 0.0)) / (2.0 * invariant_mass)
     cos_theta = 2.0 * polar_uniform - 1.0
     sin_theta = jnp.sqrt(jnp.maximum(1.0 - cos_theta * cos_theta, 0.0))
     phi = 2.0 * jnp.pi * azimuth_uniform
@@ -442,22 +458,30 @@ def _two_body_momenta(units, parent, masses, azimuth_uniform, polar_uniform):
     p_rest = magnitude * direction
     e1 = jnp.sqrt(m1 * m1 + magnitude * magnitude)
     e2 = jnp.sqrt(m2 * m2 + magnitude * magnitude)
-    beta = parent[1:] / jnp.maximum(parent[0], 1e-30)
+    safe_parent_energy = jnp.where(positive_energy, parent[0], 1.0)
+    beta = parent[1:] / safe_parent_energy
     beta_squared = jnp.sum(beta * beta)
-    gamma = parent[0] / jnp.maximum(invariant_mass, 1e-30)
+    boost_valid = beta_squared < 1.0
+    gamma = safe_parent_energy / invariant_mass
 
     def boost(energy, spatial):
         projection = jnp.sum(beta * spatial)
         coefficient = jnp.where(
             beta_squared > 0.0,
-            (gamma - 1.0) * projection / beta_squared + gamma * energy,
+            (gamma - 1.0) * projection / jnp.maximum(beta_squared, 1.0e-30)
+            + gamma * energy,
             0.0,
         )
         return jnp.concatenate(
             ((gamma * (energy + projection))[None], spatial + coefficient * beta)
         )
 
-    return jnp.stack((boost(e1, p_rest), boost(e2, -p_rest))), invariant_mass
+    physical = positive_energy & timelike & boost_valid & open_channel
+    return (
+        jnp.stack((boost(e1, p_rest), boost(e2, -p_rest))),
+        invariant_mass,
+        physical,
+    )
 
 
 def _pair_probabilities(
@@ -496,8 +520,11 @@ def _fragment_dark_string_total(
     parent_id,
     finite_input,
     species_valid,
+    draw_id,
 ):
     channel_ids, masses, charges, weights = _species_arrays(plan.species, plan.channels)
+    invariant_mass = jnp.sqrt(jnp.maximum(plan.units.lorentz_scalar(parent, parent), 0.0))
+    shape_a, shape_b = plan.longitudinal_shape
     probabilities, charge_match, open_channel = _pair_probabilities(
         plan.units,
         parent,
@@ -505,17 +532,30 @@ def _fragment_dark_string_total(
         charges,
         weights,
         parent_charge,
-        lambda values: jnp.exp(
-            -jnp.pi * jnp.sum(values * values, axis=1) / plan.string_tension
+        lambda values: (
+            jnp.exp(-jnp.pi * jnp.sum(values * values, axis=1) / plan.string_tension)
+            * jnp.maximum(
+                1.0 - jnp.sum(values, axis=1) / jnp.maximum(invariant_mass, 1.0e-30),
+                0.0,
+            )
+            ** shape_a
+            * jnp.exp(-shape_b * jnp.sum(values * values, axis=1) / plan.string_tension)
         ),
     )
     selected = _select(probabilities, random[0])
-    output, _ = _two_body_momenta(
+    output, _, physical_parent = _two_body_momenta(
         plan.units, parent, masses[selected], random[1], random[2]
     )
     selected_ids = channel_ids[selected]
     selected_charges = charges[selected]
     finite = finite_input & jnp.all(jnp.isfinite(output))
+    momentum_residual = jnp.sum(output, axis=0) - parent
+    charge_residual = jnp.sum(selected_charges) - parent_charge
+    momentum_scale = jnp.maximum(1.0, jnp.max(jnp.abs(parent)))
+    residual_valid = jnp.all(
+        jnp.abs(momentum_residual)
+        <= 2048.0 * jnp.finfo(parent.dtype).eps * momentum_scale
+    ) & (jnp.abs(charge_residual) <= 1.0e-10)
     status = jnp.where(
         ~finite,
         int(DarkHadronizationStatus.NONFINITE_INPUT),
@@ -531,19 +571,22 @@ def _fragment_dark_string_total(
                     jnp.where(
                         ~jnp.any(charge_match & open_channel),
                         int(DarkHadronizationStatus.BELOW_THRESHOLD),
-                        int(DarkHadronizationStatus.SUCCESS),
+                        jnp.where(
+                            physical_parent & residual_valid,
+                            int(DarkHadronizationStatus.SUCCESS),
+                            int(DarkHadronizationStatus.INVALID_KINEMATICS),
+                        ),
                     ),
                 ),
             ),
         ),
     ).astype(jnp.int32)
-    momentum_residual = jnp.sum(output, axis=0) - parent
-    charge_residual = jnp.sum(selected_charges) - parent_charge
     evidence_id = canonical_fingerprint(
         {
             "kind": "dark-string-fragmentation-evidence",
             "profile": plan.profile_id,
             "parent": parent_id,
+            "draw": draw_id,
             "production_evidence": list(plan.production_evidence_ids),
         }
     )
@@ -574,6 +617,7 @@ def fragment_dark_string(
     /,
     *,
     parent_entity_id: str,
+    draw_id: str,
 ) -> DarkHadronizationEvidence:
     """Fragment one declared color-singlet dark string into an exact two-body state."""
 
@@ -594,6 +638,9 @@ def fragment_dark_string(
     parent_id = str(parent_entity_id).strip()
     if not parent_id:
         raise ValueError("parent_entity_id must be non-empty.")
+    draw = str(draw_id).strip()
+    if not draw:
+        raise ValueError("draw_id must be a non-empty RNG stream/draw identity.")
     ids = np.asarray(plan.species.pdg_ids)
     charges_table = np.asarray(plan.species.charges)
     active = np.asarray(plan.species.active)
@@ -623,6 +670,7 @@ def fragment_dark_string(
         parent_id,
         jnp.all(jnp.isfinite(endpoints)),
         jnp.asarray(True),
+        draw,
     )
 
 
@@ -636,6 +684,7 @@ def fragment_dark_string_chain(
     /,
     *,
     parent_entity_id: str,
+    draw_id: str,
 ) -> DarkHadronizationEvidence:
     """Fragment one fixed-capacity connected dark-color chain, including kinks."""
 
@@ -663,6 +712,9 @@ def fragment_dark_string_chain(
     parent_id = str(parent_entity_id).strip()
     if not parent_id:
         raise ValueError("parent_entity_id must be non-empty.")
+    draw = str(draw_id).strip()
+    if not draw:
+        raise ValueError("draw_id must be a non-empty RNG stream/draw identity.")
     matches = (pdg_ids[:, None] == plan.species.pdg_ids[None, :]) & plan.species.active[
         None, :
     ]
@@ -703,6 +755,7 @@ def fragment_dark_string_chain(
         parent_id,
         finite_input,
         species_valid,
+        draw,
     )
 
 
@@ -714,6 +767,7 @@ def decay_dark_cluster(
     /,
     *,
     parent_entity_id: str,
+    draw_id: str,
 ) -> DarkHadronizationEvidence:
     """Decay one terminal dark cluster using normalized declared spectrum weights."""
 
@@ -734,6 +788,9 @@ def decay_dark_cluster(
     parent_id = str(parent_entity_id).strip()
     if not parent_id:
         raise ValueError("parent_entity_id must be non-empty.")
+    draw = str(draw_id).strip()
+    if not draw:
+        raise ValueError("draw_id must be a non-empty RNG stream/draw identity.")
     channel_ids, masses, charges, weights = _species_arrays(
         plan.species, plan.decay_channels
     )
@@ -747,7 +804,7 @@ def decay_dark_cluster(
         lambda values: jnp.ones((values.shape[0],), dtype=values.dtype),
     )
     selected = _select(probabilities, random[0])
-    output, _ = _two_body_momenta(
+    output, _, physical_parent = _two_body_momenta(
         plan.units, parent, masses[selected], random[1], random[2]
     )
     selected_charges = charges[selected]
@@ -767,11 +824,26 @@ def decay_dark_cluster(
     ).astype(jnp.int32)
     momentum_residual = jnp.sum(output, axis=0) - parent
     charge_residual = jnp.sum(selected_charges) - charge
+    momentum_scale = jnp.maximum(1.0, jnp.max(jnp.abs(parent)))
+    residual_valid = jnp.all(
+        jnp.abs(momentum_residual)
+        <= 2048.0 * jnp.finfo(parent.dtype).eps * momentum_scale
+    ) & (jnp.abs(charge_residual) <= 1.0e-10)
+    status = jnp.where(
+        status == int(DarkHadronizationStatus.SUCCESS),
+        jnp.where(
+            physical_parent & residual_valid,
+            status,
+            int(DarkHadronizationStatus.INVALID_KINEMATICS),
+        ),
+        status,
+    ).astype(jnp.int32)
     evidence_id = canonical_fingerprint(
         {
             "kind": "dark-cluster-decay-evidence",
             "profile": plan.profile_id,
             "parent": parent_id,
+            "draw": draw,
             "production_evidence": list(plan.production_evidence_ids),
         }
     )
@@ -801,6 +873,7 @@ def fission_dark_cluster(
     /,
     *,
     parent_entity_id: str,
+    draw_id: str,
 ) -> DarkClusterFissionResult:
     """Fission one above-threshold cluster; both daughters publish atomically."""
 
@@ -823,6 +896,9 @@ def fission_dark_cluster(
     parent_id = str(parent_entity_id).strip()
     if not parent_id:
         raise ValueError("parent_entity_id must be non-empty.")
+    draw = str(draw_id).strip()
+    if not draw:
+        raise ValueError("draw_id must be a non-empty RNG stream/draw identity.")
     masses = jnp.asarray(
         [value.daughter_rest_energies for value in plan.fission_channels],
         dtype=parent.dtype,
@@ -843,7 +919,7 @@ def fission_dark_cluster(
         lambda values: jnp.ones((values.shape[0],), dtype=values.dtype),
     )
     selected = _select(probabilities, random[0])
-    output, invariant_mass = _two_body_momenta(
+    output, invariant_mass, physical_parent = _two_body_momenta(
         plan.units, parent, masses[selected], random[1], random[2]
     )
     selected_charges = charges[selected]
@@ -864,11 +940,26 @@ def fission_dark_cluster(
     ).astype(jnp.int32)
     momentum_residual = jnp.sum(output, axis=0) - parent
     charge_residual = jnp.sum(selected_charges) - charge
+    momentum_scale = jnp.maximum(1.0, jnp.max(jnp.abs(parent)))
+    residual_valid = jnp.all(
+        jnp.abs(momentum_residual)
+        <= 2048.0 * jnp.finfo(parent.dtype).eps * momentum_scale
+    ) & (jnp.abs(charge_residual) <= 1.0e-10)
+    status = jnp.where(
+        status == int(DarkHadronizationStatus.SUCCESS),
+        jnp.where(
+            physical_parent & residual_valid,
+            status,
+            int(DarkHadronizationStatus.INVALID_KINEMATICS),
+        ),
+        status,
+    ).astype(jnp.int32)
     result_id = canonical_fingerprint(
         {
             "kind": "dark-cluster-fission-result",
             "profile": plan.profile_id,
             "parent": parent_id,
+            "draw": draw,
             "production_evidence": list(plan.production_evidence_ids),
         }
     )

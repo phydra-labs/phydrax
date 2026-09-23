@@ -274,6 +274,10 @@ class IncrementalPCA(AbstractRecipe):
         if previous is not None and previous.out_size != self.n_components:
             raise ValueError("previous model rank must match n_components.")
 
+    @property
+    def is_fresh_fit(self) -> bool:
+        return self.previous is None
+
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         del key
         chunk = batch.sample_count if self.chunk_size is None else self.chunk_size

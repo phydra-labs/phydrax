@@ -7,11 +7,16 @@ import jax.random as jr
 import numpy as np
 import pytest
 
+import phydrax as phx
 from phydrax.applications.cellular_mechanics._active_polymers import (
     ActinNetworkPlan,
     ChromatinDynamicsPlan,
     FocalAdhesionPlan,
     MotorCrosslinkerPlan,
+)
+from phydrax.applications.cellular_mechanics._chromatin_atomistic import (
+    ChromatinAtomisticCheckpoint,
+    ChromatinAtomisticCouplingPlan,
 )
 
 
@@ -220,3 +225,52 @@ def test_focal_adhesion_traction_is_energy_derived_and_balanced():
             cell_positions,
             substrate_positions,
         )
+
+
+def test_chromatin_atomistic_checkpoint_binds_complete_state_content():
+    units = phx.atomistic.AtomisticUnitSystem.reduced()
+    system = phx.atomistic.AtomisticSystemPlan(
+        [10, 20],
+        [1, 1],
+        [1.0, 1.0],
+        units,
+        atom_type_ids=[0, 0],
+    ).prepare()
+    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
+        system.particles
+    )
+    potential = phx.atomistic.AtomisticPotentialProgram(
+        [phx.atomistic.LennardJonesPotential([1.0], [1.0], 2.5)]
+    ).prepare(system)
+    dynamics = phx.atomistic.AtomisticDynamicsPlan(
+        system,
+        potential,
+        neighborhood,
+        phx.atomistic.VelocityVerletPlan(1.0e-3),
+    ).prepare()
+    thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+        phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system),
+        ensemble="nve",
+    ).prepare(dynamics)
+    positions = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0]])
+    atomistic = dynamics.initialize_state(
+        positions,
+        thermodynamic,
+        velocity=jnp.zeros_like(positions),
+    )
+    chromatin = ChromatinDynamicsPlan(2, 1, ambient_dimension=3).prepare()
+    prepared = ChromatinAtomisticCouplingPlan(
+        [10, 20],
+        maximum_spring_energy=100.0,
+    ).prepare(dynamics, chromatin)
+    state = prepared.initialize(atomistic, chromatin.initialize())
+    checkpoint = prepared.checkpoint(state)
+    assert prepared.restore(checkpoint) is state
+
+    forged = ChromatinAtomisticCheckpoint(
+        state,
+        "forged-content-id",
+        prepared.prepared_id,
+    )
+    with pytest.raises(ValueError, match="content identity"):
+        prepared.restore(forged)

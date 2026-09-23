@@ -88,6 +88,8 @@ class FrequencyMaxwellSolveResult(StrictModule):
     residual_norm: Array
     converged: Array
     iterations: Array
+    status: Array
+    diagnostics: Any
 
 
 class FrequencyMaxwellEigenResult(StrictModule):
@@ -288,6 +290,8 @@ class FrequencyMaxwellOperator(StrictModule):
             residual_norm,
             result.successful,
             jnp.max(result.diagnostics.iterations),
+            result.status,
+            result.diagnostics,
         )
 
     def adjoint_solve(
@@ -341,6 +345,8 @@ class FrequencyMaxwellOperator(StrictModule):
             residual_norm,
             result.successful,
             jnp.max(result.diagnostics.iterations),
+            result.status,
+            result.diagnostics,
         )
 
     def materialize(self, /, *, maximum_dofs: int = 4096) -> Array:
@@ -592,6 +598,9 @@ class FrequencyMaxwellAdjointResult(StrictModule):
     adjoint: Array
     objective: Array
     source_gradient: Array
+    primal_result: FrequencyMaxwellSolveResult
+    adjoint_result: FrequencyMaxwellSolveResult
+    valid: Array
 
 
 def frequency_maxwell_adjoint(
@@ -609,12 +618,23 @@ def frequency_maxwell_adjoint(
     if value.shape != () or jnp.iscomplexobj(value):
         raise ValueError("Frequency Maxwell objective must be a real scalar.")
     cotangent = pullback(jnp.asarray(1.0))[0]
-    adjoint = operator.adjoint_solve(cotangent).electric
+    adjoint_result = operator.adjoint_solve(cotangent)
+    adjoint = adjoint_result.electric
+    valid = (
+        solved.converged
+        & adjoint_result.converged
+        & jnp.isfinite(value)
+        & jnp.all(jnp.isfinite(solved.electric))
+        & jnp.all(jnp.isfinite(adjoint))
+    )
     return FrequencyMaxwellAdjointResult(
         solved.electric,
         adjoint,
         value,
         adjoint,
+        solved,
+        adjoint_result,
+        valid,
     )
 
 

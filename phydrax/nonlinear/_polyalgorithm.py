@@ -46,6 +46,22 @@ def _diagnostic_work(diagnostics: NonlinearDiagnostics, /) -> NonlinearWork:
     )
 
 
+def _newton_handoff_compatible(
+    previous: NewtonKrylov | NewtonTrustRegion,
+    current: NewtonKrylov | NewtonTrustRegion,
+    /,
+) -> bool:
+    jacobian_matches = eqx.tree_equal(
+        previous.jacobian_policy,
+        current.jacobian_policy,
+    )
+    linear_matches = eqx.tree_equal(
+        previous.linear_policy,
+        current.linear_policy,
+    )
+    return bool(jacobian_matches) and bool(linear_matches)
+
+
 def _remaining_termination(
     termination: NonlinearTermination,
     work: NonlinearWork,
@@ -170,6 +186,10 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
                 prepared_start = (
                     None
                     if best_newton_internal is None
+                    or not _newton_handoff_compatible(
+                        best_newton_internal[2],
+                        method,
+                    )
                     else _root_attempt_handoff(
                         method,
                         problem_,
@@ -201,6 +221,7 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
                 current_newton_internal = (
                     internal_run,
                     internal_jacobian,
+                    method,
                 )
             elif isinstance(method, (Broyden, PseudoTransient, DFSANE)):
                 if initial_evaluation is not None:

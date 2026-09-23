@@ -106,6 +106,8 @@ class CompressibleKineticPopulationState(StrictModule):
     frame_velocity: Array
     frame_temperature_scale: Array
     layout: KineticPopulationLayout = eqx.field(static=True)
+    model_id: str = eqx.field(static=True)
+    rule_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -115,9 +117,15 @@ class CompressibleKineticPopulationState(StrictModule):
         frame_velocity: ArrayLike,
         frame_temperature_scale: ArrayLike,
         layout: KineticPopulationLayout,
+        model_id: str,
+        rule_id: str,
     ):
         if not isinstance(layout, KineticPopulationLayout):
             raise TypeError("layout must be a KineticPopulationLayout.")
+        model_identifier = str(model_id).strip()
+        rule_identifier = str(rule_id).strip()
+        if not model_identifier or not rule_identifier:
+            raise ValueError("model_id and rule_id must be nonempty.")
         values = tuple(jnp.asarray(value) for value in populations)
         if len(values) != len(layout.fields):
             raise ValueError("Population tuple does not match the declared layout.")
@@ -136,7 +144,7 @@ class CompressibleKineticPopulationState(StrictModule):
             raise ValueError("equilibrium_dual must share the population spatial shape.")
         if frame.shape[:-1] != spatial_shape:
             raise ValueError("frame_velocity must share the population spatial shape.")
-        if jnp.issubdtype(values[0].dtype, jnp.complexfloating):
+        if any(jnp.issubdtype(value.dtype, jnp.complexfloating) for value in values):
             raise TypeError("Kinetic populations must be real-valued.")
         self.populations = values
         self.equilibrium_dual = dual
@@ -144,6 +152,8 @@ class CompressibleKineticPopulationState(StrictModule):
         self.frame_velocity = frame
         self.frame_temperature_scale = scale
         self.layout = layout
+        self.model_id = model_identifier
+        self.rule_id = rule_identifier
 
     @property
     def spatial_shape(self) -> tuple[int, ...]:

@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...solver import (
     DifferentialProblem,
@@ -94,6 +94,9 @@ class AstrodynamicsPropagationPlan(StrictModule):
         absolute_tolerance: float = 1.0e-11,
         max_steps: int = 4096,
         dense: bool = False,
+        solver_id: str | None = None,
+        stepsize_controller_id: str | None = None,
+        adjoint_id: str | None = None,
     ):
         if not isinstance(force, AbstractAstrodynamicsForce):
             raise TypeError("force must be an AbstractAstrodynamicsForce.")
@@ -107,20 +110,42 @@ class AstrodynamicsPropagationPlan(StrictModule):
             raise ValueError("save_times must be finite and strictly increasing.")
         rtol = float(relative_tolerance)
         atol = float(absolute_tolerance)
-        steps = int(max_steps)
+        if isinstance(max_steps, bool) or not isinstance(max_steps, int):
+            raise TypeError("max_steps must be an integer.")
+        steps = max_steps
         if not np.isfinite(rtol) or not np.isfinite(atol) or rtol <= 0.0 or atol <= 0.0:
             raise ValueError("Propagation tolerances must be finite and positive.")
         if steps <= 0:
             raise ValueError("max_steps must be positive.")
         if not isinstance(dense, bool):
             raise TypeError("dense must be a bool.")
+        component_ids = []
+        for name, component, identifier in (
+            ("solver", solver, solver_id),
+            ("stepsize_controller", stepsize_controller, stepsize_controller_id),
+            ("adjoint", adjoint, adjoint_id),
+        ):
+            if component is None:
+                if identifier is not None:
+                    raise ValueError(f"{name}_id requires a configured {name}.")
+                component_ids.append("default")
+            else:
+                normalized = "" if identifier is None else str(identifier).strip()
+                if not normalized:
+                    raise ValueError(f"{name}_id is required for a configured {name}.")
+                component_ids.append(normalized)
+        dt0_value = None if dt0 is None else np.asarray(dt0, dtype=np.float64)
+        if dt0_value is not None and (
+            dt0_value.shape != () or not np.isfinite(dt0_value) or dt0_value <= 0.0
+        ):
+            raise ValueError("dt0 must be a finite positive scalar or None.")
         self.force = force
         self.save_times = times
         self.solver = solver
         self.stepsize_controller = stepsize_controller
         self.adjoint = adjoint
         self.dt0 = (
-            None if dt0 is None else jnp.asarray(dt0, dtype=times.dtype).reshape(())
+            None if dt0_value is None else jnp.asarray(dt0_value, dtype=times.dtype)
         )
         self.relative_tolerance = rtol
         self.absolute_tolerance = atol
@@ -130,8 +155,11 @@ class AstrodynamicsPropagationPlan(StrictModule):
             {
                 "kind": "astrodynamics-propagation-plan",
                 "force": force.force_id,
-                "num_times": times.size,
-                "solver": "default" if solver is None else type(solver).__name__,
+                "save_times": array_tree_fingerprint(times_host),
+                "solver": component_ids[0],
+                "stepsize_controller": component_ids[1],
+                "adjoint": component_ids[2],
+                "dt0": None if dt0_value is None else array_tree_fingerprint(dt0_value),
                 "rtol": rtol,
                 "atol": atol,
                 "max_steps": steps,

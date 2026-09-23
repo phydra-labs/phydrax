@@ -408,19 +408,25 @@ def test_particle_fokker_planck_returns_normalized_empirical_weak_laws():
 
 def test_finite_spde_family_reports_coupled_cauchy_and_tail_evidence():
     spde = _small_spde()
+    coarse_grid = phx.dynamics.TimeGrid(
+        jnp.asarray([0.0, 0.1]), time_id="coarse-time-grid"
+    )
+    fine_grid = phx.dynamics.TimeGrid(
+        jnp.asarray([0.0, 0.05, 0.1]), time_id="fine-time-grid"
+    )
     levels = (
         SPDEApproximationLevel(
             spde,
-            _ensemble_plan().time_grid,
-            lambda values: values,
+            coarse_grid,
+            lambda values: values[:, -1],
             (4, 1),
             4.0,
             level_id="coarse",
         ),
         SPDEApproximationLevel(
             spde,
-            _ensemble_plan().time_grid,
-            lambda values: values,
+            fine_grid,
+            lambda values: values[:, -1],
             (4, 1),
             8.0,
             level_id="replay-fine",
@@ -433,14 +439,18 @@ def test_finite_spde_family_reports_coupled_cauchy_and_tail_evidence():
         "shared-spde-noise",
         tail_envelope=jnp.asarray([0.2, 0.1]),
     )
-    result = solve_spde_approximation(
-        prepare_spde_approximation(
-            family,
-            ensemble_plan=_ensemble_plan(path_count=4),
-            key=jr.key(11),
-        )
+    prepared = prepare_spde_approximation(
+        family,
+        ensemble_plan=_ensemble_plan(path_count=4),
+        key=jr.key(11),
     )
+    result = solve_spde_approximation(prepared)
 
+    assert tuple(item.plan.time_grid.time_id for item in prepared.ensembles) == (
+        "coarse-time-grid",
+        "fine-time-grid",
+    )
+    assert prepared.ensembles[0].plan.plan_id != prepared.ensembles[1].plan.plan_id
     assert result.approximation_kind == "finite-time-refinement"
     assert result.cauchy_differences.shape == (1,)
     assert jnp.allclose(result.cauchy_differences, 0.0)

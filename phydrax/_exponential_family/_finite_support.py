@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..linalg._local_blocks import (
+    _portable_positive_definite_solve,
     prepare_local_block_factorization,
     solve_local_blocks_detailed,
 )
@@ -105,81 +106,6 @@ class FiniteSupportSolveResult(StrictModule):
     conversion: ExponentialFamilyConversionResult
     probabilities: Array
     evidence: FiniteSupportSolveEvidence
-
-
-def _portable_positive_definite_solve(
-    matrix: Array,
-    right_hand_side: Array,
-    /,
-) -> tuple[Array, Array]:
-    """Batched Cholesky solve expressed only with portable array primitives."""
-    batch_size, dimension, _ = matrix.shape
-    row_indices = jnp.arange(dimension)
-    factor = jnp.zeros_like(matrix)
-    failed = jnp.zeros((batch_size,), dtype=jnp.bool_)
-
-    def factor_step(index, state):
-        current, current_failed = state
-        selector = jax.nn.one_hot(index, dimension, dtype=matrix.dtype)
-        diagonal_selector = selector[:, None] * selector[None, :]
-        row = jnp.sum(current * selector[None, :, None], axis=1)
-        matrix_diagonal = jnp.sum(matrix * diagonal_selector[None, :, :], axis=(-2, -1))
-        diagonal_residual = matrix_diagonal - jnp.sum(row * row, axis=-1)
-        valid = jnp.isfinite(diagonal_residual) & (diagonal_residual > 0.0)
-        diagonal = jnp.sqrt(jnp.where(valid, diagonal_residual, 1.0))
-        current = (
-            current * (1.0 - diagonal_selector[None, :, :])
-            + diagonal[:, None, None] * diagonal_selector[None, :, :]
-        )
-        pivot_row = jnp.sum(current * selector[None, :, None], axis=1)
-        products = jnp.sum(current * pivot_row[:, None, :], axis=-1)
-        matrix_column = jnp.sum(matrix * selector[None, None, :], axis=-1)
-        column = (matrix_column - products) / diagonal[:, None]
-        current_column = jnp.sum(current * selector[None, None, :], axis=-1)
-        updated_column = jnp.where(
-            row_indices[None, :] > index,
-            column,
-            current_column,
-        )
-        current = (
-            current * (1.0 - selector[None, None, :])
-            + updated_column[:, :, None] * selector[None, None, :]
-        )
-        return current, current_failed | ~valid
-
-    factor, failed = jax.lax.fori_loop(
-        0,
-        dimension,
-        factor_step,
-        (factor, failed),
-    )
-    forward = jnp.zeros_like(right_hand_side)
-
-    def forward_step(index, current):
-        selector = jax.nn.one_hot(index, dimension, dtype=matrix.dtype)
-        factor_row = jnp.sum(factor * selector[None, :, None], axis=1)
-        rhs_value = jnp.sum(right_hand_side * selector[None, :], axis=-1)
-        diagonal = jnp.sum(factor_row * selector[None, :], axis=-1)
-        value = (rhs_value - jnp.sum(factor_row * current, axis=-1)) / diagonal
-        return current * (1.0 - selector[None, :]) + value[:, None] * selector[None, :]
-
-    forward = jax.lax.fori_loop(0, dimension, forward_step, forward)
-    solution = jnp.zeros_like(right_hand_side)
-
-    def backward_step(offset, current):
-        index = dimension - 1 - offset
-        selector = jax.nn.one_hot(index, dimension, dtype=matrix.dtype)
-        factor_column = jnp.sum(factor * selector[None, None, :], axis=-1)
-        rhs_value = jnp.sum(forward * selector[None, :], axis=-1)
-        diagonal = jnp.sum(factor_column * selector[None, :], axis=-1)
-        value = (rhs_value - jnp.sum(factor_column * current, axis=-1)) / diagonal
-        return current * (1.0 - selector[None, :]) + value[:, None] * selector[None, :]
-
-    solution = jax.lax.fori_loop(0, dimension, backward_step, solution)
-    failed |= jnp.any(~jnp.isfinite(factor), axis=(-2, -1)) | jnp.any(
-        ~jnp.isfinite(solution), axis=-1
-    )
-    return jnp.where(failed[:, None], 0.0, solution), failed
 
 
 class FiniteSupportExponentialFamily(AbstractExponentialFamily):
@@ -278,21 +204,55 @@ class FiniteSupportExponentialFamily(AbstractExponentialFamily):
             boundary=jnp.zeros(shape, dtype=jnp.bool_),
         )
 
-    def _mean_domain(self, values: Array, /) -> ExponentialFamilyDomainResult:
+    def _bounding_mean_domain(self, values: Array, /) -> ExponentialFamilyDomainResult:
         scale = jnp.maximum(
-            jnp.maximum(jnp.abs(self.feature_minimum), jnp.abs(self.feature_maximum)), 1.0
+            jnp.maximum(jnp.abs(self.feature_minimum), jnp.abs(self.feature_maximum)),
+            1.0,
         )
         tolerance = 32.0 * jnp.finfo(values.dtype).eps * scale
-        lower_ok = jnp.all(values >= self.feature_minimum - tolerance, axis=-1)
-        upper_ok = jnp.all(values <= self.feature_maximum + tolerance, axis=-1)
-        strictly_lower = jnp.all(values > self.feature_minimum + tolerance, axis=-1)
-        strictly_upper = jnp.all(values < self.feature_maximum - tolerance, axis=-1)
-        inside_bounds = lower_ok & upper_ok
+        inside_bounds = jnp.all(
+            (values >= self.feature_minimum - tolerance)
+            & (values <= self.feature_maximum + tolerance),
+            axis=-1,
+        )
         return _mean_domain_result(
             self.signature,
             values,
-            interior=inside_bounds & strictly_lower & strictly_upper,
-            boundary=inside_bounds & ~(strictly_lower & strictly_upper),
+            interior=inside_bounds,
+            boundary=jnp.zeros_like(inside_bounds),
+        )
+
+    def _mean_domain(self, values: Array, /) -> ExponentialFamilyDomainResult:
+        preliminary = self._bounding_mean_domain(values)
+        solved = solve_finite_support_mean(
+            self,
+            MeanCoordinates(values, self.signature),
+            plan=self.solve_plan,
+            domain=preliminary,
+        )
+        scale = jnp.maximum(jnp.linalg.norm(values, axis=-1), 1.0)
+        residual_limit = (
+            jnp.maximum(
+                self.solve_plan.residual_tolerance,
+                256.0 * jnp.finfo(values.dtype).eps,
+            )
+            * scale
+        )
+        feasible = (
+            preliminary.valid
+            & jnp.isfinite(solved.evidence.residual)
+            & (solved.evidence.residual <= residual_limit)
+        )
+        boundary_floor = jnp.maximum(
+            self.solve_plan.minimum_probability,
+            jnp.sqrt(jnp.finfo(values.dtype).eps),
+        )
+        boundary = feasible & (solved.evidence.minimum_probability <= boundary_floor)
+        return _mean_domain_result(
+            self.signature,
+            values,
+            interior=feasible & ~boundary,
+            boundary=boundary,
         )
 
     def _sufficient_statistics(self, value: ArrayLike, /) -> StatisticBatch:

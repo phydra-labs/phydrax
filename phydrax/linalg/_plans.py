@@ -809,7 +809,7 @@ def _validate_dense_rectangular(
         )
     if isinstance(method, DenseQR) and isinstance(problem, MinimumNormProblem):
         raise ValueError("Dense QR does not implement minimum-norm semantics.")
-    if not _dense_metric_pairings_supported(problem):
+    if not _dense_metric_pairings_supported(problem, method):
         raise ValueError(
             "Dense rectangular methods require Euclidean or diagonal metric pairings."
         )
@@ -1210,13 +1210,28 @@ def _native_lsmr_eligible(
     )
 
 
-def _dense_metric_pairings_supported(problem: AbstractLinearProblem, /) -> bool:
-    if isinstance(problem, (LinearSystem, MinimumNormProblem)):
-        return _has_diagonal_pairing(problem.operator.source)
-    if isinstance(problem, LeastSquaresProblem):
-        return _has_diagonal_pairing(problem.operator.target) and (
-            problem.regularizer is None
-            or _has_diagonal_pairing(problem.regularizer.target)
+def _dense_metric_pairings_supported(
+    problem: AbstractLinearProblem,
+    method: AbstractLinearMethod,
+    /,
+) -> bool:
+    if not isinstance(problem, (LeastSquaresProblem, MinimumNormProblem)):
+        return False
+    target_supported = _has_diagonal_pairing(problem.operator.target)
+    regularizer_supported = (
+        not isinstance(problem, LeastSquaresProblem)
+        or problem.regularizer is None
+        or _has_diagonal_pairing(problem.regularizer.target)
+    )
+    if isinstance(method, DenseQR):
+        return isinstance(problem, LeastSquaresProblem) and (
+            target_supported and regularizer_supported
+        )
+    if isinstance(method, DenseSVD):
+        return (
+            _has_diagonal_pairing(problem.operator.source)
+            and target_supported
+            and regularizer_supported
         )
     return False
 
@@ -1258,9 +1273,14 @@ def _structured_factorization_entries(
 ) -> int:
     if isinstance(operator, TreeLinearOperator):
         return operator.source.size + 1
-    if isinstance(operator, (DenseLinearOperator, BandedLinearOperator)):
+    if isinstance(operator, DenseLinearOperator):
         dimension = operator.source.size
         return dimension * dimension + dimension
+    if isinstance(operator, BandedLinearOperator):
+        dimension = operator.source.size
+        factor_width = 2 * operator.lower_bandwidth + operator.upper_bandwidth + 1
+        batch_count = prod(operator.batch_shape or (1,))
+        return batch_count * (factor_width * dimension + dimension)
     if isinstance(operator, TridiagonalLinearOperator):
         return 5 * operator.source.size
     if isinstance(operator, TransformDiagonalLinearOperator):
@@ -1299,6 +1319,21 @@ def _structured_factorization_bytes(
     /,
 ) -> int:
     itemsize = _coordinate_dtype(operator.source).itemsize
+    if isinstance(operator, BandedLinearOperator):
+        dimension = operator.source.size
+        factor_width = 2 * operator.lower_bandwidth + operator.upper_bandwidth + 1
+        batch_count = prod(operator.batch_shape or (1,))
+        real_itemsize = (
+            max(1, itemsize // 2)
+            if jnp.issubdtype(operator.bands.dtype, jnp.complexfloating)
+            else itemsize
+        )
+        return batch_count * (
+            factor_width * dimension * itemsize
+            + dimension * jnp.dtype(jnp.int32).itemsize
+            + jnp.dtype(jnp.bool_).itemsize
+            + real_itemsize
+        )
     if isinstance(operator, TreeLinearOperator):
         return operator.source.size * itemsize + jnp.dtype(jnp.bool_).itemsize
     if isinstance(operator, TransformDiagonalLinearOperator):
@@ -1337,11 +1372,16 @@ def _structured_solve_workspace_bytes(
     /,
 ) -> int:
     itemsize = _coordinate_dtype(operator.source).itemsize
+    batch_count = (
+        prod(operator.batch_shape or (1,))
+        if isinstance(operator, BandedLinearOperator)
+        else 1
+    )
     if isinstance(operator, TransformDiagonalLinearOperator):
         return 3 * operator.source.size * itemsize
     if isinstance(operator, KroneckerSumLinearOperator):
         return 4 * operator.source.size * itemsize
-    return (operator.source.size + operator.target.size) * itemsize
+    return batch_count * (operator.source.size + operator.target.size) * itemsize
 
 
 def _has_rank_cutoff(policy: LinearSolvePolicy, /) -> bool:
@@ -1393,7 +1433,8 @@ def _dense_candidate_fits(
     if isinstance(method, DenseCholesky) and not _has_diagonal_pairing(operator.source):
         return False, "Cholesky requires a coordinate-diagonal source pairing"
     if isinstance(method, (DenseQR, DenseSVD)) and not _dense_metric_pairings_supported(
-        problem
+        problem,
+        method,
     ):
         return False, "rectangular dense factors require coordinate-diagonal metrics"
     if not operator.capabilities.materialize:

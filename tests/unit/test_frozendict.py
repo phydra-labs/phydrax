@@ -4,6 +4,7 @@
 
 from typing import Mapping
 
+import jax
 import pytest
 
 from phydrax._frozendict import frozendict
@@ -152,6 +153,31 @@ class TestFrozenDict:
         fd = frozendict({(1, 2): "a", (3, 4): "b"})
         assert fd[(1, 2)] == "a"
         assert fd[(3, 4)] == "b"
+
+    def test_equivalent_mappings_have_one_canonical_pytree_layout(self):
+        left = frozendict({"b": 2, "a": 1})
+        right = frozendict({"a": 1, "b": 2})
+
+        assert tuple(left) == ("a", "b")
+        assert left == right
+        assert jax.tree.structure(left) == jax.tree.structure(right)
+        assert jax.tree.leaves(left) == jax.tree.leaves(right)
+
+        boolean_key = frozendict({True: "value"})
+        integer_key = frozendict({1: "value"})
+        floating_key = frozendict({1.0: "value"})
+        assert tuple(boolean_key) == tuple(integer_key) == tuple(floating_key) == (1,)
+        assert jax.tree.structure(boolean_key) == jax.tree.structure(integer_key)
+        assert jax.tree.structure(integer_key) == jax.tree.structure(floating_key)
+
+    def test_noncanonical_key_kinds_are_rejected(self):
+        class CustomKey:
+            pass
+
+        with pytest.raises(TypeError, match="canonical"):
+            frozendict({CustomKey(): 1})
+        with pytest.raises(ValueError, match="finite"):
+            frozendict({float("nan"): 1})
 
     def test_mapping_protocol(self):
         # Test that frozendict implements the Mapping protocol

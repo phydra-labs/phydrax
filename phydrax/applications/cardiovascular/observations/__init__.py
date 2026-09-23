@@ -5,7 +5,6 @@
 """Cardiovascular observation metadata, operators, traces, and modalities."""
 # ruff: noqa: F401
 
-from ....spatial_sampling import ElectrodeObservationPlan
 from ._cine import (
     __all__ as _cine_all,
     CineTimingEvidence,
@@ -60,9 +59,6 @@ from ._pressure_volume import (
     VolumeObservationPlan,
     VolumeTraceResult,
 )
-
-
-_sampling_all = ("ElectrodeObservationPlan",)
 from ._strain import (
     __all__ as _strain_all,
     eulerian_strain,
@@ -80,6 +76,5 @@ __all__ = [
     *_electrograms_all,
     *_lge_all,
     *_pressure_volume_all,
-    *_sampling_all,
     *_strain_all,
 ]

@@ -38,6 +38,21 @@ def test_message_passing_jit_runs():
     assert out.shape == (3, 1)
 
 
+def test_target_to_source_bipartite_flow_uses_reversed_feature_sides():
+    source = jnp.asarray([[10.0], [20.0]])
+    target = jnp.asarray([[1.0], [2.0], [3.0]])
+    edge_index = jnp.asarray([[0, 1, 0], [2, 0, 1]], dtype=jnp.int32)
+    passing = vx.MessagePassing(
+        aggr="add",
+        flow="target_to_source",
+        message=lambda x_j, x_i, edge_attr: 10.0 * x_j + x_i,
+    )
+
+    result = passing((source, target), edge_index)
+
+    assert jnp.array_equal(result, jnp.asarray([[70.0], [30.0]]))
+
+
 def test_gcn_conv_shape():
     x = jnp.array([[1.0], [2.0], [3.0]])
     edge_index = jnp.array([[0, 1, 2], [1, 2, 0]], dtype=jnp.int32)

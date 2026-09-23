@@ -382,6 +382,7 @@ def _analysis(leg, value, variance, identity, *, mapping_id=None):
         mapping_id=mapping_id,
         bias_ids=tuple(state.bias_id for state in states),
         unit_system_id=states[0].unit_system_id,
+        inverse_temperature=states[0].inverse_temperature,
         unit_id="1",
     )
     covariance = jnp.asarray([[0.0, 0.0], [0.0, variance]])
@@ -579,4 +580,5 @@ def test_switching_executes_native_dynamics_and_emits_lineage():
     assert record.qualification_id == qualification.qualification_id
     assert record.sampling_exact
     assert record.sampling_bias_bound == 0.0
+    assert record.inverse_temperature == switching.inverse_temperature
     assert bool(record.successful)

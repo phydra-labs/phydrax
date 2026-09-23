@@ -36,6 +36,17 @@ def test_exact_integer_matrix_and_identity_chain_map():
         for value, count in zip(identity.degree_maps, complex.layout.counts, strict=True)
     )
 
+    with pytest.raises(TypeError, match="coefficients must be integers"):
+        phx.topology.ExactIntegerCOO(
+            1,
+            1,
+            np.asarray([0]),
+            np.asarray([0]),
+            (1.0,),
+            source_id="x",
+            target_id="y",
+        )
+
 
 def test_induced_identity_and_mapping_cone_are_exact():
     complex = phx.topology.CellSubcomplex.full(filled_triangle_topology())
@@ -102,6 +113,40 @@ def test_extended_persistence_and_persistent_cohomology():
     assert extended.extended_positive.interval_count >= 1
     assert cohomology.terminal_cocycles[0].generator_count == 1
     assert cohomology.annotations[0].essential_pair_indices.shape == (1,)
+
+
+def test_terminal_cocycles_are_dual_to_their_essential_intervals():
+    vertices = phx.discretization.EntitySet(
+        "two-components",
+        0,
+        jnp.asarray([10, 20], dtype=jnp.int32),
+    )
+    topology = phx.discretization.CellComplexTopology((vertices,), ())
+    complex = phx.topology.CellSubcomplex.full(topology)
+    filtration = phx.topology.CellFiltration(
+        complex,
+        (jnp.asarray([1.0, 0.0]),),
+        source_id="reversed-component-births",
+    )
+
+    result = phx.topology.compute_persistent_cohomology(
+        filtration,
+        coefficients=phx.topology.PrimeField(2),
+    )
+    annotation = result.annotations[0]
+    basis = annotation.basis
+    birth_entities = np.asarray(result.persistence.pairing.birth_entity_ids)[
+        np.asarray(annotation.essential_pair_indices)
+    ]
+    basis_entities = []
+    for generator in range(basis.generator_count):
+        cells = np.asarray(basis.cell_indices)[
+            np.asarray(basis.generator_indices) == generator
+        ]
+        assert cells.shape == (1,)
+        basis_entities.append(int(np.asarray(vertices.entity_ids)[int(cells[0])]))
+
+    np.testing.assert_array_equal(basis_entities, birth_entities)
 
 
 def test_field_snapshot_series_and_ensemble_summary():
@@ -214,6 +259,45 @@ def test_vineyard_and_zigzag_topology_evolution():
     np.testing.assert_array_equal(zigzag.betti_history[:, 0], [0, 1, 0])
     assert topology.topology_id == complex.topology.topology_id
     assert monotone.persistence.pairing.pair_count >= 1
+
+
+def test_zigzag_rejects_initial_and_inserted_cells_outside_ambient_subcomplex():
+    topology = filled_triangle_topology()
+    ambient = phx.topology.CellSubcomplex(
+        topology,
+        (
+            jnp.asarray([True, True, False]),
+            jnp.asarray([False, False, False]),
+            jnp.asarray([False]),
+        ),
+    )
+    empty = tuple(jnp.zeros_like(mask, dtype=jnp.bool_) for mask in ambient.masks)
+    outside_initial = list(empty)
+    outside_initial[0] = jnp.asarray([False, False, True])
+    operation = phx.topology.ZigzagCellOperation("insert", 0, 2)
+    field = phx.topology.PrimeField(2)
+
+    with pytest.raises(ValueError, match="outside the ambient subcomplex"):
+        phx.topology.compute_zigzag_topology(
+            ambient,
+            tuple(outside_initial),
+            (),
+            coefficients=field,
+        )
+    with pytest.raises(ValueError, match="outside the ambient subcomplex"):
+        phx.topology.compute_zigzag_topology(
+            ambient,
+            empty,
+            (operation,),
+            coefficients=field,
+        )
+    with pytest.raises(ValueError, match="outside the ambient subcomplex"):
+        phx.topology.compute_monotone_zigzag_intervals(
+            ambient,
+            empty,
+            (operation,),
+            coefficients=field,
+        )
 
 
 def test_local_homology_and_certified_implicit_evidence():

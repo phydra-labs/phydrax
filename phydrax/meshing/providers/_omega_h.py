@@ -29,6 +29,7 @@ from .._contracts import (
     MeshingExecutionMode,
     MeshingFailure,
     MeshingFailureCategory,
+    MeshingLimits,
     MeshingOperation,
     MeshingProviderInfo,
     MeshingSourceKind,
@@ -153,6 +154,40 @@ def _run(command: Sequence[str], timeout: float, environment: Mapping[str, str])
     return output
 
 
+def _decode_json_object(data: bytes, owner: str, /) -> dict:
+    def pairs(values):
+        record = {}
+        for key, value in values:
+            if key in record:
+                raise ValueError(f"{owner} contains duplicate field {key!r}.")
+            record[key] = value
+        return record
+
+    value = json.loads(data.decode("utf-8"), object_pairs_hook=pairs)
+    if not isinstance(value, dict):
+        raise ValueError(f"{owner} must be a JSON object.")
+    return value
+
+
+def _read_partition_records(
+    directory: str | Path,
+    ranks: int,
+    limits: MeshingLimits,
+    /,
+) -> list[dict]:
+    output_paths = [Path(directory) / f"rank-{rank}.json" for rank in range(ranks)]
+    sizes = [path.stat().st_size for path in output_paths]
+    if sum(sizes) > limits.maximum_data_bytes:
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "Omega_h rank outputs exceed the aggregate maximum_data_bytes.",
+        )
+    return [
+        _decode_json_object(path.read_bytes(), "Omega_h rank output")
+        for path in output_paths
+    ]
+
+
 def _unpack_metric(values: np.ndarray, dimension: int) -> np.ndarray:
     # INRIA lower-triangular row-major: xx,xy,yy[,xz,yz,zz].
     rows, columns = np.tril_indices(dimension)
@@ -162,7 +197,7 @@ def _unpack_metric(values: np.ndarray, dimension: int) -> np.ndarray:
     return result
 
 
-def _merge_partitions(records: list[dict], dimension: int):
+def _merge_partitions(records: list[dict], dimension: int, limits: MeshingLimits, /):
     """Reject contradictory copies, missing owners and incomplete global covers."""
     partitions = []
     vertices, cells = {}, {}
@@ -176,6 +211,74 @@ def _merge_partitions(records: list[dict], dimension: int):
         "cell_owner_indices",
     )
     for rank, record in enumerate(records):
+        expected_fields = {
+            "protocol",
+            "rank",
+            "size",
+            "dimension",
+            "global_vertices",
+            "global_cells",
+            "iterations",
+            "vertex_ids",
+            "coordinates",
+            "vertex_owner_ranks",
+            "vertex_owner_indices",
+            "cell_ids",
+            "cells",
+            "cell_owner_ranks",
+            "cell_owner_indices",
+            "metric",
+        }
+        if not isinstance(record, dict) or set(record) != expected_fields:
+            raise ValueError("Omega_h rank output fields do not match the protocol.")
+        if any(
+            type(record[name]) is not int
+            for name in (
+                "protocol",
+                "rank",
+                "size",
+                "dimension",
+                "global_vertices",
+                "global_cells",
+                "iterations",
+            )
+        ):
+            raise ValueError("Omega_h rank output counts must be integers.")
+        if (
+            not 0 < record["global_vertices"] <= limits.maximum_vertices
+            or not 0 < record["global_cells"] <= limits.maximum_cells
+        ):
+            raise ValueError("Omega_h rank output exceeds entity limits.")
+        array_fields = expected_fields - {
+            "protocol",
+            "rank",
+            "size",
+            "dimension",
+            "global_vertices",
+            "global_cells",
+            "iterations",
+        }
+        if any(not isinstance(record[name], list) for name in array_fields):
+            raise ValueError("Omega_h rank output arrays must be JSON arrays.")
+        local_vertices = len(record["vertex_ids"])
+        local_cells = len(record["cell_ids"])
+        metric_width = dimension * (dimension + 1) // 2
+        expected_lengths = {
+            "coordinates": local_vertices * dimension,
+            "vertex_owner_ranks": local_vertices,
+            "vertex_owner_indices": local_vertices,
+            "cells": local_cells * (dimension + 1),
+            "cell_owner_ranks": local_cells,
+            "cell_owner_indices": local_cells,
+            "metric": local_vertices * metric_width,
+        }
+        if (
+            local_vertices > limits.maximum_vertices
+            or local_cells > limits.maximum_cells
+            or expected_lengths["cells"] > limits.maximum_connectivity_entries
+            or any(len(record[name]) != count for name, count in expected_lengths.items())
+        ):
+            raise ValueError("Omega_h rank output array extents are invalid.")
         if (record["protocol"], record["rank"], record["size"], record["dimension"]) != (
             1,
             rank,
@@ -190,13 +293,13 @@ def _merge_partitions(records: list[dict], dimension: int):
         partition = OmegaHPartition(rank, *(tuple(record[field]) for field in fields))
         partitions.append(partition)
         coordinates = np.asarray(record["coordinates"], dtype=np.float64).reshape(
-            (-1, dimension)
+            (local_vertices, dimension)
         )
         metric = np.asarray(record["metric"], dtype=np.float64).reshape(
-            (-1, metric_width)
+            (local_vertices, metric_width)
         )
         connectivity = np.asarray(record["cells"], dtype=np.int64).reshape(
-            (-1, dimension + 1)
+            (local_cells, dimension + 1)
         )
         if len(coordinates) != len(partition.vertex_ids) or len(metric) != len(
             coordinates
@@ -347,13 +450,20 @@ class OmegaHProvider:
                 "PHYDRAX_OMEGA_H_EXECUTABLE to the installed phydrax_omega_h executable.",
             )
         try:
-            details = json.loads(
-                _run((executable, "--version"), self.timeout, self.environment)
+            details = _decode_json_object(
+                _run((executable, "--version"), self.timeout, self.environment).encode(
+                    "utf-8"
+                ),
+                "Omega_h version response",
             )
             if (
-                details["protocol"] != 1
+                set(details) != {"protocol", "version", "commit", "mpi"}
+                or details["protocol"] != 1
                 or type(details["mpi"]) is not bool
+                or not isinstance(details["version"], str)
                 or not details["version"]
+                or not isinstance(details["commit"], str)
+                or not details["commit"]
             ):
                 raise ValueError("Unsupported Omega_h bridge protocol.")
         except (ValueError, KeyError, TypeError) as error:
@@ -392,9 +502,20 @@ class OmegaHProvider:
         ranks: int = 1,
         feature_angle: float = np.pi / 4,
         maximum_iterations: int = 100,
+        limits: MeshingLimits | None = None,
     ) -> OmegaHAdaptationResult:
         if not isinstance(mesh, CellMesh) or not isinstance(metric, MeshMetricField):
             raise TypeError("Omega_h requires CellMesh and MeshMetricField values.")
+        limits_ = MeshingLimits() if limits is None else limits
+        if not isinstance(limits_, MeshingLimits):
+            raise TypeError("limits must be MeshingLimits.")
+        if (
+            limits_.maximum_vertices > 10_000_000
+            or limits_.maximum_cells > 20_000_000
+            or limits_.maximum_connectivity_entries > 500_000_000
+            or limits_.maximum_data_bytes > 4_000_000_000
+        ):
+            raise ValueError("limits exceed the Omega_h bridge hard bounds.")
         dimension = mesh.topological_dimension
         kind = "triangle" if dimension == 2 else "tetrahedron"
         if (
@@ -416,6 +537,25 @@ class OmegaHProvider:
         angle = float(feature_angle)
         if not np.isfinite(angle) or not 0 < angle < np.pi:
             raise ValueError("feature_angle must be in (0, pi) radians.")
+        vertex_count = mesh.coordinates.shape[0]
+        cell_count = sum(block.cell_count for block in mesh.blocks)
+        connectivity_count = sum(block.vertices.size for block in mesh.blocks)
+        estimated_input_bytes = (
+            vertex_count * (8 + dimension * 24 + dimension * (dimension + 1) * 4)
+            + cell_count * 16
+            + connectivity_count * 12
+            + 4_096
+        )
+        if (
+            vertex_count > limits_.maximum_vertices
+            or cell_count > limits_.maximum_cells
+            or connectivity_count > limits_.maximum_connectivity_entries
+            or estimated_input_bytes > limits_.maximum_data_bytes
+        ):
+            raise MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "Omega_h input exceeds configured entity or byte limits.",
+            )
         vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
         scope = metric.scope
         if (
@@ -468,7 +608,9 @@ class OmegaHProvider:
             with input_path.open("w", encoding="utf-8") as stream:
                 stream.write(
                     f"PHYDRAX_OMEGA_H_1\n{dimension} {len(order)} {len(connectivity)} "
-                    f"{metric.maximum_gradation:.17g} {angle:.17g} {maximum_iterations}\n"
+                    f"{metric.maximum_gradation:.17g} {angle:.17g} {maximum_iterations} "
+                    f"{limits_.maximum_vertices} {limits_.maximum_cells} "
+                    f"{limits_.maximum_connectivity_entries} {limits_.maximum_data_bytes}\n"
                 )
                 for array, fmt in (
                     (vertex_ids[order], "%d"),
@@ -478,19 +620,33 @@ class OmegaHProvider:
                     (packed, "%.17g"),
                 ):
                     np.savetxt(stream, array, fmt=fmt)
+            if input_path.stat().st_size > limits_.maximum_data_bytes:
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "Serialized Omega_h input exceeds maximum_data_bytes.",
+                )
             command = (executable, str(input_path), directory)
             if ranks > 1:
                 command = (*self.mpi_launcher, "-n", str(ranks), *command)
-            _run(command, self.timeout, self.environment)
+            _run(
+                command,
+                min(self.timeout, limits_.maximum_wall_seconds),
+                self.environment,
+            )
             try:
-                records = [
-                    json.loads((Path(directory) / f"rank-{rank}.json").read_text())
-                    for rank in range(ranks)
-                ]
+                records = _read_partition_records(directory, ranks, limits_)
                 target_mesh, target_values, owners, partitions = _merge_partitions(
-                    records, dimension
+                    records, dimension, limits_
                 )
-            except (OSError, ValueError, KeyError, TypeError, IndexError) as error:
+            except (
+                OSError,
+                UnicodeError,
+                ValueError,
+                KeyError,
+                TypeError,
+                IndexError,
+                OverflowError,
+            ) as error:
                 raise MeshingFailure(
                     MeshingFailureCategory.CONVERSION_FAILED, str(error)
                 ) from error
@@ -533,6 +689,19 @@ class OmegaHProvider:
                 provider.version,
                 MeshingExecutionMode.SUBPROCESS,
                 deterministic=True,
+                enforced_limits=(
+                    "wall_seconds",
+                    "input_entities",
+                    "input_connectivity_entries",
+                    "input_bytes",
+                    "serialized_output_entities",
+                    "serialized_output_bytes",
+                    "aggregate_output_bytes",
+                ),
+                unenforced_limits=(
+                    "provider_internal_workspace",
+                    "native_adaptation_output_preallocation",
+                ),
             ),
             MeshingDerivativeMode.NONDIFFERENTIABLE,
             provenance,

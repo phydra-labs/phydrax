@@ -381,6 +381,10 @@ class PreparedUnstructuredMaxwell(StrictModule):
 
     def __init__(self, plan: UnstructuredMaxwellPlan, /):
         constitutive = plan.constitutive.prepare(plan.cochain, plan.layout)
+        if not constitutive.capabilities.reversible:
+            raise ValueError(
+                "Unstructured Maxwell supports only instantaneous lossless constitutive laws."
+            )
         self.plan = plan
         self.constitutive = constitutive
         self.stable_dt = (

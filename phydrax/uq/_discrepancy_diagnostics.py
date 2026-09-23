@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import equinox as eqx
@@ -47,6 +48,12 @@ class DiscrepancyIdentifiabilityThresholds(StrictModule):
             raise ValueError("min_coverage must lie between zero and one.")
         if not 0.0 < float(max_abs_parameter_gp_correlation) <= 1.0:
             raise ValueError("max_abs_parameter_gp_correlation must lie in (0, 1].")
+        for name, value in (
+            ("min_nll_improvement", min_nll_improvement),
+            ("min_crps_improvement", min_crps_improvement),
+        ):
+            if not math.isfinite(float(value)):
+                raise ValueError(f"{name} must be finite.")
         self.min_repeats = int(min_repeats)
         self.max_fixed_bias_ratio = float(max_fixed_bias_ratio)
         self.max_joint_bias_ratio = float(max_joint_bias_ratio)

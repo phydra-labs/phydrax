@@ -160,7 +160,11 @@ def test_optical_frontend_keeps_drude_separate_and_uses_retarded_dielectric_sign
     result = OpticalDielectricPlan(
         np.eye(3),
         ("xx", "yy", "zz"),
-    ).evaluate(kubo, units.HERTZ, units.SIEMENS)
+    ).evaluate(
+        kubo,
+        units.derived_unit("radian/second", ((units.RADIAN, 1), (units.SECOND, -1))),
+        units.derived_unit("siemens/meter", ((units.SIEMENS, 1), (units.METER, -1))),
+    )
 
     assert bool(result.evidence.successful)
     dielectric_diagonal = np.diagonal(

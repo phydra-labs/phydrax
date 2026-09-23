@@ -9,6 +9,7 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 
+from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 
 
@@ -207,7 +208,18 @@ def design_name(design: DesignLike, /) -> DesignName:
 
 def design_signature(design: DesignLike, /) -> str:
     """Return the replay-relevant semantic identity of a reference design."""
-    return design_name(design)
+    resolved = resolve_design(design)
+    if isinstance(resolved, RandomizedQMCDesign):
+        return canonical_fingerprint(
+            {
+                "kind": "randomized-qmc-design",
+                "sequence": resolved.sequence,
+                "scrambled": resolved.scrambled,
+                "num_replicates": resolved.num_replicates,
+                "allow_arbitrary_count": resolved.allow_arbitrary_count,
+            }
+        )
+    return design_name(resolved)
 
 
 def design_capabilities(design: DesignLike, /) -> DesignCapabilities:

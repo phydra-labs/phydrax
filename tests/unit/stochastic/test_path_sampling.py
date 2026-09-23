@@ -626,7 +626,7 @@ def test_path_reweighting_fails_closed_for_surrogates_and_crosses_normalized_act
         initial_density_id="normal-a",
     )
     ensemble = FixedPathEnsemble(5)
-    potential = ReducedPathPotential(ensemble, action)
+    potential = ReducedPathPotential(ensemble, action, inverse_temperature=2.0)
     evaluation = cross_evaluate_path_potentials(
         (potential, potential),
         (_path(), _path()),
@@ -640,11 +640,14 @@ def test_path_reweighting_fails_closed_for_surrogates_and_crosses_normalized_act
         run_id="normalized-path-cross-evaluation",
     )
     assert evaluation.samples.values.shape == (2, 2)
+    np.testing.assert_allclose(evaluation.samples.inverse_temperatures, 2.0)
     work = path_fep_work(evaluation, 0, 1)
     assert int(jnp.sum(work.sample_active)) == 1
+    assert work.inverse_temperature == 2.0
     np.testing.assert_allclose(work.values[work.sample_active], jnp.asarray([0.0]))
     with pytest.raises(ValueError, match="normalized stochastic"):
         ReducedPathPotential(
             ensemble,
             SurrogatePathAction(lambda path: jnp.asarray(0.0), action_id="surrogate"),
+            inverse_temperature=2.0,
         )

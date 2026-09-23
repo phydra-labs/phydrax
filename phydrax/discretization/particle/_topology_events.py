@@ -136,7 +136,8 @@ def split_preallocated_owner(
     offsets = jnp.asarray(child_offset, dtype=state.position.dtype)
     inertias = jnp.asarray(child_inertia_body, dtype=state.inertia_body.dtype)
     if (
-        children.shape != (plan.maximum_children,)
+        source.shape != ()
+        or children.shape != (plan.maximum_children,)
         or valid_children.shape != children.shape
         or masses.shape != children.shape
         or offsets.shape != (plan.maximum_children, plan.dimension)
@@ -147,6 +148,8 @@ def split_preallocated_owner(
     )
     if inertias.shape != expected_inertia_shape:
         raise ValueError("Child inertia shape does not match topology dimension.")
+    source_in_bounds = (source >= 0) & (source < plan.owner_capacity)
+    safe_source = jnp.clip(source, 0, plan.owner_capacity - 1)
     safe_children = jnp.where(valid_children, children, 0)
     child_slots_valid = (
         (children >= 0) & (children < plan.owner_capacity) & valid_children
@@ -158,12 +161,16 @@ def split_preallocated_owner(
     )
     event_slot = jnp.sum(record.valid, dtype=jnp.int32)
     capacity_ok = event_slot < plan.event_capacity
-    source_active = state.active[source]
+    source_active = state.active[safe_source]
     children_inactive = jnp.all(~state.active[safe_children] | ~valid_children)
-    mass_residual = jnp.sum(jnp.where(valid_children, masses, 0.0)) - state.mass[source]
-    mass_ok = jnp.abs(mass_residual) <= tolerance * jnp.maximum(state.mass[source], 1.0)
+    mass_residual = (
+        jnp.sum(jnp.where(valid_children, masses, 0.0)) - state.mass[safe_source]
+    )
+    mass_ok = jnp.abs(mass_residual) <= tolerance * jnp.maximum(
+        state.mass[safe_source], 1.0
+    )
     if plan.dimension == 2:
-        angle = state.orientation[source, 0]
+        angle = state.orientation[safe_source, 0]
         cosine = jnp.cos(angle)
         sine = jnp.sin(angle)
         world_offset = jnp.stack(
@@ -173,30 +180,30 @@ def split_preallocated_owner(
             ),
             axis=-1,
         )
-        omega = state.angular_velocity[source, 0]
-        child_velocity = state.velocity[source] + jnp.stack(
+        omega = state.angular_velocity[safe_source, 0]
+        child_velocity = state.velocity[safe_source] + jnp.stack(
             (-omega * world_offset[:, 1], omega * world_offset[:, 0]), axis=-1
         )
         child_orientation = jnp.broadcast_to(
-            state.orientation[source], (plan.maximum_children, 1)
+            state.orientation[safe_source], (plan.maximum_children, 1)
         )
         child_angular = jnp.broadcast_to(
-            state.angular_velocity[source], (plan.maximum_children, 1)
+            state.angular_velocity[safe_source], (plan.maximum_children, 1)
         )
     else:
-        rotation = quaternion_rotation_matrix(state.orientation[source : source + 1])[0]
+        rotation = quaternion_rotation_matrix(state.orientation[safe_source][None, :])[0]
         world_offset = contract("ij,kj->ki", rotation, offsets)
-        child_velocity = state.velocity[source] + jnp.cross(
-            state.angular_velocity[source], world_offset
+        child_velocity = state.velocity[safe_source] + jnp.cross(
+            state.angular_velocity[safe_source], world_offset
         )
         child_orientation = jnp.broadcast_to(
-            state.orientation[source], (plan.maximum_children, 4)
+            state.orientation[safe_source], (plan.maximum_children, 4)
         )
         child_angular = jnp.broadcast_to(
-            state.angular_velocity[source], (plan.maximum_children, 3)
+            state.angular_velocity[safe_source], (plan.maximum_children, 3)
         )
-    child_position = state.position[source] + world_offset
-    momentum_before = state.mass[source] * state.velocity[source]
+    child_position = state.position[safe_source] + world_offset
+    momentum_before = state.mass[safe_source] * state.velocity[safe_source]
     momentum_after = jnp.sum(
         jnp.where(valid_children[:, None], masses[:, None] * child_velocity, 0.0),
         axis=0,
@@ -206,7 +213,9 @@ def split_preallocated_owner(
         jnp.linalg.norm(momentum_before), 1.0
     )
     if plan.dimension == 2:
-        angular_before = state.inertia_body[source] * state.angular_velocity[source, 0]
+        angular_before = (
+            state.inertia_body[safe_source] * state.angular_velocity[safe_source, 0]
+        )
         orbital = (
             world_offset[:, 0] * masses * child_velocity[:, 1]
             - world_offset[:, 1] * masses * child_velocity[:, 0]
@@ -220,12 +229,12 @@ def split_preallocated_owner(
         )
         angular_residual = (angular_after - angular_before)[None]
     else:
-        rotation = quaternion_rotation_matrix(state.orientation[source : source + 1])[0]
+        rotation = quaternion_rotation_matrix(state.orientation[safe_source][None, :])[0]
         source_world_inertia = contract(
-            "ij,jk,lk->il", rotation, state.inertia_body[source], rotation
+            "ij,jk,lk->il", rotation, state.inertia_body[safe_source], rotation
         )
         angular_before = contract(
-            "ij,j->i", source_world_inertia, state.angular_velocity[source]
+            "ij,j->i", source_world_inertia, state.angular_velocity[safe_source]
         )
         child_world_inertia = contract("ij,kjl,ml->kim", rotation, inertias, rotation)
         spin = contract("kij,kj->ki", child_world_inertia, child_angular)
@@ -239,6 +248,7 @@ def split_preallocated_owner(
     )
     successful = (
         capacity_ok
+        & source_in_bounds
         & source_active
         & children_inactive
         & mass_ok
@@ -249,13 +259,15 @@ def split_preallocated_owner(
         & jnp.all(jnp.isfinite(child_position))
         & jnp.all(jnp.isfinite(child_velocity))
     )
-    active = state.active.at[source].set(False)
+    active = state.active.at[safe_source].set(False)
     active = active.at[safe_children].set(
         jnp.where(valid_children, True, active[safe_children])
     )
     parent = state.parent_ids.at[safe_children].set(
         jnp.where(
-            valid_children, state.stable_ids[source], state.parent_ids[safe_children]
+            valid_children,
+            state.stable_ids[safe_source],
+            state.parent_ids[safe_children],
         )
     )
     position = state.position.at[safe_children].set(

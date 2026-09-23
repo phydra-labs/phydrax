@@ -561,10 +561,23 @@ def prepare_thin_gnat(
     ):
         raise TypeError("residual_basis must use role='residual'.")
     basis = residual_basis.basis_matrix
-    nodes = jnp.asarray(node_indices, dtype=jnp.int32)
-    metric = jnp.asarray(residual_metric)
-    if nodes.ndim != 1 or nodes.size < residual_basis.rank:
+    raw_nodes = jnp.asarray(node_indices)
+    if raw_nodes.ndim != 1 or raw_nodes.size < residual_basis.rank:
         raise ValueError("Thin GNAT requires at least residual-rank samples.")
+    if not jnp.issubdtype(raw_nodes.dtype, jnp.integer):
+        raise TypeError("Thin GNAT node indices must contain integers.")
+    host_nodes = np.asarray(raw_nodes)
+    if host_nodes.size and (
+        host_nodes.min() < 0
+        or host_nodes.max() >= basis.shape[0]
+        or host_nodes.min() < np.iinfo(np.int32).min
+        or host_nodes.max() > np.iinfo(np.int32).max
+    ):
+        raise ValueError("Thin GNAT node indices are outside residual support.")
+    if np.unique(host_nodes).size != host_nodes.size:
+        raise ValueError("Thin GNAT node indices must be unique.")
+    nodes = raw_nodes.astype(jnp.int32)
+    metric = jnp.asarray(residual_metric)
     if metric.shape != (basis.shape[0], basis.shape[0]):
         raise ValueError("Residual metric must match the residual full dimension.")
     sampled_basis = basis[nodes, :]

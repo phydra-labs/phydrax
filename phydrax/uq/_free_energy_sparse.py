@@ -380,6 +380,13 @@ def sparse_pairwise_free_energy_network(
     for edge_number, ((source, destination), eligible, edge_key) in enumerate(
         zip(indexed_edges, eligible_masks, edge_keys, strict=True)
     ):
+        inverse_temperatures = np.asarray(dataset.inverse_temperatures)[
+            [source, destination]
+        ]
+        if not np.all(inverse_temperatures == inverse_temperatures[0]):
+            raise ValueError(
+                "Sparse pairwise reduced work requires one shared inverse temperature."
+            )
         active = jnp.asarray(eligible)
         source_origin = dataset.origin_state == source
         destination_origin = dataset.origin_state == destination
@@ -418,6 +425,7 @@ def sparse_pairwise_free_energy_network(
             run_id=dataset.run_id,
             work_id=work_id,
             work_kind="equilibrium-difference",
+            inverse_temperature=float(inverse_temperatures[0]),
             qualification_id=dataset.qualification_id,
             sampling_exact=dataset.sampling_exact,
             sampling_bias_bound=dataset.sampling_bias_bound,

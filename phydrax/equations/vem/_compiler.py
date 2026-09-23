@@ -53,6 +53,7 @@ from ._form import (
     VirtualElementForm,
     VirtualElementRobinAction,
 )
+from ._reconstruction import _runtime_matches_discretization
 
 
 def _cell_indices(discretization: VirtualElementDiscretization, block_index: int, /):
@@ -657,14 +658,9 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
                 user_args=args,
             )
         runtime = context.runtime
-        family = self.discretization.field.element.family
         if not isinstance(runtime, VirtualElementRuntimeData):
             raise TypeError("VEM execution context runtime has the wrong type.")
-        if (
-            runtime.topology_id != self.discretization.mesh.topology_id
-            or runtime.geometry_layout_id != self.discretization.mesh.geometry_layout_id
-            or any(projection.family != family for projection in runtime.projections)
-        ):
+        if not _runtime_matches_discretization(runtime, self.discretization):
             raise ValueError("VEM execution context is incompatible with the space.")
         return context
 

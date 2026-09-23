@@ -242,7 +242,6 @@ def test_case_manifest_is_host_only_and_has_no_solver_or_schema_surface():
     assert "solve" not in surface
     assert "state" not in surface
     assert "schema_version" not in surface
-    assert "schema_version" not in manifest.__dataclass_fields__
     assert CARDIOVASCULAR_CASE_METADATA_KEYS == frozenset(
         {
             "cohort_definition",

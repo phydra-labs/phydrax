@@ -5,9 +5,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from enum import IntEnum
 from itertools import pairwise
-from math import prod, sqrt
-from numbers import Number
+from math import prod
+from numbers import Integral, Number
 from typing import Any
 
 import equinox as eqx
@@ -23,7 +24,10 @@ from .._strict import StrictModule
 
 
 def _positive_modes(mode_sizes: Sequence[int], /) -> tuple[int, ...]:
-    modes = tuple(mode_sizes)
+    raw = tuple(mode_sizes)
+    if any(not isinstance(size, Integral) or isinstance(size, bool) for size in raw):
+        raise TypeError("Tensor-train mode sizes must be integers.")
+    modes = tuple(int(size) for size in raw)
     if not modes or any(size <= 0 for size in modes):
         raise ValueError("Tensor-train mode sizes must be a nonempty tuple of positives.")
     return modes
@@ -31,16 +35,19 @@ def _positive_modes(mode_sizes: Sequence[int], /) -> tuple[int, ...]:
 
 def _rank_caps(max_ranks: int | Sequence[int], order: int, /) -> tuple[int, ...]:
     if order <= 1:
-        if isinstance(max_ranks, int):
+        if isinstance(max_ranks, Integral) and not isinstance(max_ranks, bool):
             if max_ranks <= 0:
                 raise ValueError("max_ranks must be positive.")
         elif tuple(max_ranks):
             raise ValueError("An order-one tensor has no TT cuts.")
         return ()
-    if isinstance(max_ranks, int):
+    if isinstance(max_ranks, Integral) and not isinstance(max_ranks, bool):
         caps = (int(max_ranks),) * (order - 1)
     else:
-        caps = tuple(max_ranks)
+        raw = tuple(max_ranks)
+        if any(not isinstance(rank, Integral) or isinstance(rank, bool) for rank in raw):
+            raise TypeError("max_ranks entries must be integers.")
+        caps = tuple(int(rank) for rank in raw)
     if len(caps) != order - 1 or any(rank <= 0 for rank in caps):
         raise ValueError("max_ranks must provide one positive cap for every TT cut.")
     return caps
@@ -53,35 +60,57 @@ def _validate_relative_tolerance(relative_tolerance: float, /) -> float:
     return value
 
 
-def _selected_rank(singular_values: Array, cap: int, cut_tolerance: float, /) -> int:
-    values = np.asarray(singular_values)
-    maximum = min(int(cap), values.size)
-    if cut_tolerance <= 0.0:
-        return maximum
-    squared = np.abs(values) ** 2
-    for rank in range(1, maximum + 1):
-        if float(np.sqrt(np.sum(squared[rank:]))) <= cut_tolerance:
-            return rank
-    return maximum
+def _fixed_capacity_rank_selection(
+    singular_values: Array,
+    cap: int,
+    cut_tolerance: Array,
+    /,
+) -> tuple[int, Array, Array, Array]:
+    """Select a numerical rank while retaining one static-capacity factor shape."""
+    capacity = min(cap, singular_values.shape[0])
+    squared = jnp.abs(singular_values) ** 2
+    cumulative = jnp.cumsum(squared)
+    total = jnp.sum(squared)
+    candidate_tail = jnp.sqrt(jnp.maximum(total - cumulative[:capacity], 0.0))
+    eligible = candidate_tail <= cut_tolerance
+    first_eligible = jnp.argmax(eligible).astype(jnp.int32) + 1
+    selected = jnp.where(
+        (cut_tolerance > 0.0) & jnp.any(eligible),
+        first_eligible,
+        jnp.asarray(capacity, dtype=jnp.int32),
+    )
+    mask = jnp.arange(singular_values.shape[0]) < selected
+    capacity_mask = jnp.arange(singular_values.shape[0]) < capacity
+    retained_mask = mask & capacity_mask
+    masked_values = jnp.where(retained_mask, singular_values, 0.0)
+    discarded = jnp.sqrt(jnp.sum(jnp.where(retained_mask, 0.0, squared)))
+    return capacity, selected, masked_values, discarded
+
+
+class TTRoundingStatus(IntEnum):
+    TOLERANCE_MET = 0
+    RANK_CAP_REACHED_BEFORE_TOLERANCE = 1
 
 
 class TTRoundingEvidence(StrictModule):
     """Per-cut discarded singular mass and its rigorous TT Frobenius RSS bound."""
 
     per_cut_discarded_frobenius: Array
+    selected_ranks: Array
     frobenius_error_bound: Array
     relative_error_bound: Array
     input_frobenius_norm: Array
     output_ranks: tuple[int, ...] = eqx.field(static=True)
     max_ranks: tuple[int, ...] = eqx.field(static=True)
     requested_relative_tolerance: float = eqx.field(static=True)
-    exact: bool = eqx.field(static=True)
-    tolerance_met: bool = eqx.field(static=True)
-    status: str = eqx.field(static=True)
+    exact: Array
+    tolerance_met: Array
+    status: Array
 
     def __init__(
         self,
         per_cut_discarded_frobenius: ArrayLike,
+        selected_ranks: ArrayLike,
         input_frobenius_norm: ArrayLike,
         output_ranks: Sequence[int],
         max_ranks: Sequence[int],
@@ -89,9 +118,12 @@ class TTRoundingEvidence(StrictModule):
         /,
     ):
         discarded = jnp.asarray(per_cut_discarded_frobenius)
+        selected = jnp.asarray(selected_ranks, dtype=jnp.int32)
         norm = jnp.asarray(input_frobenius_norm)
-        if discarded.ndim != 1 or norm.shape != ():
-            raise ValueError("Rounding evidence requires a cut vector and scalar norm.")
+        if discarded.ndim != 1 or selected.shape != discarded.shape or norm.shape != ():
+            raise ValueError(
+                "Rounding evidence requires aligned cut vectors and scalar norm."
+            )
         ranks = tuple(output_ranks)
         caps = tuple(max_ranks)
         if discarded.shape != (len(ranks),) or len(caps) != len(ranks):
@@ -100,21 +132,23 @@ class TTRoundingEvidence(StrictModule):
         safe_norm = jnp.where(norm > 0, norm, jnp.asarray(1, dtype=norm.dtype))
         relative_bound = jnp.where(norm > 0, bound / safe_norm, bound)
         tolerance = _validate_relative_tolerance(requested_relative_tolerance)
-        dtype = np.asarray(norm).real.dtype
-        slack = 32 * np.finfo(dtype).eps
-        tolerance_met = bool(np.asarray(relative_bound <= tolerance + slack))
+        slack = jnp.asarray(32 * jnp.finfo(norm.dtype).eps, dtype=norm.dtype)
+        tolerance_met = relative_bound <= tolerance + slack
         self.per_cut_discarded_frobenius = discarded
+        self.selected_ranks = selected
         self.frobenius_error_bound = bound
         self.relative_error_bound = relative_bound
         self.input_frobenius_norm = norm
         self.output_ranks = ranks
         self.max_ranks = caps
         self.requested_relative_tolerance = tolerance
-        self.exact = bool(np.all(np.asarray(discarded) == 0))
+        self.exact = jnp.all(discarded == 0)
         self.tolerance_met = tolerance_met
-        self.status = (
-            "tolerance_met" if tolerance_met else "rank_cap_reached_before_tolerance"
-        )
+        self.status = jnp.where(
+            tolerance_met,
+            int(TTRoundingStatus.TOLERANCE_MET),
+            int(TTRoundingStatus.RANK_CAP_REACHED_BEFORE_TOLERANCE),
+        ).astype(jnp.int32)
 
 
 class TensorTrain(StrictModule):
@@ -179,6 +213,12 @@ class TensorTrain(StrictModule):
         if len(position) != self.order:
             raise ValueError("A TensorTrain entry needs one index per mode.")
         if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for value in position
+        ):
+            raise TypeError("TensorTrain entry indices must be integers.")
+        position = tuple(int(value) for value in position)
+        if any(
             value < 0 or value >= size
             for value, size in zip(position, self.mode_sizes, strict=True)
         ):
@@ -190,15 +230,17 @@ class TensorTrain(StrictModule):
 
     def evaluate(self, indices: ArrayLike, /) -> Array:
         """Evaluate a statically shaped batch of integer multi-indices."""
-        points = jnp.asarray(indices, dtype=jnp.int32)
+        points = jnp.asarray(indices)
+        if not jnp.issubdtype(points.dtype, jnp.integer):
+            raise TypeError("TensorTrain evaluation indices must have an integer dtype.")
         if points.ndim < 1 or points.shape[-1] != self.order:
             raise ValueError("indices must have trailing dimension equal to TT order.")
-        limits = jnp.asarray(self.mode_sizes, dtype=jnp.int32)
+        limits = jnp.asarray(self.mode_sizes, dtype=points.dtype)
         points = eqx.error_if(
             points,
             jnp.any((points < 0) | (points >= limits)),
             "TensorTrain evaluation index is outside its mode.",
-        )
+        ).astype(jnp.int32)
         flat = points.reshape((-1, self.order))
 
         def evaluate_one(point):
@@ -479,6 +521,13 @@ class TensorTrainOperator(StrictModule):
                 "TT operator entries need one input and output index per mode."
             )
         if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for value in output + input_
+        ):
+            raise TypeError("TT operator entry indices must be integers.")
+        output = tuple(int(value) for value in output)
+        input_ = tuple(int(value) for value in input_)
+        if any(
             value < 0 or value >= size
             for value, size in zip(output, self.output_mode_sizes, strict=True)
         ) or any(
@@ -498,26 +547,30 @@ class TensorTrainOperator(StrictModule):
         /,
     ) -> Array:
         """Evaluate a statically shaped batch of input/output multi-index pairs."""
-        outputs = jnp.asarray(output_indices, dtype=jnp.int32)
-        inputs = jnp.asarray(input_indices, dtype=jnp.int32)
+        outputs = jnp.asarray(output_indices)
+        inputs = jnp.asarray(input_indices)
+        if not jnp.issubdtype(outputs.dtype, jnp.integer) or not jnp.issubdtype(
+            inputs.dtype, jnp.integer
+        ):
+            raise TypeError("TT operator evaluation indices must have integer dtypes.")
         if (
             outputs.shape != inputs.shape
             or outputs.ndim < 1
             or outputs.shape[-1] != self.order
         ):
             raise ValueError("TT operator index batches must agree and match its order.")
-        output_limits = jnp.asarray(self.output_mode_sizes, dtype=jnp.int32)
-        input_limits = jnp.asarray(self.input_mode_sizes, dtype=jnp.int32)
+        output_limits = jnp.asarray(self.output_mode_sizes, dtype=outputs.dtype)
+        input_limits = jnp.asarray(self.input_mode_sizes, dtype=inputs.dtype)
         outputs = eqx.error_if(
             outputs,
             jnp.any((outputs < 0) | (outputs >= output_limits)),
             "TT operator output index is outside its mode.",
-        )
+        ).astype(jnp.int32)
         inputs = eqx.error_if(
             inputs,
             jnp.any((inputs < 0) | (inputs >= input_limits)),
             "TT operator input index is outside its mode.",
-        )
+        ).astype(jnp.int32)
         flat_outputs = outputs.reshape((-1, self.order))
         flat_inputs = inputs.reshape((-1, self.order))
 
@@ -712,26 +765,32 @@ def tt_svd(
     tolerance = _validate_relative_tolerance(relative_tolerance)
     caps = _rank_caps(max_ranks, dense.ndim)
     input_norm = jnp.sqrt(jnp.sum(jnp.abs(dense) ** 2))
-    cut_tolerance = (
-        tolerance * float(np.asarray(input_norm)) / sqrt(max(dense.ndim - 1, 1))
-    )
+    cut_tolerance = tolerance * input_norm / jnp.sqrt(jnp.asarray(max(dense.ndim - 1, 1)))
     cores: list[Array] = []
     discarded: list[Array] = []
+    selected_ranks: list[Array] = []
     unfolding = dense
     left_rank = 1
     for cut, mode_size in enumerate(dense.shape[:-1]):
         matrix = unfolding.reshape((left_rank * mode_size, -1))
         left, singular_values, right = jnp.linalg.svd(matrix, full_matrices=False)
-        rank = _selected_rank(singular_values, caps[cut], cut_tolerance)
-        tail = singular_values[rank:]
-        discarded.append(jnp.sqrt(jnp.sum(jnp.abs(tail) ** 2)))
-        cores.append(left[:, :rank].reshape((left_rank, mode_size, rank)))
-        unfolding = singular_values[:rank, None] * right[:rank, :]
-        left_rank = rank
+        capacity, selected, masked_values, local_discarded = (
+            _fixed_capacity_rank_selection(
+                singular_values,
+                caps[cut],
+                cut_tolerance,
+            )
+        )
+        selected_ranks.append(selected)
+        discarded.append(local_discarded)
+        cores.append(left[:, :capacity].reshape((left_rank, mode_size, capacity)))
+        unfolding = masked_values[:capacity, None] * right[:capacity, :]
+        left_rank = capacity
     cores.append(unfolding.reshape((left_rank, dense.shape[-1], 1)))
     train = TensorTrain(tuple(cores))
     evidence = TTRoundingEvidence(
         jnp.stack(discarded) if discarded else jnp.zeros((0,), dtype=input_norm.dtype),
+        jnp.stack(selected_ranks) if selected_ranks else jnp.zeros((0,), dtype=jnp.int32),
         input_norm,
         train.ranks,
         caps,
@@ -769,22 +828,31 @@ def round_tensor_train(
     caps = _rank_caps(max_ranks, tensor.order)
     input_norm = tensor.frobenius_norm()
     cut_tolerance = (
-        tolerance * float(np.asarray(input_norm)) / sqrt(max(tensor.order - 1, 1))
+        tolerance * input_norm / jnp.sqrt(jnp.asarray(max(tensor.order - 1, 1)))
     )
     cores = list(_right_orthogonalize(tensor))
     discarded: list[Array] = []
+    selected_ranks: list[Array] = []
     for cut in range(tensor.order - 1):
         core = cores[cut]
         matrix = core.reshape((core.shape[0] * core.shape[1], core.shape[2]))
         left, singular_values, right = jnp.linalg.svd(matrix, full_matrices=False)
-        rank = _selected_rank(singular_values, caps[cut], cut_tolerance)
-        discarded.append(jnp.sqrt(jnp.sum(jnp.abs(singular_values[rank:]) ** 2)))
-        cores[cut] = left[:, :rank].reshape((core.shape[0], core.shape[1], rank))
-        transfer = singular_values[:rank, None] * right[:rank, :]
+        capacity, selected, masked_values, local_discarded = (
+            _fixed_capacity_rank_selection(
+                singular_values,
+                caps[cut],
+                cut_tolerance,
+            )
+        )
+        selected_ranks.append(selected)
+        discarded.append(local_discarded)
+        cores[cut] = left[:, :capacity].reshape((core.shape[0], core.shape[1], capacity))
+        transfer = masked_values[:capacity, None] * right[:capacity, :]
         cores[cut + 1] = ein.contract("ab,bic->aic", transfer, cores[cut + 1])
     rounded = TensorTrain(tuple(cores))
     evidence = TTRoundingEvidence(
         jnp.stack(discarded) if discarded else jnp.zeros((0,), dtype=input_norm.dtype),
+        jnp.stack(selected_ranks) if selected_ranks else jnp.zeros((0,), dtype=jnp.int32),
         input_norm,
         rounded.ranks,
         caps,
@@ -795,6 +863,7 @@ def round_tensor_train(
 
 __all__ = [
     "TTRoundingEvidence",
+    "TTRoundingStatus",
     "TensorTrain",
     "TensorTrainCompressionResult",
     "TensorTrainOperator",

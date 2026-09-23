@@ -170,14 +170,35 @@ class E57Provider:
         reference.require_rights()
         source = Path(path).expanduser().absolute()
         backend = import_module("pye57")
-        temporary_context = TemporaryDirectory(prefix="phydrax-e57-read-")
-        temporary = temporary_context.__enter__()
-        staged = Path(temporary) / source.name
-        with open_reference_artifact(source, reference) as resource:
-            with staged.open("wb") as output:
-                while chunk := resource.stream.read(1024 * 1024):
-                    output.write(chunk)
-        document = backend.E57(str(staged))
+        with TemporaryDirectory(prefix="phydrax-e57-read-") as temporary:
+            staged = Path(temporary) / source.name
+            with open_reference_artifact(source, reference) as resource:
+                with staged.open("wb") as output:
+                    while chunk := resource.stream.read(1024 * 1024):
+                        output.write(chunk)
+            document = backend.E57(str(staged))
+            try:
+                return self._read_document(
+                    document,
+                    reference,
+                    coordinate_contract,
+                    campaign_id,
+                    maximum_points_per_scan,
+                    image_assets,
+                )
+            finally:
+                document.close()
+
+    def _read_document(
+        self,
+        document,
+        reference: ReferenceArtifactManifest,
+        coordinate_contract: SpatialCoordinateContract,
+        campaign_id: str,
+        maximum_points_per_scan: int,
+        image_assets: tuple,
+        /,
+    ) -> E57ScanCollection:
         records = []
         losses = []
         for scan_index in range(document.scan_count):
@@ -281,7 +302,6 @@ class E57Provider:
                     tuple(value.asset_id for value in image_assets),
                 )
             )
-        document.close()
         if not image_assets:
             losses.append(
                 AdapterLoss(
@@ -332,9 +352,7 @@ class E57Provider:
             assets,
             roles,
         )
-        result = E57ScanCollection(collection, tuple(records), report)
-        temporary_context.__exit__(None, None, None)
-        return result
+        return E57ScanCollection(collection, tuple(records), report)
 
 
 def _point_anchor(

@@ -542,13 +542,13 @@ def fit_edmd(
         & jnp.all(jnp.isfinite(decoder_matrix))
         & (True if input_matrix is None else jnp.all(jnp.isfinite(input_matrix)))
     )
-    valid = evolution.valid & decoder.valid & finite
-    insufficient = evolution.sample_count < design.shape[-1] | (
+    insufficient = (evolution.sample_count < design.shape[-1]) | (
         decoder.sample_count < library.num_features
     )
     rank_deficient = ((evolution.rank < design.shape[-1]) & (ridge == 0.0)) | (
         (decoder.rank < library.num_features) & (decoder_ridge == 0.0)
     )
+    valid = evolution.valid & decoder.valid & finite & ~insufficient & ~rank_deficient
     status = jnp.where(
         ~finite,
         IDENTIFICATION_NONFINITE,

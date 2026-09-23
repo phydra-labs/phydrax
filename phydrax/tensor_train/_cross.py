@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from enum import IntEnum
 from math import prod
+from numbers import Integral
 
 import equinox as eqx
 import jax
@@ -47,7 +49,24 @@ class TTCrossPlan(StrictModule):
         regularization: float,
         relative_tolerance: float,
     ):
-        modes = tuple(mode_sizes)
+        raw_modes = tuple(mode_sizes)
+        integer_fields = (
+            ("mode_sizes", raw_modes),
+            ("max_rank", (max_rank,)),
+            ("sweeps", (sweeps,)),
+            ("evaluation_budget", (evaluation_budget,)),
+            ("holdout_count", (holdout_count,)),
+            ("max_local_unknowns", (max_local_unknowns,)),
+        )
+        if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for _, values in integer_fields
+            for value in values
+        ):
+            raise TypeError(
+                "TT cross dimensions, ranks, counts, and budgets must be integers."
+            )
+        modes = tuple(int(value) for value in raw_modes)
         rank = int(max_rank)
         sweep_count = int(sweeps)
         budget = int(evaluation_budget)
@@ -66,7 +85,13 @@ class TTCrossPlan(StrictModule):
             raise ValueError(
                 "TT cross holdout_count must be between zero and its budget."
             )
-        if local_limit <= 0 or ridge <= 0.0 or tolerance < 0.0:
+        if (
+            local_limit <= 0
+            or not np.isfinite(ridge)
+            or ridge <= 0.0
+            or not np.isfinite(tolerance)
+            or tolerance < 0.0
+        ):
             raise ValueError(
                 "TT cross local budget, regularization, and tolerance are invalid."
             )
@@ -142,23 +167,32 @@ class TTCrossEvidence(StrictModule):
         self.estimator_is_guarantee = False
 
 
+class TTCrossStatus(IntEnum):
+    CONVERGED = 0
+    HOLDOUT_TOLERANCE_NOT_MET = 1
+
+
 class TTCrossResult(StrictModule):
     tensor: TensorTrain
     evidence: TTCrossEvidence
-    converged: bool = eqx.field(static=True)
-    status: str = eqx.field(static=True)
+    converged: Array
+    status: Array
 
     def __init__(
         self,
         tensor: TensorTrain,
         evidence: TTCrossEvidence,
-        converged: bool,
+        converged: Array,
         /,
     ):
         self.tensor = tensor
         self.evidence = evidence
-        self.converged = bool(converged)
-        self.status = "converged" if self.converged else "holdout_tolerance_not_met"
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
+        self.status = jnp.where(
+            self.converged,
+            int(TTCrossStatus.CONVERGED),
+            int(TTCrossStatus.HOLDOUT_TOLERANCE_NOT_MET),
+        ).astype(jnp.int32)
 
 
 def _permuted_indices(mode_sizes: tuple[int, ...], count: int, /) -> Array:
@@ -185,6 +219,8 @@ def _rank_one_cross(
     /,
 ) -> TensorTrain | None:
     anchor = values[0]
+    if isinstance(anchor, jax.core.Tracer):
+        return None
     if not bool(np.asarray(jnp.isfinite(anchor) & (jnp.abs(anchor) > 0.0))):
         return None
     vectors = []
@@ -197,7 +233,8 @@ def _rank_one_cross(
         cursor += size - 1
     cores = []
     for axis, vector in enumerate(vectors):
-        normalized = vector if axis == len(vectors) - 1 else vector / anchor
+        # One factor carries the anchor scale; every other factor is relative to it.
+        normalized = vector if axis == 0 else vector / anchor
         cores.append(normalized[None, :, None])
     return TensorTrain(tuple(cores))
 
@@ -263,16 +300,17 @@ def _update_pair(
     plan: TTCrossPlan,
     /,
 ) -> TensorTrain:
-    design = _two_site_design(tensor, points, axis)
-    if design.shape[1] > plan.max_local_unknowns:
-        raise ValueError(
-            f"TT cross local pair needs {design.shape[1]} unknowns, exceeding budget {plan.max_local_unknowns}."
-        )
-    local = regularized_least_squares(design, values, plan.regularization)
     left_rank = tensor.cores[axis].shape[0]
     right_rank = tensor.cores[axis + 1].shape[2]
     first_size = tensor.mode_sizes[axis]
     second_size = tensor.mode_sizes[axis + 1]
+    unknowns = left_rank * first_size * second_size * right_rank
+    if unknowns > plan.max_local_unknowns:
+        raise ValueError(
+            f"TT cross local pair needs {unknowns} unknowns, exceeding budget {plan.max_local_unknowns}."
+        )
+    design = _two_site_design(tensor, points, axis)
+    local = regularized_least_squares(design, values, plan.regularization)
     matrix = local.reshape((left_rank * first_size, second_size * right_rank))
     left, singular_values, right = jnp.linalg.svd(matrix, full_matrices=False)
     rank = min(plan.max_rank, left.shape[1])
@@ -298,6 +336,13 @@ def tensor_train_cross(
     values = jnp.asarray(evaluator(indices))
     if values.shape != (plan.evaluation_budget,):
         raise ValueError("TT cross evaluator must return one scalar per requested index.")
+    if not jnp.issubdtype(values.dtype, jnp.inexact):
+        raise TypeError("TT cross evaluator outputs must use an inexact dtype.")
+    values = eqx.error_if(
+        values,
+        jnp.any(~jnp.isfinite(values)),
+        "TT cross evaluator outputs must be finite.",
+    )
     training_count = plan.evaluation_budget - plan.holdout_count
     training_indices = indices[:training_count]
     training_values = values[:training_count]
@@ -370,13 +415,14 @@ def tensor_train_cross(
         maximum_error,
         holdout_count=plan.holdout_count,
     )
-    converged = bool(np.asarray(relative_estimator <= plan.relative_tolerance))
+    converged = relative_estimator <= plan.relative_tolerance
     return TTCrossResult(tensor, evidence, converged)
 
 
 __all__ = [
     "TTCrossEvidence",
     "TTCrossPlan",
+    "TTCrossStatus",
     "TTCrossResult",
     "tensor_train_cross",
 ]

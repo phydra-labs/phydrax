@@ -223,6 +223,9 @@ def test_calibration_reports_unobservable_free_focal_lengths():
     assert not bool(result.diagnostics.observable)
     assert int(result.diagnostics.rank) == 0
     assert int(result.status) == int(CameraCalibrationStatus.UNOBSERVABLE)
+    assert int(result.diagnostics.holdout_count) == 0
+    assert float(result.diagnostics.holdout_rms) == 0.0
+    assert bool(jnp.all(jnp.isfinite(result.diagnostics.per_camera_holdout_rms)))
     assert result.optimization is None
 
 
@@ -254,6 +257,9 @@ def test_calibration_updates_preserve_the_refractive_stack():
     result = calibrate_camera_rig(problem, CameraCalibrationPlan(free))
 
     assert bool(result.diagnostics.observable)
+    assert int(result.diagnostics.holdout_count) == 0
+    assert float(result.diagnostics.holdout_rms) == 0.0
+    assert bool(jnp.all(jnp.isfinite(result.diagnostics.per_camera_holdout_rms)))
     retained = result.rig.cameras[0].refractive_stack
     assert retained is not None
     assert retained.stack_id == stack.stack_id

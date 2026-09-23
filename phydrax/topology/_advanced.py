@@ -459,6 +459,48 @@ class MultiFiltration(StrictModule, NonTrainableState):
         self.parameter_dimension = dimension
 
 
+def _validate_persistence_compositions(
+    dimensions: np.ndarray,
+    edges: np.ndarray,
+    maps: tuple[np.ndarray, ...],
+    modulus: int,
+    /,
+) -> None:
+    path_maps = {
+        (index, index): np.eye(int(dimension), dtype=np.int64) % modulus
+        for index, dimension in enumerate(dimensions)
+    }
+
+    def admit(pair: tuple[int, int], matrix: np.ndarray) -> bool:
+        normalized = np.asarray(matrix, dtype=np.int64) % modulus
+        previous = path_maps.get(pair)
+        if previous is not None:
+            if not np.array_equal(previous, normalized):
+                raise ValueError("Finite persistence module has noncommuting path maps.")
+            return False
+        path_maps[pair] = normalized
+        return True
+
+    for edge, matrix in zip(edges, maps, strict=True):
+        admit((int(edge[0]), int(edge[1])), matrix)
+
+    changed = True
+    while changed:
+        changed = False
+        known = tuple(path_maps.items())
+        for (source, middle), first in known:
+            for (next_source, target), second in known:
+                if middle != next_source:
+                    continue
+                changed = (
+                    admit(
+                        (source, target),
+                        _matmul_mod(second, first, modulus),
+                    )
+                    or changed
+                )
+
+
 class FinitePersistenceModule(StrictModule, NonTrainableState):
     dimensions: Array
     edges: Array
@@ -497,18 +539,12 @@ class FinitePersistenceModule(StrictModule, NonTrainableState):
                 np.eye(dimensions_[source], dtype=np.int64) % field.modulus,
             ):
                 raise ValueError("Finite module identity maps must be exact identities.")
-        path_products: dict[tuple[int, int], list[np.ndarray]] = {}
-        for first_edge, first_map in zip(edges_, maps_, strict=True):
-            for second_edge, second_map in zip(edges_, maps_, strict=True):
-                if int(first_edge[1]) != int(second_edge[0]):
-                    continue
-                pair = (int(first_edge[0]), int(second_edge[1]))
-                path_products.setdefault(pair, []).append(
-                    (second_map @ first_map) % field.modulus
-                )
-        for products in path_products.values():
-            if any(not np.array_equal(products[0], product) for product in products[1:]):
-                raise ValueError("Finite persistence module has noncommuting path maps.")
+        _validate_persistence_compositions(
+            dimensions_,
+            edges_,
+            maps_,
+            field.modulus,
+        )
         self.dimensions = jnp.asarray(dimensions_)
         self.edges = jnp.asarray(edges_)
         self.maps = tuple(jnp.asarray(value, dtype=jnp.int32) for value in maps_)
@@ -724,11 +760,14 @@ def compute_zigzag_intervals(
 
 class CellDiagonalApproximation(StrictModule, NonTrainableState):
     source_degree: int = eqx.field(static=True)
+    source_cell_count: int = eqx.field(static=True)
     source_cells: Array
     left_cells: Array
     right_cells: Array
     left_degree: int = eqx.field(static=True)
+    left_cell_count: int = eqx.field(static=True)
     right_degree: int = eqx.field(static=True)
+    right_cell_count: int = eqx.field(static=True)
     coefficients: Array
     topology_id: str = eqx.field(static=True)
 
@@ -744,7 +783,21 @@ class CellDiagonalApproximation(StrictModule, NonTrainableState):
         coefficients: ArrayLike,
         /,
     ):
-        if int(left_degree) + int(right_degree) != int(source_degree):
+        if not isinstance(topology, CellComplexTopology):
+            raise TypeError("topology must be a CellComplexTopology.")
+        source_degree_ = int(source_degree)
+        left_degree_ = int(left_degree)
+        right_degree_ = int(right_degree)
+        if (
+            source_degree_ < 0
+            or source_degree_ >= len(topology.entity_sets)
+            or left_degree_ < 0
+            or left_degree_ >= len(topology.entity_sets)
+            or right_degree_ < 0
+            or right_degree_ >= len(topology.entity_sets)
+        ):
+            raise ValueError("Diagonal term degrees must belong to the topology.")
+        if left_degree_ + right_degree_ != source_degree_:
             raise ValueError("Diagonal term degrees must sum to source_degree.")
         arrays = tuple(
             np.asarray(value)
@@ -754,16 +807,19 @@ class CellDiagonalApproximation(StrictModule, NonTrainableState):
             raise ValueError("Diagonal term arrays must be equal rank-1 arrays.")
         if (
             np.any(arrays[0] < 0)
-            or np.any(arrays[0] >= topology.entity_sets[int(source_degree)].count)
+            or np.any(arrays[0] >= topology.entity_sets[source_degree_].count)
             or np.any(arrays[1] < 0)
-            or np.any(arrays[1] >= topology.entity_sets[int(left_degree)].count)
+            or np.any(arrays[1] >= topology.entity_sets[left_degree_].count)
             or np.any(arrays[2] < 0)
-            or np.any(arrays[2] >= topology.entity_sets[int(right_degree)].count)
+            or np.any(arrays[2] >= topology.entity_sets[right_degree_].count)
         ):
             raise ValueError("Diagonal term addresses a cell outside the topology.")
-        self.source_degree = int(source_degree)
-        self.left_degree = int(left_degree)
-        self.right_degree = int(right_degree)
+        self.source_degree = source_degree_
+        self.source_cell_count = topology.entity_sets[source_degree_].count
+        self.left_degree = left_degree_
+        self.left_cell_count = topology.entity_sets[left_degree_].count
+        self.right_degree = right_degree_
+        self.right_cell_count = topology.entity_sets[right_degree_].count
         self.source_cells = jnp.asarray(arrays[0], dtype=jnp.int32)
         self.left_cells = jnp.asarray(arrays[1], dtype=jnp.int32)
         self.right_cells = jnp.asarray(arrays[2], dtype=jnp.int32)
@@ -781,12 +837,17 @@ def cup_product(
 ) -> Array:
     left_ = jnp.asarray(left, dtype=jnp.int32)
     right_ = jnp.asarray(right, dtype=jnp.int32)
+    if left_.shape != (diagonal.left_cell_count,):
+        raise ValueError("Left cochain length does not match its declared degree.")
+    if right_.shape != (diagonal.right_cell_count,):
+        raise ValueError("Right cochain length does not match its declared degree.")
     terms = (
         diagonal.coefficients * left_[diagonal.left_cells] * right_[diagonal.right_cells]
     )
-    count = int(np.max(np.asarray(diagonal.source_cells), initial=-1)) + 1
     return (
-        jnp.zeros((count,), dtype=jnp.int32).at[diagonal.source_cells].add(terms)
+        jnp.zeros((diagonal.source_cell_count,), dtype=jnp.int32)
+        .at[diagonal.source_cells]
+        .add(terms)
         % coefficients.modulus
     )
 

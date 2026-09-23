@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -501,10 +503,9 @@ def _mathematical_program_certificate(
             problem.conic_rhs.shape,
         )
         if cone_dual is None or lower_dual is None or upper_dual is None:
-            norm = float(np.linalg.norm(value))
-            normal = value / max(norm, np.finfo(np.float64).tiny)
-            multiplier = max(0.0, -float(gradient @ normal))
-            stationarity = gradient + multiplier * normal
+            raise ValueError(
+                "SOCP independent KKT certification requires cone and bound duals"
+            )
         else:
             stationarity = (
                 gradient + problem.conic_matrix.T @ cone_dual - lower_dual + upper_dual
@@ -541,6 +542,11 @@ def _mathematical_program_certificate(
             float(np.max(np.abs(inequality_slack * inequality_dual), initial=0.0)),
             float(np.max(np.abs(lower_slack * lower_dual), initial=0.0)),
             float(np.max(np.abs(upper_slack * upper_dual), initial=0.0)),
+        )
+    else:
+        raise ValueError(
+            "program independent KKT certification requires equality, inequality, "
+            "and bound duals"
         )
     primal_feasibility = max(
         float(np.max(np.abs(equality_residual), initial=0.0)),
@@ -622,8 +628,13 @@ def _certificate(
     }
 
 
+def certificate_evaluator_fingerprint() -> str:
+    """Identify the exact independent evaluator source used by a report."""
+    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+
 def _positive_scale(value: float) -> float:
     return max(float(value), np.finfo(np.float64).tiny)
 
 
-__all__ = ["independent_certificate"]
+__all__ = ["certificate_evaluator_fingerprint", "independent_certificate"]

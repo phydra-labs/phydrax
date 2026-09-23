@@ -320,8 +320,8 @@ class VariationalResult(StrictModule):
     ) -> PredictiveField | frozendict[str, PredictiveField]:
         return sample_observations_from_position_samples(
             self.problem,
-            self.unconstrained_samples,
             key,
+            self.unconstrained_samples,
             *args,
             sample_dims=(draw_dim,),
             sample_sources=("epistemic",),

@@ -315,10 +315,42 @@ def test_tetra_slab_propagates_and_checkpoint_restart_replays_identically(tmp_pa
     assert monodomain_state_identity(runtime, restored) == prefix.state_id
     np.testing.assert_array_equal(resumed.state.values, uninterrupted.state.values)
     assert archive.manifest.checkpoint_id
+    child = write_monodomain_checkpoint(
+        runtime,
+        restored,
+        tmp_path / "monodomain-child.phx",
+        parent=archive,
+    )
+    assert child.manifest.parent_checkpoint_id == archive.manifest.checkpoint_id
+    assert child.manifest.parent_manifest_id == archive.manifest.manifest_id
+    child_state = read_monodomain_checkpoint(
+        runtime,
+        child.path,
+        parent=archive,
+    )
+    assert monodomain_state_identity(runtime, child_state) == prefix.state_id
+    with pytest.raises(ValueError, match="parent archive"):
+        read_monodomain_checkpoint(runtime, child.path)
 
     other_runtime = runtime.plan.prepare(0.01)
     with pytest.raises(ValueError, match="does not match"):
         read_monodomain_checkpoint(other_runtime, checkpoint)
+    other_state = other_runtime.initialize(
+        jnp.zeros(other_runtime.plan.node_count),
+        jnp.zeros(other_runtime.plan.node_count),
+    )
+    other_archive = write_monodomain_checkpoint(
+        other_runtime,
+        other_state,
+        tmp_path / "other-monodomain.phx",
+    )
+    with pytest.raises(ValueError, match="Parent checkpoint"):
+        write_monodomain_checkpoint(
+            runtime,
+            restored,
+            tmp_path / "wrong-parent-monodomain.phx",
+            parent=other_archive,
+        )
 
     with zipfile.ZipFile(checkpoint, "a") as container:
         container.writestr("unexpected-member", b"corruption")

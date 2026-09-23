@@ -524,11 +524,13 @@ def advance_sparse_structured_ipm(
     sufficient_decrease,
     maximum_line_search_steps,
     regularization,
+    optimality_threshold,
+    maximum_evaluations,
     assume_active=False,
 ):
     residuals = _residuals(prepared, plan, state)
     current_norm = residuals[-1]
-    threshold = termination.absolute_optimality
+    threshold = optimality_threshold
     if not assume_active and float(current_norm) <= float(threshold):
         return eqx.tree_at(
             lambda value: value.status,
@@ -641,8 +643,18 @@ def advance_sparse_structured_ipm(
         fraction_to_boundary,
     )
 
-    def line_search_step(_, carry):
-        accepted_, candidate_, candidate_norm_, rate_ = carry
+    trial_budget = (
+        jnp.asarray(maximum_line_search_steps, dtype=jnp.int32)
+        if maximum_evaluations is None
+        else jnp.maximum(
+            jnp.asarray(maximum_evaluations, dtype=jnp.int32)
+            - state.objective_evaluations,
+            0,
+        )
+    )
+
+    def evaluate_trial(carry):
+        accepted_, candidate_, candidate_norm_, rate_, evaluations_ = carry
         trial = _candidate(state, direction, rate_)
         trial_norm = _residuals(prepared, plan, trial)[-1]
         finite = jnp.all(
@@ -663,20 +675,24 @@ def advance_sparse_structured_ipm(
         acceptable = finite & (
             trial_norm <= (1.0 - sufficient_decrease * rate_) * current_norm
         )
-        select = ~accepted_ & acceptable
         selected_candidate = jax.tree_util.tree_map(
-            lambda new, old: jnp.where(select, new, old),
+            lambda new, old: jnp.where(acceptable, new, old),
             trial,
             candidate_,
         )
         return (
-            accepted_ | acceptable,
+            acceptable,
             selected_candidate,
-            jnp.where(select, trial_norm, candidate_norm_),
-            jnp.where(accepted_ | acceptable, rate_, 0.5 * rate_),
+            jnp.where(acceptable, trial_norm, candidate_norm_),
+            jnp.where(acceptable, rate_, 0.5 * rate_),
+            evaluations_ + 1,
         )
 
-    accepted, candidate, candidate_norm, rate = jax.lax.fori_loop(
+    def line_search_step(_, carry):
+        active = (~carry[0]) & (carry[4] < trial_budget)
+        return jax.lax.cond(active, evaluate_trial, lambda value: value, carry)
+
+    accepted, candidate, candidate_norm, rate, trial_evaluations = jax.lax.fori_loop(
         0,
         maximum_line_search_steps,
         line_search_step,
@@ -685,6 +701,7 @@ def advance_sparse_structured_ipm(
             state,
             current_norm,
             rate,
+            jnp.asarray(0, dtype=jnp.int32),
         ),
     )
     if isinstance(linear_policy.method, SparseLDLT):
@@ -694,6 +711,10 @@ def advance_sparse_structured_ipm(
             value.iteration,
             value.status,
             value.rejected_steps,
+            value.objective_evaluations,
+            value.constraint_evaluations,
+            value.gradient_evaluations,
+            value.jacobian_evaluations,
             value.hessian_evaluations,
             value.kkt_assemblies,
             value.factorizations,
@@ -704,6 +725,10 @@ def advance_sparse_structured_ipm(
             state.iteration + 1,
             jnp.asarray(int(OptimizationStatus.RESTORATION_FAILED), dtype=jnp.int32),
             state.rejected_steps + 1,
+            state.objective_evaluations + trial_evaluations,
+            state.constraint_evaluations + trial_evaluations,
+            state.gradient_evaluations + trial_evaluations,
+            state.jacobian_evaluations + trial_evaluations,
             state.hessian_evaluations + 1,
             state.kkt_assemblies + 1,
             state.factorizations + 1,
@@ -732,10 +757,10 @@ def advance_sparse_structured_ipm(
             state.iteration + 1,
             state.accepted_steps + 1,
             jnp.linalg.norm(rate * direction[0]),
-            state.objective_evaluations + 1,
-            state.constraint_evaluations + 1,
-            state.gradient_evaluations + 1,
-            state.jacobian_evaluations + 1,
+            state.objective_evaluations + trial_evaluations,
+            state.constraint_evaluations + trial_evaluations,
+            state.gradient_evaluations + trial_evaluations,
+            state.jacobian_evaluations + trial_evaluations,
             state.hessian_evaluations + 1,
             state.kkt_assemblies + 1,
             state.factorizations + 1,
@@ -792,7 +817,7 @@ def finalize_sparse_structured_ipm(
                 ),
             ),
         )
-        <= termination.absolute_optimality
+        <= termination.optimality_threshold(initial_norm)
     )
     public_status = jnp.where(
         (state.status == int(OptimizationStatus.SUCCESS)) & ~certified,
@@ -817,7 +842,7 @@ def finalize_sparse_structured_ipm(
         constraint_evaluations=state.constraint_evaluations + 1,
         linear_solves=state.right_hand_side_solves,
         linear_iterations=state.right_hand_side_solves,
-        globalization_evaluations=state.accepted_steps + state.rejected_steps,
+        globalization_evaluations=jnp.maximum(state.objective_evaluations - 1, 0),
         initial_optimality_norm=initial_norm,
         final_optimality_norm=final_norm,
         final_step_norm=state.final_step_norm,
@@ -877,6 +902,7 @@ def finalize_sparse_structured_ipm(
         work,
         numeric_version=prepared.numeric_version,
         structure_id=prepared.structure_id,
+        numeric_binding_id=prepared.numeric_binding_id,
         method_id=method_id,
     )
 
@@ -913,10 +939,15 @@ def solve_sparse_structured_ipm(
         warm_start,
     )
     initial_norm = _residuals(prepared, plan, state)[-1]
+    optimality_threshold = termination.optimality_threshold(initial_norm)
     if isinstance(linear_policy.method, SparseLDLT):
         while (
             int(state.status) == int(OptimizationStatus.ITERATING)
             and int(state.iteration) < termination.maximum_steps
+            and (
+                termination.maximum_evaluations is None
+                or int(state.objective_evaluations) < termination.maximum_evaluations
+            )
         ):
             state = advance_sparse_structured_ipm(
                 prepared,
@@ -928,26 +959,37 @@ def solve_sparse_structured_ipm(
                 sufficient_decrease=sufficient_decrease,
                 maximum_line_search_steps=maximum_line_search_steps,
                 regularization=regularization,
+                optimality_threshold=optimality_threshold,
+                maximum_evaluations=termination.maximum_evaluations,
             )
     else:
 
         def iteration(_, current):
-            active = current.status == int(OptimizationStatus.ITERATING)
-            candidate = advance_sparse_structured_ipm(
-                prepared,
-                plan,
-                current,
-                termination,
-                linear_policy,
-                fraction_to_boundary=fraction_to_boundary,
-                sufficient_decrease=sufficient_decrease,
-                maximum_line_search_steps=maximum_line_search_steps,
-                regularization=regularization,
-                assume_active=True,
+            within_evaluations = (
+                jnp.asarray(True)
+                if termination.maximum_evaluations is None
+                else current.objective_evaluations < termination.maximum_evaluations
             )
-            return jax.tree_util.tree_map(
-                lambda new, old: jnp.where(active, new, old),
-                candidate,
+            active = (
+                current.status == int(OptimizationStatus.ITERATING)
+            ) & within_evaluations
+            return jax.lax.cond(
+                active,
+                lambda value: advance_sparse_structured_ipm(
+                    prepared,
+                    plan,
+                    value,
+                    termination,
+                    linear_policy,
+                    fraction_to_boundary=fraction_to_boundary,
+                    sufficient_decrease=sufficient_decrease,
+                    maximum_line_search_steps=maximum_line_search_steps,
+                    regularization=regularization,
+                    optimality_threshold=optimality_threshold,
+                    maximum_evaluations=termination.maximum_evaluations,
+                    assume_active=True,
+                ),
+                lambda value: value,
                 current,
             )
 
@@ -957,12 +999,21 @@ def solve_sparse_structured_ipm(
             iteration,
             state,
         )
+    exhausted_evaluations = (
+        jnp.asarray(False)
+        if termination.maximum_evaluations is None
+        else state.objective_evaluations >= termination.maximum_evaluations
+    )
     state = eqx.tree_at(
         lambda value: value.status,
         state,
         jnp.where(
             state.status == int(OptimizationStatus.ITERATING),
-            int(OptimizationStatus.MAXIMUM_STEPS_REACHED),
+            jnp.where(
+                exhausted_evaluations,
+                int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED),
+                int(OptimizationStatus.MAXIMUM_STEPS_REACHED),
+            ),
             state.status,
         ).astype(jnp.int32),
     )

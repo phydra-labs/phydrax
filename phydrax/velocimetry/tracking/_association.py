@@ -27,7 +27,12 @@ from ...combinatorial import (
     SetPackingSpace,
     solve_combinatorial,
 )
-from ...imaging.camera import CameraRig, pixels_to_rays, triangulate_weighted_rays
+from ...imaging.camera import (
+    CameraRig,
+    pixels_to_rays,
+    triangulate_weighted_rays,
+    TriangulationStatus,
+)
 from ._types import AssociationEvidence, AssociationStatus, ParticleDetections
 
 
@@ -189,6 +194,7 @@ class MultiViewAssociationResult(StrictModule):
 
     detection_indices: Array
     candidate_score: Array
+    selected: Array
     valid: Array
     triangulation: object
     status: Array
@@ -675,21 +681,35 @@ def associate_multiview(
         selected_weights,
     )
     valid = selected_valid & triangulation.valid
-    detection_indices = jnp.where(valid[:, None], detection_indices, -1)
+    detection_indices = jnp.where(selected_valid[:, None], detection_indices, -1)
     selected_scores = jnp.where(selected_valid, selected_scores, 0.0)
     packing_optimal = packing.status == int(CombinatorialStatus.OPTIMAL)
+    triangulation_nonfinite = jnp.any(
+        selected_valid
+        & (triangulation.status == int(TriangulationStatus.NONFINITE_INPUT))
+    )
+    triangulation_failed = jnp.any(selected_valid & ~triangulation.valid)
     status = jnp.where(
         candidates.overflow_count > 0,
         int(AssociationStatus.CANDIDATE_OVERFLOW),
         jnp.where(
-            packing_optimal,
-            int(AssociationStatus.SUCCESS),
+            ~packing_optimal,
             int(AssociationStatus.HEURISTIC_NOT_CERTIFIED),
+            jnp.where(
+                triangulation_nonfinite,
+                int(AssociationStatus.NONFINITE_INPUT),
+                jnp.where(
+                    triangulation_failed,
+                    int(AssociationStatus.TRIANGULATION_FAILED),
+                    int(AssociationStatus.SUCCESS),
+                ),
+            ),
         ),
     ).astype(jnp.int32)
     return MultiViewAssociationResult(
         detection_indices,
         selected_scores,
+        selected_valid,
         valid,
         triangulation,
         status,

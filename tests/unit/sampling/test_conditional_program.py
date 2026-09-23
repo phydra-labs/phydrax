@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 
@@ -115,3 +116,60 @@ def test_conditional_program_supports_stateful_callable_kernels():
     assert result.samples[0].shape == (3, 2, 2)
     assert jnp.all(result.samples[0][:, 0] == 2)
     assert jnp.all(result.samples[0][:, 1] == 3)
+
+
+def test_conditional_program_rejects_duplicate_heads_and_stale_state_owner():
+    conditional = phx.sampling.conditional
+    group = conditional.ConditionalVariableGroup(
+        "x",
+        2,
+        jax.ShapeDtypeStruct((), jnp.float64),
+    )
+    with pytest.raises(ValueError, match="head indices must be unique"):
+        conditional.ConditionalInteractionGroup(
+            "x",
+            jnp.asarray([0, 0]),
+            (),
+            (),
+            jnp.asarray(1.0),
+            interaction_id="duplicate-head",
+        )
+
+    interaction = conditional.ConditionalInteractionGroup(
+        "x",
+        jnp.asarray([0, 1]),
+        (),
+        (),
+        jnp.asarray(1.0),
+        interaction_id="owner-check",
+    )
+
+    def program(kernel_id):
+        return conditional.prepare_conditional_program(
+            (group,),
+            (
+                conditional.ConditionalUpdate(
+                    interaction,
+                    conditional.CallableConditionalKernel(
+                        _increment,
+                        kernel_id=kernel_id,
+                    ),
+                ),
+            ),
+            (conditional.ConditionalUpdateStage((0,), stage_id="all"),),
+        )
+
+    first = program("first")
+    second = program("second")
+    state = conditional.initialize_conditional_program(
+        first,
+        {"x": jnp.zeros((1, 2))},
+    )
+    with pytest.raises(ValueError, match="another prepared program"):
+        conditional.sample_conditional_program(
+            second,
+            state,
+            key=jax.random.key(5),
+            warmup_steps=0,
+            num_draws=1,
+        )

@@ -51,3 +51,21 @@ def test_pooled_small_roots_are_jittable_and_record_nonfinite_failures():
         phx.nonlinear.NonlinearStatus.NONFINITE_EVALUATION
     )
     assert sorted(result.evidence.completion_order.tolist()) == [0, 1, 2]
+
+
+def test_pooled_small_roots_honor_configured_damping_floor():
+    result = phx.nonlinear.pooled_small_root(
+        lambda state, target: state * state - target,
+        jnp.asarray([[0.1], [0.2]]),
+        jnp.asarray([[2.0], [3.0]]),
+        lane_count=1,
+        maximum_steps=1,
+        minimum_damping=1.0,
+    )
+
+    assert jnp.array_equal(result.result.residual_evaluations, jnp.asarray([2, 2]))
+    assert jnp.array_equal(result.result.accepted_steps, jnp.asarray([0, 0]))
+    assert jnp.array_equal(
+        result.result.state,
+        jnp.asarray([[0.1], [0.2]]),
+    )

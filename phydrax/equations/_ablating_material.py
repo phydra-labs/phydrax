@@ -108,6 +108,8 @@ class PorousAblatingMaterialPlan(StrictModule, NonTrainableState):
         if (
             cp.ndim != 1
             or component_count == 0
+            or reaction_count == 0
+            or reaction_count > component_count
             or conductivity.shape != cp.shape
             or reference_energy.shape != cp.shape
             or exponent.shape != pre.shape

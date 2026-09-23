@@ -61,6 +61,7 @@ class ConstantTransport(AbstractTransportClosure):
             or not np.isfinite(bulk)
             or viscosity < 0.0
             or conductivity < 0.0
+            or bulk < 0.0
         ):
             raise ValueError(
                 "Constant transport coefficients must be finite and non-negative."
@@ -134,6 +135,7 @@ class SutherlandTransport(AbstractTransportClosure):
             or sutherland < 0.0
             or cp <= 0.0
             or prandtl <= 0.0
+            or bulk < 0.0
         ):
             raise ValueError("Sutherland transport parameters are invalid.")
         self.reference_viscosity = mu_ref

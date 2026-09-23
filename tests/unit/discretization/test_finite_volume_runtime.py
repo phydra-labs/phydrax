@@ -130,8 +130,6 @@ def test_runtime_initialization_binds_static_content_and_round_trips_averages():
         volumes,
     )
     assert state.time == state.content_state.time
-    assert "conservative_state" not in vars(state)
-    assert "time" not in vars(state)
     assert state.content_state.topology_epoch_id == runtime.topology_epoch_id
     assert state.content_state.geometry_layout_id == runtime.geometry_layout_id
     assert state.content_state.evidence_policy_id == runtime.evidence_policy_id
@@ -329,7 +327,6 @@ def test_runtime_exposes_one_stable_accepted_flux_integral_ledger():
         (block.block_id, block.route_id)
         for block in second.accepted_flux_integrals.blocks
     )
-    assert "accepted_" + "integrated_fluxes" not in vars(result)
 
 
 def test_mapped_runtime_high_order_fallback_and_ledger_routes_are_deterministic():

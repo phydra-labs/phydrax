@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from phydrax.discretization import CellBlock, CellMesh
 from phydrax.discretization.fem import (
@@ -80,3 +81,39 @@ def test_children_inherit_owners_and_adaptive_halos_include_mortar_neighbors():
     halo_valid = np.asarray(target_partition.worksets.halo_valid)
     assert np.count_nonzero(halo_valid[0]) == 1
     assert np.count_nonzero(halo_valid[1]) == 2
+
+
+def test_hp_ownership_inheritance_rejects_a_lineage_for_another_target():
+    topology, geometry = initial_finite_element_hp_topology(_mesh(), 2, 16)
+    source_epoch = prepare_finite_element_hp_epoch(
+        topology,
+        geometry,
+        "u",
+        conformity="L2",
+    )
+    source_owners = np.full((topology.capacity,), -1, dtype=np.int32)
+    source_owners[:2] = (0, 1)
+    source_partition = FiniteElementHPPartitionPlan(source_epoch, source_owners, 2)
+    target_refinement = refine_tensor_hp_cells(
+        topology,
+        geometry,
+        jnp.asarray((10,)),
+    )
+    other_refinement = refine_tensor_hp_cells(
+        topology,
+        geometry,
+        jnp.asarray((20,)),
+    )
+    target_epoch = prepare_finite_element_hp_epoch(
+        target_refinement.topology,
+        target_refinement.geometry,
+        "u",
+        conformity="L2",
+    )
+
+    with pytest.raises(ValueError, match="source and target topologies"):
+        inherit_finite_element_hp_ownership(
+            source_partition,
+            target_epoch,
+            other_refinement.lineage,
+        )

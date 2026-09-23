@@ -16,8 +16,11 @@ from .._strict import StrictModule
 from ._belief_propagation import SumProductBeliefPropagationResult
 from ._model import (
     DiscreteFactorGraph,
+    EnumeratedFactorGroup,
+    factor_graph_contains,
     factor_graph_log_score,
     factor_group_cardinality_signature,
+    factor_group_dense_tables,
     pack_assignments,
 )
 from ._types import ExactFactorGraphResult
@@ -47,18 +50,53 @@ class FactorGraphTrainingDiagnostics(StrictModule):
         )
 
 
-def _exact_log_normalizer(result: ExactNormalizerResult, /) -> Array:
+def _exact_log_normalizer(
+    graph: DiscreteFactorGraph,
+    result: ExactNormalizerResult,
+    /,
+) -> Array:
+    if not isinstance(
+        result,
+        (ExactFactorGraphResult, SumProductBeliefPropagationResult),
+    ):
+        raise TypeError(
+            "normalizer must be an exact enumeration or forest sum-product result."
+        )
+    if result.provenance.structure_id != graph.structure_id:
+        raise ValueError("Exact normalizer belongs to another graph structure.")
     if isinstance(result, ExactFactorGraphResult):
         if not bool(result.provenance.exact):
             raise ValueError("ExactFactorGraphResult does not carry exact provenance.")
-        return jnp.where(result.valid, result.log_normalizer, jnp.nan)
-    if isinstance(result, SumProductBeliefPropagationResult):
+        expected = tuple(
+            factor_group_dense_tables(graph, index)
+            for index in range(len(graph.factor_groups))
+        )
+        valid = result.successful
+    elif isinstance(result, SumProductBeliefPropagationResult):
         if not result.log_normalizer_exact:
             raise ValueError("Loopy Bethe normalizers cannot enter the exact likelihood.")
-        return jnp.where(result.valid, result.log_normalizer, jnp.nan)
-    raise TypeError(
-        "normalizer must be an exact enumeration or forest sum-product result."
+        expected = tuple(
+            group.log_potentials
+            if isinstance(group, EnumeratedFactorGroup)
+            else factor_group_dense_tables(graph, index)
+            for index, group in enumerate(graph.factor_groups)
+        )
+        valid = result.successful
+    if len(expected) != len(result.factor_tables) or any(
+        left.shape != right.shape for left, right in zip(expected, result.factor_tables)
+    ):
+        raise ValueError(
+            "Exact normalizer numeric factor layout does not match the graph."
+        )
+    numeric_match = jnp.asarray(True)
+    for current, normalized in zip(expected, result.factor_tables):
+        numeric_match = numeric_match & jnp.array_equal(current, normalized)
+    value = eqx.error_if(
+        result.log_normalizer,
+        ~numeric_match,
+        "Exact normalizer numeric factors do not match the supplied graph.",
     )
+    return jnp.where(valid, value, jnp.nan)
 
 
 def exact_factor_graph_negative_log_likelihood(
@@ -72,7 +110,7 @@ def exact_factor_graph_negative_log_likelihood(
     if states.ndim == 1:
         states = states[None, :]
     scores = factor_graph_log_score(graph, states)
-    log_normalizer = _exact_log_normalizer(normalizer)
+    log_normalizer = _exact_log_normalizer(graph, normalizer)
     objective = log_normalizer - jnp.mean(scores)
     diagnostics = FactorGraphTrainingDiagnostics(
         objective=objective,
@@ -138,6 +176,11 @@ def factor_graph_moments(
     if states.ndim == 1:
         states = states[None, :]
     samples = states.reshape((-1, graph.num_variables))
+    samples = eqx.error_if(
+        samples,
+        ~jnp.all(factor_graph_contains(graph, samples)),
+        "assignments contain values outside graph support.",
+    )
     count = samples.shape[0]
     outputs: list[Array] = []
     for group_index, scope in enumerate(graph.factor_scopes):

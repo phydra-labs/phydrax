@@ -673,9 +673,8 @@ class PreparedDistributedLineSolve(StrictModule, NonTrainableState):
             raise ValueError("RHS line axis does not match topology line_size.")
         moved = jnp.moveaxis(rhs, axis, -1)
         batch_shape = moved.shape[:-1]
-        batch_rhs = moved.reshape((-1, moved.shape[-1])).astype(
-            self.factors.modified_diagonal.dtype
-        )
+        solve_dtype = jnp.result_type(moved.dtype, self.factors.modified_diagonal.dtype)
+        batch_rhs = moved.reshape((-1, moved.shape[-1])).astype(solve_dtype)
         compatible = batch_rhs
         compatibility_defect = jnp.asarray(0.0, dtype=jnp.real(batch_rhs).dtype)
         compatibility_correction_norm = jnp.asarray(0.0, dtype=jnp.real(batch_rhs).dtype)

@@ -134,6 +134,8 @@ def reduced_potential_dataset_from_multistate(result) -> ReducedPotentialDataset
 
     if not isinstance(result, AtomisticMultistateSegmentResult):
         raise TypeError("result must be AtomisticMultistateSegmentResult.")
+    if not result.successful:
+        raise ValueError("Multistate segment must be successful before UQ conversion.")
     values = jnp.asarray(result.reduced_potentials)
     coverage = jnp.asarray(result.coverage, dtype=jnp.bool_)
     active = jnp.asarray(result.sample_active, dtype=jnp.bool_)
@@ -224,6 +226,9 @@ def reduced_work_dataset_from_alchemical_switching(
 
     if not isinstance(record, AlchemicalSwitchingRecord):
         raise TypeError("record must be AlchemicalSwitchingRecord.")
+    biases = tuple(bias_ids)
+    if biases != (None, None):
+        raise ValueError("The current switching protocol is bias-free.")
     if direction not in ("forward", "reverse", "both"):
         raise ValueError("direction must be 'forward', 'reverse', or 'both'.")
     states = _exact_tuple(
@@ -311,13 +316,13 @@ def reduced_work_dataset_from_alchemical_switching(
         ordered_states = states
         ordered_potentials = potentials
         ordered_measures = measures
-        ordered_biases = tuple(bias_ids)
+        ordered_biases = biases
     elif direction == "forward":
         arrays = forward
         ordered_states = states
         ordered_potentials = potentials
         ordered_measures = measures
-        ordered_biases = tuple(bias_ids)
+        ordered_biases = biases
     else:
         work, coverage, active, _, _, chain, draw, repeat, dependence = reverse
         arrays = (
@@ -334,14 +339,7 @@ def reduced_work_dataset_from_alchemical_switching(
         ordered_states = (states[1], states[0])
         ordered_potentials = (potentials[1], potentials[0])
         ordered_measures = (measures[1], measures[0])
-        biases = tuple(bias_ids)
-        if len(biases) != 2:
-            raise ValueError("bias_ids must align with the two switching states.")
         ordered_biases = (biases[1], biases[0])
-    if direction != "reverse":
-        ordered_biases = tuple(ordered_biases)
-        if len(ordered_biases) != 2:
-            raise ValueError("bias_ids must align with the two switching states.")
     work_id = (
         record.work_id
         if direction == "both"
@@ -361,6 +359,7 @@ def reduced_work_dataset_from_alchemical_switching(
         sampling_exact=record.sampling_exact,
         sampling_bias_bound=record.sampling_bias_bound,
         measure_ids=ordered_measures,
+        inverse_temperature=record.inverse_temperature,
         producer_id=record.producer_id,
         run_id=record.run_id,
         work_id=work_id,

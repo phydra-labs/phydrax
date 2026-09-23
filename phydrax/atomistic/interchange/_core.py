@@ -7,13 +7,16 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 import equinox as eqx
+import jax
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization import PeriodicCell
 from ...units import AMOUNT, ENERGY, UnitDefinition
 from .._force_field import AtomisticForceFieldPlan
+from .._sites import AtomisticCoordinateMapPlan
 from .._units import AtomisticUnitSystem
 
 
@@ -134,19 +137,30 @@ def require_mapping_fields(value: Mapping, fields: tuple[str, ...], /) -> None:
 
 def canonical_source_digest(value: Mapping, /) -> str:
     def normalize(content):
-        if isinstance(content, np.ndarray):
+        if isinstance(content, (np.ndarray, jax.Array)):
+            array = np.asarray(content)
             return {
-                "shape": list(content.shape),
-                "dtype": content.dtype.name,
-                "data": content.tolist(),
+                "shape": list(array.shape),
+                "dtype": array.dtype.name,
+                "data": array.tolist(),
             }
+        if isinstance(content, np.generic):
+            return content.item()
+        if isinstance(content, PeriodicCell):
+            return {"kind": "periodic-cell", "cell_id": content.cell_id}
+        if isinstance(content, AtomisticCoordinateMapPlan):
+            return {"kind": "atomistic-coordinate-map", "plan_id": content.plan_id}
         if isinstance(content, Mapping):
-            return {str(key): normalize(item) for key, item in content.items()}
+            if any(not isinstance(key, str) for key in content):
+                raise TypeError("Canonical interchange mapping keys must be strings.")
+            return {key: normalize(item) for key, item in content.items()}
         if isinstance(content, (list, tuple)):
             return [normalize(item) for item in content]
         if isinstance(content, (str, int, float, bool, type(None))):
             return content
-        return repr(content)
+        raise TypeError(
+            f"Unsupported noncanonical interchange value {type(content).__name__}."
+        )
 
     return canonical_fingerprint(
         {"kind": "atomistic-interchange-source", "content": normalize(value)}

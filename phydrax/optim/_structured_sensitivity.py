@@ -70,8 +70,11 @@ def structured_solution_jvp(
         raise TypeError("prepared must be a PreparedStructuredNonlinearProgram.")
     if not isinstance(result, StructuredNonlinearResult):
         raise TypeError("result must be a StructuredNonlinearResult.")
-    if result.structure_id != prepared.structure_id:
-        raise ValueError("Structured result and prepared program do not match.")
+    if (
+        result.structure_id != prepared.structure_id
+        or result.numeric_binding_id != prepared.numeric_binding_id
+    ):
+        raise ValueError("Structured result and prepared numeric binding do not match.")
     if not bool(result.successful):
         raise ValueError("Structured sensitivity requires a successful primal solve.")
     return constrained_solution_jvp(
@@ -102,8 +105,11 @@ def structured_solution_vjp(
         raise TypeError("prepared must be a PreparedStructuredNonlinearProgram.")
     if not isinstance(result, StructuredNonlinearResult):
         raise TypeError("result must be a StructuredNonlinearResult.")
-    if result.structure_id != prepared.structure_id:
-        raise ValueError("Structured result and prepared program do not match.")
+    if (
+        result.structure_id != prepared.structure_id
+        or result.numeric_binding_id != prepared.numeric_binding_id
+    ):
+        raise ValueError("Structured result and prepared numeric binding do not match.")
     if not bool(result.successful):
         raise ValueError("Structured sensitivity requires a successful primal solve.")
     cotangent = prepared.validate_coordinates(cotangent_coordinates)
@@ -146,6 +152,11 @@ def structured_parameter_continuation(
         raise TypeError("result must be a StructuredNonlinearResult.")
     if not callable(args_path):
         raise TypeError("args_path must be callable.")
+    if (
+        result.structure_id != prepared.structure_id
+        or result.numeric_binding_id != prepared.numeric_binding_id
+    ):
+        raise ValueError("Structured result and prepared numeric binding do not match.")
     if not bool(result.successful):
         raise ValueError("Structured continuation requires a successful primal solve.")
     if np.any(np.asarray(prepared.template.fixed_variable_mask)):

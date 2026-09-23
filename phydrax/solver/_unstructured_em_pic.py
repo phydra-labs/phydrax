@@ -17,6 +17,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization import tetrahedral_cell_complex, tetrahedral_connectivity
 from ..discretization.particle import ParticlePopulationState
 from ..discretization.pic import (
     PICChargeModelPlan,
@@ -57,6 +58,8 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
     face_reconstruction: Array
     cell_faces: Array
     cell_face_signs: Array
+    current_to_maxwell_edges: Array
+    current_to_maxwell_signs: Array
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -76,16 +79,33 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
             raise TypeError("current must be UnstructuredWhitneyCurrentPlan.")
         if current.locator.dimension != 3:
             raise ValueError("Unstructured electromagnetic PIC requires tetrahedra.")
-        if maxwell.plan.cochain.cell_counts[1] != current.edges.shape[0]:
-            raise ValueError(
-                "Whitney current edge space differs from Maxwell degree one."
-            )
         cells = np.asarray(current.locator.cells, dtype=np.int32)
+        connectivity = tetrahedral_connectivity(cells, current.locator.coordinate_count)
+        expected_topology = tetrahedral_cell_complex(
+            cells, current.locator.coordinate_count
+        )
+        if maxwell.plan.cochain.topology.topology_id != expected_topology.topology_id:
+            raise ValueError(
+                "Whitney current and Maxwell cochains must share exact topology."
+            )
+        maxwell_edges = np.asarray(connectivity.edges, dtype=np.int32)
+        if maxwell.plan.cochain.cell_counts[1] != maxwell_edges.shape[0]:
+            raise ValueError("Maxwell degree-one capacity does not match topology.")
+        edge_lookup = {
+            tuple(int(value) for value in edge): index
+            for index, edge in enumerate(maxwell_edges)
+        }
+        current_to_maxwell = []
+        current_to_maxwell_signs = []
+        for edge in np.asarray(current.edges, dtype=np.int32):
+            oriented = tuple(int(value) for value in edge)
+            canonical = tuple(sorted(oriented))
+            if canonical not in edge_lookup:
+                raise ValueError("Whitney edge is absent from the Maxwell cochain.")
+            current_to_maxwell.append(edge_lookup[canonical])
+            current_to_maxwell_signs.append(1.0 if oriented == canonical else -1.0)
         coordinates = np.asarray(current.locator.coordinates, dtype=np.float64)
         gradients = []
-        face_map: dict[tuple[int, int, int], int] = {}
-        cell_faces = []
-        cell_signs = []
         reconstruction = []
         local_faces = ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))
         for cell in cells:
@@ -99,25 +119,11 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
                 (-np.sum(inverse, axis=0, keepdims=True), inverse), axis=0
             )
             gradients.append(grad)
-            local_ids, local_sign = [], []
             normal_rows = []
             for face_local in local_faces:
                 oriented = tuple(int(cell[index]) for index in face_local)
-                canonical = tuple(sorted(oriented))
-                if canonical not in face_map:
-                    face_map[canonical] = len(face_map)
-                local_ids.append(face_map[canonical])
-                permutation = [canonical.index(value) for value in oriented]
-                inversions = sum(
-                    permutation[i] > permutation[j]
-                    for i in range(3)
-                    for j in range(i + 1, 3)
-                )
-                local_sign.append(-1 if inversions % 2 else 1)
                 a, b, c = coordinates[list(oriented)]
                 normal_rows.append(0.5 * np.cross(b - a, c - a))
-            cell_faces.append(local_ids)
-            cell_signs.append(local_sign)
             normal_matrix = np.asarray(normal_rows)
             reconstruction.append(
                 np.linalg.lstsq(
@@ -126,16 +132,18 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
                     rcond=1.0e-15,
                 )[0]
             )
-        if maxwell.plan.cochain.cell_counts[2] != len(face_map):
-            raise ValueError("Whitney face ordering differs from Maxwell degree two.")
+        if maxwell.plan.cochain.cell_counts[2] != connectivity.faces.shape[0]:
+            raise ValueError("Maxwell degree-two capacity does not match topology.")
         self.maxwell = maxwell
         self.current = current
         self.charge_model = charge_model
         self.pusher = RelativisticBorisPlan() if pusher is None else pusher
         self.gradients = jnp.asarray(gradients)
         self.face_reconstruction = jnp.asarray(reconstruction)
-        self.cell_faces = jnp.asarray(cell_faces, dtype=jnp.int32)
-        self.cell_face_signs = jnp.asarray(cell_signs)
+        self.cell_faces = connectivity.cell_faces
+        self.cell_face_signs = connectivity.cell_face_signs
+        self.current_to_maxwell_edges = jnp.asarray(current_to_maxwell, dtype=jnp.int32)
+        self.current_to_maxwell_signs = jnp.asarray(current_to_maxwell_signs)
         self.tolerance = float(tolerance)
         self.plan_id = canonical_fingerprint(
             {
@@ -143,6 +151,9 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
                 "maxwell": maxwell.prepared_id,
                 "current": current.plan_id,
                 "charge_model": charge_model.plan_id,
+                "topology": expected_topology.topology_id,
+                "edge_order": tuple(current_to_maxwell),
+                "edge_signs": tuple(current_to_maxwell_signs),
                 "pusher": self.pusher.plan_id,
             }
         )
@@ -168,7 +179,10 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
                 - location.barycentric[:, b, None] * self.gradients[cell, a]
             )
             coefficient = (
-                electric_cochain[local_edges[:, local_index]]
+                electric_cochain[
+                    self.current_to_maxwell_edges[local_edges[:, local_index]]
+                ]
+                * self.current_to_maxwell_signs[local_edges[:, local_index]]
                 * local_signs[:, local_index]
             )
             electric = electric + coefficient[:, None] * whitney
@@ -208,11 +222,19 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
             state.population.active,
             dt,
         )
+        maxwell_current = (
+            jnp.zeros(
+                (self.maxwell.plan.cochain.cell_counts[1],),
+                dtype=deposited.edge_current.dtype,
+            )
+            .at[self.current_to_maxwell_edges]
+            .add(self.current_to_maxwell_signs * deposited.edge_current)
+        )
         maxwell = self.maxwell.step(
             state.time,
             state.maxwell,
             dt,
-            electric_current=deposited.edge_current,
+            electric_current=maxwell_current,
         )
         constraints = self.maxwell.constraints(maxwell)
         electric_constraint = jnp.max(jnp.abs(constraints[0]), initial=0.0)

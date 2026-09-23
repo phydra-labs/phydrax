@@ -721,10 +721,21 @@ class CallableLinearRepresentation(AbstractLinearRepresentation, NonTrainableSta
             if self.real_coordinates is None
             else self.real_coordinates.from_real_coordinates(coordinate)
         )
-        result = frozendict(self.replacement(values, native))
-        if tuple(result.keys()) != self.field_spec.sources:
+        checked = _mapping(values, "values")
+        replacements = _mapping(self.replacement(checked, native), "replacement result")
+        if tuple(replacements) != self.field_spec.sources:
             raise ValueError("Replacement must return every represented field in order.")
-        return result
+        missing = tuple(name for name in self.field_spec.sources if name not in checked)
+        if missing:
+            raise ValueError(
+                f"Replacement input is missing represented fields {missing!r}."
+            )
+        result = dict(checked)
+        for name in self.field_spec.sources:
+            result[name] = replacements[name]
+        if tuple(result) != tuple(checked):
+            raise ValueError("Replacement must preserve the input mapping key order.")
+        return frozendict(result)
 
     def synthesize(self, coefficients: PyTree[Any], /) -> frozendict[str, Any]:
         coordinate = self.coefficient_space.validate(coefficients)

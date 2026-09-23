@@ -47,9 +47,11 @@ def run() -> dict[str, object]:
     }
 
 
-def main() -> None:
-    print(json.dumps(run(), indent=2, sort_keys=True))
+def main() -> int:
+    report = run()
+    print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
+    return 0 if report["valid"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

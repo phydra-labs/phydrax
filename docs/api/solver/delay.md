@@ -581,10 +581,12 @@ evidence. Rejection never resamples or enters causal history.
 `BacksolveDelayAdjoint` is not `diffrax.BacksolveAdjoint`. It integrates the
 continuous advanced adjoint only for smooth deterministic retarded constant point
 delays (and statically represented quadrature terms) from a matching
-`DelayPrimalTape`. It is a convergent continuous-adjoint approximation, not the
-exact checkpointed discrete gradient and not constant-memory. Unsupported neutral,
-state-dependent, functional, stochastic, manifold, or hybrid terms fail
-preparation.
+`DelayPrimalTape`. Tape construction requires the exact `solve_start_time`; every
+active tape node must cover all delayed primal queries before that solve boundary.
+Missing prehistory is an adjoint failure and is never extrapolated. The result is a
+convergent continuous-adjoint approximation, not the exact checkpointed discrete
+gradient and not constant-memory. Unsupported neutral, state-dependent, functional,
+stochastic, manifold, or hybrid terms fail preparation.
 
 Bounded infinite memory has two truthful forms.
 `ExponentialConvolutionDelay` carries an exact finite-dimensional declared

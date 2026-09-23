@@ -518,7 +518,7 @@ def _prepare_sparse_assembly(
         values,
         source=plan.source,
         target=plan.target,
-        properties=plan.properties,
+        properties=operator.properties,
         operator_id=f"{plan.plan_id}:operator",
     )
     return PreparedSparseAssembly(

@@ -115,8 +115,11 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
             {
                 "kind": "nearly-keplerian-plan",
                 "context": context.context_id,
-                "planet_count": masses.size,
-                "num_times": times_host.size,
+                "central_mass": central,
+                "planet_masses": masses,
+                "times": times_host,
+                "gravitational_constant": self.gravitational_constant,
+                "close_approach_distance": self.close_approach_distance,
                 "kepler_policy": policy.policy_id,
             }
         )

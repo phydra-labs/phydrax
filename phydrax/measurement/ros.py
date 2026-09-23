@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from hashlib import new as new_digest
 from importlib import import_module, util
+from numbers import Integral
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,7 @@ from .._fingerprint import canonical_fingerprint
 from .._physical import SpatialCoordinateContract
 from ..geometry import FrameTransformGraph, FrameTransformTimeline, RigidFrame
 from ..qualification import ReferenceArtifactManifest
-from ..units import METER, ONE, SECOND
+from ..units import derived_unit, METER, ONE, RADIAN, SECOND
 from ._asset import (
     AcquisitionIdentity,
     DataOrigin,
@@ -32,6 +33,60 @@ from ._field import QuantityField, SamplingSemantics, SpatialSamplingKind
 from ._quantity import QuantitySpec, ValueKind, ValueLayout
 from ._support import IndexSampleSupport, PointSampleSupport, RaySampleSupport
 from ._time import SampleTimeAxis
+
+
+_ANGULAR_VELOCITY = derived_unit("rad/s", ((RADIAN, 1), (SECOND, -1)))
+_ACCELERATION = derived_unit("m/s2", ((METER, 1), (SECOND, -2)))
+
+
+_IMAGE_ENCODINGS = {
+    "mono8": (np.dtype(np.uint8), ("intensity",)),
+    "8UC1": (np.dtype(np.uint8), ("intensity",)),
+    "mono16": (np.dtype(np.uint16), ("intensity",)),
+    "16UC1": (np.dtype(np.uint16), ("intensity",)),
+    "32FC1": (np.dtype(np.float32), ("intensity",)),
+    "64FC1": (np.dtype(np.float64), ("intensity",)),
+    "rgb8": (np.dtype(np.uint8), ("red", "green", "blue")),
+    "bgr8": (np.dtype(np.uint8), ("blue", "green", "red")),
+    "rgba8": (np.dtype(np.uint8), ("red", "green", "blue", "alpha")),
+    "bgra8": (np.dtype(np.uint8), ("blue", "green", "red", "alpha")),
+    "8UC3": (np.dtype(np.uint8), ("channel-0", "channel-1", "channel-2")),
+    "8UC4": (
+        np.dtype(np.uint8),
+        ("channel-0", "channel-1", "channel-2", "channel-3"),
+    ),
+}
+
+
+def _decode_image(message: Any, /) -> tuple[np.ndarray, tuple[str, ...]]:
+    encoding = str(message.encoding)
+    if encoding not in _IMAGE_ENCODINGS:
+        raise ValueError(f"Unsupported ROS image encoding {encoding!r}.")
+    base_dtype, labels = _IMAGE_ENCODINGS[encoding]
+    byte_order = ">" if bool(message.is_bigendian) else "<"
+    dtype = base_dtype.newbyteorder(byte_order)
+    height, width, step = int(message.height), int(message.width), int(message.step)
+    channels = len(labels)
+    row_bytes = width * channels * dtype.itemsize
+    payload = memoryview(message.data)
+    if height < 1 or width < 1 or step < row_bytes or len(payload) < height * step:
+        raise ValueError(
+            "ROS image dimensions, step, and payload length are inconsistent."
+        )
+    shape = (height, width) if channels == 1 else (height, width, channels)
+    strides = (
+        (step, dtype.itemsize)
+        if channels == 1
+        else (step, channels * dtype.itemsize, dtype.itemsize)
+    )
+    values = np.ndarray(shape, dtype=dtype, buffer=payload, strides=strides).copy()
+    if encoding == "bgr8":
+        values = values[..., ::-1]
+        labels = ("red", "green", "blue")
+    elif encoding == "bgra8":
+        values = values[..., (2, 1, 0, 3)]
+        labels = ("red", "green", "blue", "alpha")
+    return values.astype(np.float64), labels
 
 
 class RosMessageKind(StrEnum):
@@ -52,6 +107,17 @@ class RosTopicProfile:
     kind: RosMessageKind
     frame_id: str
 
+    def __post_init__(self) -> None:
+        if not all(
+            isinstance(value, str) and value and value == value.strip()
+            for value in (self.topic, self.message_type, self.frame_id)
+        ):
+            raise ValueError(
+                "ROS topic, message_type, and frame_id must be canonical nonempty text."
+            )
+        if not isinstance(self.kind, RosMessageKind):
+            raise TypeError("kind must be RosMessageKind.")
+
 
 @dataclass(frozen=True, slots=True)
 class RosMessageRecord:
@@ -61,6 +127,26 @@ class RosMessageRecord:
     bag_time: float
     sequence: int
     payload: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.topic, str)
+            or not self.topic
+            or self.topic != self.topic.strip()
+        ):
+            raise ValueError("topic must be canonical nonempty text.")
+        if not isinstance(self.kind, RosMessageKind):
+            raise TypeError("kind must be RosMessageKind.")
+        if not np.isfinite(self.sensor_time) or not np.isfinite(self.bag_time):
+            raise ValueError("ROS sensor_time and bag_time must be finite.")
+        if (
+            isinstance(self.sequence, bool)
+            or not isinstance(self.sequence, Integral)
+            or self.sequence < 0
+        ):
+            raise ValueError("sequence must be a nonnegative integer.")
+        if not isinstance(self.payload, dict):
+            raise TypeError("payload must be a dictionary.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,7 +299,9 @@ class RosbagImportPlan:
                     )
                 )
                 continue
-            assets.extend(_lower_record(record, reference, campaign_id))
+            assets.extend(
+                _lower_record(record, profiles[record.topic], reference, campaign_id)
+            )
         if not assets:
             raise ValueError("ROS bag produced no supported measurement assets.")
         roles = tuple(
@@ -288,10 +376,12 @@ def _normalize_message(
     kind = profile.kind
     payload: dict[str, Any]
     if kind is RosMessageKind.IMAGE:
-        data = np.frombuffer(message.data, dtype=np.uint8).reshape(
-            (message.height, message.step)
-        )
-        payload = {"values": data[:, : message.width], "encoding": message.encoding}
+        values, component_labels = _decode_image(message)
+        payload = {
+            "values": values,
+            "encoding": str(message.encoding),
+            "component_labels": component_labels,
+        }
     elif kind is RosMessageKind.CAMERA_INFO:
         payload = {
             "intrinsic": np.asarray(message.k).reshape((3, 3)),
@@ -405,7 +495,10 @@ def _normalize_message(
 
 
 def _quaternion_rotation(quaternion: np.ndarray) -> np.ndarray:
-    w, x, y, z = quaternion / np.linalg.norm(quaternion)
+    norm = np.linalg.norm(quaternion)
+    if not np.isfinite(norm) or norm <= np.finfo(np.float64).tiny:
+        raise ValueError("ROS transform quaternion must have finite nonzero norm.")
+    w, x, y, z = quaternion / norm
     return np.asarray(
         (
             (1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)),
@@ -415,15 +508,98 @@ def _quaternion_rotation(quaternion: np.ndarray) -> np.ndarray:
     )
 
 
+def _payload_contract(
+    record: RosMessageRecord,
+    name: str,
+    values: np.ndarray,
+    frame_id: str,
+    /,
+) -> tuple[np.ndarray, tuple[int, ...], tuple[str, ...], ValueLayout, object]:
+    array = np.asarray(values)
+    if record.kind is RosMessageKind.IMAGE:
+        if name != "values" or array.ndim not in (2, 3):
+            raise ValueError("Normalized ROS image payload has an invalid shape.")
+        if array.ndim == 2:
+            return (
+                array.astype(np.float64),
+                array.shape,
+                ("row", "column"),
+                ValueLayout.scalar(),
+                ONE,
+            )
+        labels = tuple(record.payload["component_labels"])
+        return (
+            array.astype(np.float64),
+            array.shape[:2],
+            ("row", "column"),
+            ValueLayout(
+                ValueKind.VECTOR,
+                (array.shape[-1],),
+                labels,
+                f"{frame_id}:image-components",
+            ),
+            ONE,
+        )
+    vector_units = {
+        (RosMessageKind.IMU, "angular_velocity"): _ANGULAR_VELOCITY,
+        (RosMessageKind.IMU, "linear_acceleration"): _ACCELERATION,
+        (RosMessageKind.ODOMETRY, "position"): METER,
+        (RosMessageKind.ODOMETRY, "quaternion"): ONE,
+    }
+    if (record.kind, name) in vector_units:
+        labels = ("w", "x", "y", "z") if name == "quaternion" else ("x", "y", "z")
+        if array.shape != (len(labels),):
+            raise ValueError(f"ROS {name} must have shape ({len(labels)},).")
+        return (
+            array.reshape((1, len(labels))),
+            (1,),
+            ("observation",),
+            ValueLayout(ValueKind.VECTOR, (len(labels),), labels, frame_id),
+            vector_units[(record.kind, name)],
+        )
+    if record.kind is RosMessageKind.CAMERA_INFO and name == "intrinsic":
+        if array.shape != (3, 3):
+            raise ValueError("ROS camera intrinsic must have shape (3, 3).")
+        return (
+            array.reshape((1, 3, 3)),
+            (1,),
+            ("observation",),
+            ValueLayout(ValueKind.GENERAL_TENSOR, (3, 3), component_frame_id=frame_id),
+            ONE,
+        )
+    if record.kind is RosMessageKind.CAMERA_INFO and name == "distortion":
+        if array.ndim != 1 or array.size < 1:
+            raise ValueError("ROS camera distortion must be a nonempty vector.")
+        return (
+            array.reshape((1, array.size)),
+            (1,),
+            ("observation",),
+            ValueLayout(
+                ValueKind.VECTOR,
+                (array.size,),
+                component_frame_id=frame_id,
+            ),
+            ONE,
+        )
+    if array.ndim != 1 or array.size < 1:
+        raise ValueError(f"ROS {name} requires a nonempty rank-one scalar payload.")
+    return array, array.shape, (name,), ValueLayout.scalar(), ONE
+
+
 def _lower_record(
-    record: RosMessageRecord, reference: ReferenceArtifactManifest, campaign: str
+    record: RosMessageRecord,
+    profile: RosTopicProfile,
+    reference: ReferenceArtifactManifest,
+    campaign: str,
 ) -> list[MeasurementAsset]:
+    sensor_clock_id = f"ros-header:{profile.topic}"
+    bag_clock_id = "ros-bag-clock"
     acquisition = AcquisitionIdentity(
         f"{campaign}:{record.topic}:{record.sequence}",
         record.topic,
         record.kind.value,
         "ros-topic",
-        clock_id="ros-header-clock",
+        clock_id=sensor_clock_id,
     )
     derivation = DerivationRecord(
         DataOrigin.EXTERNAL,
@@ -432,6 +608,13 @@ def _lower_record(
             {"kind": "ros-lowering", "topic": record.topic, "sequence": record.sequence}
         ),
     )
+    metadata = {
+        "ros_sensor_time_seconds": record.sensor_time,
+        "ros_bag_time_seconds": record.bag_time,
+        "ros_sensor_clock_id": sensor_clock_id,
+        "ros_bag_clock_id": bag_clock_id,
+        "ros_frame_id": profile.frame_id,
+    }
     result = []
     if record.kind is RosMessageKind.LASER_SCAN:
         ranges = np.asarray(record.payload["ranges"])
@@ -440,7 +623,9 @@ def _lower_record(
             (np.cos(angles), np.sin(angles), np.zeros_like(angles)), axis=-1
         )
         contract = SpatialCoordinateContract(
-            METER, coordinate_system="cartesian", reference_frame="sensor"
+            METER,
+            coordinate_system="cartesian",
+            reference_frame=profile.frame_id,
         )
         support = RaySampleSupport(
             np.zeros_like(directions),
@@ -450,6 +635,8 @@ def _lower_record(
                 for index in range(ranges.size)
             ),
             contract,
+            sample_times=np.full(ranges.shape, record.sensor_time),
+            time_unit=SECOND,
             active_mask=np.isfinite(ranges),
             near=np.full(ranges.shape, record.payload["range_min"]),
             far=np.full(ranges.shape, record.payload["range_max"]),
@@ -465,12 +652,15 @@ def _lower_record(
                 acquisition,
                 derivation,
                 reference,
+                metadata,
             )
         )
     elif record.kind is RosMessageKind.POINT_CLOUD:
         points = np.asarray(record.payload["points"], dtype=np.float64)
         contract = SpatialCoordinateContract(
-            METER, coordinate_system="cartesian", reference_frame="sensor"
+            METER,
+            coordinate_system="cartesian",
+            reference_frame=profile.frame_id,
         )
         valid = np.all(np.isfinite(points), axis=-1)
         support = PointSampleSupport(
@@ -480,6 +670,8 @@ def _lower_record(
                 for index in range(points.shape[0])
             ),
             contract,
+            sample_times=np.full((points.shape[0],), record.sensor_time),
+            time_unit=SECOND,
             active_mask=valid,
         )
         result.append(
@@ -493,38 +685,28 @@ def _lower_record(
                     ValueKind.VECTOR,
                     (3,),
                     ("x", "y", "z"),
-                    "sensor",
+                    profile.frame_id,
                 ),
                 acquisition,
                 derivation,
                 reference,
+                metadata,
             )
         )
     else:
         for name, values in record.payload.items():
             if not isinstance(values, np.ndarray):
                 continue
-            array = np.asarray(values)
-            support = IndexSampleSupport(
-                array.shape[:-1]
-                if array.ndim > 1 and array.shape[-1] in (2, 3, 4, 9)
-                else array.shape,
-                tuple(
-                    f"axis-{index}"
-                    for index in range(
-                        array.ndim
-                        - (1 if array.ndim > 1 and array.shape[-1] in (2, 3, 4, 9) else 0)
-                    )
-                ),
-                frame_id="sensor",
+            array, sample_shape, axis_labels, layout, unit = _payload_contract(
+                record,
+                name,
+                values,
+                profile.frame_id,
             )
-            component_shape = array.shape[len(support.sample_shape) :]
-            layout = (
-                ValueLayout.scalar()
-                if not component_shape
-                else ValueLayout(
-                    ValueKind.VECTOR, component_shape, component_frame_id="sensor"
-                )
+            support = IndexSampleSupport(
+                sample_shape,
+                axis_labels,
+                frame_id=profile.frame_id,
             )
             result.append(
                 _asset(
@@ -532,11 +714,12 @@ def _lower_record(
                     array,
                     support,
                     name.replace("_", "-"),
-                    ONE,
+                    unit,
                     layout,
                     acquisition,
                     derivation,
                     reference,
+                    metadata,
                 )
             )
     return result
@@ -552,6 +735,7 @@ def _asset(
     acquisition: AcquisitionIdentity,
     derivation: DerivationRecord,
     reference: ReferenceArtifactManifest,
+    metadata: dict[str, object],
 ) -> MeasurementAsset:
     field = QuantityField(
         f"{asset_id}.field",
@@ -567,7 +751,12 @@ def _asset(
         else np.isfinite(values),
     )
     return MeasurementAsset.from_single_reference(
-        asset_id, field, reference, derivation, acquisition=acquisition
+        asset_id,
+        field,
+        reference,
+        derivation,
+        acquisition=acquisition,
+        metadata=metadata,
     )
 
 

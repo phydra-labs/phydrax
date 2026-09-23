@@ -8,7 +8,11 @@ from ._conservative import (
     SectionalPopulationState,
     SectionalPopulationStep,
 )
-from ._core import population_balance_candidate_profiles, SectionalPopulationPlan
+from ._core import (
+    population_balance_candidate_profiles,
+    SectionalAggregationRate,
+    SectionalPopulationPlan,
+)
 from ._dqmom import quadrature_moment_rates
 from ._eqmom import gaussian_eqmom_one_node, GaussianEQMOM
 from ._maximum_entropy import exponential_maximum_entropy_density
@@ -23,6 +27,7 @@ from ._spatial import (
 __all__ = [
     "ConservativeSectionalSolver",
     "GaussianEQMOM",
+    "SectionalAggregationRate",
     "SectionalPopulationPlan",
     "TwoNodeQuadrature",
     "SectionalPopulationRate",

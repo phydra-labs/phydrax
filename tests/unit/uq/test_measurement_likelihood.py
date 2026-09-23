@@ -129,6 +129,18 @@ def test_parameter_dependent_covariances_are_jittable_and_normalized():
     )
 
 
+def test_callback_observation_covariance_is_validated_before_input_propagation():
+    term = phx.uq.LinearizedGaussianMeasurementLikelihood(
+        lambda slope, value: slope * value[0],
+        jnp.ones((2, 1)),
+        jnp.ones((2,)),
+        input_covariance=jnp.asarray([[1.0]]),
+        observation_covariance=lambda _: jnp.asarray([[-0.5]]),
+    )
+
+    assert jnp.isneginf(term.log_prob(jnp.asarray(1.0)))
+
+
 def test_per_case_covariances_select_the_correct_external_minibatch_cases():
     inputs = jnp.arange(5.0)[:, None]
     targets = 1.3 * inputs[:, 0] + jnp.asarray([0.1, -0.2, 0.0, 0.3, -0.1])

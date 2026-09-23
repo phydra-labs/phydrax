@@ -107,3 +107,23 @@ def test_one_sided_region_cannot_silently_invent_missing_boundary_condition():
 
     with pytest.raises(ValueError, match="one condition per side"):
         phx.equations.prepare_fd_boundary_runtime(_grid(), bindings, "u")
+
+
+def test_serialized_dynamic_boundary_target_folds_every_operand():
+    u = phx.equations.PDEExpression.field("u")
+    target = ((phx.equations.PDEExpression.constant(1.0) + 2.0) + 3.0) * 4.0 * 5.0
+    problem = phx.equations.pde_ir_from_json(
+        phx.equations.pde_ir_to_json(_problem(u, target))
+    )
+    grid = _grid()
+    binding = phx.equations.lower_fd_boundaries(problem, grid)[0]
+    values = jnp.ones(grid.shape)
+
+    evaluated = binding.target.evaluate(
+        _context(grid, values),
+        binding.axis,
+        binding.side,
+        grid.shape,
+    )
+
+    assert jnp.allclose(evaluated, 120.0)

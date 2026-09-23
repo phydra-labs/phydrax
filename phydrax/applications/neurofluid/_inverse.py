@@ -290,8 +290,11 @@ class NeurofluidInverseProblem(StrictModule):
         singular = decomposition.singular_values
         threshold = tolerance * jnp.maximum(singular[0], 1.0)
         rank = jnp.sum(singular > threshold, dtype=jnp.int32)
-        condition = singular[0] / jnp.where(
-            singular[-1] > threshold, singular[-1], jnp.inf
+        full_rank = rank == parameters.size
+        condition = jnp.where(
+            full_rank,
+            singular[0] / singular[-1],
+            jnp.asarray(jnp.inf, dtype=singular.dtype),
         )
         fisher = weighted.T @ weighted + self.regularization * jnp.eye(parameters.size)
         covariance_result = pseudoinverse(fisher)
@@ -302,7 +305,6 @@ class NeurofluidInverseProblem(StrictModule):
             & jnp.all(decomposition.successful)
             & jnp.all(covariance_result.successful)
         )
-        full_rank = rank == parameters.size
         return IdentifiabilityReport(
             singular,
             rank,

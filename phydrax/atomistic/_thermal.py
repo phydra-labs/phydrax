@@ -74,12 +74,28 @@ def stable_particle_normals(
     data = jnp.asarray(key_data, dtype=jnp.uint32)
     if data.shape != (2,):
         raise ValueError("key_data must contain two uint32 words.")
-    ids = jnp.asarray(particle_ids, dtype=jnp.int64)
-    if ids.ndim != 1:
+    raw_ids = jnp.asarray(particle_ids)
+    if raw_ids.ndim != 1:
         raise ValueError("particle_ids must be a vector.")
+    if raw_ids.dtype.kind not in "iu":
+        raise TypeError("particle_ids must contain integers.")
+    if type(operator_id) is not int or operator_id < 0:
+        raise ValueError("operator_id must be a non-negative integer.")
+    if type(realization_id) is not int or realization_id < 0:
+        raise ValueError("realization_id must be a non-negative integer.")
+    step = jnp.asarray(step_index)
+    if step.shape != () or step.dtype.kind not in "iu":
+        raise TypeError("step_index must be an integer scalar.")
+    ids = raw_ids.astype(jnp.int64)
+    ids = eqx.error_if(
+        ids,
+        jnp.any(ids < 0) | jnp.any(jnp.diff(jnp.sort(ids)) == 0),
+        "particle_ids must be unique and non-negative.",
+    )
+    data = eqx.error_if(data, step < 0, "step_index must be non-negative.")
     key = jr.wrap_key_data(data)
     key = jr.fold_in(key, jnp.asarray(realization_id, dtype=jnp.uint32))
-    key = jr.fold_in(key, jnp.asarray(step_index, dtype=jnp.uint32))
+    key = jr.fold_in(key, step.astype(jnp.uint32))
     key = jr.fold_in(key, jnp.asarray(operator_id, dtype=jnp.uint32))
     unsigned = ids.astype(jnp.uint64)
     lower = (unsigned & jnp.uint64(0xFFFFFFFF)).astype(jnp.uint32)

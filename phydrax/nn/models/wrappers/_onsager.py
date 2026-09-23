@@ -12,7 +12,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from ...._strict import StrictModule
-from ...._trainable import partition_trainable
+from ...._trainable import NonTrainableState, partition_trainable
 from ....ml._numerics import fit_weighted_subspace
 from ..._keys import EvalKey, fold_in_eval_key
 from ...parameters import ParameterSubspace
@@ -135,14 +135,33 @@ class FixedSubspaceProjectionReport(StrictModule):
     valid: Array
 
 
-class FixedSubspaceOnsagerModel(StrictModule):
-    """Structured latent dynamics restricted to a fixed affine physical subspace."""
+class FixedOnsagerSubspace(StrictModule, NonTrainableState):
+    """Validated fixed affine subspace kept outside optimizer partitions."""
 
     mean: Array
     basis: Array
     metric: Array
-    latent_dynamics: Any
     report: FixedSubspaceProjectionReport
+
+    def __init__(
+        self,
+        mean: Array,
+        basis: Array,
+        metric: Array,
+        report: FixedSubspaceProjectionReport,
+        /,
+    ):
+        self.mean = mean
+        self.basis = basis
+        self.metric = metric
+        self.report = report
+
+
+class FixedSubspaceOnsagerModel(StrictModule):
+    """Structured latent dynamics restricted to a fixed affine physical subspace."""
+
+    subspace: FixedOnsagerSubspace
+    latent_dynamics: Any
     state_size: int = eqx.field(static=True)
     latent_size: int = eqx.field(static=True)
 
@@ -182,13 +201,33 @@ class FixedSubspaceOnsagerModel(StrictModule):
                 error,
                 jnp.asarray(True),
             )
-        self.mean = mean_array
-        self.basis = basis_array
-        self.metric = metric_array
+        if not isinstance(report, FixedSubspaceProjectionReport):
+            raise TypeError("report must be a FixedSubspaceProjectionReport.")
+        self.subspace = FixedOnsagerSubspace(
+            mean_array,
+            basis_array,
+            metric_array,
+            report,
+        )
         self.latent_dynamics = latent_dynamics
-        self.report = report
         self.state_size = int(state_size)
         self.latent_size = int(latent_size)
+
+    @property
+    def mean(self) -> Array:
+        return self.subspace.mean
+
+    @property
+    def basis(self) -> Array:
+        return self.subspace.basis
+
+    @property
+    def metric(self) -> Array:
+        return self.subspace.metric
+
+    @property
+    def report(self) -> FixedSubspaceProjectionReport:
+        return self.subspace.report
 
     @classmethod
     def fit(

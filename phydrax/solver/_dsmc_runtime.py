@@ -147,6 +147,29 @@ class DSMCProductionPlan(StrictModule, NonTrainableState):
         )
         if len(set(face_keys)) != len(face_keys):
             raise ValueError("A DSMC boundary face may own at most one physical plan.")
+        declared_surfaces = {
+            (axis, side)
+            for axis, pair in enumerate(streaming.boundary_kinds)
+            for side, kind in zip(("lower", "upper"), pair, strict=True)
+            if kind == "surface"
+        }
+        declared_reservoirs = {
+            (axis, side)
+            for axis, pair in enumerate(streaming.boundary_kinds)
+            for side, kind in zip(("lower", "upper"), pair, strict=True)
+            if kind == "reservoir"
+        }
+        registered_surfaces = {(value.face.axis, value.face.side) for value in surfaces}
+        registered_reservoirs = {
+            (value.face.axis, value.face.side) for value in reservoirs_
+        }
+        if (
+            registered_surfaces != declared_surfaces
+            or registered_reservoirs != declared_reservoirs
+        ):
+            raise ValueError(
+                "Every DSMC surface and reservoir stream face requires one physical plan."
+            )
         for reservoir in reservoirs_:
             boundary = streaming.boundary_kinds[reservoir.face.axis]
             kind = boundary[0 if reservoir.face.side == "lower" else 1]

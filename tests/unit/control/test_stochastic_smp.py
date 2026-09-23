@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax.numpy as jnp
 import pytest
 
@@ -46,6 +47,7 @@ def _paths(states, actions, noise, *, clusters=None, problem_id="smp-test"):
             else jnp.asarray(clusters, dtype=jnp.int32)
         ),
         noise_shape=noise.shape[2:],
+        time_grid=grid,
     )
     return ControlledPathBatch(
         problem=controlled,
@@ -222,3 +224,32 @@ def test_stochastic_smp_quarantines_nonfinite_derivative_evidence():
     )
     assert jnp.isinf(result.maximum_residual_norms[1])
     assert int(result.path_evidence.valid_path_count) == 1
+
+
+def test_stochastic_smp_emits_no_valid_paths_when_every_path_is_invalid():
+    paths = _paths(
+        states=[[[0.0], [0.0]], [[0.0], [0.0]]],
+        actions=[[[0.0]], [[0.0]]],
+        noise=[[[0.0]], [[0.0]]],
+    )
+    paths = eqx.tree_at(
+        lambda value: (value.valid, value.status),
+        paths,
+        (
+            jnp.asarray([False, False]),
+            jnp.full(
+                (2,),
+                int(1),
+                dtype=jnp.int32,
+            ),
+        ),
+    )
+    result = _evaluate(
+        _problem(),
+        paths,
+        jnp.zeros((2, 2, 1)),
+        jnp.zeros((2, 1, 1, 1)),
+    )
+
+    assert jnp.all(result.status == int(StochasticMaximumPrincipleStatus.NO_VALID_PATHS))
+    assert int(result.path_evidence.valid_path_count) == 0

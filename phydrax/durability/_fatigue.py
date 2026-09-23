@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import pairwise
+from math import isfinite
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -26,15 +28,24 @@ class SNCurve:
     fatigue_strength_exponent: float
 
     def __post_init__(self):
-        if self.fatigue_strength_coefficient_pa <= 0:
-            raise ValueError("Fatigue strength coefficient must be positive.")
-        if self.fatigue_strength_exponent >= 0:
-            raise ValueError("Basquin fatigue exponent must be negative.")
+        if (
+            not isfinite(self.fatigue_strength_coefficient_pa)
+            or self.fatigue_strength_coefficient_pa <= 0
+        ):
+            raise ValueError("Fatigue strength coefficient must be finite and positive.")
+        if (
+            not isfinite(self.fatigue_strength_exponent)
+            or self.fatigue_strength_exponent >= 0
+        ):
+            raise ValueError("Basquin fatigue exponent must be finite and negative.")
 
     def cycles_to_failure(self, stress_amplitude_pa: ArrayLike, /) -> Array:
         amplitude = jnp.asarray(stress_amplitude_pa)
-        if bool(jnp.any(amplitude <= 0)):
-            raise ValueError("Fatigue stress amplitudes must be positive.")
+        amplitude = eqx.error_if(
+            amplitude,
+            jnp.any(~jnp.isfinite(amplitude) | (amplitude <= 0)),
+            "Fatigue stress amplitudes must be finite and positive.",
+        )
         reversals = (amplitude / self.fatigue_strength_coefficient_pa) ** (
             1.0 / self.fatigue_strength_exponent
         )
@@ -109,8 +120,8 @@ class FatigueAssessment:
     ultimate_strength_pa: float
 
     def __post_init__(self):
-        if self.ultimate_strength_pa <= 0:
-            raise ValueError("Fatigue ultimate strength must be positive.")
+        if not isfinite(self.ultimate_strength_pa) or self.ultimate_strength_pa <= 0:
+            raise ValueError("Fatigue ultimate strength must be finite and positive.")
 
     def evaluate(self, stress_history_pa: ArrayLike, /) -> FatigueResult:
         cycles = rainflow_cycles(stress_history_pa)
@@ -118,8 +129,10 @@ class FatigueAssessment:
         denominator = (
             1.0 - jnp.maximum(cycles.mean_stress_pa, 0) / self.ultimate_strength_pa
         )
-        admissible = jnp.all(denominator > 0)
-        corrected = amplitude / jnp.maximum(denominator, jnp.finfo(amplitude.dtype).tiny)
+        admissible_members = jnp.isfinite(denominator) & (denominator > 0)
+        admissible = jnp.all(admissible_members)
+        safe_denominator = jnp.where(admissible_members, denominator, 1.0)
+        corrected = amplitude / safe_denominator
         life = self.sn_curve.cycles_to_failure(corrected)
         damage = jnp.sum(cycles.cycle_count / life)
         blocks = jnp.where(damage > 0, 1 / damage, jnp.inf)

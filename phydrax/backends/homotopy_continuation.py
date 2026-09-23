@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 from enum import Enum
+from numbers import Integral
 from pathlib import Path
 
 import equinox as eqx
@@ -53,6 +54,28 @@ def _digest(value: str, name: str, /) -> str:
     ):
         raise ValueError(f"{name} must be a lowercase SHA-256 digest.")
     return digest
+
+
+def _decode_json_object(data: bytes, owner: str, /) -> dict:
+    def pairs(values):
+        record = {}
+        for key, value in values:
+            if key in record:
+                raise ValueError(f"{owner} contains duplicate field {key!r}.")
+            record[key] = value
+        return record
+
+    def reject_constant(value: str):
+        raise ValueError(f"{owner} contains non-finite constant {value!r}.")
+
+    value = json.loads(
+        data.decode("ascii", errors="strict"),
+        object_pairs_hook=pairs,
+        parse_constant=reject_constant,
+    )
+    if not isinstance(value, dict):
+        raise ValueError(f"{owner} must be a JSON object.")
+    return value
 
 
 class HomotopyContinuationEnvironment(StrictModule):
@@ -136,37 +159,77 @@ class HomotopyContinuationPolicy(StrictModule):
     seed: int = eqx.field(static=True)
     timeout_seconds: float = eqx.field(static=True)
     maximum_output_bytes: int = eqx.field(static=True)
+    maximum_variable_count: int = eqx.field(static=True)
+    maximum_equation_count: int = eqx.field(static=True)
+    maximum_term_count: int = eqx.field(static=True)
+    maximum_exponent_entries: int = eqx.field(static=True)
+    maximum_storage_bytes: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         *,
         start_system: str = "polyhedral",
-        path_capacity: int = 10000,
+        path_capacity: int = 10_000,
         seed: int = 0,
-        timeout_seconds: float = 3600.0,
+        timeout_seconds: float = 3_600.0,
         maximum_output_bytes: int = 64 * 1024 * 1024,
+        maximum_variable_count: int = 4_096,
+        maximum_equation_count: int = 4_096,
+        maximum_term_count: int = 1_000_000,
+        maximum_exponent_entries: int = 10_000_000,
+        maximum_storage_bytes: int = 256 * 1024 * 1024,
     ):
         start = str(start_system).replace("_", "-")
         if start not in ("total-degree", "polyhedral"):
             raise ValueError("start_system must be 'total-degree' or 'polyhedral'.")
+        integer_values = (
+            path_capacity,
+            seed,
+            maximum_output_bytes,
+            maximum_variable_count,
+            maximum_equation_count,
+            maximum_term_count,
+            maximum_exponent_entries,
+            maximum_storage_bytes,
+        )
+        if any(
+            isinstance(value, bool) or not isinstance(value, Integral)
+            for value in integer_values
+        ):
+            raise TypeError("Homotopy continuation resource limits must be integers.")
         capacity = int(path_capacity)
         seed_ = int(seed)
         timeout = float(timeout_seconds)
         output_bytes = int(maximum_output_bytes)
+        resource_limits = tuple(int(value) for value in integer_values[3:])
         if capacity < 1:
             raise ValueError("path_capacity must be positive.")
         if seed_ < 0 or seed_ > 2**32 - 1:
             raise ValueError("seed must fit an unsigned 32-bit integer.")
         if not math.isfinite(timeout) or timeout <= 0.0:
             raise ValueError("timeout_seconds must be finite and positive.")
-        if output_bytes < 1:
-            raise ValueError("maximum_output_bytes must be positive.")
+        if output_bytes < 1 or any(value < 1 for value in resource_limits):
+            raise ValueError("Homotopy continuation resource limits must be positive.")
+        hard_limits = (4_096, 4_096, 1_000_000, 10_000_000, 256 * 1024 * 1024)
+        if any(
+            value > hard for value, hard in zip(resource_limits, hard_limits, strict=True)
+        ):
+            raise ValueError(
+                "Homotopy continuation resource limits exceed worker bounds."
+            )
         self.start_system = start
         self.path_capacity = capacity
         self.seed = seed_
         self.timeout_seconds = timeout
         self.maximum_output_bytes = output_bytes
+        (
+            self.maximum_variable_count,
+            self.maximum_equation_count,
+            self.maximum_term_count,
+            self.maximum_exponent_entries,
+            self.maximum_storage_bytes,
+        ) = resource_limits
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "homotopy-continuation-policy",
@@ -175,6 +238,11 @@ class HomotopyContinuationPolicy(StrictModule):
                 "seed": seed_,
                 "timeout_seconds": timeout,
                 "maximum_output_bytes": output_bytes,
+                "maximum_variable_count": resource_limits[0],
+                "maximum_equation_count": resource_limits[1],
+                "maximum_term_count": resource_limits[2],
+                "maximum_exponent_entries": resource_limits[3],
+                "maximum_storage_bytes": resource_limits[4],
             }
         )
 
@@ -191,19 +259,14 @@ class HomotopyContinuationProvider(StrictModule):
         self,
         executable: PinnedExecutable,
         environment: HomotopyContinuationEnvironment,
-        *,
-        protocol_id: str = HOMOTOPY_CONTINUATION_PROTOCOL,
     ):
         if not isinstance(executable, PinnedExecutable):
             raise TypeError("executable must be a PinnedExecutable.")
         if not isinstance(environment, HomotopyContinuationEnvironment):
             raise TypeError("environment must be a HomotopyContinuationEnvironment.")
-        protocol = str(protocol_id).strip()
-        if not protocol:
-            raise ValueError("protocol_id must be nonempty.")
         self.executable = executable
         self.environment = environment
-        self.protocol_id = protocol
+        self.protocol_id = HOMOTOPY_CONTINUATION_PROTOCOL
         self.provider_id = canonical_fingerprint(
             {
                 "kind": "homotopy-continuation-provider",
@@ -211,7 +274,7 @@ class HomotopyContinuationProvider(StrictModule):
                 "executable_version": executable.version,
                 "executable_license_id": executable.license_id,
                 "environment": environment.environment_id,
-                "protocol": protocol,
+                "protocol": HOMOTOPY_CONTINUATION_PROTOCOL,
                 "worker_sha256": HOMOTOPY_CONTINUATION_WORKER_SHA256,
             }
         )
@@ -232,6 +295,7 @@ class HomotopyContinuationExecutionStatus(str, Enum):
     INVALID_OUTPUT = "invalid_output"
     SEMANTIC_MISMATCH = "semantic_mismatch"
     PATH_CAPACITY_EXCEEDED = "path_capacity_exceeded"
+    RESOURCE_EXHAUSTED = "resource_exhausted"
 
 
 _PATH_STATUS_VALUES = frozenset(status.value for status in HomotopyContinuationPathStatus)
@@ -264,10 +328,30 @@ class HomotopyContinuationRequest(StrictModule):
         request = str(request_id).strip()
         support = str(support_id).strip()
         system = str(system_id).strip()
+        if (
+            isinstance(equation_count, bool)
+            or not isinstance(equation_count, Integral)
+            or isinstance(variable_count, bool)
+            or not isinstance(variable_count, Integral)
+        ):
+            raise TypeError("Polynomial dimensions must be integers.")
         equation_count_ = int(equation_count)
         variable_count_ = int(variable_count)
-        rows = tuple(equation_indices)
-        powers = tuple(tuple(row) for row in exponents)
+        raw_rows = tuple(equation_indices)
+        raw_powers = tuple(tuple(row) for row in exponents)
+        if any(
+            isinstance(value, bool) or not isinstance(value, Integral)
+            for value in raw_rows
+        ):
+            raise TypeError("equation_indices must contain integers.")
+        if any(
+            isinstance(value, bool) or not isinstance(value, Integral)
+            for row in raw_powers
+            for value in row
+        ):
+            raise TypeError("exponents must contain integers.")
+        rows = tuple(int(value) for value in raw_rows)
+        powers = tuple(tuple(int(value) for value in row) for row in raw_powers)
         values = tuple(complex(value) for value in coefficients)
         if not request or not support or not system:
             raise ValueError("Request, support and system identities must be nonempty.")
@@ -336,7 +420,23 @@ def homotopy_continuation_availability(
         )
     if not isinstance(provider, HomotopyContinuationProvider):
         raise TypeError("provider must be a HomotopyContinuationProvider.")
-    provider.environment.verify()
+    try:
+        provider.environment.verify()
+        executable_digest = _sha256(Path(provider.executable.path).read_bytes())
+    except (OSError, ValueError) as error:
+        return BackendAvailability(
+            capabilities=HOMOTOPY_CONTINUATION_CAPABILITIES,
+            available=False,
+            requirement="explicit pinned Julia executable and HomotopyContinuation project",
+            reason=f"pinned provider identity could not be verified: {type(error).__name__}: {error}",
+        )
+    if executable_digest != provider.executable.sha256:
+        return BackendAvailability(
+            capabilities=HOMOTOPY_CONTINUATION_CAPABILITIES,
+            available=False,
+            requirement="explicit pinned Julia executable and HomotopyContinuation project",
+            reason="pinned Julia executable SHA-256 does not match its current bytes",
+        )
     return BackendAvailability(
         capabilities=HOMOTOPY_CONTINUATION_CAPABILITIES,
         available=True,
@@ -427,6 +527,11 @@ def _payload(
         "start_system": policy.start_system,
         "path_capacity": policy.path_capacity,
         "seed": policy.seed,
+        "maximum_variable_count": policy.maximum_variable_count,
+        "maximum_equation_count": policy.maximum_equation_count,
+        "maximum_term_count": policy.maximum_term_count,
+        "maximum_exponent_entries": policy.maximum_exponent_entries,
+        "maximum_storage_bytes": policy.maximum_storage_bytes,
         "equation_count": request.equation_count,
         "variable_count": request.variable_count,
         "equation_indices": list(request.equation_indices),
@@ -436,6 +541,40 @@ def _payload(
     return (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode(
         "ascii"
     )
+
+
+def _request_resource_error(
+    policy: HomotopyContinuationPolicy,
+    request: HomotopyContinuationRequest,
+    /,
+) -> str:
+    term_count = len(request.equation_indices)
+    exponent_entries = term_count * request.variable_count
+    estimated_bytes = (
+        request.variable_count * 64
+        + request.equation_count * 64
+        + term_count * 40
+        + exponent_entries * 8
+    )
+    checks = (
+        (request.variable_count, policy.maximum_variable_count, "variable_count"),
+        (request.equation_count, policy.maximum_equation_count, "equation_count"),
+        (term_count, policy.maximum_term_count, "term_count"),
+        (
+            exponent_entries,
+            policy.maximum_exponent_entries,
+            "exponent_entries",
+        ),
+        (
+            estimated_bytes,
+            policy.maximum_storage_bytes,
+            "estimated_storage_bytes",
+        ),
+    )
+    for observed, maximum, name in checks:
+        if observed > maximum:
+            return f"{name}={observed} exceeds the configured maximum {maximum}."
+    return ""
 
 
 def _finite_optional(value, name: str, /) -> float | None:
@@ -532,7 +671,7 @@ def _parse_output(
     run: EnergyRunResult,
     /,
 ) -> HomotopyContinuationExecution:
-    record = json.loads(data.decode("ascii", errors="strict"))
+    record = _decode_json_object(data, "HomotopyContinuation output")
     required = {
         "protocol_id",
         "request_id",
@@ -543,6 +682,7 @@ def _parse_output(
         "homotopy_continuation_uuid",
         "homotopy_continuation_version",
         "start_system",
+        "seed",
         "execution_status",
         "start_count",
         "tracked_path_count",
@@ -551,6 +691,8 @@ def _parse_output(
     }
     if not isinstance(record, dict) or set(record) != required:
         raise ValueError("Provider output fields do not match the protocol.")
+    if type(record["seed"]) is not int:
+        raise ValueError("Provider seed echo must be an integer.")
     expected = (
         ("protocol_id", provider.protocol_id),
         ("request_id", request.request_id),
@@ -567,6 +709,7 @@ def _parse_output(
             provider.environment.homotopy_continuation_version,
         ),
         ("start_system", policy.start_system),
+        ("seed", policy.seed),
     )
     if any(record[key] != value for key, value in expected):
         return _execution(
@@ -651,6 +794,15 @@ def execute_homotopy_continuation(
         raise TypeError("policy must be a HomotopyContinuationPolicy.")
     if not isinstance(request, HomotopyContinuationRequest):
         raise TypeError("request must be a HomotopyContinuationRequest.")
+    resource_error = _request_resource_error(policy, request)
+    if resource_error:
+        return _execution(
+            HomotopyContinuationExecutionStatus.RESOURCE_EXHAUSTED,
+            provider,
+            policy,
+            request,
+            error=resource_error,
+        )
     try:
         project, manifest = provider.environment.verify()
     except (OSError, ValueError) as failure:

@@ -11,6 +11,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from _runtime import (
     capture_environment,
     compiler_evidence,
@@ -183,6 +184,9 @@ def _pseudoinverse_cases(
                 dtype=matrix.dtype,
             )
             rank_policy = la.RankPolicy()
+            independent_action = np.linalg.pinv(np.asarray(matrix)) @ np.asarray(
+                right_hand_side
+            )
             fused = jax.jit(
                 lambda value, rhs=right_hand_side, policy=rank_policy: (
                     apply_pseudoinverse(
@@ -194,8 +198,10 @@ def _pseudoinverse_cases(
             materialized = jax.jit(
                 lambda value, rhs=right_hand_side: la.pseudoinverse(value).value @ rhs
             )
-            action_residual = lambda value, result, reference=materialized: jnp.max(
-                jnp.abs(value @ result - value @ reference(value))
+            action_residual = (
+                lambda _value, result, reference=jnp.asarray(independent_action): jnp.max(
+                    jnp.abs(result - reference)
+                )
             )
             cases.append(
                 _timed_case(
@@ -207,8 +213,10 @@ def _pseudoinverse_cases(
                     residual=action_residual,
                 )
             )
-            materialized_residual = lambda value, result, reference=fused: jnp.max(
-                jnp.abs(value @ result - value @ reference(value))
+            materialized_residual = (
+                lambda _value, result, reference=jnp.asarray(independent_action): jnp.max(
+                    jnp.abs(result - reference)
+                )
             )
             cases.append(
                 _timed_case(
@@ -251,17 +259,26 @@ def main() -> None:
         repeats=arguments.repeats,
     )
     cases = inverse_cases + pseudoinverse_cases
+    maximum_residual = max(case["residual"] for case in cases)
+    passed = bool(
+        all(jnp.isfinite(case["residual"]) for case in cases)
+        and maximum_residual <= 1e-8
+    )
     payload = {
         "environment": capture_environment().to_dict(),
         "cases": cases,
-        "maximum_residual": max(case["residual"] for case in cases),
-        "all_finite": all(jnp.isfinite(case["residual"]) for case in cases),
+        "maximum_residual": maximum_residual,
+        "passed": passed,
     }
-    encoded = json.dumps(payload, indent=2)
+    encoded = json.dumps(payload, allow_nan=False, indent=2)
     if arguments.output is None:
         print(encoded)
     else:
-        arguments.output.write_text(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
+    if not passed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

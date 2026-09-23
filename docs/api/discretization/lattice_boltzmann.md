@@ -532,9 +532,11 @@ compressible total-energy or solid-mechanics model.
         - CompressibleKineticRuntimePlan
         - CompressibleKineticPrecisionPolicy
         - KineticAMRTransferPlan
+        - KineticAMRTransferResult
         - PredictiveKineticRefinementPlan
         - MappedKineticGridPlan
         - MovingKineticGeometryPlan
+        - MovingKineticGeometryResult
         - KineticSpeciesTransportPlan
         - KineticEffectiveTransportPlan
         - KineticRadiationAblationPlan

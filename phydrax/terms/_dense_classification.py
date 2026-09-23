@@ -593,15 +593,23 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
         active = observed & (combined_data != 0.0)
         return jnp.where(active, combined_data, 0.0)
 
-    def _case_reduce(self, per_case: Array, batch: DenseSiteClassificationBatch) -> Array:
+    def _case_reduce(
+        self,
+        per_case: Array,
+        case_support: Array,
+        batch: DenseSiteClassificationBatch,
+        /,
+    ) -> Array:
         values = jnp.asarray(per_case)
-        active = jnp.isfinite(values)
+        active = jnp.asarray(case_support, dtype=jnp.bool_)
+        if active.shape != values.shape:
+            raise ValueError("case_support must align the per-case objective.")
+        if batch.sample_weight is None:
+            weights = active.astype(values.dtype)
+        else:
+            active = active & (batch.sample_weight != 0.0)
+            weights = jnp.where(active, batch.sample_weight, 0.0)
         safe = jnp.where(active, values, 0.0)
-        weights = (
-            active.astype(values.dtype)
-            if batch.sample_weight is None
-            else jnp.where(active, batch.sample_weight, 0.0)
-        )
         if self.case_reduction == "sum":
             return jnp.sum(weights * safe)
         mass = jnp.sum(weights)
@@ -660,7 +668,7 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         self.objective = objective_
         self.site_reduction = site_reduction
 
-    def per_case_loss(
+    def _per_case_loss_and_support(
         self,
         functions: Mapping[str, DomainFunction],
         batch: DenseSiteClassificationBatch,
@@ -668,7 +676,7 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> Array:
+    ) -> tuple[Array, Array]:
         value = self._logits(functions, batch, key=key, **kwargs)
         logits, observation_dims = _output_contract(
             value, self.target_schema, self.objective
@@ -738,7 +746,23 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
             if self.site_reduction == "integral"
             else weighted_sum / jnp.where(mass > 0.0, mass, 1.0)
         )
-        return jnp.where(mass > 0.0, reduced, jnp.nan)
+        return jnp.where(mass > 0.0, reduced, jnp.nan), mass > 0.0
+
+    def per_case_loss(
+        self,
+        functions: Mapping[str, DomainFunction],
+        batch: DenseSiteClassificationBatch,
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        **kwargs: Any,
+    ) -> Array:
+        return self._per_case_loss_and_support(
+            functions,
+            batch,
+            key=key,
+            **kwargs,
+        )[0]
 
     def loss(
         self,
@@ -757,9 +781,13 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
             return jnp.zeros((), dtype=jnp.result_type(self.weight, jnp.float64))
 
         def active_loss() -> Array:
-            reduced = self._case_reduce(
-                self.per_case_loss(functions, batch_, key=key, **kwargs), batch_
+            per_case, case_support = self._per_case_loss_and_support(
+                functions,
+                batch_,
+                key=key,
+                **kwargs,
             )
+            reduced = self._case_reduce(per_case, case_support, batch_)
             return self.weight * jnp.asarray(reduced, dtype=jnp.float64).reshape(())
 
         return jax.lax.cond(self.weight == 0.0, zero_loss, active_loss)
@@ -893,7 +921,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
         self.objective = objective_
         self.support_measure = support_measure
 
-    def per_case_score(
+    def _per_case_score_and_support(
         self,
         functions: Mapping[str, DomainFunction],
         batch: DenseSiteClassificationBatch,
@@ -901,7 +929,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
-    ) -> Array:
+    ) -> tuple[Array, Array]:
         value = self._logits(functions, batch, key=key, **kwargs)
         logits, observation_dims = _output_contract(
             value, self.target_schema, self.objective
@@ -982,7 +1010,28 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
                 else support_weight
             )
             statistics = _soft_statistics(probability, safe_target, support_weight_)
-        return reduce_overlap_score(*statistics, self.score)
+        score = reduce_overlap_score(*statistics, self.score)
+        case_support = jnp.any(
+            effective_observation,
+            axis=tuple(range(1, effective_observation.ndim)),
+        )
+        return score, case_support
+
+    def per_case_score(
+        self,
+        functions: Mapping[str, DomainFunction],
+        batch: DenseSiteClassificationBatch,
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        **kwargs: Any,
+    ) -> Array:
+        return self._per_case_score_and_support(
+            functions,
+            batch,
+            key=key,
+            **kwargs,
+        )[0]
 
     def loss(
         self,
@@ -1001,8 +1050,14 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
             return jnp.zeros((), dtype=jnp.result_type(self.weight, jnp.float64))
 
         def active_loss() -> Array:
-            per_case = 1.0 - self.per_case_score(functions, batch_, key=key, **kwargs)
-            reduced = self._case_reduce(per_case, batch_)
+            per_case_score, case_support = self._per_case_score_and_support(
+                functions,
+                batch_,
+                key=key,
+                **kwargs,
+            )
+            per_case = 1.0 - per_case_score
+            reduced = self._case_reduce(per_case, case_support, batch_)
             return self.weight * jnp.asarray(reduced, dtype=jnp.float64).reshape(())
 
         return jax.lax.cond(self.weight == 0.0, zero_loss, active_loss)

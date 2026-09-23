@@ -89,6 +89,17 @@ def test_zero_residual_attention_remains_uniform_and_finite():
     assert jnp.isclose(refreshed.effective_sample_size, 16.0)
 
 
+def test_attention_work_charges_candidates_only_when_replacement_runs():
+    policy = phx.sampling.collocation.ResidualAttentionCollocation(
+        candidate_count=7,
+        replacement_count=0,
+    )
+    _domain, term, _functions = _interval_term(policy)
+    population = policy.initialize(term, key=jr.key(41))
+
+    assert policy.refresh_residual_evaluations(population) == 16
+
+
 def test_attention_is_invariant_to_residual_units_and_enforces_ess_guard():
     policy = phx.sampling.collocation.ResidualAttentionCollocation(
         decay=0.0,

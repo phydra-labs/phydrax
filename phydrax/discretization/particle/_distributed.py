@@ -172,6 +172,12 @@ def prepare_particle_halos(
     )
     distance_to_left = jnp.abs(position_[:, 0][None, :] - edges[:-1, None])
     distance_to_right = jnp.abs(position_[:, 0][None, :] - edges[1:, None])
+    if plan.box.periodic_axes[0]:
+        length = plan.box.lengths[0]
+        distance_to_left = jnp.mod(distance_to_left, length)
+        distance_to_right = jnp.mod(distance_to_right, length)
+        distance_to_left = jnp.minimum(distance_to_left, length - distance_to_left)
+        distance_to_right = jnp.minimum(distance_to_right, length - distance_to_right)
     halo = (
         (distance_to_left <= plan.halo_radius) | (distance_to_right <= plan.halo_radius)
     ) & ~owned

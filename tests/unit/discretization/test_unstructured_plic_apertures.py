@@ -179,6 +179,55 @@ def test_full_empty_limits_and_invalid_route_or_identity_are_rejected():
         )
 
 
+def test_stage_plic_binds_geometry_epoch_and_handles_inactive_cells_exactly():
+    discretization = _grid()
+    vof = _vof(discretization)
+    metrics = lower_static_unstructured_stage_metrics(discretization)
+    active = metrics.active_cell_mask.at[0].set(False)
+    zero_volume = metrics.effective_cell_volumes.at[0].set(0.0)
+    zero_coordinate_volume = metrics.coordinate_effective_cell_volumes.at[0].set(0.0)
+    inactive_metrics = eqx.tree_at(
+        lambda value: (
+            value.active_cell_mask,
+            value.effective_cell_volumes,
+            value.coordinate_effective_cell_volumes,
+        ),
+        metrics,
+        (active, zero_volume, zero_coordinate_volume),
+    )
+    alpha = jnp.full((discretization.cell_count,), 0.5).at[0].set(0.0)
+
+    stage = vof.reconstruct_stage(alpha, stage_metrics=inactive_metrics)
+
+    assert bool(stage.interface_evidence[0])
+    assert int(stage.interface_status[0]) == int(PLICInterfaceStatus.EMPTY)
+    assert stage.reconstructed_volume_fraction[0] == 0.0
+    with pytest.raises(Exception, match="exactly zero"):
+        vof.reconstruct_stage(
+            alpha.at[0].set(0.5),
+            stage_metrics=inactive_metrics,
+        )
+
+    other_epoch_vof = phx.discretization.UnstructuredVOFPlan(
+        discretization,
+        vof.gradient,
+        topology_epoch_id="foreign-topology-epoch",
+    )
+    with pytest.raises(ValueError, match="stale"):
+        other_epoch_vof.reconstruct_stage(alpha, stage_metrics=metrics)
+
+    translated = _grid(shift=(1.0, 0.0))
+    foreign_family = lower_static_unstructured_stage_metrics(translated)
+    with pytest.raises(ValueError, match="stale"):
+        vof.reconstruct_stage(alpha, stage_metrics=foreign_family)
+    with pytest.raises(ValueError, match="stale"):
+        vof.face_phase_apertures(
+            jnp.full((discretization.cell_count,), 0.5),
+            vof.reconstruct(jnp.full((discretization.cell_count,), 0.5)),
+            foreign_family,
+        )
+
+
 def test_embedded_open_and_cut_routes_use_exact_segment_geometry():
     discretization = _grid()
     embedded = phx.discretization.EmbeddedBoundaryPlan(

@@ -76,7 +76,9 @@ verification = mn.verify_member_structure(
     local_buckling=buckling,
     required=("equilibrium", "construction", "sizing", "local_buckling"),
 )
-print("sequence status", bool(sequence.successful))
+if not bool(sequence.successful & verification.successful):
+    raise RuntimeError("Member construction sequence or verification failed")
+print("sequence status", True)
 print("tip", final.state.kinematics.positions[1])
 print("mass", sizing.mass)
 print("maximum utilization", sizing.maximum_utilization)

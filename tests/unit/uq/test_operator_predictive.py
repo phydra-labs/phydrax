@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _tensor_batch(*, cases: int = 2) -> phx.nn.operator.OperatorBatch:
@@ -183,6 +184,41 @@ def test_operator_predictive_tensor_geometry_and_statistics():
     assert interval.nominal_coverage == pytest.approx(0.5)
     assert not interval.simultaneous
     assert not interval.calibrated
+
+
+def test_operator_predictive_preserves_precision_through_wrappers():
+    batch = _tensor_batch()
+    spec = phx.nn.operator.OperatorOutputSpec("scalar")
+    precision = phx.uq.PredictivePrecisionPolicy(
+        storage_dtype="float32",
+        summary_dtype="float64",
+    )
+    predictive = phx.uq.PredictiveField(
+        cx.AxisArray(
+            jnp.arange(48.0).reshape((2, 2, 2, 3)),
+            dims=("epistemic", "input", "case", "x"),
+        ),
+        (
+            phx.uq.SampleAxis("epistemic", "epistemic"),
+            phx.uq.SampleAxis("input", "input"),
+        ),
+        precision=precision,
+    )
+    wrapped = phx.uq.OperatorPredictiveField(
+        predictive,
+        batch.query("query"),
+        spec,
+        case_axes=("case",),
+        case_shape=(2,),
+        field_name="output",
+        query_name="query",
+    )
+    retained = wrapped.variance(sources="epistemic")
+
+    assert wrapped.predictive.precision.policy_id == precision.policy_id
+    assert isinstance(retained, phx.uq.OperatorPredictiveField)
+    assert retained.predictive.precision.policy_id == precision.policy_id
+    assert retained.predictive.samples.data.dtype == jnp.float32
 
 
 def test_operator_predictive_masks_padding_and_records_valid_draws():

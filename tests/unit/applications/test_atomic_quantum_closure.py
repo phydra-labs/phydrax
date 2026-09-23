@@ -154,6 +154,12 @@ def test_compiled_lindblad_and_finite_channel_are_trace_preserving():
     np.testing.assert_allclose(finite.density_trace_residuals, 0.0, atol=2e-12)
     assert float(jnp.max(finite.trace_preservation_residuals)) < 2e-12
     assert float(prepared.evidence.trace_preservation_residual) < 1e-13
+    nonphysical = integrate_finite_cptp(
+        prepared.finite_plan(slicing),
+        jnp.zeros_like(initial_density),
+    )
+    assert not bool(nonphysical.valid)
+    assert jnp.all(nonphysical.density_trace_residuals == 1.0)
 
 
 def test_density_and_quantum_trajectory_observables_agree():

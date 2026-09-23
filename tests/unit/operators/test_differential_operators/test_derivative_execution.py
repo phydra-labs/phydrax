@@ -1,8 +1,10 @@
 import jax.numpy as jnp
 
+from phydrax.domain import CallbackDerivativeRule, Interval1d
 from phydrax.operators.differential import (
     DerivativeRequest,
     evaluate_fused_coordinate_derivatives,
+    partial_n,
     plan_derivative_execution,
 )
 
@@ -73,3 +75,20 @@ def test_fused_coordinate_derivatives_match_analytic_vector_derivatives():
     assert evaluated.plan is not None
     assert evaluated.plan.strategy == "jvp"
     assert evaluated.plan.directional
+
+
+def test_partial_n_dispatches_the_complete_order_to_the_original_rule():
+    domain = Interval1d(-1.0, 1.0)
+    requested_orders = []
+
+    def derive(**request):
+        requested_orders.append(request["order"])
+        return domain.Function()(jnp.asarray(7.0))
+
+    field = domain.Function("x")(lambda x: x[0] ** 4).with_derivative_rule(
+        CallbackDerivativeRule(derive)
+    )
+    derivative = partial_n(field, var="x", order=3)
+
+    assert requested_orders == [3]
+    assert jnp.asarray(derivative.func()) == 7.0

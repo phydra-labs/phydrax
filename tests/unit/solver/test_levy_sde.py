@@ -64,6 +64,27 @@ def test_levy_euler_reproduces_additive_truncated_driver_path():
     assert trajectory.realizations == (realization,)
 
 
+def test_truncated_levy_increment_rejects_incomplete_series():
+    driver = _driver()
+    realization = phx.stochastic.LevyProcessRealization.from_process(
+        driver,
+        jr.key(99),
+        support=(0.0, 1.0),
+        max_terms=1,
+        sample_shape=(2,),
+        gaussian_tolerance=1e-5,
+    )
+    cutoff = 0.5 * jnp.min(realization.series(driver).smallest_radius)
+
+    with pytest.raises(Exception, match="does not represent every jump"):
+        realization.truncated_increments(
+            driver,
+            jnp.asarray([0.0]),
+            jnp.asarray([1.0]),
+            cutoff=cutoff,
+        )
+
+
 def test_gaussian_small_jump_closure_uses_reserved_global_wiener_path():
     driver = _driver()
     problem = phx.solver.LevySDEProblem(

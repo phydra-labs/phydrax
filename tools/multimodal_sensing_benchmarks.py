@@ -41,7 +41,11 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
     )
     projection = phx.imaging.tomography.ProjectionSupport(rays, (1,), ("view",))
     ct = phx.imaging.tomography.VoxelXRayTransformPlan(
-        projection, (8, 1, 1), (0, 0, 0), (0.25, 1, 1)
+        projection,
+        (8, 1, 1),
+        (0, 0, 0),
+        (0.25, 1, 1),
+        contract,
     )
     volume = jnp.ones((8, 1, 1))
     ct_call = eqx.filter_jit(ct.forward)
@@ -60,10 +64,23 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
     )
 
     radar_acquisition = phx.sensing.FMCWAcquisition(
-        77e9, 1e12, 1e-6, 1e-3, np.zeros((2, 3)), "benchmark-radar"
+        77e9,
+        1e12,
+        1e-6,
+        1e-3,
+        np.zeros((2, 3)),
+        "benchmark-radar",
+        contract,
+        phx.units.SECOND,
     )
     radar = phx.sensing.FMCWTransformPlan(
-        radar_acquisition, 32, 16, propagation_speed=3e8
+        radar_acquisition,
+        32,
+        16,
+        propagation_speed=3e8,
+        propagation_speed_unit=phx.units.derived_unit(
+            "m/s", ((phx.units.METER, 1), (phx.units.SECOND, -1))
+        ),
     )
     adc = jnp.ones((16, 32, 2), dtype=jnp.complex64)
     radar_call = eqx.filter_jit(radar.evaluate)
@@ -93,7 +110,10 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
     pulse = phx.measurement.PulseResponse(
         np.asarray((-0.1, 0.0, 0.1)),
         np.asarray((0.0, 1.0, 0.0)),
-        phx.units.SECOND.unit_id,
+        phx.units.SECOND,
+    )
+    speed_unit = phx.units.derived_unit(
+        "m/s", ((phx.units.METER, 1), (phx.units.SECOND, -1))
     )
     atmosphere = phx.rendering.AtmosphericLidarPlan(
         waveform_support,
@@ -101,6 +121,8 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
         np.asarray(((1.0, 2.0, 3.0),)),
         np.ones((1, 3)),
         wave_speed=2.0,
+        range_unit=phx.units.METER,
+        wave_speed_unit=speed_unit,
     )
     atmosphere_call = eqx.filter_jit(atmosphere.evaluate)
     lidar_result, lidar_times = measure_repeated(
@@ -109,18 +131,15 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
         repeats=repeats,
     )
 
-    if not all(
-        bool(value)
-        for value in (
-            graded_result.evidence.successful,
-            ct_result.evidence.successful,
-            mri_result[1].successful,
-            radar_result.successful,
-            phase_result[1].successful,
-            lidar_result.evidence.successful,
-        )
-    ):
-        raise RuntimeError("A multimodal benchmark result failed its evidence contract.")
+    statuses = {
+        "graded_index": bool(graded_result.evidence.successful),
+        "ct_projection": bool(ct_result.evidence.successful),
+        "mri_encoding": bool(mri_result[1].successful),
+        "fmcw_transform": bool(radar_result.successful),
+        "wave_phase_screen": bool(phase_result[1].successful),
+        "lidar_atmosphere": bool(lidar_result.evidence.successful),
+    }
+    successful = all(statuses.values())
     return {
         "environment": capture_environment().to_dict(),
         "repeats": repeats,
@@ -130,16 +149,20 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
         "fmcw_transform": radar_times.to_milliseconds_dict(),
         "wave_phase_screen": phase_times.to_milliseconds_dict(),
         "lidar_atmosphere": lidar_times.to_milliseconds_dict(),
-        "successful": True,
+        "statuses": statuses,
+        "lidar_status": int(lidar_result.evidence.status),
+        "successful": successful,
     }
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     arguments = parser.parse_args()
-    print(json.dumps(benchmark(smoke=arguments.smoke), indent=2, sort_keys=True))
+    report = benchmark(smoke=arguments.smoke)
+    print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
+    return 0 if report["successful"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

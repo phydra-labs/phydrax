@@ -275,6 +275,16 @@ class BlockAMRConservationPlan(StrictModule, NonTrainableState):
                 current.accepted_step <= previous.accepted_step,
                 "Accepted-step IDs must be strictly monotone.",
             )
+            token = eqx.error_if(
+                token,
+                current.start_geometry_version != previous.end_geometry_version,
+                "Accepted ledger geometry versions must be contiguous.",
+            )
+            token = eqx.error_if(
+                token,
+                current.start_evidence_version != previous.end_evidence_version,
+                "Accepted ledger evidence versions must be contiguous.",
+            )
         return values, token
 
     def aggregate_accepted_route(
@@ -393,6 +403,7 @@ class BlockAMRConservationPlan(StrictModule, NonTrainableState):
                     "precision": self.precision.policy_id,
                 }
             ),
+            owner_id=self.plan_id,
         )
 
     def reflux(
@@ -402,6 +413,10 @@ class BlockAMRConservationPlan(StrictModule, NonTrainableState):
         /,
     ) -> tuple[Array, ...]:
         """Apply one route-bound cell register to the matching hierarchy payload."""
+        if not isinstance(register, FluxRegister):
+            raise TypeError("register must be a FluxRegister.")
+        if register.owner_id != self.plan_id:
+            raise ValueError("Flux register belongs to another AMR conservation plan.")
         values = tuple(jnp.asarray(value) for value in level_values)
         if len(values) != len(self.topology.plan.levels):
             raise ValueError("Reflux requires one value array per hierarchy level.")

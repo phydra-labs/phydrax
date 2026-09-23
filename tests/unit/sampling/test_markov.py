@@ -15,6 +15,13 @@ def _standard_normal(value):
     return -0.5 * jnp.sum(value**2)
 
 
+def _standard_target():
+    return phx.sampling.FullMarkovTarget(
+        _standard_normal,
+        target_id="standard-normal",
+    )
+
+
 class _PayloadSpinFlipProposal(phx.sampling.AbstractProposal):
     proposal_id: str = eqx.field(static=True)
 
@@ -60,14 +67,18 @@ def test_metropolis_hastings_uses_asymmetric_proposal_ratio():
         log_prob,
         proposal_id="asymmetric-toggle",
     )
+    target = phx.sampling.FullMarkovTarget(
+        lambda value: jnp.where(value[0] == 1, jnp.log(0.6), jnp.log(0.4)),
+        target_id="asymmetric-binary",
+    )
     kernel = phx.sampling.MetropolisHastings(proposal)
     state = kernel.initialize(
-        lambda value: jnp.where(value[0] == 1, jnp.log(0.6), jnp.log(0.4)),
+        target,
         jnp.asarray([[0]], dtype=jnp.int32),
     )
 
     _next_state, info = kernel.step(
-        lambda value: jnp.where(value[0] == 1, jnp.log(0.6), jnp.log(0.4)),
+        target,
         state,
         jr.key(0),
     )
@@ -82,8 +93,9 @@ def test_markov_sampling_is_jittable_reproducible_and_prefix_stable():
     kernel = phx.sampling.MetropolisHastings(_normal_proposal())
     initial_two = jnp.asarray([[-0.5], [0.75]])
     initial_three = jnp.asarray([[-0.5], [0.75], [1.25]])
-    state_two = kernel.initialize(_standard_normal, initial_two)
-    state_three = kernel.initialize(_standard_normal, initial_three)
+    target = _standard_target()
+    state_two = kernel.initialize(target, initial_two)
+    state_three = kernel.initialize(target, initial_three)
     iteration = phx.execution.IterationPlan(
         granularity="step",
         observers=(phx.execution.IterationTraceObserver(20),),
@@ -91,7 +103,7 @@ def test_markov_sampling_is_jittable_reproducible_and_prefix_stable():
 
     def run(state, key):
         return phx.sampling.sample_markov(
-            _standard_normal,
+            target,
             kernel,
             state,
             key=key,
@@ -106,7 +118,10 @@ def test_markov_sampling_is_jittable_reproducible_and_prefix_stable():
     extended = run(state_three, jr.key(4))
 
     assert isinstance(eager, phx.sampling.AbstractChainSampleResult)
-    assert eager.chain_provenance == "markov:metropolis-hastings:gaussian-random-walk"
+    assert (
+        eager.chain_provenance
+        == "markov:metropolis-hastings:gaussian-random-walk:standard-normal"
+    )
 
     assert jnp.array_equal(eager.samples, compiled.samples)
     assert jnp.array_equal(eager.accepted, compiled.accepted)
@@ -120,15 +135,17 @@ def test_markov_sampling_is_jittable_reproducible_and_prefix_stable():
     assert trace.records.metrics.accepted.shape[1:] == (2,)
 
 
-def test_refresh_preserves_positions_and_recomputes_target_values():
+def test_refresh_rejects_a_different_explicit_target_identity():
     kernel = phx.sampling.MetropolisHastings(_normal_proposal())
-    state = kernel.initialize(_standard_normal, jnp.asarray([[1.0], [-2.0]]))
-    refreshed = kernel.refresh(lambda value: -jnp.sum((value - 1.0) ** 2), state)
+    original = _standard_target()
+    changed = phx.sampling.FullMarkovTarget(
+        lambda value: -jnp.sum((value - 1.0) ** 2),
+        target_id="shifted-normal",
+    )
+    state = kernel.initialize(original, jnp.asarray([[1.0], [-2.0]]))
 
-    assert jnp.array_equal(refreshed.position, state.position)
-    assert refreshed.step_index == state.step_index
-    assert not jnp.array_equal(refreshed.log_target, state.log_target)
-    assert jnp.allclose(refreshed.log_target, jnp.asarray([0.0, -9.0]))
+    with pytest.raises(ValueError, match="Target identity"):
+        kernel.refresh(changed, state)
 
 
 def test_rebind_replaces_full_target_identity_without_advancing_chain():
@@ -196,9 +213,10 @@ def test_incremental_rebind_rebuilds_cache_while_refresh_detects_drift():
 
 def test_markov_chain_measure_preserves_correlation_and_never_claims_iid_error():
     kernel = phx.sampling.MetropolisHastings(_normal_proposal())
-    state = kernel.initialize(_standard_normal, jnp.asarray([[-0.5], [0.75]]))
+    target_law = _standard_target()
+    state = kernel.initialize(target_law, jnp.asarray([[-0.5], [0.75]]))
     result = phx.sampling.sample_markov(
-        _standard_normal,
+        target_law,
         kernel,
         state,
         key=jr.key(8),
@@ -224,15 +242,22 @@ def test_markov_chain_measure_preserves_correlation_and_never_claims_iid_error()
 
 def test_markov_sampling_rejects_invalid_contracts():
     kernel = phx.sampling.MetropolisHastings(_normal_proposal())
+    with pytest.raises(TypeError, match="explicit target_id"):
+        kernel.initialize(lambda value: -jnp.sum(value**2), jnp.zeros((2, 1)))
+    complex_target = phx.sampling.FullMarkovTarget(
+        lambda value: 1j * jnp.sum(value),
+        target_id="complex-invalid",
+    )
     with pytest.raises(TypeError, match="real-valued"):
-        kernel.initialize(lambda value: 1j * jnp.sum(value), jnp.zeros((2, 1)))
+        kernel.initialize(complex_target, jnp.zeros((2, 1)))
     with pytest.raises(ValueError, match="leading chain axis"):
-        kernel.initialize(_standard_normal, jnp.asarray(0.0))
+        kernel.initialize(_standard_target(), jnp.asarray(0.0))
 
-    state = kernel.initialize(_standard_normal, jnp.zeros((2, 1)))
+    target = _standard_target()
+    state = kernel.initialize(target, jnp.zeros((2, 1)))
     with pytest.raises(ValueError, match="num_draws"):
         phx.sampling.sample_markov(
-            _standard_normal,
+            target,
             kernel,
             state,
             key=jr.key(0),
@@ -315,7 +340,8 @@ def test_incremental_target_refresh_runs_on_declared_transition_cadence():
 
 def test_chunked_markov_host_control_preserves_exact_active_prefix():
     kernel = phx.sampling.MetropolisHastings(_normal_proposal())
-    state = kernel.initialize(_standard_normal, jnp.asarray([[0.0], [1.0]]))
+    target = _standard_target()
+    state = kernel.initialize(target, jnp.asarray([[0.0], [1.0]]))
     phases = []
 
     def phase(event):
@@ -334,7 +360,7 @@ def test_chunked_markov_host_control_preserves_exact_active_prefix():
         ),
     )
     result = phx.sampling.sample_markov_chunked(
-        _standard_normal,
+        target,
         kernel,
         state,
         key=jr.key(91),

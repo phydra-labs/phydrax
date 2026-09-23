@@ -37,8 +37,10 @@ def test_labeled_plan_preserves_output_order_refresh_and_jit():
 
     refreshed = tn.refresh_contraction(prepared, (left + 1.0, right))
     refreshed_result = tn.execute_contraction(refreshed)
-    assert refreshed.prepared_id == prepared.prepared_id
+    assert refreshed.prepared_id != prepared.prepared_id
+    assert refreshed.operand_id != prepared.operand_id
     assert refreshed.numeric_version == prepared.numeric_version + 1
+    assert refreshed_result.evidence.replay_id != result.evidence.replay_id
     assert jnp.allclose(refreshed_result.value, ((left + 1.0) @ right).T)
 
 
@@ -67,6 +69,48 @@ def test_contraction_structure_supports_hyperedges_and_rejects_resource_overflow
             _matrix_structure(),
             dtype="float64",
             resources=tn.ContractionResourcePolicy(maximum_intermediate_elements=1),
+        )
+
+
+def test_contraction_workspace_accounts_for_precision_widening():
+    structure = _matrix_structure()
+    narrow = tn.plan_contraction(
+        structure,
+        dtype="float32",
+        precision=tn.TensorNetworkPrecisionPolicy(
+            storage_dtype="float32",
+            contraction_dtype="float32",
+            output_dtype="float32",
+        ),
+    )
+    wide_precision = tn.TensorNetworkPrecisionPolicy(
+        storage_dtype="float32",
+        contraction_dtype="float64",
+        output_dtype="float64",
+    )
+    wide = tn.plan_contraction(
+        structure,
+        dtype="float32",
+        precision=wide_precision,
+    )
+    assert wide.cost.peak_live_bytes > narrow.cost.peak_live_bytes
+    with pytest.raises(MemoryError, match="workspace"):
+        tn.plan_contraction(
+            structure,
+            dtype="float32",
+            precision=wide_precision,
+            resources=tn.ContractionResourcePolicy(
+                maximum_workspace_bytes=narrow.cost.peak_live_bytes
+            ),
+        )
+
+
+def test_contraction_planner_deadline_is_enforced_during_search():
+    with pytest.raises(TimeoutError, match="planning exceeded"):
+        tn.plan_contraction(
+            _matrix_structure(),
+            dtype="float32",
+            planner=tn.ContractionPlannerPolicy(maximum_planning_seconds=1e-9),
         )
 
 

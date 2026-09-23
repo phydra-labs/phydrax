@@ -9,10 +9,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from phydrax._array_archive import read_array_archive
+from phydrax._array_archive import ArrayArchiveCorruptionError, read_array_archive
 from phydrax.lifecycle._archive import (
     collection_digest,
     create,
+    open as open_lifecycle_archive,
     support_bundle,
     SupportBundleAuthorization,
 )
@@ -126,3 +127,76 @@ def test_full_support_payload_requires_explicit_complete_owner_authorization(
     assert len(manifest["audit"]["authorization_fingerprint"]) == 64
     assert manifest["source"]["archive_id"] == source.archive_id
     assert arrays["archive"].tobytes() == source.path.read_bytes()
+
+
+def test_numeric_revision_archive_requires_materialized_content(tmp_path: Path):
+    revision = NumericRevision("0" * 64, label="unbacked")
+    with pytest.raises(ValueError, match="materialized payload"):
+        create(tmp_path / "unbacked.zip", manifest=revision, arrays={})
+
+
+def test_parented_numeric_revision_requires_exact_parent_archive(tmp_path: Path):
+    parent_values = np.asarray((1.0,))
+    parent_revision = NumericRevision(
+        collection_digest({"state": parent_values}), label="parent"
+    )
+    parent = create(
+        tmp_path / "parent.zip",
+        manifest=parent_revision,
+        arrays={"state": parent_values},
+    )
+    child_values = np.asarray((2.0,))
+    child_revision = NumericRevision(
+        collection_digest({"state": child_values}),
+        label="child",
+        parent_digest=parent_revision.content_digest,
+        parent_revision_id=parent_revision.revision_id,
+    )
+    with pytest.raises(ValueError, match="parent archive"):
+        create(
+            tmp_path / "child-without-parent.zip",
+            manifest=child_revision,
+            arrays={"state": child_values},
+        )
+    child = create(
+        tmp_path / "child.zip",
+        manifest=child_revision,
+        arrays={"state": child_values},
+        parent=parent,
+    )
+    assert child.manifest.parent_revision_id == parent_revision.revision_id
+    with pytest.raises(ValueError, match="parent archive"):
+        open_lifecycle_archive(child.path)
+    assert (
+        open_lifecycle_archive(child.path, parent=parent).archive_id == child.archive_id
+    )
+
+
+def test_authorized_support_copy_revalidates_source_snapshot(tmp_path: Path):
+    source = _sensitive_archive(tmp_path)
+    authorization = SupportBundleAuthorization(
+        "authorization-1",
+        "data-owner-1",
+        source.archive_id,
+        1_700_000_000,
+        _FULL_DISCLOSURE,
+    )
+    replacement_values = np.asarray((9.0,))
+    replacement = NumericRevision(
+        collection_digest({"replacement": replacement_values}),
+        label="replacement",
+    )
+    source.path.unlink()
+    create(
+        source.path,
+        manifest=replacement,
+        arrays={"replacement": replacement_values},
+    )
+    with pytest.raises(
+        ArrayArchiveCorruptionError, match="changed after support-bundle admission"
+    ):
+        support_bundle(
+            source,
+            tmp_path / "replaced-support.zip",
+            authorization=authorization,
+        )

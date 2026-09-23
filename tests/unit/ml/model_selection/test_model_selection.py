@@ -20,6 +20,13 @@ from phydrax.ml import (
     ML_SUCCESS,
     MLBatch,
 )
+from phydrax.ml.decomposition import IncrementalPCA
+from phydrax.ml.metrics import (
+    accuracy_score,
+    FunctionScorer,
+    log_loss,
+    mean_squared_error,
+)
 from phydrax.ml.model_selection import (
     assemble_out_of_fold_predictions,
     cross_validate,
@@ -116,6 +123,38 @@ class _MeanRecipe(AbstractRecipe):
         )
 
 
+class _ResponseClassifierModel(AbstractArrayModel):
+    in_size: int = 1
+    out_size: int = 2
+
+    def decision_function(self, x, /):
+        return jnp.asarray(x)[..., 0]
+
+    def predict_proba(self, x, /):
+        positive = jax.nn.sigmoid(self.decision_function(x))
+        return jnp.stack((1.0 - positive, positive), axis=-1)
+
+    def predict(self, x, /):
+        return (self.decision_function(x) >= 0.0).astype(jnp.int32)
+
+    def __call__(self, x, /, *, key=None):
+        del key
+        return self.decision_function(x)
+
+
+class _ResponseClassifierRecipe(AbstractRecipe):
+    def fit_batch(self, batch, /, *, key=None):
+        del batch, key
+        return FitResult(
+            _ResponseClassifierModel(),
+            FitDiagnostics(valid=True, status=0, method="response-test"),
+            valid=True,
+            status=0,
+            method="response-test",
+            gradient_contract=GradientContract(),
+        )
+
+
 class _MetricResult(StrictModule):
     value: jax.Array
     valid: jax.Array
@@ -129,7 +168,7 @@ class _MetricResult(StrictModule):
         self.effective_weight = jnp.asarray(effective_weight)
 
 
-def _structured_scorer(predictions, targets, *, sample_weight, mask):
+def _structured_metric(targets, predictions, *, sample_weight, mask):
     predictions = jnp.asarray(predictions)
     targets = jnp.asarray(targets)
     active = jnp.asarray(mask, dtype="bool")
@@ -148,6 +187,13 @@ def _structured_scorer(predictions, targets, *, sample_weight, mask):
         "neg_mse": _MetricResult(-mse, valid=valid, status=status, effective_weight=mass),
         "bias": _MetricResult(bias, valid=valid, status=status, effective_weight=mass),
     }
+
+
+_structured_scorer = FunctionScorer(
+    _structured_metric,
+    name="structured",
+    greater_is_better=True,
+)
 
 
 def _batch(targets):
@@ -483,4 +529,84 @@ def test_fixed_fold_objective_is_differentiable_but_choices_are_stopped():
             splits,
             _structured_scorer,
             key=jr.key(11),
+        )
+
+
+def test_cross_validation_dispatches_explicit_classifier_responses():
+    batch = MLBatch(
+        jnp.asarray([[-2.0], [-1.0], [1.0], [2.0]]),
+        jnp.asarray([0, 0, 1, 1], dtype=jnp.int32),
+    )
+    splits = KFoldPlan(2, shuffle=False).split(batch, key=jr.key(30))
+    accuracy = cross_validate(
+        _ResponseClassifierRecipe(),
+        batch,
+        splits,
+        FunctionScorer(
+            accuracy_score,
+            greater_is_better=True,
+            response_method="predict",
+        ),
+        key=jr.key(31),
+    )
+    probability = cross_validate(
+        _ResponseClassifierRecipe(),
+        batch,
+        splits,
+        FunctionScorer(
+            log_loss,
+            greater_is_better=False,
+            response_method="predict_proba",
+        ),
+        key=jr.key(32),
+    )
+    decision = cross_validate(
+        _ResponseClassifierRecipe(),
+        batch,
+        splits,
+        FunctionScorer(
+            mean_squared_error,
+            greater_is_better=False,
+            response_method="decision_function",
+        ),
+        key=jr.key(33),
+    )
+
+    assert jnp.allclose(accuracy.aggregate_score.value, 1.0)
+    assert all(fold.predictions.ndim == 2 for fold in probability.folds)
+    assert all(fold.predictions.ndim == 1 for fold in decision.folds)
+
+
+def test_cross_validation_rejects_implicit_scorers_and_learned_recipe_state():
+    batch = _batch(jnp.linspace(-1.0, 1.0, 6))
+    splits = KFoldPlan(2, shuffle=False).split(batch, key=jr.key(34))
+    with pytest.raises(TypeError, match="FunctionScorer"):
+        cross_validate(
+            _MeanRecipe(),
+            batch,
+            splits,
+            _structured_metric,
+            key=jr.key(35),
+        )
+    with pytest.raises(TypeError, match="does not provide the requested predict"):
+        cross_validate(
+            _MeanRecipe(),
+            batch,
+            splits,
+            FunctionScorer(
+                accuracy_score,
+                greater_is_better=True,
+                response_method="predict",
+            ),
+            key=jr.key(36),
+        )
+
+    previous = IncrementalPCA(1).fit_batch(batch).as_trainable()
+    with pytest.raises(ValueError, match="fresh-fit"):
+        cross_validate(
+            IncrementalPCA(1, previous=previous),
+            batch,
+            splits,
+            _structured_scorer,
+            key=jr.key(37),
         )

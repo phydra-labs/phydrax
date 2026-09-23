@@ -37,6 +37,19 @@ def _norm(value: ArrayLike, /) -> Array:
     return jnp.linalg.norm(array.reshape((-1,)))
 
 
+def _transport_norm(
+    geometry: AbstractStateGeometry,
+    state: ArrayLike,
+    tangent: ArrayLike,
+    /,
+) -> Array:
+    from ._manifold_state_geometry import GeodesicManifoldStateGeometry
+
+    if isinstance(geometry, GeodesicManifoldStateGeometry):
+        return geometry.manifold.norm(state, tangent)
+    return _norm(tangent)
+
+
 def _pair(covector: ArrayLike, vector: ArrayLike, /) -> Array:
     covector_array = jnp.asarray(covector)
     vector_array = jnp.asarray(vector)
@@ -396,13 +409,13 @@ class AbstractStateGeometry(StrictModule):
                 jnp.maximum(jnp.abs(target_pairing), jnp.abs(source_pairing)),
             )
             duality_residual = jnp.abs(target_pairing - source_pairing) / pairing_scale
+            source_norm = jnp.asarray(_transport_norm(self, source, source_tangent))
+            target_norm = jnp.asarray(_transport_norm(self, target, transported))
             norm_scale = jnp.maximum(
                 1.0,
-                jnp.maximum(_norm(source_tangent), _norm(transported)),
+                jnp.maximum(source_norm, target_norm),
             )
-            isometry_residual = (
-                jnp.abs(_norm(transported) - _norm(source_tangent)) / norm_scale
-            )
+            isometry_residual = jnp.abs(target_norm - source_norm) / norm_scale
             finite_terms.extend(
                 (
                     jnp.all(jnp.isfinite(identity)),
@@ -1501,6 +1514,13 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
     ) -> Array:
         projected = self.project_tangent(state, tangent)
         return _skew(_transpose(state) @ projected)
+
+    def to_local(self, state: ArrayLike, tangent: ArrayLike, /) -> Array:
+        """Left-trivialize an ambient SO(n) tangent into local coordinates."""
+        matrix = _matrix_shape(state, self.dimension, "SO(n) state")
+        vector = _matrix_shape(tangent, self.dimension, "SO(n) tangent")
+        _same_shape(vector, matrix, "SO(n) tangent")
+        return self._left_trivialize_tangent(matrix, vector)
 
     def _increment(self, local_tangent: Array, /) -> Array:
         algebra = _skew(local_tangent)

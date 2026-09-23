@@ -154,6 +154,19 @@ def build_triangle_mortar_interface(
         plus_triangle = plus_triangle_3d[:, keep]
         for minus_face_index, minus_face in enumerate(minus_topology):
             minus_triangle_3d = minus[minus_face]
+            minus_normal = np.cross(
+                minus_triangle_3d[1] - minus_triangle_3d[0],
+                minus_triangle_3d[2] - minus_triangle_3d[0],
+            )
+            minus_normal_norm = np.linalg.norm(minus_normal)
+            if minus_normal_norm <= tolerance_:
+                continue
+            minus_normal = minus_normal / minus_normal_norm
+            if 1.0 - abs(float(np.dot(normal, minus_normal))) > tolerance_:
+                continue
+            plane_distance = np.abs((minus_triangle_3d - plus_triangle_3d[0]) @ normal)
+            if np.any(plane_distance > tolerance_):
+                continue
             minus_triangle = minus_triangle_3d[:, keep]
             polygon = _clip_polygon(list(plus_triangle), list(minus_triangle), tolerance_)
             if len(polygon) < 3 or abs(_signed_area(polygon)) <= tolerance_:

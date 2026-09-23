@@ -20,12 +20,12 @@ from .._training import (
 )
 from .._training_checkpoint import (
     _deserialize_root_key,
+    _open_verified_state,
     _prune_state_files,
     _publish_manifest,
     _publish_state,
     _read_manifest,
     _serialize_root_key,
-    _verify_state,
 )
 from ._functional_training import FunctionalTrainingPlan, FunctionalTrainingState
 
@@ -155,12 +155,7 @@ def _read_functional_manifest(path: str | Path, /) -> tuple[dict[str, Any], Path
         raise ValueError("File is not a Phydrax functional training checkpoint.")
     if manifest["update_boundary"] is not True:
         raise ValueError("Functional checkpoints must be accepted-update boundaries.")
-    state_name = manifest["state_file"]
-    if not isinstance(state_name, str) or not state_name:
-        raise ValueError("Functional checkpoint state_file must be non-empty.")
-    state_path = source / state_name
-    _verify_state(state_path, manifest["state_sha256"])
-    return manifest, state_path
+    return manifest, source
 
 
 def load_functional_training_checkpoint(
@@ -175,7 +170,7 @@ def load_functional_training_checkpoint(
         raise TypeError("state_like must be a FunctionalTrainingState.")
     if not isinstance(plan, FunctionalTrainingPlan):
         raise TypeError("plan must be a FunctionalTrainingPlan.")
-    manifest, state_path = _read_functional_manifest(path)
+    manifest, source = _read_functional_manifest(path)
     if manifest["plan_id"] != plan.plan_id:
         raise ValueError("Functional checkpoint training-plan identity mismatch.")
     if manifest["target_policy"] != _target_policy_contract(state_like):
@@ -189,11 +184,16 @@ def load_functional_training_checkpoint(
         raise ValueError("Functional checkpoint run identity mismatch.")
     if manifest["gradient_accumulation"] != state_like.gradient_accumulation:
         raise ValueError("Functional checkpoint gradient-accumulation identity mismatch.")
-    functions, objective, restored = eqx.tree_deserialise_leaves(
-        state_path,
-        (solver_like.functions, solver_like.objective, state_like),
-        filter_spec=deserialize_model_leaf,
-    )
+    with _open_verified_state(
+        source,
+        manifest["state_file"],
+        manifest["state_sha256"],
+    ) as state_stream:
+        functions, objective, restored = eqx.tree_deserialise_leaves(
+            state_stream,
+            (solver_like.functions, solver_like.objective, state_like),
+            filter_spec=deserialize_model_leaf,
+        )
     progress = TrainingProgress(**manifest["progress"])
     if progress.update_step != int(manifest["step"]):
         raise ValueError("Functional checkpoint progress disagrees with its step.")

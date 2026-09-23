@@ -143,3 +143,24 @@ def test_snapshot_reports_staleness_crossed_quotes_and_causal_exclusion() -> Non
     assert int(state.status[1]) & int(MarketStatus.CROSSED_QUOTE)
     assert int(state.status[2]) == int(MarketStatus.CAUSAL_TIME_VIOLATION)
     assert not bool(jnp.any(state.accepted))
+
+
+def test_snapshot_uses_event_and_knowledge_cutoffs_on_their_distinct_clocks() -> None:
+    known = QuoteKey("AAPL", "known")
+    future = QuoteKey("AAPL", "future")
+    snapshot = MarketDataSnapshot(
+        (
+            QuoteObservation(known, 1.0, _timestamp(10, 80, "known"), _lineage()),
+            QuoteObservation(future, 2.0, _timestamp(50, 40, "future"), _lineage()),
+        ),
+        snapshot_time=_timestamp(100, 100, "archive"),
+    )
+    layout = RiskFactorLayout(
+        (RiskFactorKey("known", known), RiskFactorKey("future", future))
+    )
+
+    state = snapshot.prepare(layout, _timestamp(30, 100, "decision"))
+
+    assert bool(state.accepted[0])
+    assert not bool(state.accepted[1])
+    assert state.decision_time_ns == 100

@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel
+from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
 from .._schema import FeatureSchema, TargetSchema
 
@@ -107,6 +107,91 @@ def _traverse_one_tree(
     return value, safe_node, path
 
 
+def _traverse_masked_tree(
+    x: Array,
+    feature_index: Array,
+    threshold: Array,
+    left_child: Array,
+    right_child: Array,
+    default_left: Array,
+    split_kind: Array,
+    category_values: Array,
+    category_mask: Array,
+    leaf_value: Array,
+    node_mask: Array,
+    leaf_mask: Array,
+    tree_active: Array,
+    max_steps: int,
+) -> tuple[Array, Array, Array]:
+    root = jnp.arange(node_mask.shape[0]) == 0
+    safe_node_mask = jnp.where(tree_active, node_mask, root)
+    safe_leaf_mask = jnp.where(tree_active, leaf_mask, root)
+    safe_leaf_value = jnp.where(tree_active, leaf_value, jnp.zeros_like(leaf_value))
+    value, leaf, path = _traverse_one_tree(
+        x,
+        feature_index,
+        threshold,
+        left_child,
+        right_child,
+        default_left,
+        split_kind,
+        category_values,
+        category_mask,
+        safe_leaf_value,
+        safe_node_mask,
+        safe_leaf_mask,
+        max_steps,
+    )
+    return (
+        jnp.where(tree_active, value, jnp.zeros_like(value)),
+        jnp.where(tree_active, leaf, jnp.asarray(-1, dtype=leaf.dtype)),
+        path & tree_active,
+    )
+
+
+def _tree_topology_valid(
+    left_child: Array,
+    right_child: Array,
+    node_mask: Array,
+    leaf_mask: Array,
+    tree_mask: Array,
+    /,
+) -> Array:
+    node_capacity = node_mask.shape[-1]
+    root = jax.nn.one_hot(0, node_capacity, dtype=jnp.bool_)
+    visited = jnp.broadcast_to(root, node_mask.shape) & tree_mask[..., None]
+    frontier = visited
+    valid = jnp.all(~leaf_mask | node_mask, axis=-1)
+    node_indices = jnp.arange(node_capacity)
+    for _ in range(node_capacity):
+        parents = frontier & node_mask & ~leaf_mask
+        left_in_range = (left_child >= 0) & (left_child < node_capacity)
+        right_in_range = (right_child >= 0) & (right_child < node_capacity)
+        safe_left = jnp.clip(left_child, 0, node_capacity - 1)
+        safe_right = jnp.clip(right_child, 0, node_capacity - 1)
+        left_active = jnp.take_along_axis(node_mask, safe_left, axis=-1)
+        right_active = jnp.take_along_axis(node_mask, safe_right, axis=-1)
+        valid = valid & jnp.all(
+            ~parents | (left_in_range & right_in_range & left_active & right_active),
+            axis=-1,
+        )
+        left_edges = parents[..., :, None] & (safe_left[..., :, None] == node_indices)
+        right_edges = parents[..., :, None] & (safe_right[..., :, None] == node_indices)
+        incoming = jnp.sum(
+            left_edges.astype(jnp.int32) + right_edges.astype(jnp.int32),
+            axis=-2,
+        )
+        valid = (
+            valid
+            & jnp.all(incoming <= 1, axis=-1)
+            & jnp.all((incoming == 0) | ~visited, axis=-1)
+        )
+        frontier = incoming > 0
+        visited = visited | frontier
+    complete = jnp.all(~node_mask | visited, axis=-1)
+    return jnp.all(~tree_mask | (valid & complete), axis=-1)
+
+
 def _predict_case(
     points: Array,
     feature_index: Array,
@@ -127,8 +212,23 @@ def _predict_case(
 ) -> tuple[Array, Array, Array, Array]:
     def point_prediction(point):
         values, leaves, paths = jax.vmap(
-            lambda fi, th, lc, rc, dl, sk, cv, cm, lv, nm, lm: _traverse_one_tree(
-                point, fi, th, lc, rc, dl, sk, cv, cm, lv, nm, lm, max_steps
+            lambda fi, th, lc, rc, dl, sk, cv, cm, lv, nm, lm, active: (
+                _traverse_masked_tree(
+                    point,
+                    fi,
+                    th,
+                    lc,
+                    rc,
+                    dl,
+                    sk,
+                    cv,
+                    cm,
+                    lv,
+                    nm,
+                    lm,
+                    active,
+                    max_steps,
+                )
             )
         )(
             feature_index,
@@ -142,6 +242,7 @@ def _predict_case(
             leaf_value,
             node_mask,
             leaf_mask,
+            tree_mask,
         )
         effective_weight = jnp.where(tree_mask, tree_weight, 0.0)
         raw = base_score + jnp.sum(values * effective_weight[:, None], axis=0)
@@ -251,6 +352,8 @@ class TreeEnsemble(AbstractArrayModel):
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     max_steps: int = eqx.field(static=True)
     capacity_exhausted: Array
+
+    _input_binding: ModelBinding = eqx.field(static=True)  # ty: ignore[invalid-attribute-override]
 
     def __init__(
         self,
@@ -443,6 +546,11 @@ class TreeEnsemble(AbstractArrayModel):
         self.capacity_exhausted = jnp.broadcast_to(
             jnp.asarray(capacity_exhausted, dtype=jnp.bool_), case_shape_
         )
+        self._input_binding = (
+            ModelBinding.blockwise("flat", pass_key=False)
+            if self.case_shape
+            else ModelBinding.pointwise("flat", pass_key=False)
+        )
 
     @property
     def class_schema(self) -> TargetSchema:
@@ -531,6 +639,22 @@ class TreeEnsemble(AbstractArrayModel):
             return raw.reshape(lead_shape + (1,))[..., 0]
         return raw.reshape(lead_shape + output_shape)
 
+    def decision_function(self, x: Any, /) -> Array:
+        return self.predict_raw(x)
+
+    def predict_proba(self, x: Any, /) -> Array:
+        prediction = self(x)
+        if self.objective_transform == "sigmoid":
+            return jnp.stack((1.0 - prediction, prediction), axis=-1)
+        if self.objective_transform == "softmax":
+            return prediction
+        raise ValueError(
+            "Class probabilities require a probabilistic classification objective."
+        )
+
+    def predict(self, x: Any, /) -> Array:
+        return self.predict_labels(x)
+
     def predict_trees(self, x: Any, /) -> Array:
         """Return reached leaf values before tree weights or objective transform."""
         _, tree_values, _, _, lead_shape = self._evaluate(x)
@@ -597,6 +721,13 @@ class TreeEnsemble(AbstractArrayModel):
             ~self.tree_mask | jnp.isfinite(self.tree_weight), axis=-1
         )
         roots_valid = jnp.all(~self.tree_mask | self.node_mask[..., 0], axis=-1)
+        topology_valid = _tree_topology_valid(
+            self.left_child,
+            self.right_child,
+            self.node_mask,
+            self.leaf_mask,
+            self.tree_mask,
+        )
         valid = (
             jnp.all(children_valid, axis=(-2, -1))
             & jnp.all(feature_valid, axis=(-2, -1))
@@ -606,6 +737,7 @@ class TreeEnsemble(AbstractArrayModel):
             & jnp.all(leaf_value_valid, axis=(-2, -1))
             & roots_valid
             & score_valid
+            & topology_valid
         )
         return TreeStructureDiagnostics(
             valid=valid,

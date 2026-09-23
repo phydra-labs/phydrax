@@ -27,11 +27,13 @@ def main() -> None:
 
     final, successful = jax.lax.scan(step, initial, xs=None, length=1_000)
     output = runtime.output(final, stretch)
+    if not bool(successful.all()):
+        raise RuntimeError("Muscle-spindle trajectory contains a failed step")
     payload = {
         "source_doi": MILEUSNIC_SPINDLE_2006_DOI,
         "prepared_id": runtime.prepared_id,
         "duration_s": 0.1,
-        "all_steps_successful": bool(successful.all()),
+        "all_steps_successful": True,
         "primary_afferent_pps": float(output.primary_afferent_pps),
         "secondary_afferent_pps": float(output.secondary_afferent_pps),
         "bag1_dynamic_activation": float(final.bag1_dynamic_activation),

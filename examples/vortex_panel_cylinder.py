@@ -23,13 +23,12 @@ wall = phx.discretization.BoundarySheetParticleTransferPlan2D(64, 0.08, 0.1)
 wall_result = wall.transfer(
     wall.initialize(dtype="float64"), geometry, result.sheet_strength
 )
+if not bool(result.successful & moving_result.successful & wall_result.successful):
+    raise RuntimeError("Fixed, moving, or wall vortex-panel evaluation failed")
 
 print("boundary residual", result.boundary_residual_norm)
 print("constraint residual", result.constraint_residual)
 print("force", result.total_force)
 print("moving force", moving_result.total_force)
 print("wall circulation residual", wall_result.circulation_residual)
-print(
-    "successful",
-    bool(result.successful & moving_result.successful & wall_result.successful),
-)
+print("successful", True)

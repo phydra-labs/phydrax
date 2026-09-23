@@ -54,6 +54,29 @@ def test_qft_cavity_modes_have_declared_single_quantum_energy():
     assert len(set(result.mode_ids)) == 2
 
 
+def test_qft_mode_resource_limits_are_exact_and_identity_defining():
+    with pytest.raises(TypeError, match="maximum_modes"):
+        MaxwellEigenmodeNormalizationPlan(
+            jnp.eye(1),
+            jnp.eye(1),
+            [1.0],
+            maximum_modes=True,
+        )
+    first = MaxwellEigenmodeNormalizationPlan(
+        jnp.eye(1),
+        jnp.eye(1),
+        [1.0],
+        maximum_modes=1,
+    )
+    second = MaxwellEigenmodeNormalizationPlan(
+        jnp.eye(1),
+        jnp.eye(1),
+        [1.0],
+        maximum_modes=2,
+    )
+    assert first.plan_id != second.plan_id
+
+
 def test_qft_participation_and_dipole_coupling_retain_si_units():
     modes = (
         MaxwellEigenmodeNormalizationPlan(jnp.eye(1), jnp.eye(1), [3.0], hbar=2.0)

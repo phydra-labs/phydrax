@@ -52,8 +52,10 @@ def run():
     view = phx.applications.hydrodynamics.free_surface_diagnostic_view(
         hydro, result.accepted_state
     )
+    if not bool(result.successful):
+        raise RuntimeError("Capillary-wave step failed")
     return {
-        "successful": bool(result.successful),
+        "successful": True,
         "surface_energy": float(view.surface_energy),
         "wave_reflection": float(view.wave_reflection_coefficient),
         "capillary_dual_residual": float(

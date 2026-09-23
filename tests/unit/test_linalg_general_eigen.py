@@ -183,6 +183,37 @@ def test_restarted_arnoldi_shift_invert_and_cayley_target_interior_modes():
     assert jnp.allclose(shift_invert.diagnostics.pairing_matrix, 1.0, atol=1e-7)
 
 
+def test_native_arnoldi_finite_mask_tracks_each_nonfinite_recovered_mode():
+    matrix = 1.0e30 * jnp.eye(3)
+    problem = GeneralEigenproblem(
+        _MatrixFreeOperator(
+            matrix,
+            operator_id="matrix-free-cayley-overflow",
+        )
+    )
+    result = general_eigensolve(
+        problem,
+        policy=GeneralEigenSolvePolicy(
+            RestartedArnoldi(subspace_dimension=2),
+            transform=CayleyTransform(1.0),
+            selection=GeneralEigenSelection("largest-magnitude", count=1),
+            max_steps=4,
+        ),
+    )
+
+    expected_finite = (
+        jnp.isfinite(result.eigenvalues)
+        & jnp.all(jnp.isfinite(result.right_eigenvector_coordinates), axis=0)
+        & jnp.all(jnp.isfinite(result.left_eigenvector_coordinates), axis=0)
+        & jnp.isfinite(result.diagnostics.right_residual_norms)
+        & jnp.isfinite(result.diagnostics.left_residual_norms)
+    )
+    assert jnp.array_equal(result.finite_mask, expected_finite)
+    assert not bool(jnp.all(result.finite_mask))
+    assert not bool(result.diagnostics.output_finite)
+    assert result.status == int(GeneralEigenSolveStatus.NONFINITE_OUTPUT)
+
+
 def test_matrix_free_generalized_arnoldi_uses_certified_mass_and_full_pairing():
     dimension = 6
     mass_matrix = jnp.diag(jnp.linspace(1.0, 2.0, dimension))

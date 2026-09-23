@@ -27,12 +27,13 @@ import jax.core
 from ._external_resource import read_bounded_resource, ResourceLimits
 from ._external_worker import (
     _DEFAULT_BYTES,
-    _digest_file,
+    _ERROR_PACKET_BYTES,
     _receive_packet,
     _relative_path,
     _send_packet,
 )
 from ._fingerprint import canonical_fingerprint, canonical_json
+from ._host_io import open_regular_file
 from .artifacts import ScientificArtifactEnvelope
 from .backends._types import BackendUnavailableError
 from .logging import emit
@@ -68,21 +69,36 @@ def _limits(max_bytes: int) -> ResourceLimits:
     )
 
 
-ExternalIsolation: type = Literal["trusted-local", "container", "sandboxed"]
+ExternalIsolation: type = Literal["trusted-local"]
+ExternalEnforcement: type = Literal[
+    "trusted-local-direct-descriptor",
+    "trusted-local-private-snapshot",
+    "trusted-local-verified-path",
+]
 
 
 @dataclass(frozen=True, slots=True)
 class ExternalExecutionPolicy:
-    """Declared isolation and environment boundary for one external process."""
+    """Truthful policy for a direct process trusted to access the local host."""
 
     isolation: ExternalIsolation = "trusted-local"
-    network_access: bool = True
+    network_access: Literal[True] = True
     inherit_environment: bool = True
     allowed_environment_variables: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.isolation not in ("trusted-local", "container", "sandboxed"):
-            raise ValueError("Unknown external execution isolation.")
+        if self.isolation != "trusted-local":
+            raise ValueError(
+                "Container and sandbox isolation require an enforcing launcher; "
+                "this runtime supports trusted-local execution only."
+            )
+        if self.network_access is not True:
+            raise ValueError(
+                "Network denial requires an enforcing launcher; trusted-local "
+                "execution has unrestricted host network access."
+            )
+        if not isinstance(self.inherit_environment, bool):
+            raise TypeError("inherit_environment must be a bool.")
         variables = tuple(str(value) for value in self.allowed_environment_variables)
         if len(set(variables)) != len(variables) or any(
             not value or not value.replace("_", "").isalnum() for value in variables
@@ -90,9 +106,9 @@ class ExternalExecutionPolicy:
             raise ValueError(
                 "Allowed environment variables must be unique canonical names."
             )
-        if self.isolation != "trusted-local" and self.inherit_environment:
+        if self.inherit_environment and variables:
             raise ValueError(
-                "Container/sandbox profiles cannot inherit the complete host environment."
+                "An environment allowlist requires inherit_environment=False."
             )
         object.__setattr__(
             self, "allowed_environment_variables", tuple(sorted(variables))
@@ -113,7 +129,7 @@ class ExternalExecutionPolicy:
 
 @dataclass(frozen=True, slots=True)
 class PinnedExecutable:
-    """Caller-declared release/license and exact executable bytes, rechecked per run.
+    """Caller-declared release/license and exact descriptor-executed bytes.
 
     The digest pins this file, not every dynamic dependency. ``source_url`` is
     provenance, never evidence of permission to redistribute a tool or its inputs.
@@ -141,12 +157,12 @@ class PinnedExecutable:
 def pin_energy_executable(
     path: str | os.PathLike[str], *, version: str, license_id: str, source_url: str = ""
 ) -> PinnedExecutable:
-    """Identify a caller-selected local executable without guessing its release."""
+    """Identify exact bytes of a caller-selected trusted-local executable."""
     _host_only()
     resolved = Path(path).expanduser().resolve(strict=True)
-    return PinnedExecutable(
-        str(resolved), _digest_file(resolved), version, license_id, source_url
-    )
+    with open_regular_file(resolved) as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    return PinnedExecutable(str(resolved), digest, version, license_id, source_url)
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +181,10 @@ class EnergyRunResult:
     stdout: bytes
     stderr: bytes
     outputs: tuple[EnergyOutput, ...]
+    execution_policy_id: str
+    isolation: ExternalIsolation
+    network_access: Literal[True]
+    enforcement: ExternalEnforcement
     artifact: ScientificArtifactEnvelope
     error: str = ""
 
@@ -259,6 +279,43 @@ def _kill_process_group(process: subprocess.Popen) -> None:
     process.wait()
 
 
+def _descriptor_execution_path(descriptor: int, /) -> str:
+    if os.name != "posix" or not os.path.isdir("/proc/self/fd"):
+        raise OSError("The host does not expose executable descriptor paths.")
+    return f"/proc/self/fd/{descriptor}"
+
+
+def _execution_enforcement(executable: PinnedExecutable, /) -> ExternalEnforcement:
+    if sys.platform != "darwin":
+        return "trusted-local-direct-descriptor"
+    with open_regular_file(executable.path) as stream:
+        script = stream.read(2) == b"#!"
+    return "trusted-local-private-snapshot" if script else "trusted-local-verified-path"
+
+
+def _snapshot_executable(
+    executable: PinnedExecutable,
+    root: Path,
+    /,
+) -> Path:
+    destination = root / ".phydrax-executable"
+    digest = hashlib.sha256()
+    with (
+        open_regular_file(executable.path) as source,
+        destination.open("xb") as target,
+    ):
+        while block := source.read(1024 * 1024):
+            digest.update(block)
+            target.write(block)
+        target.flush()
+        os.fsync(target.fileno())
+        os.fchmod(target.fileno(), 0o500)
+    if digest.hexdigest() != executable.sha256:
+        destination.unlink(missing_ok=True)
+        raise ValueError("Executable SHA-256 no longer matches its pin.")
+    return destination
+
+
 def run_energy_command(
     executable: PinnedExecutable,
     args: Sequence[str],
@@ -271,12 +328,11 @@ def run_energy_command(
     environment: Mapping[str, str] | None = None,
     execution_policy: ExternalExecutionPolicy | None = None,
 ) -> EnergyRunResult:
-    """Execute argv, never a shell, in a private directory; detach bounded outputs.
+    """Execute trusted local argv after verifying a private executable snapshot.
 
-    Timeout, nonzero exit, pin mutation, missing outputs and output-limit failures
-    raise ``EnergyRuntimeError`` with ``result``. The private directory and process
-    group are removed on every exit. Engine model files are trusted executable
-    inputs: isolation is operational, not a restriction on their host access.
+    Linux executes through the held snapshot descriptor. Darwin executes scripts
+    from the private snapshot; path-sensitive native binaries use their verified
+    configured path under the declared trusted-local threat model.
     """
     _host_only(args, inputs, timeout)
     timeout = _positive_timeout(timeout)
@@ -287,16 +343,20 @@ def run_energy_command(
     disallowed = tuple(
         sorted(set(overrides).difference(policy.allowed_environment_variables))
     )
-    if disallowed and policy.isolation != "trusted-local":
+    if disallowed and not policy.inherit_environment:
         raise ValueError(
-            "Environment overrides exceed the isolated execution allowlist: "
+            "Environment overrides exceed the execution allowlist: "
             + ", ".join(disallowed)
         )
+    if type(max_output_bytes) is not int or max_output_bytes <= 0:
+        raise ValueError("max_output_bytes must be a positive integer.")
     if not isinstance(executable, PinnedExecutable):
         raise TypeError("executable must be a PinnedExecutable.")
     if not isinstance(stdin, bytes) or len(stdin) > max_output_bytes:
         raise ValueError("stdin must be bounded bytes.")
     output_names = tuple(_relative_path(name) for name in outputs)
+    if any(name.startswith(".phydrax-") for name in output_names):
+        raise ValueError("The .phydrax- prefix is reserved for runtime evidence.")
     if len(output_names) != len(set(output_names)):
         raise ValueError("Requested output paths must be unique.")
     command = (executable.path, *tuple(str(arg) for arg in args))
@@ -306,7 +366,10 @@ def run_energy_command(
     returncode = None
     timed_out = False
     error = ""
+    stdout = b""
+    stderr = b""
     detached = []
+    enforcement = _execution_enforcement(executable)
     with tempfile.TemporaryDirectory(prefix="phydrax-energy-") as directory:
         root = Path(directory)
         identities = _stage_inputs(root, inputs, max_output_bytes)
@@ -320,6 +383,7 @@ def run_energy_command(
                 "isolation": policy.isolation,
                 "network_access": policy.network_access,
                 "source_url": executable.source_url,
+                "enforcement": enforcement,
             }
         )
         emit(
@@ -349,54 +413,67 @@ def run_energy_command(
         env.update(overrides)
         with (
             in_path.open("rb") as inp,
-            out_path.open("wb") as out,
-            err_path.open("wb") as err,
+            out_path.open("w+b") as out,
+            err_path.open("w+b") as err,
         ):
             process = None
             try:
-                if _digest_file(Path(executable.path)) != executable.sha256:
-                    raise ValueError("Executable SHA-256 no longer matches its pin.")
-                process = subprocess.Popen(
-                    command,
-                    cwd=directory,
-                    env=env,
-                    stdin=inp,
-                    stdout=out,
-                    stderr=err,
-                    start_new_session=True,
-                )
-                while process.poll() is None:
-                    if time.monotonic() - start >= timeout:
-                        timed_out = True
-                        error = f"Command exceeded {timeout:g} seconds."
-                        break
-                    if (
-                        out_path.stat().st_size + err_path.stat().st_size
-                        > max_output_bytes
-                    ):
-                        error = "Command logs exceed max_output_bytes."
-                        break
-                    time.sleep(0.01)
+                executable_snapshot = _snapshot_executable(executable, root)
+                with open_regular_file(executable_snapshot) as executable_stream:
+                    executable_descriptor = executable_stream.fileno()
+                    execution_path = (
+                        str(executable_snapshot)
+                        if enforcement == "trusted-local-private-snapshot"
+                        else executable.path
+                        if enforcement == "trusted-local-verified-path"
+                        else _descriptor_execution_path(executable_descriptor)
+                    )
+                    inherited_descriptors = (
+                        (executable_descriptor,)
+                        if enforcement == "trusted-local-direct-descriptor"
+                        else ()
+                    )
+                    process = subprocess.Popen(
+                        command,
+                        executable=execution_path,
+                        pass_fds=inherited_descriptors,
+                        cwd=directory,
+                        env=env,
+                        stdin=inp,
+                        stdout=out,
+                        stderr=err,
+                        start_new_session=True,
+                    )
+                    while process.poll() is None:
+                        if time.monotonic() - start >= timeout:
+                            timed_out = True
+                            error = f"Command exceeded {timeout:g} seconds."
+                            break
+                        if (
+                            os.fstat(out.fileno()).st_size
+                            + os.fstat(err.fileno()).st_size
+                            > max_output_bytes
+                        ):
+                            error = "Command logs exceed max_output_bytes."
+                            break
+                        time.sleep(0.01)
             except (OSError, ValueError) as failure:
                 error = f"{type(failure).__name__}: {failure}"
             finally:
                 if process is not None:
                     _kill_process_group(process)
                     returncode = process.returncode
-        with out_path.open("rb") as stream:
-            stdout = stream.read(max_output_bytes)
-        with err_path.open("rb") as stream:
-            stderr = stream.read(max(0, max_output_bytes - len(stdout)))
-        if out_path.stat().st_size + err_path.stat().st_size > max_output_bytes:
-            error = error or "Command logs exceed max_output_bytes."
+            total_log_bytes = (
+                os.fstat(out.fileno()).st_size + os.fstat(err.fileno()).st_size
+            )
+            out.seek(0)
+            stdout = out.read(max_output_bytes)
+            err.seek(0)
+            stderr = err.read(max(0, max_output_bytes - len(stdout)))
+            if total_log_bytes > max_output_bytes:
+                error = error or "Command logs exceed max_output_bytes."
         if not error and returncode != 0:
             error = f"Command exited with status {returncode}."
-        if not error:
-            try:
-                if _digest_file(Path(executable.path)) != executable.sha256:
-                    error = "Executable changed during execution."
-            except OSError as failure:
-                error = f"Executable identity could not be rechecked: {failure}"
         remaining = max_output_bytes - len(stdout) - len(stderr)
         for name in output_names:
             try:
@@ -430,6 +507,7 @@ def run_energy_command(
             "execution_policy_id": policy.policy_id,
             "isolation": policy.isolation,
             "network_access": policy.network_access,
+            "enforcement": enforcement,
             "executable_sha256": executable.sha256,
             "input_id": resource_id,
             "returncode": returncode,
@@ -458,6 +536,10 @@ def run_energy_command(
             stdout,
             stderr,
             tuple(detached),
+            policy.policy_id,
+            policy.isolation,
+            policy.network_access,
+            enforcement,
             artifact,
             error,
         )
@@ -564,7 +646,7 @@ def _require_optional(module: str, requirement: str) -> None:
 
 
 class _HostWorker:
-    """Private process transport for native calls that cannot be interrupted in Python."""
+    """Private trusted-local process transport for blocking native calls."""
 
     def __init__(
         self,
@@ -578,10 +660,12 @@ class _HostWorker:
         _host_only(config)
         if os.name != "posix":
             raise OSError(
-                "Isolated optional energy sessions currently require a POSIX host."
+                "Optional native energy sessions currently require a POSIX host."
             )
         self.timeout = _positive_timeout(timeout)
-        self.max_bytes = int(max_bytes)
+        if type(max_bytes) is not int or max_bytes <= 0:
+            raise ValueError("max_bytes must be a positive integer.")
+        self.max_bytes = max_bytes
         self.closed = False
         self.calls: list[dict[str, Any]] = []
         self._temporary = tempfile.TemporaryDirectory(prefix=f"phydrax-{kind}-")
@@ -618,6 +702,11 @@ class _HostWorker:
                 child.close()
             self.info = self.call("open", {"kind": kind, "config": dict(config)})
             self.info["build_id"] = canonical_fingerprint(self.info.pop("build_evidence"))
+            self.info["execution"] = {
+                "isolation": "trusted-local",
+                "network_access": True,
+                "enforcement": "trusted-local-direct-process",
+            }
         except BaseException:
             self.abort()
             raise
@@ -632,11 +721,20 @@ class _HostWorker:
         if connection is None or logs is None or process is None:
             raise RuntimeError("External session transport is not initialized.")
         started = time.monotonic()
-        request = {"operation": operation, "payload": dict(payload or {})}
-        evidence = {"operation": operation, "request_id": canonical_fingerprint(request)}
+        request = {
+            "operation": operation,
+            "payload": dict(payload or {}),
+            "maximum_response_bytes": self.max_bytes,
+        }
+        evidence = {
+            "operation": operation,
+            "request_id": canonical_fingerprint(request),
+            "isolation": "trusted-local",
+            "network_access": True,
+            "enforcement": "trusted-local-direct-process",
+        }
         try:
-            connection.settimeout(self.timeout)
-            _send_packet(connection, request)
+            _send_packet(connection, request, self.max_bytes)
             if os.fstat(logs.fileno()).st_size > self.max_bytes:
                 raise ValueError(
                     "External runtime logs exceed the configured byte limit."
@@ -655,8 +753,16 @@ class _HostWorker:
                 ready, _, _ = select.select([connection], [], [], min(remaining, 0.05))
                 if ready:
                     connection.settimeout(max(0.001, deadline - time.monotonic()))
-                    response = _receive_packet(connection, self.max_bytes)
+                    response, response_bytes = _receive_packet(
+                        connection,
+                        max(self.max_bytes, _ERROR_PACKET_BYTES),
+                        include_size=True,
+                    )
                     break
+            if response["ok"] and response_bytes > self.max_bytes:
+                raise ValueError(
+                    "External runtime response exceeds the configured byte limit."
+                )
             if not response["ok"]:
                 raise EnergyRuntimeError(response["error"], evidence=response)
             if os.fstat(logs.fileno()).st_size > self.max_bytes:
@@ -746,12 +852,19 @@ def run_opendss(
     ``expected_version`` enforces a caller pin; observed package/native-build
     identities are always recorded. Missing optional libraries fail explicitly.
     """
+    if type(max_output_bytes) is not int or max_output_bytes <= 0:
+        raise ValueError("max_output_bytes must be a positive integer.")
     _require_optional(
         "opendssdirect", "install opendssdirect.py>=0.9 with its DSS native engine"
     )
     if not license_id.strip() or not commands:
         raise ValueError("An explicit license_id and nonempty commands are required.")
     output_names = tuple(_relative_path(name) for name in outputs)
+    command_list = list(commands)
+    response_limits = {
+        "max_bytes": max_output_bytes,
+        "max_items": max(1, min(1_000_000, max_output_bytes // 16)),
+    }
     worker = _HostWorker(
         "opendss",
         {"expected_version": expected_version},
@@ -760,12 +873,19 @@ def run_opendss(
         max_bytes=max_output_bytes,
     )
     try:
-        data = worker.call("run", {"commands": list(commands)})
+        data = worker.call(
+            "run",
+            {
+                "commands": command_list,
+                "response_limits": response_limits,
+            },
+        )
         error = "" if data["converged"] else "OpenDSS solution did not converge."
         resource_id = canonical_fingerprint(
             {
-                "commands": list(commands),
+                "commands": command_list,
                 "inputs": worker.input_ids,
+                "response_limits": response_limits,
                 "source_url": source_url,
             }
         )

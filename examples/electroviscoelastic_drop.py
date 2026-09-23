@@ -41,10 +41,12 @@ state = phx.applications.electroviscoelastic.SpatialElectroViscoelasticState(
     jnp.zeros(1),
 )
 result = workflow.advance(state, jnp.zeros(2), 0.1)
+if not bool(result.successful):
+    raise RuntimeError("Electroviscoelastic workflow failed")
 print(
     json.dumps(
         {
-            "successful": bool(result.successful),
+            "successful": True,
             "traction": result.interface_traction_pa.tolist(),
             "surface_charge_balance_residual_c": float(
                 result.surface_charge_balance_residual_c

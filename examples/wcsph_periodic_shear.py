@@ -79,13 +79,15 @@ expected_velocity = (
 velocity_error = jnp.sqrt(jnp.mean((final_velocity[:, 1] - expected_velocity) ** 2))
 energy_decay = initial_diagnostics.kinetic_energy - final_diagnostics.kinetic_energy
 neighborhood = compiled.dynamics.neighborhood.build(final_position)
+if not bool(solution.backend_successful & neighborhood.successful):
+    raise RuntimeError("WCSPH integration or final neighborhood failed")
 
 print("solver", solution.resolved_method)
 print("particle count", particle_count)
 print("cell shape", compiled.dynamics.neighborhood.cell_shape)
 print("pair count", int(neighborhood.pair_count))
 print("maximum cell occupancy", int(neighborhood.maximum_cell_occupancy))
-print("neighborhood successful", bool(neighborhood.successful))
+print("neighborhood successful", True)
 print(
     "density range",
     float(final_diagnostics.density_minimum),

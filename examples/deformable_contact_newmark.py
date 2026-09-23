@@ -90,9 +90,11 @@ def main():
     result = phx.applications.contact.solve_finite_element_contact_step(
         phx.applications.contact.prepare_finite_element_contact_step(plan, accepted, 0.05)
     )
+    if not bool(result.accepted):
+        raise RuntimeError("Deformable-contact Newmark step was rejected")
     print(
         {
-            "accepted": bool(result.accepted),
+            "accepted": True,
             "minimum_gap": float(result.contact.minimum_gap),
             "iterations": int(result.diagnostics.iterations),
             "rejection_reasons": int(result.rejection_reasons),

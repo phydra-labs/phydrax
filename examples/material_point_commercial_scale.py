@@ -14,6 +14,7 @@ def run():
         (8, 8),
         (4, 4),
         jnp.asarray([[0, 0], [1, 1]]),
+        periodic_axes=(False, False),
         device_count=2,
         particle_capacity_per_device=4,
     )
@@ -45,18 +46,22 @@ def run():
         journal_digest=2,
         evidence_id="example-topology-change",
     )
+    if not bool(
+        migration.successful & transaction.global_success & derivative.evidence.valid
+    ):
+        raise RuntimeError("Distributed MPM migration, commit, or derivative failed")
     return {
         "distributed": {
-            "migration_successful": bool(migration.successful),
-            "global_commit": bool(transaction.global_success),
+            "migration_successful": True,
+            "global_commit": True,
             "generation": int(transaction.commit_generation),
         },
         "amr": {"dense_transfer_parity": float(amr_parity)},
         "derivative": {
-            "branchwise_valid": bool(derivative.evidence.valid),
+            "branchwise_valid": True,
             "directional": float(derivative.derivative),
             "topology_kind": int(nondifferentiable.evidence.kind),
-            "topology_valid": bool(nondifferentiable.evidence.valid),
+            "topology_derivative_available": bool(nondifferentiable.evidence.valid),
         },
     }
 

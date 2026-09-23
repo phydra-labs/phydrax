@@ -44,26 +44,12 @@ def _scalar_solver(value=1.0):
     return phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
 
 
-def test_functional_session_rejects_sharding_coordinator_mismatch():
-    training = phx.solver.FunctionalTrainingPlan(
-        sharding=phx.solver.FunctionalShardingPolicy(
+def test_functional_sharding_rejects_coordinator_outside_mesh():
+    outside_mesh = max(device.process_index for device in jax.devices()) + 1
+    with pytest.raises(ValueError, match="represented by the sharding mesh"):
+        phx.solver.FunctionalShardingPolicy(
             {"sample": "data"},
-            coordinator_process=1,
-        )
-    )
-    session = phx.execution.IterationSession(
-        "sharding-session",
-        observation_policy=phx.execution.DistributedObservationPolicy(
-            scope=phx.execution.ObservationScope.COORDINATOR,
-            coordinator_process=0,
-        ),
-    )
-
-    with pytest.raises(ValueError, match="coordinators differ"):
-        FunctionalSolveConfig(
-            num_iter=1,
-            training=training,
-            session=session,
+            coordinator_process=outside_mesh,
         )
 
 
@@ -160,6 +146,36 @@ class _WindowAdapter(phx.solver.FunctionalWindowAdapter):
         return {"u": jnp.abs(current - previous)}
 
 
+class _WidthChangingWindowAdapter(phx.solver.FunctionalWindowAdapter):
+    adapter_id: str = eqx.field(static=True, default="width-changing-window-adapter")
+
+    def build_solver(
+        self,
+        previous_solver: Any,
+        window_index: int,
+        bounds,
+        previous_terminal,
+        /,
+    ):
+        del bounds, previous_terminal
+        if window_index == 0:
+            return eqx.tree_at(
+                lambda solver: solver.training_state,
+                previous_solver,
+                None,
+                is_leaf=lambda value: value is None,
+            )
+        return _scalar_solver(jnp.asarray([1.0, -1.0]))
+
+    def terminal_fields(self, solver, window_index, bounds, /):
+        del window_index, bounds
+        return {"u": solver.functions["u"]}
+
+    def seam_metrics(self, previous_terminal, current_solver, window_index, bounds, /):
+        del previous_terminal, current_solver, window_index, bounds
+        return {"u": jnp.asarray(0.0)}
+
+
 def test_functional_time_windows_train_and_route_physical_query():
     schedule = phx.sampling.collocation.CausalTimeSlabSchedule((0.0, 0.5, 1.0))
     plan = phx.solver.FunctionalTimeWindowPlan(
@@ -206,3 +222,29 @@ def test_functional_time_windows_transfer_optimizer_state_independently():
         and value.shape == ()
     )
     assert 2 in integer_scalars
+
+
+def test_functional_time_windows_reinitialize_incompatible_optimizer_state():
+    schedule = phx.sampling.collocation.CausalTimeSlabSchedule((0.0, 0.5, 1.0))
+    plan = phx.solver.FunctionalTimeWindowPlan(
+        schedule,
+        _WidthChangingWindowAdapter(),
+        lambda index: optax.adam(0.01),
+        steps=1,
+        training=phx.solver.FunctionalTrainingPlan(),
+        transfer_optimizer_state=True,
+    )
+
+    result = phx.solver.train_functional_time_windows(_scalar_solver(), plan)
+    final_state = result.solvers[-1].training_state
+
+    assert final_state is not None
+    assert final_state.current_functions["u"].func().shape == (2,)
+    integer_scalars = tuple(
+        int(value)
+        for value in jax.tree.leaves(final_state.optimizer_state)
+        if hasattr(value, "dtype")
+        and jnp.issubdtype(value.dtype, jnp.integer)
+        and value.shape == ()
+    )
+    assert 1 in integer_scalars

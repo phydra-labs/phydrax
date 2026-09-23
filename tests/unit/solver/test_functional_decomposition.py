@@ -3,11 +3,14 @@
 #
 
 import equinox as eqx
+import jax
+import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
 
 import phydrax as phx
+import phydrax.solver.functional_decomposition._checkpoint as decomposition_checkpoint
 
 
 def _fixed_penalty(condition, *, count=8):
@@ -91,6 +94,63 @@ def test_joint_partition_of_unity_trains_canonical_local_parameters():
     )
 
 
+def test_functional_update_kernel_rejects_nonfinite_candidate_objective():
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    field = domain.Parameter(jnp.asarray(0.0))
+    component = domain.component()
+    condition = phx.conditions.Residual(
+        "u",
+        component,
+        lambda value: domain.Parameter(1.0 / (value.func() - 1.0)),
+    )
+    batch = component.points({"x": jnp.asarray([[0.25], [0.75]])})
+    term = phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.fixed(
+            phx.integration.from_samples(
+                phx.integration.mean_over(component),
+                batch,
+            )
+        ),
+    )
+    solver = phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
+    paths = tuple(
+        path
+        for path in phx.nn.parameters.ParameterSubspace.array_leaf_paths(solver.functions)
+        if ".func.value" in path
+    )
+    subspace = phx.nn.parameters.ParameterSubspace.from_leaf_paths(
+        solver.functions,
+        paths,
+    )
+    kernel = solver.update_kernel(optax.sgd(-0.5), subspace, jit=False)
+    state = kernel.initialize()
+
+    advanced, evidence = kernel.advance(state, key=jr.key(101))
+
+    assert not bool(evidence.accepted)
+    assert advanced.step == 0
+    assert eqx.tree_equal(advanced.functions, state.functions)
+    nonfinite_state_optimizer = optax.GradientTransformation(
+        lambda parameters: jnp.asarray(0.0),
+        lambda gradients, optimizer_state, params=None: (
+            jax.tree.map(jnp.zeros_like, gradients),
+            jnp.asarray(jnp.inf),
+        ),
+    )
+    state_kernel = solver.update_kernel(
+        nonfinite_state_optimizer,
+        subspace,
+        jit=False,
+    )
+    state_result, state_evidence = state_kernel.advance(
+        state_kernel.initialize(),
+        key=jr.key(102),
+    )
+    assert not bool(state_evidence.accepted)
+    assert state_result.step == 0
+
+
 def test_jacobi_uses_one_snapshot_while_gauss_seidel_uses_latest_patch():
     problem = _broken_pair_problem()
     jacobi = phx.solver.prepare_functional_decomposition(
@@ -168,7 +228,7 @@ def test_block_decomposition_host_control_stops_after_committed_sweep():
     assert result.iteration_session_state.stop_requested
 
 
-def test_checkpoint_resume_matches_uninterrupted_block_training(tmp_path):
+def test_checkpoint_resume_matches_uninterrupted_block_training(tmp_path, monkeypatch):
     problem = _broken_pair_problem()
     prepared = phx.solver.prepare_functional_decomposition(
         problem,
@@ -195,6 +255,21 @@ def test_checkpoint_resume_matches_uninterrupted_block_training(tmp_path):
         tmp_path / "decomposition",
         partial.state,
         prepared,
+    )
+    checkpoint_directory = tmp_path / "decomposition"
+    state_path = next(checkpoint_directory.glob("state-*.eqx"))
+    deserialize = decomposition_checkpoint.eqx.tree_deserialise_leaves
+
+    def replace_path_after_open(state_stream, *args, **kwargs):
+        replacement = checkpoint_directory / "replacement.eqx"
+        replacement.write_bytes(b"replacement")
+        replacement.replace(state_path)
+        return deserialize(state_stream, *args, **kwargs)
+
+    monkeypatch.setattr(
+        decomposition_checkpoint.eqx,
+        "tree_deserialise_leaves",
+        replace_path_after_open,
     )
     restored = phx.solver.load_functional_decomposition_checkpoint(
         tmp_path / "decomposition",

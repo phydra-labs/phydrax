@@ -3,6 +3,7 @@
 #
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -26,7 +27,7 @@ def test_operator_uq_cli_runs_end_to_end_and_writes_artifacts(tmp_path):
             "--uq",
             "--quick",
             "--steps",
-            "0",
+            "1",
             "--repeats",
             "1",
             "--resolution",
@@ -36,8 +37,7 @@ def test_operator_uq_cli_runs_end_to_end_and_writes_artifacts(tmp_path):
             "--alpha",
             "0.5",
             "--posterior-samples",
-            "2",
-            "--skip-laplace",
+            "4",
             "--output",
             str(tmp_path),
             "--commit-identity",
@@ -62,5 +62,32 @@ def test_operator_uq_cli_runs_end_to_end_and_writes_artifacts(tmp_path):
         "fno",
         "deeponet",
     ]
+    for result in persisted["results"]:
+        assert result["seeds"] == [0]
+        assert result["ensemble_size"] == 1
+        assert result["training_steps"] == [1]
+        assert all(
+            math.isfinite(value)
+            for field in ("initial_losses", "final_losses", "validation_losses")
+            for value in result[field]
+        )
+        assert result["evaluations"]
+        for evaluation in result["evaluations"]:
+            assert evaluation["valid_draw_count"] > 0
+            assert evaluation["valid_draw_count"] == evaluation["total_draw_count"]
+            assert all(
+                math.isfinite(evaluation[field])
+                for field in (
+                    "relative_l2",
+                    "epistemic_standard_deviation",
+                    "crps",
+                    "energy_score",
+                    "pointwise_coverage",
+                    "simultaneous_coverage",
+                    "interval_width",
+                )
+            )
+    assert persisted["results"][0]["laplace"]["posterior_sample_count"] == 4
+    assert persisted["results"][0]["laplace"]["geometry_preserved"]
     assert "long_rollout" in set(table["name"])
     assert set(table["architecture"]) == {"fno", "deeponet"}

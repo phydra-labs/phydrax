@@ -24,6 +24,7 @@ import phydrax.linalg as la
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..units import LENGTH, MILLIMETER, UnitDefinition
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -99,6 +100,7 @@ class RegistrationEvaluationPlan:
     inverse_consistency_tolerance_mm: float = 0.5
     require_inverse_consistency: bool = False
     require_uncertainty: bool = False
+    length_unit: UnitDefinition = MILLIMETER
     plan_id: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -106,6 +108,8 @@ class RegistrationEvaluationPlan:
         points = np.asarray(
             self.reference_points_mm, dtype=np.result_type(original.dtype, np.float64)
         )
+        if points.size == 0:
+            raise ValueError("reference_points_mm must contain at least one point.")
         if points.ndim < 1 or points.shape[-1] != 3:
             raise ValueError(
                 "reference_points_mm must end with a coordinate axis of length three."
@@ -130,6 +134,14 @@ class RegistrationEvaluationPlan:
             raise TypeError("require_inverse_consistency must be boolean.")
         if not isinstance(self.require_uncertainty, bool):
             raise TypeError("require_uncertainty must be boolean.")
+        if (
+            not isinstance(self.length_unit, UnitDefinition)
+            or self.length_unit.dimension != LENGTH
+            or self.length_unit.unit_id != MILLIMETER.unit_id
+        ):
+            raise ValueError(
+                "Registration fields named *_mm require the canonical millimeter unit."
+            )
         points = np.array(points, copy=True)
         points.setflags(write=False)
         reference = _identifier(self.reference_frame_id, "reference_frame_id")
@@ -154,6 +166,7 @@ class RegistrationEvaluationPlan:
                     "minimum_jacobian": minimum,
                     "inverse_consistency_tolerance_mm": tolerance,
                     "require_inverse_consistency": self.require_inverse_consistency,
+                    "length_unit": self.length_unit.unit_id,
                     "require_uncertainty": self.require_uncertainty,
                 }
             ),
@@ -169,6 +182,7 @@ class RegistrationEvaluationPlan:
             self.inverse_consistency_tolerance_mm,
             self.require_inverse_consistency,
             self.require_uncertainty,
+            self.length_unit.unit_id,
             self.plan_id,
         )
 
@@ -185,6 +199,7 @@ class PreparedRegistrationEvaluation(StrictModule, NonTrainableState):
     require_inverse_consistency: bool = eqx.field(static=True)
     require_uncertainty: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    length_unit_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
@@ -197,6 +212,7 @@ class PreparedRegistrationEvaluation(StrictModule, NonTrainableState):
         inverse_consistency_tolerance_mm: float,
         require_inverse_consistency: bool,
         require_uncertainty: bool,
+        length_unit_id: str,
         plan_id: str,
         /,
     ):
@@ -211,11 +227,13 @@ class PreparedRegistrationEvaluation(StrictModule, NonTrainableState):
         self.inverse_consistency_tolerance_mm = float(inverse_consistency_tolerance_mm)
         self.require_inverse_consistency = bool(require_inverse_consistency)
         self.require_uncertainty = bool(require_uncertainty)
+        self.length_unit_id = _identifier(length_unit_id, "length_unit_id")
         self.plan_id = _identifier(plan_id, "plan_id")
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-registration-evaluation",
                 "plan_id": self.plan_id,
+                "length_unit": self.length_unit_id,
             }
         )
 

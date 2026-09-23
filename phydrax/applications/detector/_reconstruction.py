@@ -184,11 +184,12 @@ def build_particle_flow_candidates(
         charged.source_cluster_indices
     )
     active = active.at[:, :track_capacity].set(charged.active & charged.valid)
+    light = charged.speed_of_light
     neutral_direction = clusters.positions / jnp.maximum(
         jnp.linalg.norm(clusters.positions, axis=-1, keepdims=True),
         jnp.finfo(clusters.positions.dtype).tiny,
     )
-    neutral_momentum = neutral_direction * clusters.energies[..., None]
+    neutral_momentum = neutral_direction * (clusters.energies / light)[..., None]
     cluster_indices = jnp.broadcast_to(
         jnp.arange(cluster_capacity, dtype=jnp.int32), neutral_active.shape
     )
@@ -207,6 +208,7 @@ def build_particle_flow_candidates(
         source_cluster_indices=source_clusters,
         active=active,
         provider_id=plan.plan_id,
+        speed_of_light=light,
     )
     return ParticleFlowResult(
         candidates, nearest_track, minimum_distance, association_valid, plan.plan_id

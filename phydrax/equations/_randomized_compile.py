@@ -543,9 +543,25 @@ class _RandomizedPointCallable(StrictModule):
                 result = result + value
             return result, True
         if node.op == "multiply":
-            result = values[0]
-            for value in values[1:]:
-                result = result * value
+            event_shapes = tuple(
+                value.shape[1:] if is_randomized else value.shape
+                for value, is_randomized in zip(values, randomized, strict=True)
+            )
+            event_shape = jnp.broadcast_shapes(*event_shapes)
+            result = jnp.ones(
+                (self.plan.num_realizations,) + event_shape,
+                dtype=jnp.result_type(*values),
+            )
+            for value, is_randomized in zip(values, randomized, strict=True):
+                target_shape = (
+                    (self.plan.num_realizations,) + event_shape
+                    if is_randomized
+                    else event_shape
+                )
+                aligned = jnp.broadcast_to(value, target_shape)
+                if not is_randomized:
+                    aligned = aligned[None, ...]
+                result = result * aligned
             return result, True
         if node.op == "divide":
             return values[0] / values[1], True

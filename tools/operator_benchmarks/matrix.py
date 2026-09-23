@@ -132,9 +132,36 @@ def _symmetry_contract(
     return contract
 
 
+def _batch_schema(batch) -> dict[str, object]:
+    return {
+        "case_axes": tuple(batch.case_axes),
+        "case_shape": tuple(batch.case_shape),
+        "inputs": tuple(
+            (
+                name,
+                batch.input(name).support_id,
+                batch.input(name).measure_id,
+                batch.input(name).geometry_fingerprint(),
+            )
+            for name in sorted(batch.inputs)
+        ),
+        "queries": tuple(
+            (
+                name,
+                batch.query(name).support_id,
+                batch.query(name).measure_id,
+                batch.query(name).geometry_fingerprint(),
+            )
+            for name in sorted(batch.queries)
+        ),
+    }
+
+
 def scenario_checksum(scenario: OperatorBenchmarkScenario, /) -> str:
     digest = hashlib.sha256(scenario.name.encode("utf-8"))
     contract = {
+        "seed": scenario.seed,
+        "train_batch_schema": _batch_schema(scenario.train_batch),
         "case_ids": scenario.case_ids,
         "metadata": scenario.metadata,
         "regimes": scenario.regimes,
@@ -166,6 +193,7 @@ def scenario_checksum(scenario: OperatorBenchmarkScenario, /) -> str:
                 "rollout_steps": evaluation.rollout_steps,
                 "rollout_source_key": evaluation.rollout_source_key,
                 "case_ids": evaluation.case_ids,
+                "batch_schema": _batch_schema(evaluation.batch),
             }
             for evaluation in scenario.evaluations
         ),
@@ -185,6 +213,7 @@ def scenario_checksum(scenario: OperatorBenchmarkScenario, /) -> str:
                     "split": scenario.validation.split,
                     "shift": scenario.validation.shift,
                     "case_ids": scenario.validation.case_ids,
+                    "batch_schema": _batch_schema(scenario.validation.batch),
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -323,6 +352,10 @@ def run_benchmark_matrix(
 ) -> OperatorBenchmarkMatrixResult:
     if not seeds:
         raise ValueError("At least one benchmark seed is required.")
+    if len(set(seeds)) != len(seeds) or any(
+        isinstance(seed, bool) or not isinstance(seed, int) for seed in seeds
+    ):
+        raise ValueError("Benchmark seeds must be unique integers.")
     selected = None if architecture_names is None else set(architecture_names)
     results = []
     for scenario in scenarios:

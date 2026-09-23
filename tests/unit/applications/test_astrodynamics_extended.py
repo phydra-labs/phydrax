@@ -101,6 +101,51 @@ def test_sgp4_adapter_preserves_teme_utc_context_while_converting_units():
     np.testing.assert_allclose(trajectory.states[0, 3:], [4000.0, 5000.0, 6000.0])
     assert trajectory.context.context_id == context.context_id
     assert trajectory.context.epoch.time_scale == "UTC"
+    np.testing.assert_array_equal(trajectory.provider_status, [0, 0])
+
+    class ErrorSatrec:
+        @staticmethod
+        def sgp4(day, fraction):
+            del day
+            error = 1 if fraction == 0.0 else 6
+            return error, (1.0, 2.0, 3.0), (4.0, 5.0, 6.0)
+
+    provider_failures = astro.trajectory_from_sgp4(
+        ErrorSatrec(),
+        jnp.asarray([2451545.0, 2451545.0]),
+        jnp.asarray([0.0, 1.0 / 86400.0]),
+        context,
+    )
+    np.testing.assert_array_equal(provider_failures.provider_status, [1, 6])
+    np.testing.assert_array_equal(
+        provider_failures.status,
+        [
+            int(astro.AstrodynamicsStatus.NO_SOLUTION),
+            int(astro.AstrodynamicsStatus.NO_SOLUTION),
+        ],
+    )
+    with pytest.raises(ValueError, match="finite"):
+        astro.trajectory_from_sgp4(
+            Satrec(),
+            jnp.asarray([jnp.nan]),
+            jnp.asarray([0.0]),
+            context,
+        )
+
+    class NonfiniteSatrec:
+        @staticmethod
+        def sgp4(day, fraction):
+            del day, fraction
+            return 0, (jnp.nan, 2.0, 3.0), (4.0, 5.0, 6.0)
+
+    invalid = astro.trajectory_from_sgp4(
+        NonfiniteSatrec(),
+        jnp.asarray([2451545.0]),
+        jnp.asarray([0.0]),
+        context,
+    )
+    assert not bool(invalid.valid[0])
+    assert int(invalid.status[0]) == int(astro.AstrodynamicsStatus.NONFINITE_INPUT)
     noninertial = astro.AstrodynamicsContext(
         context.scale,
         context.epoch,
@@ -127,6 +172,19 @@ def test_time_frame_ephemeris_and_third_body_contracts():
     offset = astro.TimeScaleTransform.tai_to_tt(provenance).apply(jnp.asarray(1.0))
     assert bool(offset.valid)
     np.testing.assert_allclose(offset.relative_seconds, 33.184, atol=1.0e-12)
+    bounded = astro.TimeScaleTransform(
+        "UTC",
+        "TAI",
+        jnp.asarray([0.0, 1.0]),
+        jnp.asarray([0.0, 0.0]),
+        provenance,
+        interpolation="linear",
+    )
+    route = astro.PreparedTimeRoute(
+        (bounded, astro.TimeScaleTransform.tai_to_tt(provenance))
+    ).apply(jnp.asarray(2.0))
+    assert not bool(route.valid)
+    assert int(route.status) == int(astro.AstrodynamicsStatus.INVALID_DOMAIN)
 
     evaluator = astro.ConstantKinematicEvaluator(
         jnp.asarray([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
@@ -273,3 +331,42 @@ def test_spacecraft_burn_and_measurement_adapters():
     assert bool(measurements.valid[0])
     np.testing.assert_allclose(measurements.predicted[0, 0], 2.0)
     np.testing.assert_allclose(measurements.jacobian[0, 0, 3], 1.0)
+
+
+def test_environment_force_parameters_are_finite_physical_and_identity_defining():
+    astro = phx.applications.astrodynamics
+    context = _context()
+    atmosphere = astro.ExponentialAtmosphere(1.0, 1.0, 0.0, 1.0)
+    with pytest.raises(ValueError, match="finite and nonnegative"):
+        astro.AtmosphericDrag(
+            atmosphere,
+            context,
+            drag_coefficient=2.0,
+            area_to_mass=1.0,
+            angular_velocity=(jnp.nan, 0.0, 0.0),
+        )
+    first = astro.AtmosphericDrag(
+        atmosphere,
+        context,
+        drag_coefficient=1.0,
+        area_to_mass=1.0,
+    )
+    second = astro.AtmosphericDrag(
+        atmosphere,
+        context,
+        drag_coefficient=2.0,
+        area_to_mass=1.0,
+    )
+    assert first.force_id != second.force_id
+
+    eclipse = astro.EclipseGeometry(jnp.asarray(1.0), jnp.asarray(1.0))
+    with pytest.raises(ValueError, match="finite and physical"):
+        astro.SolarRadiationPressure(
+            lambda time, args: jnp.asarray([10.0, 0.0, 0.0]),
+            lambda time, args: jnp.zeros(3),
+            eclipse,
+            context,
+            reference_pressure=-1.0,
+            source_provider_id="source",
+            occulting_provider_id="occulter",
+        )

@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._model import register_artifact_value
 from ..._strict import StrictModule
 from ._propagation import apply_local_operator_to_state
 from ._register import _target_wire_ids, HilbertRegisterLayout
@@ -140,6 +141,12 @@ def local_density_expectation(
         value,
     )
     return jnp.trace(right_action, axis1=-2, axis2=-1)
+
+
+register_artifact_value(
+    "phydrax.quantum:LocalObservable",
+    LocalObservable,
+)
 
 
 __all__ = [

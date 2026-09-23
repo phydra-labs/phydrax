@@ -48,6 +48,7 @@ class MagneticSymmetryRepresentationPlan(StrictModule, NonTrainableState):
     coefficient_count: int = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     rank_tolerance: float = eqx.field(static=True)
+    composition_residual: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -110,6 +111,7 @@ class MagneticSymmetryRepresentationPlan(StrictModule, NonTrainableState):
         if not np.issubdtype(wraps.dtype, np.integer):
             raise TypeError("Magnetic symmetry lattice wraps must be integers.")
         wraps = wraps.astype(np.int32, copy=False)
+        composition_residual = 0.0
         table = group.multiplication_table
         for left in range(order):
             for right in range(order):
@@ -129,6 +131,15 @@ class MagneticSymmetryRepresentationPlan(StrictModule, NonTrainableState):
                     np.conj(representations[right])
                     if flags[left]
                     else representations[right]
+                )
+                composition_residual = max(
+                    composition_residual,
+                    float(
+                        np.max(
+                            np.abs(representations[product] - expected_representation),
+                            initial=0.0,
+                        )
+                    ),
                 )
                 if not np.allclose(
                     representations[product],
@@ -182,6 +193,7 @@ class MagneticSymmetryRepresentationPlan(StrictModule, NonTrainableState):
         self.coefficient_count = coefficient_count
         self.tolerance = tolerance_
         self.rank_tolerance = rank_tolerance_
+        self.composition_residual = composition_residual
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "magnetic-symmetry-representation-plan",
@@ -302,7 +314,7 @@ def compile_magnetic_symmetry_constraints(
         jnp.asarray(gap),
         jnp.asarray(rank, dtype=jnp.int32),
         jnp.asarray(nullity, dtype=jnp.int32),
-        jnp.asarray(0.0),
+        jnp.asarray(plan.composition_residual),
         certificate_id,
     )
 

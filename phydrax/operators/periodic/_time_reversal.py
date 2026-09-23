@@ -30,8 +30,11 @@ class PeriodicTimeReversalEvidence(StrictModule, NonTrainableState):
     hamiltonian_residual: Array
     overlap_residual: Array
     maximum_pairing_distance: Array
+    pairing_involution: Array
     accepted: Array
     basis_id: str = eqx.field(static=True)
+    pencil_id: str = eqx.field(static=True)
+    mesh_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
 
@@ -94,6 +97,11 @@ class PeriodicTimeReversalPlan(StrictModule, NonTrainableState):
             index = int(np.argmin(distances))
             pair_indices.append(index)
             pair_distances.append(float(distances[index]))
+        pair_array = np.asarray(pair_indices, dtype=np.int32)
+        pairing_involution = bool(
+            np.unique(pair_array).size == points.shape[0]
+            and np.array_equal(pair_array[pair_array], np.arange(points.shape[0]))
+        )
         evaluation = self.pencil.evaluate(self.mesh.fractional_points)
         hamiltonian = np.asarray(evaluation.hamiltonians)
         overlap = np.asarray(evaluation.overlaps)
@@ -115,6 +123,7 @@ class PeriodicTimeReversalPlan(StrictModule, NonTrainableState):
             and h_residual <= self.tolerance
             and s_residual <= self.tolerance
             and pairing <= self.tolerance
+            and pairing_involution
             and bool(evaluation.successful)
         )
         evidence_id = canonical_fingerprint(
@@ -125,6 +134,7 @@ class PeriodicTimeReversalPlan(StrictModule, NonTrainableState):
                 "hamiltonian_residual": h_residual,
                 "overlap_residual": s_residual,
                 "maximum_pairing_distance": pairing,
+                "pairing_involution": pairing_involution,
                 "accepted": accepted,
             }
         )
@@ -133,8 +143,11 @@ class PeriodicTimeReversalPlan(StrictModule, NonTrainableState):
             jnp.asarray(h_residual),
             jnp.asarray(s_residual),
             jnp.asarray(pairing),
+            jnp.asarray(pairing_involution),
             jnp.asarray(accepted),
             self.pencil.plan.basis.basis_id,
+            self.pencil.plan.pencil_id,
+            self.mesh.mesh_id,
             evidence_id,
         )
 
@@ -192,8 +205,14 @@ class PeriodicZ2Plan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Z2 evaluation requires a two-dimensional even mesh and one rank-two occupied Kramers pair."
             )
-        if bundle.manifold.spectrum.basis_id != time_reversal.basis_id:
-            raise ValueError("Z2 bundle and time-reversal evidence use different bases.")
+        if (
+            bundle.manifold.spectrum.basis_id != time_reversal.basis_id
+            or bundle.manifold.spectrum.pencil_id != time_reversal.pencil_id
+            or mesh.mesh_id != time_reversal.mesh_id
+        ):
+            raise ValueError(
+                "Z2 bundle and time-reversal evidence use different scientific identities."
+            )
         self.bundle = bundle
         self.time_reversal = time_reversal
         self.loop_axis = axes[0]

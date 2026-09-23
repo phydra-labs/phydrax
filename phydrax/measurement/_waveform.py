@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..units import TIME, UnitDefinition
 from ._support import RaySampleSupport
 from ._time import SampleTimeAxis
 
@@ -79,10 +80,15 @@ class WaveformSupport:
 class PulseResponse:
     times: np.ndarray
     amplitudes: np.ndarray
-    time_unit_id: str
+    time_unit: UnitDefinition
     response_id: str = field(init=False)
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.time_unit, UnitDefinition)
+            or self.time_unit.dimension != TIME
+        ):
+            raise ValueError("time_unit must be a time UnitDefinition.")
         times = np.array(self.times, dtype=np.float64, copy=True)
         amplitudes = np.array(self.amplitudes, dtype=np.float64, copy=True)
         if (
@@ -116,7 +122,7 @@ class PulseResponse:
                     "kind": "pulse-response",
                     "times": array_tree_fingerprint(times),
                     "amplitudes": array_tree_fingerprint(amplitudes),
-                    "time_unit": self.time_unit_id,
+                    "time_unit": self.time_unit.unit_id,
                 }
             ),
         )

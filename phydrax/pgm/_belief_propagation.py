@@ -206,11 +206,21 @@ class PreparedBeliefPropagation(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
+def _graph_numeric_tables(graph: DiscreteFactorGraph, /) -> tuple[Array, ...]:
+    return tuple(
+        group.log_potentials
+        if isinstance(group, EnumeratedFactorGroup)
+        else factor_group_dense_tables(graph, index)
+        for index, group in enumerate(graph.factor_groups)
+    )
+
+
 class SumProductBeliefPropagationResult(StrictModule):
     """Variable/factor beliefs, normalizer evidence, and terminal message state."""
 
     variable_log_probabilities: VariableStateValues
     factor_probabilities: tuple[Array, ...]
+    factor_tables: tuple[Array, ...]
     log_normalizer: Array
     state: BeliefPropagationState
     status: Array
@@ -595,6 +605,12 @@ def initialize_belief_propagation(
     )
     if evidence_values.structure_id != graph.structure_id:
         raise ValueError("Evidence structure does not match the prepared graph.")
+    expected_evidence_shape = (prepared.state_variable_indices.shape[0],)
+    if evidence_values.values.shape != expected_evidence_shape:
+        raise ValueError(
+            f"evidence values must have shape {expected_evidence_shape}; "
+            f"got {evidence_values.values.shape}."
+        )
     evidence_values = VariableStateValues(
         prepared.precision.evaluation(evidence_values.values),
         structure_id=graph.structure_id,
@@ -1385,6 +1401,12 @@ def run_belief_propagation(
         raise ValueError("State message shape does not match the prepared plan.")
     if state.evidence.structure_id != prepared.graph.structure_id:
         raise ValueError("State evidence does not match the prepared graph.")
+    expected_evidence_shape = (prepared.state_variable_indices.shape[0],)
+    if state.evidence.values.shape != expected_evidence_shape:
+        raise ValueError(
+            f"State evidence must have shape {expected_evidence_shape}; "
+            f"got {state.evidence.values.shape}."
+        )
     selected = (
         BeliefPropagationSchedulePolicy("forest" if prepared.forest else "synchronous")
         if schedule is None
@@ -1461,6 +1483,7 @@ def run_belief_propagation(
                 prepared.precision.output(probabilities)
                 for probabilities in factor_probabilities
             ),
+            factor_tables=_graph_numeric_tables(prepared.graph),
             log_normalizer=prepared.precision.output(log_normalizer),
             state=final_state,
             status=status,

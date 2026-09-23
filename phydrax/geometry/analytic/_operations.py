@@ -26,6 +26,8 @@ from .._capabilities import (
     ClosestPointProvider,
     ContactCurvatureProvider,
     GeometryCapability,
+    SeamDiagnosticsProvider,
+    SupportMapProvider,
 )
 from .._certificate import (
     DistanceSemantics,
@@ -443,6 +445,19 @@ class _RigidTransformKernel(GeometryKernel):
             raise TypeError("Child curvature query returned an invalid result.")
         return result
 
+    def support_map(self, state, directions, /):
+        if not isinstance(self.child, SupportMapProvider):
+            raise TypeError("Transformed child lacks a support-map provider.")
+        rotation, translation = self._parameters(state)
+        directions_ = jnp.asarray(directions)
+        support = self.child.support_map(state, directions_ @ rotation)
+        return support @ rotation.T + translation
+
+    def seam_residual(self, state, /):
+        if not isinstance(self.child, SeamDiagnosticsProvider):
+            raise TypeError("Transformed child lacks a seam-diagnostics provider.")
+        return self.child.seam_residual(state)
+
     def bounds(self, state, /):
         rotation, translation = self._parameters(state)
         bounds = self.child.bounds(state)
@@ -548,7 +563,7 @@ class Scaling(GeometrySource):
         elif scale_host.ndim == 1 and scale_host.size > 0:
             if not np.all(np.isfinite(scale_host)) or np.any(scale_host <= 0.0):
                 raise ValueError("scale entries must be finite and positive.")
-            uniform = bool(np.allclose(scale_host, scale_host[0]))
+            uniform = bool(np.all(scale_host == scale_host[0]))
             scalar_scale = False
         else:
             raise ValueError("scale must be a positive scalar or vector.")
@@ -632,10 +647,16 @@ class _ScalingKernel(GeometryKernel):
     def capabilities(self):
         if self.uniform:
             return self.child.capabilities
+        unsupported = {
+            GeometryCapability.CLOSEST_POINT,
+            GeometryCapability.CONTACT_CURVATURE,
+            GeometryCapability.SEAM_DIAGNOSTICS,
+            GeometryCapability.SIGNED_DISTANCE,
+        }
         return frozenset(
             capability
             for capability in self.child.capabilities
-            if capability is not GeometryCapability.CLOSEST_POINT
+            if capability not in unsupported
         )
 
     @property
@@ -658,10 +679,45 @@ class _ScalingKernel(GeometryKernel):
         )
 
     def geometry_validity(self, state, /):
-        return representation_validity(self.child, state)
+        scale = self.scale.read(state)
+        spread = jnp.max(jnp.abs(scale - scale[0]))
+        classification_valid = spread == 0.0 if self.uniform else jnp.asarray(True)
+        minimum_scale = jnp.min(scale)
+        local = GeometryValidityEvidence(
+            finite=jnp.all(jnp.isfinite(scale)),
+            conditions_satisfied=(minimum_scale > 0.0) & classification_valid,
+            resolved=True,
+            margins=(
+                jnp.stack((minimum_scale, -spread))
+                if self.uniform
+                else minimum_scale[None]
+            ),
+            margin_names=(
+                ("minimum_scale_positive", "uniform_scale_classification")
+                if self.uniform
+                else ("minimum_scale_positive",)
+            ),
+            contract_id="scaling_topology_classification",
+        )
+        return combine_validity(
+            (representation_validity(self.child, state), local),
+            contract_id="scaling",
+        )
 
     def _parameters(self, state):
-        return self.scale.read(state), self.center.read(state)
+        scale = self.scale.read(state)
+        center = self.center.read(state)
+        invalid = (
+            jnp.any(~jnp.isfinite(scale))
+            | jnp.any(scale <= 0.0)
+            | (jnp.any(scale != scale[0]) if self.uniform else jnp.asarray(False))
+        )
+        scale = eqx.error_if(
+            scale,
+            invalid,
+            "Scaling state crossed its compiled uniformity or positivity contract.",
+        )
+        return scale, center
 
     def _local(self, state, points):
         scale, center = self._parameters(state)
@@ -709,6 +765,42 @@ class _ScalingKernel(GeometryKernel):
             physical_geometry_id=physical_id,
             exact_to_physical=result.exact_to_physical,
         )
+
+    def contact_curvature(self, state, points, /):
+        if not self.uniform:
+            raise NotImplementedError(
+                "Nonuniform scaling does not preserve principal curvatures."
+            )
+        if not isinstance(self.child, ContactCurvatureProvider):
+            raise TypeError("Scaled child lacks a contact-curvature provider.")
+        result = self.child.contact_curvature(state, self._local(state, points))
+        if not isinstance(result, ContactCurvatureResult):
+            raise TypeError("Child contact-curvature query returned an invalid result.")
+        scale, _ = self._parameters(state)
+        factor = scale[0]
+        return ContactCurvatureResult(
+            result.principal_curvatures / factor,
+            result.valid,
+            result.regularity_margin * factor,
+            ambient_dimension=result.ambient_dimension,
+        )
+
+    def support_map(self, state, directions, /):
+        if not isinstance(self.child, SupportMapProvider):
+            raise TypeError("Scaled child lacks a support-map provider.")
+        scale, center = self._parameters(state)
+        support = self.child.support_map(state, jnp.asarray(directions) * scale)
+        return center + (support - center) * scale
+
+    def seam_residual(self, state, /):
+        if not self.uniform:
+            raise NotImplementedError(
+                "Nonuniform scaling does not preserve scalar seam residuals."
+            )
+        if not isinstance(self.child, SeamDiagnosticsProvider):
+            raise TypeError("Scaled child lacks a seam-diagnostics provider.")
+        scale, _ = self._parameters(state)
+        return scale[0] * self.child.seam_residual(state)
 
     def bounds(self, state, /):
         scale, center = self._parameters(state)

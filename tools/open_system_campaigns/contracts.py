@@ -53,12 +53,14 @@ class SemanticReplayEvidence(StrictModule):
     event_time_tolerance: Array
     disagreement_tolerance: Array
     observable_tolerance: Array
+    independently_replayed: Array
     valid: Array
 
     def __init__(
         self,
         /,
         *,
+        independently_replayed: ArrayLike,
         variates_equal: ArrayLike,
         address_schema_equal: ArrayLike,
         event_time_difference: ArrayLike,
@@ -68,6 +70,9 @@ class SemanticReplayEvidence(StrictModule):
         disagreement_tolerance: float,
         observable_tolerance: float,
     ):
+        self.independently_replayed = _boolean_scalar(
+            independently_replayed, "independently_replayed"
+        )
         self.variates_equal = _boolean_scalar(variates_equal, "variates_equal")
         self.address_schema_equal = _boolean_scalar(
             address_schema_equal,
@@ -100,8 +105,11 @@ class SemanticReplayEvidence(StrictModule):
             raise ValueError(
                 "Semantic replay values and tolerances must be finite non-negative scalars."
             )
+        if bool(self.channel_disagreement_probability > 1.0):
+            raise ValueError("Replay channel disagreement probability cannot exceed one.")
         self.valid = (
-            self.variates_equal
+            self.independently_replayed
+            & self.variates_equal
             & self.address_schema_equal
             & (self.event_time_difference <= self.event_time_tolerance)
             & (self.channel_disagreement_probability <= self.disagreement_tolerance)
@@ -113,6 +121,7 @@ class CampaignPrecisionBundle(StrictModule):
     request: PrecisionRequest = eqx.field(static=True)
     resolution: PrecisionResolution = eqx.field(static=True)
     evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -124,6 +133,11 @@ class CampaignPrecisionBundle(StrictModule):
         children: Mapping[str, PrecisionEvidenceEnvelope] | None = None,
     ):
         request = PrecisionRequest(domain, effective)
+        expected_provider = f"phydrax-{domain}"
+        if provider != expected_provider:
+            raise ValueError(
+                f"Precision provider must be {expected_provider!r}, got {provider!r}."
+            )
         resolution = PrecisionResolution(request, provider, effective)
         evidence = PrecisionEvidenceEnvelope(
             resolution,
@@ -133,6 +147,7 @@ class CampaignPrecisionBundle(StrictModule):
         self.request = request
         self.resolution = resolution
         self.evidence = evidence
+        self.policy_id = f"{domain}:precision-policy"
 
 
 class CampaignCapacityEvidence(StrictModule):
@@ -148,24 +163,24 @@ class CampaignCapacityEvidence(StrictModule):
         used: int,
         limit: int,
         /,
-        *,
-        saturated: ArrayLike,
     ):
         identifier = str(name)
-        used_ = int(used)
-        limit_ = int(limit)
-        saturated_ = _boolean_scalar(saturated, "saturated")
+        if (
+            isinstance(used, bool)
+            or not isinstance(used, int)
+            or isinstance(limit, bool)
+            or not isinstance(limit, int)
+        ):
+            raise TypeError("Capacity used and limit must be integers.")
         if not identifier:
             raise ValueError("Capacity evidence name must be non-empty.")
-        if used_ < 0 or limit_ <= 0 or used_ > limit_:
+        if used < 0 or limit <= 0 or used > limit:
             raise ValueError("Capacity evidence requires 0 <= used <= limit.")
-        if saturated_.shape != ():
-            raise ValueError("Capacity saturation must be one scalar Boolean.")
         self.name = identifier
-        self.used = used_
-        self.limit = limit_
-        self.saturated = saturated_
-        self.valid = ~saturated_
+        self.used = used
+        self.limit = limit
+        self.saturated = jnp.asarray(used >= limit)
+        self.valid = ~self.saturated
 
 
 class OpenSystemCampaignRecord(StrictModule):
@@ -243,14 +258,31 @@ class OpenSystemCampaignRecord(StrictModule):
         )
         if not arrays or any(not name for name, _ in arrays):
             raise ValueError("Campaign record requires named solver/reference arrays.")
-        work_ = tuple((str(name), int(value)) for name, value in sorted(work.items()))
-        if not work_ or any(not name or value < 0 for name, value in work_):
-            raise ValueError("Campaign work must contain non-negative named counters.")
+        work_items = tuple(sorted(work.items()))
+        if not work_items:
+            raise ValueError("Campaign work must contain named counters.")
+        for name, value in work_items:
+            if (
+                not isinstance(name, str)
+                or not name
+                or isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(
+                    "Campaign work must contain non-negative integer counters."
+                )
+        work_ = work_items
         unsupported = tuple(str(value) for value in unsupported_claims)
         if any(not value for value in unsupported) or len(set(unsupported)) != len(
             unsupported
         ):
             raise ValueError("Unsupported claims must be unique and non-empty.")
+        unknown_claims = set(unsupported) - set(PERMANENT_OPEN_SYSTEM_STOP_CLAIMS)
+        if unknown_claims:
+            raise ValueError(
+                f"Unsupported claims are not canonical stop claims: {sorted(unknown_claims)}."
+            )
         self.campaign_id = campaign
         self.representation_id = representation
         self.approximation = approximation

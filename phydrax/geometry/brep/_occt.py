@@ -550,6 +550,7 @@ def import_brep(
     path: str | Path,
     *,
     coordinate_contract: SpatialCoordinateContract,
+    source_id: str | None = None,
     linear_deflection: float = 1e-3,
     angular_deflection: float = 0.1,
     trim_samples_per_edge: int = 33,
@@ -559,11 +560,17 @@ def import_brep(
         raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
 
     shape, source_format, source_digest = read_occt_shape(path)
-    source_id = str(Path(path).expanduser().resolve())
+    identity = (
+        str(Path(path).expanduser().resolve())
+        if source_id is None
+        else str(source_id).strip()
+    )
+    if not identity:
+        raise ValueError("source_id must be non-empty when provided.")
     return model_from_occt_shape(
         shape,
         coordinate_contract=coordinate_contract,
-        source_id=source_id,
+        source_id=identity,
         source_digest=source_digest,
         source_format=source_format,
         linear_deflection=linear_deflection,

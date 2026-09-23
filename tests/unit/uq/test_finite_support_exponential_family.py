@@ -57,3 +57,19 @@ def test_finite_support_exterior_target_fails_without_plausible_coordinates():
     assert not bool(result.evidence.successful)
     assert not bool(result.conversion.valid)
     assert jnp.all(jnp.isnan(result.conversion.natural.values))
+
+
+def test_finite_support_rejects_points_inside_box_but_outside_convex_hull():
+    family = phx.uq.FiniteSupportExponentialFamily(
+        jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
+        jnp.ones(3),
+        family_id="finite-support-triangle",
+    )
+    target = jnp.asarray((0.9, 0.9))
+
+    domain = family.mean_domain(family.mean(target))
+    result = phx.uq.solve_finite_support_mean(family, target)
+
+    assert not bool(domain.valid)
+    assert not bool(result.evidence.successful)
+    assert not bool(result.conversion.valid)

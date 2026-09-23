@@ -8,12 +8,25 @@ from phydrax.dynamics._dae_structural import (
     analyze_dae_structure,
     compile_acausal_dae,
     DAEComponent,
+    DAEConnection,
     DAEDerivativeIncidence,
     DAEEquationBlock,
+    DAEPort,
     DAEStructuralPolicy,
     DAEVariableBlock,
 )
 from phydrax.solver import DifferentialAlgebraicProblem
+
+
+def _equation(name, residual, incidence, **kwargs):
+    return DAEEquationBlock(
+        name,
+        residual,
+        incidence,
+        residual_semantic_id=f"test:{name}:semantic",
+        residual_numeric_id=f"test:{name}:numeric",
+        **kwargs,
+    )
 
 
 def _pendulum_like_source():
@@ -22,7 +35,7 @@ def _pendulum_like_source():
         DAEVariableBlock("lambda", (), 0, state_scale=1.0, rate_scale=1.0),
     )
     equations = (
-        DAEEquationBlock(
+        _equation(
             "dynamics",
             lambda time, jet, args: jet.value("q", 2) + jet.value("lambda"),
             (
@@ -30,7 +43,7 @@ def _pendulum_like_source():
                 DAEDerivativeIncidence("lambda", 0),
             ),
         ),
-        DAEEquationBlock(
+        _equation(
             "constraint",
             lambda time, jet, args: jet.value("q") ** 2 - 1.0,
             (DAEDerivativeIncidence("q", 0),),
@@ -60,12 +73,12 @@ def test_index_one_lowering_preserves_physical_flow_and_state_derivative():
         "decay",
         (DAEVariableBlock("a_flow", (), 0), DAEVariableBlock("z_state", (), 1)),
         (
-            DAEEquationBlock(
+            _equation(
                 "balance",
                 lambda time, jet, args: jet.value("z_state", 1) - jet.value("a_flow"),
                 (DAEDerivativeIncidence("z_state", 1), DAEDerivativeIncidence("a_flow")),
             ),
-            DAEEquationBlock(
+            _equation(
                 "constitutive",
                 lambda time, jet, args: jet.value("a_flow") + jet.value("z_state"),
                 (DAEDerivativeIncidence("a_flow"), DAEDerivativeIncidence("z_state")),
@@ -86,7 +99,7 @@ def test_structural_failure_names_unmatched_variables_and_capacity():
         "singular",
         (DAEVariableBlock("x"), DAEVariableBlock("y")),
         (
-            DAEEquationBlock(
+            _equation(
                 "one",
                 lambda time, jet, args: jet.value("x", 1),
                 (DAEDerivativeIncidence("x", 1),),
@@ -109,7 +122,7 @@ def test_missing_declared_jvp_incidence_fails_compilation():
         "bad",
         (DAEVariableBlock("x", (), 1),),
         (
-            DAEEquationBlock(
+            _equation(
                 "equation",
                 lambda time, jet, args: jet.value("x") + jet.value("x", 1),
                 (DAEDerivativeIncidence("x", 1),),
@@ -140,7 +153,7 @@ def test_input_aware_structural_dae_propagates_independent_scales_and_jits():
             ),
         ),
         (
-            DAEEquationBlock(
+            _equation(
                 "balance",
                 lambda time, jet, inputs, args: (
                     jet.value("x", 1) - inputs[1] * jet.value("x") - inputs[0]
@@ -228,7 +241,7 @@ def test_structural_input_and_residual_scale_shape_mismatches_fail_preparation()
             ),
         ),
         (
-            DAEEquationBlock(
+            _equation(
                 "balance",
                 lambda time, jet, inputs, args: jet.value("x"),
                 (DAEDerivativeIncidence("x", 0),),
@@ -260,7 +273,7 @@ def test_structural_input_and_residual_scale_shape_mismatches_fail_preparation()
         "scalar",
         (DAEVariableBlock("x"),),
         (
-            DAEEquationBlock(
+            _equation(
                 "balance",
                 lambda time, jet, inputs, args: jet.value("x", 1),
                 (DAEDerivativeIncidence("x", 1),),
@@ -277,4 +290,55 @@ def test_structural_input_and_residual_scale_shape_mismatches_fail_preparation()
             jnp.zeros((1,)),
             input_policy=mismatched,
             problem_id="structural-layout-mismatch",
+        )
+
+
+def test_component_rejects_incidence_above_variable_derivative_order():
+    with pytest.raises(ValueError, match="exceeds the declared variable maximum"):
+        DAEComponent(
+            "bad-order",
+            (DAEVariableBlock("x", (), 1),),
+            (
+                _equation(
+                    "second-order-reference",
+                    lambda time, jet, args: jet.value("x", 2),
+                    (DAEDerivativeIncidence("x", 2),),
+                ),
+            ),
+        )
+
+
+def test_source_identity_includes_connection_orientation_and_tearing_fails_closed():
+    left = DAEComponent(
+        "left",
+        (DAEVariableBlock("potential", (), 0),),
+        (),
+        (DAEPort("port", ("potential",), ()),),
+    )
+    right = DAEComponent(
+        "right",
+        (DAEVariableBlock("potential", (), 0),),
+        (),
+        (DAEPort("port", ("potential",), ()),),
+    )
+    positive = AcausalDAESource(
+        (left, right),
+        (DAEConnection(("left.port", "right.port"), (1, -1)),),
+    )
+    reversed_orientation = AcausalDAESource(
+        (left, right),
+        (DAEConnection(("left.port", "right.port"), (-1, 1)),),
+    )
+    assert positive.source_id != reversed_orientation.source_id
+
+    source = _pendulum_like_source()
+    with pytest.raises(ValueError, match="tearing is not executable"):
+        compile_acausal_dae(
+            source,
+            DAEStructuralPolicy(
+                2,
+                1,
+                tearing="declared",
+                declared_tears=("body.q",),
+            ),
         )

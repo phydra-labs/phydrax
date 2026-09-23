@@ -50,9 +50,11 @@ def main() -> None:
 
     result = plan.step(initial, 5.0, source_kg_s=jnp.asarray((1.0e-5, 0.0)))
     sensitivity = jax.grad(final_mass)(jnp.asarray(1.0e-5))
+    if not bool(result.successful):
+        raise RuntimeError("Porous infiltration step failed")
     print(
         {
-            "successful": bool(result.successful),
+            "successful": True,
             "water_mass_kg": np.asarray(result.state.water_mass_kg).tolist(),
             "maximum_residual": float(jnp.max(jnp.abs(result.residual))),
             "total_mass_sensitivity_s": float(sensitivity),

@@ -115,6 +115,7 @@ def test_feature_preparation_rejects_future_available_inputs_and_preserves_label
     panel = PreparedPointInTimePanel(
         values=jnp.arange(100.0, 108.0)[None, :],
         valid_mask=jnp.ones((1, 8), dtype="bool"),
+        overflow=jnp.zeros((1,), dtype="bool"),
         event_times_ns=event[None, :],
         published_times_ns=event[None, :],
         received_times_ns=event[None, :],

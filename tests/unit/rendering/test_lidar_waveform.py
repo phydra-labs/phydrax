@@ -1,6 +1,7 @@
 import equinox as eqx
 import jax.random as jr
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -52,8 +53,12 @@ def _pulse():
     return phx.measurement.PulseResponse(
         np.asarray((-0.1, 0.0, 0.1)),
         np.asarray((0.0, 1.0, 0.0)),
-        phx.units.SECOND.unit_id,
+        phx.units.SECOND,
     )
+
+
+def _speed_unit():
+    return phx.units.derived_unit("m/s", ((phx.units.METER, 1), (phx.units.SECOND, -1)))
 
 
 def test_hard_surface_waveform_and_return_extraction_recover_delay():
@@ -61,7 +66,12 @@ def test_hard_surface_waveform_and_return_extraction_recover_delay():
     support = _waveform_support(rays)
     pulse = _pulse()
     plan = phx.rendering.HardSurfaceLidarWaveformPlan(
-        surface, support, pulse, pulse, wave_speed=2.0
+        surface,
+        support,
+        pulse,
+        pulse,
+        wave_speed=2.0,
+        wave_speed_unit=_speed_unit(),
     )
     result = eqx.filter_jit(plan.evaluate)(vertices, geometry_id="target")
     peak = int(np.argmax(np.asarray(result.values[0, :, 0])))
@@ -78,14 +88,25 @@ def test_atmosphere_multipath_and_multiple_scattering_are_time_resolved():
     support = _waveform_support(rays)
     pulse = _pulse()
     atmosphere = phx.rendering.AtmosphericLidarPlan(
-        support, pulse, np.asarray(((1.0, 2.0, 3.0),)), np.ones((1, 3)), wave_speed=2.0
+        support,
+        pulse,
+        np.asarray(((1.0, 2.0, 3.0),)),
+        np.ones((1, 3)),
+        wave_speed=2.0,
+        range_unit=phx.units.METER,
+        wave_speed_unit=_speed_unit(),
     )
     clear = eqx.filter_jit(atmosphere.evaluate)(np.zeros((1, 3)), np.ones((1, 3)))
     attenuated = atmosphere.evaluate(np.ones((1, 3)), np.ones((1, 3)))
     assert np.sum(np.asarray(clear.values)) > np.sum(np.asarray(attenuated.values))
 
     multipath = phx.rendering.SpecularLidarMultipathPlan(
-        support, pulse, wave_speed=2.0, path_capacity=2
+        support,
+        pulse,
+        wave_speed=2.0,
+        path_length_unit=phx.units.METER,
+        wave_speed_unit=_speed_unit(),
+        path_capacity=2,
     ).evaluate(
         np.asarray(((2.0, 4.0),)), np.asarray(((1.0, 0.5),)), np.asarray(((True, True),))
     )
@@ -99,6 +120,29 @@ def test_atmosphere_multipath_and_multiple_scattering_are_time_resolved():
         extinction=1.0,
         scattering_albedo=0.8,
         wave_speed=2.0,
+        distance_unit=phx.units.METER,
+        wave_speed_unit=_speed_unit(),
     ).evaluate(jr.key(0))
     assert bool(scattered.evidence.successful)
     assert np.sum(np.asarray(scattered.values)) > 0.0
+
+
+def test_waveform_plans_refuse_incompatible_units_and_invalid_capacities():
+    _, rays, _ = _surface_and_rays()
+    support = _waveform_support(rays)
+    pulse = _pulse()
+    with pytest.raises(ValueError, match="time UnitDefinition"):
+        phx.measurement.PulseResponse(
+            np.asarray((0.0, 1.0)),
+            np.asarray((1.0, 1.0)),
+            phx.units.ONE,
+        )
+    with pytest.raises(ValueError, match="path_capacity"):
+        phx.rendering.SpecularLidarMultipathPlan(
+            support,
+            pulse,
+            wave_speed=2.0,
+            path_length_unit=phx.units.METER,
+            wave_speed_unit=_speed_unit(),
+            path_capacity=0,
+        )

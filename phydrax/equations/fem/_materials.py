@@ -185,6 +185,11 @@ class LocalImplicitMaterial(StrictModule, NonTrainableState):
         return ConstitutiveResponse(
             result.response,
             result.trial_state,
+            consistent_tangent=result.consistent_tangent,
+            energy=result.energy,
+            dissipation=result.dissipation,
+            valid=result.valid & diagnostics.converged & diagnostics.finite,
+            diagnostic=result.diagnostic,
             diagnostics={
                 **result.diagnostics,
                 "converged": diagnostics.converged,

@@ -410,6 +410,11 @@ class RobotEnvironmentReset(StrictModule):
     observation: Array
     terminated: Array
     descriptor: Array
+    attempted: Array
+    successful: Array
+    status: Array
+    backend_status: Array
+    evidence: Any
     environment_id: str = eqx.field(static=True)
     provenance_id: str = eqx.field(static=True)
 
@@ -810,6 +815,11 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             evaluation.observation,
             evaluation.terminated,
             evaluation.descriptor,
+            plant_reset.attempted,
+            plant_reset.successful,
+            plant_reset.status,
+            plant_reset.backend_status,
+            plant_reset.evidence,
             self.environment_id,
             self.provenance_id,
         )

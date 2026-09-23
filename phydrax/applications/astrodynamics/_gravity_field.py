@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax._strict import StrictModule
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...special._spherical_harmonic import _real_spherical_harmonic_table
 from ._context import AstrodynamicsContext
 from ._data import AstrodynamicsDataProvenance
@@ -63,14 +63,39 @@ class SphericalHarmonicGravityField(StrictModule):
         ):
             raise ValueError("Gravity coefficients must be finite square arrays.")
         available = cosine_host.shape[0] - 1
-        degree = available if maximum_degree is None else int(maximum_degree)
-        order = degree if maximum_order is None else int(maximum_order)
+        for name, value in (
+            ("maximum_degree", maximum_degree),
+            ("maximum_order", maximum_order),
+        ):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int)
+            ):
+                raise TypeError(f"{name} must be an integer or None.")
+        degree = available if maximum_degree is None else maximum_degree
+        order = degree if maximum_order is None else maximum_order
         if not 0 <= order <= degree <= available:
             raise ValueError("Gravity degree/order exceeds coefficient capacity.")
+        mu_host = np.asarray(mu, dtype=np.float64)
+        radius_host = np.asarray(reference_radius, dtype=np.float64)
+        if (
+            mu_host.shape != ()
+            or radius_host.shape != ()
+            or not np.isfinite(mu_host)
+            or mu_host <= 0.0
+            or not np.isfinite(radius_host)
+            or radius_host <= 0.0
+        ):
+            raise ValueError(
+                "Gravity coupling and reference radius must be positive finite scalars."
+            )
+        if not isinstance(context, AstrodynamicsContext):
+            raise TypeError("context must be an AstrodynamicsContext.")
+        if not isinstance(provenance, AstrodynamicsDataProvenance):
+            raise TypeError("provenance must be AstrodynamicsDataProvenance.")
         self.cosine = jnp.asarray(cosine_host)
         self.sine = jnp.asarray(sine_host)
-        self.mu = jnp.asarray(mu).reshape(())
-        self.reference_radius = jnp.asarray(reference_radius).reshape(())
+        self.mu = jnp.asarray(mu_host)
+        self.reference_radius = jnp.asarray(radius_host)
         self.context = context
         self.provenance = provenance
         self.maximum_degree = degree
@@ -79,6 +104,10 @@ class SphericalHarmonicGravityField(StrictModule):
         self.field_id = canonical_fingerprint(
             {
                 "kind": "spherical-harmonic-gravity-field",
+                "coefficients": array_tree_fingerprint((cosine_host, sine_host)),
+                "mu": array_tree_fingerprint(mu_host),
+                "reference_radius": array_tree_fingerprint(radius_host),
+                "context": context.context_id,
                 "degree": degree,
                 "order": order,
                 "tide_system": self.tide_system,
@@ -122,20 +151,34 @@ class SphericalHarmonicGravity(AbstractAstrodynamicsForce):
     def evaluate(self, time, state, args: Any = None, /) -> AstrodynamicsForceEvaluation:
         del time, args
         packed = jnp.asarray(state)
+        if packed.shape != (6,):
+            raise ValueError("Astrodynamics force state must have shape (6,).")
         position = packed[:3]
         radius = _norm(position)
-        valid = packed.shape == (6,) and jnp.all(jnp.isfinite(packed)) & (
-            radius > 0.0
-        ) & (self.field.mu > 0.0) & (self.field.reference_radius > 0.0)
+        finite = (
+            jnp.all(jnp.isfinite(packed))
+            & jnp.isfinite(self.field.mu)
+            & jnp.isfinite(self.field.reference_radius)
+        )
+        valid = (
+            finite
+            & (radius > 0.0)
+            & (self.field.mu > 0.0)
+            & (self.field.reference_radius > 0.0)
+        )
         safe_position = jnp.where(valid, position, jnp.asarray((1.0, 0.0, 0.0)))
         potential, potential_gradient = jax.value_and_grad(self.field.potential)(
             safe_position
         )
         acceleration = -potential_gradient
         status = jnp.where(
-            valid,
-            int(AstrodynamicsStatus.SUCCESS),
-            int(AstrodynamicsStatus.INVALID_DOMAIN),
+            ~finite,
+            int(AstrodynamicsStatus.NONFINITE_INPUT),
+            jnp.where(
+                valid,
+                int(AstrodynamicsStatus.SUCCESS),
+                int(AstrodynamicsStatus.INVALID_DOMAIN),
+            ),
         ).astype(jnp.int32)
         return AstrodynamicsForceEvaluation(
             jnp.where(valid, acceleration, 0.0),

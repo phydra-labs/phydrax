@@ -289,6 +289,10 @@ class MutualPolarizableQMMMSurface(AbstractPreparedPotentialEnergySurface):
             or multipoles.site_capacity != system.particle_ids.size
         ):
             raise ValueError("Mutual QM/MM components do not share system identities.")
+        if not classical_partition.capabilities.forces:
+            raise ValueError(
+                "Mutual polarizable QM/MM requires a force-capable classical partition."
+            )
         indices = jnp.asarray(region.mm_indices)
         selected = PermanentMultipoleSiteData(
             multipoles.charges[indices],
@@ -377,7 +381,9 @@ class MutualPolarizableQMMMSurface(AbstractPreparedPotentialEnergySurface):
             LinearSolvePolicy(DenseSVD()),
         )
         converged = False
+        iteration_successful = True
         completed = 0
+        quantum = None
         for iteration in range(self.maximum_iterations):
             quantum = self.quantum_provider.evaluate(region_positions, permanent, induced)
             right = (operator_at_zero.p_field + quantum.electric_field_at_sites).reshape(
@@ -386,48 +392,65 @@ class MutualPolarizableQMMMSurface(AbstractPreparedPotentialEnergySurface):
             linear = solve(prepared_linear, right)
             target = linear.value.reshape((site_count, 3))
             updated = (1.0 - self.damping) * induced + self.damping * target
-            residual = jnp.max(jnp.abs(updated - induced), initial=0.0)
-            induced = updated
-            completed = iteration + 1
-            if bool(
+            candidate_residual = jnp.max(jnp.abs(updated - induced), initial=0.0)
+            iteration_valid = bool(
                 linear.successful
                 & quantum.successful
-                & (residual <= self.residual_tolerance)
-            ):
+                & jnp.all(jnp.isfinite(updated))
+                & jnp.isfinite(candidate_residual)
+            )
+            completed = iteration + 1
+            if not iteration_valid:
+                iteration_successful = False
+                residual = jnp.asarray(
+                    jnp.finfo(coordinate.dtype).max, dtype=coordinate.dtype
+                )
+                break
+            induced = updated
+            residual = candidate_residual
+            if bool(residual <= self.residual_tolerance):
                 converged = True
                 break
-        quantum = self.quantum_provider.evaluate(region_positions, permanent, induced)
+        if quantum is None:
+            raise RuntimeError("Polarizable QM/MM iteration did not execute.")
+        if converged:
+            quantum = self.quantum_provider.evaluate(region_positions, permanent, induced)
+            iteration_successful = iteration_successful and bool(quantum.successful)
         classical = self.classical_partition.evaluate(coordinate, cell_vectors)
-        frozen_induced = jax.lax.stop_gradient(induced)
+        if converged and iteration_successful and bool(classical.successful):
+            frozen_induced = jax.lax.stop_gradient(induced)
 
-        def polarization_function(mm_coordinate):
-            operator = self.polarization_operator.apply(
-                mm_coordinate,
-                frozen_induced,
-                cell_vectors=cell_vectors,
-            )
-            return 0.5 * contract("nd,nd->", frozen_induced, operator.action) - contract(
-                "nd,nd->", frozen_induced, operator.p_field
-            )
+            def polarization_function(mm_coordinate):
+                operator = self.polarization_operator.apply(
+                    mm_coordinate,
+                    frozen_induced,
+                    cell_vectors=cell_vectors,
+                )
+                return 0.5 * contract(
+                    "nd,nd->", frozen_induced, operator.action
+                ) - contract("nd,nd->", frozen_induced, operator.p_field)
 
-        polarization_energy, polarization_gradient = jax.value_and_grad(
-            polarization_function
-        )(mm_positions)
-        full_quantum_force = self.region.pullback(quantum.embedded.region_forces)
-        site_force = quantum.embedded.point_charge_forces - polarization_gradient
-        full_site_force = (
-            jnp.zeros_like(coordinate)
-            .at[jnp.asarray(self.region.mm_indices)]
-            .add(site_force)
-        )
-        total_energy = classical.energy + quantum.embedded.energy + polarization_energy
-        total_forces = classical.forces + full_quantum_force + full_site_force
-        successful = (
-            classical.successful
-            & quantum.successful
-            & converged
-            & jnp.all(jnp.isfinite(total_forces))
-        )
+            polarization_energy, polarization_gradient = jax.value_and_grad(
+                polarization_function
+            )(mm_positions)
+            full_quantum_force = self.region.pullback(quantum.embedded.region_forces)
+            site_force = quantum.embedded.point_charge_forces - polarization_gradient
+            full_site_force = (
+                jnp.zeros_like(coordinate)
+                .at[jnp.asarray(self.region.mm_indices)]
+                .add(site_force)
+            )
+            total_energy = (
+                classical.energy + quantum.embedded.energy + polarization_energy
+            )
+            total_forces = classical.forces + full_quantum_force + full_site_force
+            successful = jnp.isfinite(total_energy) & jnp.all(jnp.isfinite(total_forces))
+        else:
+            polarization_energy = jnp.asarray(jnp.nan, dtype=coordinate.dtype)
+            site_force = jnp.full_like(mm_positions, jnp.nan)
+            total_energy = jnp.asarray(jnp.nan, dtype=coordinate.dtype)
+            total_forces = jnp.full_like(coordinate, jnp.nan)
+            successful = jnp.asarray(False)
         qmmm = QMMMEvaluation(
             total_energy,
             classical.energy,
@@ -527,6 +550,8 @@ class AdaptivePartitionedQMMMSurface(AbstractPreparedPotentialEnergySurface):
             raise ValueError(
                 "Adaptive QM/MM partition surfaces must share system and units."
             )
+        if any(not value.capabilities.forces for value in surfaces):
+            raise ValueError("Adaptive QM/MM requires force-capable partition surfaces.")
         self.partitions = surfaces
         self.weight_function = weight_function
         self.partition_ids = ids
@@ -670,6 +695,10 @@ class PeriodicMultilevelQMMMSurface(AbstractPreparedPotentialEnergySurface):
             for value in surfaces
         ):
             raise ValueError("Multilevel QM/MM surfaces must share system and units.")
+        if any(not value.capabilities.forces for value in surfaces):
+            raise ValueError(
+                "Periodic multilevel QM/MM requires force-capable level surfaces."
+            )
         self.levels = surfaces
         self.coefficients = coefficients_
         self.state_id = state

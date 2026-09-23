@@ -202,7 +202,10 @@ class QualificationRoleTrust:
         ):
             raise ValueError("Qualification content or signing time was tampered with.")
         self.store.verify(
-            attestation.signed_payload, attestation.signature, at_time=at_time
+            attestation.signed_payload,
+            attestation.signature,
+            expected_purpose=f"qualification.{role}",
+            at_time=at_time,
         )
         return attestation.signature.key_id
 
@@ -342,7 +345,12 @@ class AsymmetricReleaseTrustPolicy:
                 hashlib.sha256(index.signed_payload).hexdigest(),
                 bytes.fromhex(index.signature),
             )
-            self.roles.store.verify(index.signed_payload, envelope, at_time=at_time)
+            self.roles.store.verify(
+                index.signed_payload,
+                envelope,
+                expected_purpose="qualification.release-index",
+                at_time=at_time,
+            )
         except (TypeError, ValueError, KeyError, RuntimeError):
             return False
         return True

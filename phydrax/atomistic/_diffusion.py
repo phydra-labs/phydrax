@@ -76,29 +76,32 @@ class AtomisticCoordinateDiffusion(StrictModule):
             }
         )
 
-    def _require_batch(self, batch: AtomisticBatch, /) -> None:
+    def _require_batch(self, batch: AtomisticBatch, /) -> AtomisticBatch:
         if not isinstance(batch, AtomisticBatch):
             raise TypeError("batch must be an AtomisticBatch.")
         if batch.atom_topology_id != self.template.atom_topology_id:
             raise ValueError(
                 "Atomistic diffusion requires the template candidate topology."
             )
-        if not jnp.array_equal(batch.atomic_numbers, self.template.atomic_numbers):
-            raise ValueError("Coordinate diffusion requires fixed atom species.")
-        if not (
-            jnp.array_equal(batch.atom_mask, self.template.atom_mask)
-            and jnp.array_equal(batch.particle_ids, self.template.particle_ids)
-            and jnp.array_equal(batch.masses, self.template.masses)
-            and batch.scale.scale_id == self.template.scale.scale_id
-        ):
-            raise ValueError(
-                "Coordinate diffusion requires fixed masks, masses, and scale."
-            )
+        if batch.scale.scale_id != self.template.scale.scale_id:
+            raise ValueError("Coordinate diffusion requires the template scale.")
+        invalid = ~(
+            jnp.array_equal(batch.atomic_numbers, self.template.atomic_numbers)
+            & jnp.array_equal(batch.atom_mask, self.template.atom_mask)
+            & jnp.array_equal(batch.particle_ids, self.template.particle_ids)
+            & jnp.array_equal(batch.masses, self.template.masses)
+        )
+        checked_positions = eqx.error_if(
+            batch.positions,
+            invalid,
+            "Coordinate diffusion requires fixed species, masks, IDs, and masses.",
+        )
+        return eqx.tree_at(lambda value: value.positions, batch, checked_positions)
 
     def perturb(
         self, batch: AtomisticBatch, key: Key[Array, ""], /, *, time
     ) -> AtomisticBatch:
-        self._require_batch(batch)
+        batch = self._require_batch(batch)
         centered, _ = _center_positions(batch, batch.positions)
         perturbed = self.process.perturb(key, centered.reshape((-1,)), t1=time).reshape(
             centered.shape
@@ -110,8 +113,8 @@ class AtomisticCoordinateDiffusion(StrictModule):
     def conditional_score(
         self, perturbed: AtomisticBatch, clean: AtomisticBatch, /, *, time
     ):
-        self._require_batch(perturbed)
-        self._require_batch(clean)
+        perturbed = self._require_batch(perturbed)
+        clean = self._require_batch(clean)
         noisy, _ = _center_positions(perturbed, perturbed.positions)
         source, _ = _center_positions(clean, clean.positions)
         unconstrained = self.process.conditional_score(

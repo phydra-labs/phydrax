@@ -720,7 +720,14 @@ def compile_spectral_residual(
                     "fields": data_layout.field_coordinates,
                     "parameters": data_layout.parameter_coordinates,
                     "mask_semantics": data_layout.mask_semantics,
+                    "measure_mask": (
+                        None
+                        if data_layout.measure_mask is None
+                        else array_tree_fingerprint(data_layout.measure_mask)
+                    ),
                     "case_plans": data_layout.case_plan_ids,
+                    "maximum_trial_shape": data_layout.maximum_trial_shape,
+                    "maximum_evaluation_shape": data_layout.maximum_evaluation_shape,
                 }
             ),
             "report": report.report_id,

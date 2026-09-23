@@ -223,6 +223,27 @@ def test_analysis_dag_target_units_and_lineage_are_deterministic():
     flux = species_flux_target(velocity, species, prepared, density=density)
     enthalpy_flux = enthalpy_flux_target(velocity, enthalpy, prepared, density=density)
     source = source_target(fine_source, resolved_source, prepared)
+    singleton_species = ClosureField(
+        species.values[..., None],
+        name="species_singleton",
+        units=species.units,
+        schema_id=species.schema_id,
+        lineage_ids=species.lineage_ids,
+    )
+    singleton_density = ClosureField(
+        density.values[..., None],
+        name="density_singleton",
+        units=density.units,
+        schema_id=density.schema_id,
+        lineage_ids=density.lineage_ids,
+    )
+    singleton_flux = species_flux_target(
+        velocity,
+        singleton_species,
+        prepared,
+        density=singleton_density,
+    )
+    assert jnp.allclose(singleton_flux.values, flux.values)
     duplicate = sgs_stress_target(velocity, prepared, density=density)
     assert duplicate.node.node_id == stress.node.node_id
     assert duplicate.target_id == stress.target_id

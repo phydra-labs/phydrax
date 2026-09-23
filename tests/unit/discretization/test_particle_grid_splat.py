@@ -316,6 +316,12 @@ def test_mesh_splat_barycentric_and_compact_routes_are_conservative():
     assert bool(deposited.successful)
     np.testing.assert_allclose(jnp.sum(deposited.content), 2.0)
     np.testing.assert_allclose(gathered.values, (0.25,))
+    nonfinite_gather = prepared.gather(
+        jnp.asarray(((0.25, 0.25),)),
+        jnp.asarray((True,)),
+        triangle.coordinates[:, 0].at[0].set(jnp.nan),
+    )
+    assert not bool(nonfinite_gather.successful)
 
     cell_measure = phx.discretization.DiscreteMeasure(
         "cell_measure",

@@ -5,6 +5,7 @@
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
 
@@ -118,3 +119,23 @@ def test_jump_measure_change_reports_support_failure_and_zero_target_density():
     assert estimate.status == int(
         phx.integration.IntegrationStatus.PROPOSAL_SUPPORT_FAILURE
     )
+
+
+@pytest.mark.parametrize("event_time", [jnp.nan, -0.1, 1.1])
+def test_jump_measure_change_rejects_active_events_outside_partition(event_time):
+    events = phx.stochastic.JumpEventBatch(
+        jnp.asarray([[event_time]]),
+        jnp.zeros((1, 1), dtype=jnp.int32),
+        jnp.zeros((1, 1)),
+        jnp.ones((1, 1), dtype=jnp.bool_),
+        jnp.zeros((1,), dtype=jnp.int32),
+    )
+    change = phx.stochastic.jump_measure_change(
+        events,
+        jnp.asarray([0.0, 1.0]),
+        jnp.ones((1, 1, 1)),
+        jnp.ones((1, 1, 1)),
+    )
+
+    assert not change.valid[0]
+    assert jnp.isneginf(change.log_likelihood_ratio[0])

@@ -46,12 +46,17 @@ def case(fibers: int, nodes: int, angular: int, axial: int) -> dict[str, object]
     start = time.perf_counter()
     first, ok = observe(prior_source, prior_conductor, snapshot)
     first.lead_voltage_V.block_until_ready()
+    all_ok = bool(ok)
+    failure_count = 0 if all_ok else 1
     compile_and_first_ms = 1000 * (time.perf_counter() - start)
     repetitions = 20
     start = time.perf_counter()
     for _ in range(repetitions):
         result, ok = observe(prior_source, prior_conductor, snapshot)
         result.lead_voltage_V.block_until_ready()
+        current_ok = bool(ok)
+        all_ok = all_ok and current_ok
+        failure_count += int(not current_ok)
     runtime_ms = 1000 * (time.perf_counter() - start) / repetitions
     return {
         "fiber_count": fibers,
@@ -67,7 +72,8 @@ def case(fibers: int, nodes: int, angular: int, axial: int) -> dict[str, object]
         "lead_field_storage_bytes": conductor.contact_lead_field_ohm.nbytes,
         "radial_transfer_storage_bytes": conductor.radial_transfer_ohm_m.nbytes,
         "dtype": str(conductor.contact_lead_field_ohm.dtype),
-        "successful": bool(ok),
+        "successful": all_ok,
+        "failure_count": failure_count,
         "claim_scope": "manufactured fixed straight fibers; preparation separate from observation, no anatomy claim",
     }
 
@@ -87,8 +93,10 @@ def main():
         "case": result,
         "all_successful": result["successful"],
     }
-    args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    print(json.dumps(payload, indent=2, sort_keys=True))
+    from benchmarks._io import write_json_atomic
+
+    write_json_atomic(args.output, payload)
+    print(json.dumps(payload, allow_nan=False, indent=2, sort_keys=True))
     if not payload["all_successful"]:
         raise SystemExit(1)
 

@@ -228,7 +228,8 @@ def _cardiac_transfer(
         source_space,
         target_space,
         primal,
-        adjoint_operator=adjoint,
+        dual_pullback_operator=adjoint,
+        hilbert_adjoint_operator=adjoint,
         properties=phx.discretization.TransferProperties(
             constant_preserving=True,
             conservative=True,

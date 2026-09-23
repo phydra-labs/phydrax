@@ -198,8 +198,13 @@ def evaluate_quantum_hall_vmc_observables(
     ):
         raise ValueError("samples must end in the sphere configuration shape.")
     flat = values.reshape((-1,) + prepared.operator.configuration_shape)
+    coordinate_valid = (
+        jnp.all(jnp.isfinite(flat), axis=(-2, -1))
+        & jnp.all(flat[..., 0] >= 0.0, axis=-1)
+        & jnp.all(flat[..., 0] <= jnp.pi, axis=-1)
+    )
     local = evaluate_local_operator(model, prepared.operator, flat)
-    valid = local.successful
+    valid = local.successful & coordinate_valid
     safe_energy = jnp.where(valid, local.value, 0.0)
     count = jnp.sum(valid, dtype=jnp.int32)
     denominator = jnp.maximum(count, 1)
@@ -219,16 +224,24 @@ def evaluate_quantum_hall_vmc_observables(
     target_amplitudes = jax.vmap(laughlin)(flat)
     ratio = jax.vmap(_complex_ratio)(target_amplitudes, source_amplitudes)
     ratio_valid = (
-        source_amplitudes.nonzero & source_amplitudes.valid & target_amplitudes.valid
+        source_amplitudes.nonzero
+        & source_amplitudes.valid
+        & target_amplitudes.valid
+        & coordinate_valid
+        & jnp.isfinite(ratio)
     )
-    ratio_count = jnp.maximum(jnp.sum(ratio_valid), 1)
+    raw_ratio_count = jnp.sum(ratio_valid)
+    ratio_denominator = jnp.maximum(raw_ratio_count, 1)
     safe_ratio = jnp.where(ratio_valid, ratio, 0.0j)
-    ratio_mean = jnp.sum(safe_ratio) / ratio_count
-    ratio_norm = jnp.sum(jnp.where(ratio_valid, jnp.abs(ratio) ** 2, 0.0)) / ratio_count
+    ratio_mean = jnp.sum(safe_ratio) / ratio_denominator
+    ratio_norm = (
+        jnp.sum(jnp.where(ratio_valid, jnp.abs(ratio) ** 2, 0.0)) / ratio_denominator
+    )
     overlap = jnp.abs(ratio_mean) / jnp.sqrt(
         jnp.maximum(ratio_norm, jnp.finfo(ratio_norm.dtype).tiny)
     )
-    theta, phi = flat[..., 0], flat[..., 1]
+    safe_flat = jnp.where(coordinate_valid[:, None, None], flat, 0.0)
+    theta, phi = safe_flat[..., 0], safe_flat[..., 1]
     sine = jnp.sin(theta)
     cartesian = jnp.stack(
         (sine * jnp.cos(phi), sine * jnp.sin(phi), jnp.cos(theta)), axis=-1
@@ -239,6 +252,7 @@ def evaluate_quantum_hall_vmc_observables(
         k=1,
     )
     pair_angles = jnp.arccos(jnp.clip(cosine[:, pair_mask], -1.0, 1.0)).reshape((-1,))
+    pair_count = pair_mask.sum()
     bins = int(pair_angle_bins)
     if bins < 2:
         raise ValueError("pair_angle_bins must be at least two.")
@@ -246,13 +260,17 @@ def evaluate_quantum_hall_vmc_observables(
     indices = jnp.clip(
         jnp.searchsorted(edges, pair_angles, side="right") - 1, 0, bins - 1
     )
-    histogram = jnp.zeros((bins,), dtype=jnp.float64).at[indices].add(1.0)
+    pair_weights = jnp.repeat(coordinate_valid.astype(jnp.float64), pair_count)
+    histogram = jnp.zeros((bins,), dtype=jnp.float64).at[indices].add(pair_weights)
     probabilities = histogram / jnp.maximum(jnp.sum(histogram), 1.0)
     successful = (
         (count > 1)
-        & (ratio_count > 0)
+        & (raw_ratio_count > 0)
+        & (jnp.sum(pair_weights) > 0)
         & jnp.isfinite(energy_mean)
+        & jnp.isfinite(energy_error)
         & jnp.isfinite(overlap)
+        & jnp.all(jnp.isfinite(probabilities))
     )
     result_id = canonical_fingerprint(
         {

@@ -652,8 +652,13 @@ def insert_reactive_particles_with_growth(
         args=args,
         available_mask=available,
     )
-    occupied = current_epoch.ever_occupied.at[insertion.owner_slots].set(
-        insertion.inserted
+    candidate_occupied = current_epoch.ever_occupied.at[insertion.owner_slots].set(
+        current_epoch.ever_occupied[insertion.owner_slots] | insertion.inserted
+    )
+    occupied = jnp.where(
+        insertion.successful,
+        candidate_occupied,
+        current_epoch.ever_occupied,
     )
     accepted_epoch = ParticleExecutionEpoch(
         current_epoch.dynamics,
@@ -814,13 +819,21 @@ def fragment_particle_with_growth(
         jnp.asarray(True),
         args=args,
     )
-    successful = (
-        fragmentation.successful & body_update.successful & jnp.all(valid | ~valid)
-    )
-    occupied = current_epoch.ever_occupied.at[child_indices].set(
+    successful = fragmentation.successful & body_update.successful
+    candidate_occupied = current_epoch.ever_occupied.at[child_indices].set(
         jnp.where(valid, True, current_epoch.ever_occupied[child_indices])
     )
-    retired = current_epoch.retired.at[source].set(True)
+    candidate_retired = current_epoch.retired.at[source].set(True)
+    occupied = jnp.where(
+        successful,
+        candidate_occupied,
+        current_epoch.ever_occupied,
+    )
+    retired = jnp.where(
+        successful,
+        candidate_retired,
+        current_epoch.retired,
+    )
     accepted_epoch = ParticleExecutionEpoch(
         current_epoch.dynamics,
         tree_where(successful, body_update.accepted_state, current_epoch.state),

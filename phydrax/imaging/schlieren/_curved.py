@@ -39,18 +39,33 @@ class CurvedSchlierenPlan:
     rays: PreparedGradedIndexRay
     image_support: ImagePlaneSupport
     transverse_basis: np.ndarray
+    transverse_basis_frame_id: str
     deflection_quantity: QuantitySpec
     plan_id: str = field(init=False)
 
     def __post_init__(self) -> None:
         basis = np.array(self.transverse_basis, dtype=np.float64, copy=True)
-        if basis.shape != (2, 3):
-            raise ValueError("transverse_basis must have shape (2, 3).")
+        if basis.shape != (2, 3) or not np.all(np.isfinite(basis)):
+            raise ValueError("transverse_basis must contain finite shape (2, 3).")
+        gram = basis @ basis.T
+        tolerance = 128.0 * np.finfo(basis.dtype).eps
+        if not np.allclose(gram, np.eye(2), atol=tolerance, rtol=0.0):
+            raise ValueError("transverse_basis must be orthonormal.")
+        frame = str(self.transverse_basis_frame_id).strip()
+        if (
+            not frame
+            or frame != self.transverse_basis_frame_id
+            or frame != self.rays.field.coordinate_contract.reference_frame
+        ):
+            raise ValueError(
+                "transverse_basis_frame_id must equal the refractive-index coordinate frame."
+            )
         if self.deflection_quantity.unit != RADIAN:
             raise ValueError("deflection_quantity must use radians.")
         if not isinstance(self.image_support, ImagePlaneSupport):
             raise TypeError("image_support must be ImagePlaneSupport.")
         basis.setflags(write=False)
+        object.__setattr__(self, "transverse_basis_frame_id", frame)
         object.__setattr__(self, "transverse_basis", basis)
         object.__setattr__(
             self,
@@ -61,6 +76,7 @@ class CurvedSchlierenPlan:
                     "rays": self.rays.plan_id,
                     "image": self.image_support.support_id,
                     "basis": array_tree_fingerprint(basis),
+                    "basis_frame": frame,
                     "quantity": self.deflection_quantity.quantity_id,
                 }
             ),

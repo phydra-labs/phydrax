@@ -225,6 +225,7 @@ class SurfaceExportPolicy:
     target_length_unit: UnitDefinition
     allow_lossy: bool = False
     binary: bool = False
+    maximum_file_bytes: int = 256 * 1024 * 1024
     maximum_data_bytes: int = 512 * 1024 * 1024
     maximum_vertices: int = 10_000_000
     maximum_cells: int = 20_000_000
@@ -233,6 +234,11 @@ class SurfaceExportPolicy:
     def __post_init__(self):
         object.__setattr__(
             self, "target_length_unit", _length_unit(self.target_length_unit)
+        )
+        object.__setattr__(
+            self,
+            "maximum_file_bytes",
+            _positive_capacity("maximum_file_bytes", self.maximum_file_bytes),
         )
         object.__setattr__(
             self,
@@ -599,6 +605,7 @@ def _import_meshio_surface(
     file_format: SurfaceFileFormat,
     policy: SurfaceImportPolicy,
     artifact_digest: str,
+    source_identity: str,
     /,
 ) -> SurfaceImportResult:
     meshio = _require_module("meshio", f"{file_format.value} surface import")
@@ -674,7 +681,7 @@ def _import_meshio_surface(
         cell_count,
         policy.maximum_fields,
     )
-    source_id = str(source.resolve()) if source_marker is None else source_marker
+    source_id = source_identity if source_marker is None else source_marker
     source_revision = artifact_digest if revision_marker is None else revision_marker
     coordinate_system = "cartesian" if coordinates_marker is None else coordinates_marker
     scale = float(conversion_factor(policy.source_length_unit, METER))
@@ -709,7 +716,7 @@ def _import_meshio_surface(
         ),
     )
     orientation_changed = model.orientation_repair is not None and bool(
-        np.any(np.asarray(model.orientation_repair.flipped))
+        np.any(np.asarray(model.orientation_repair.orientation_signs) < 0)
     )
     report = SurfaceInteropReport(
         operation="import",
@@ -739,6 +746,7 @@ def _import_cad_surface(
     file_format: SurfaceFileFormat,
     policy: SurfaceImportPolicy,
     artifact_digest: str,
+    source_identity: str,
     /,
 ) -> SurfaceImportResult:
     _require_module("OCP", f"{file_format.value} direct BRep import")
@@ -747,6 +755,7 @@ def _import_cad_surface(
     cad_model = import_brep(
         source,
         coordinate_contract=SpatialCoordinateContract(policy.source_length_unit),
+        source_id=source_identity,
         linear_deflection=policy.cad_linear_deflection_in_source_units,
         angular_deflection=policy.cad_angular_deflection,
         trim_samples_per_edge=policy.cad_trim_samples_per_edge,
@@ -792,7 +801,7 @@ def _import_cad_surface(
         ),
     )
     orientation_changed = model.orientation_repair is not None and bool(
-        np.any(np.asarray(model.orientation_repair.flipped))
+        np.any(np.asarray(model.orientation_repair.orientation_signs) < 0)
     )
     report = SurfaceInteropReport(
         operation="import",
@@ -854,12 +863,14 @@ def import_surface(
                 format_,
                 policy,
                 resource.manifest.content_sha256,
+                str(source),
             )
         return _import_meshio_surface(
             staged,
             format_,
             policy,
             resource.manifest.content_sha256,
+            str(source),
         )
 
 

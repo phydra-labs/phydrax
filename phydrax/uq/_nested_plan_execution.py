@@ -750,10 +750,8 @@ def _propose_nested(
                     break
 
     if plan.proposal.ellipsoid and not evaluator.exhausted and not evaluator.invalid:
-        counts["ellipsoid_attempts"] = 1
-        if not bool(jnp.any(proposal_state.ellipsoid_active)):
-            failed = True
-        else:
+        if bool(jnp.any(proposal_state.ellipsoid_active)):
+            counts["ellipsoid_attempts"] = 1
             bounds = EllipsoidalNestedBounds(
                 centers=proposal_state.ellipsoid_centers,
                 factors=proposal_state.ellipsoid_factors,
@@ -807,10 +805,8 @@ def _propose_nested(
                     accepted_states.append((position, log_prior, log_likelihood))
 
     if plan.proposal.learned_flow and not evaluator.exhausted and not evaluator.invalid:
-        counts["flow_attempts"] = 1
-        if not bool(proposal_state.flow_active):
-            failed = True
-        else:
+        if bool(proposal_state.flow_active):
+            counts["flow_attempts"] = 1
             flow_key = derive_key(
                 current_state.root_key,
                 _PREPARED_FLOW,
@@ -1662,7 +1658,24 @@ def execute_prepared_nested(
             and int(state.dynamic_batches) < capacity.max_dynamic_batches
         ):
             free = capacity.max_live - int(jnp.sum(state.live_mask))
-            additions = min(plan.dynamic.additional_live_per_batch, free)
+            dead_log_evidence = jsp.special.logsumexp(
+                state.dead_log_weights[: int(state.dead_count)]
+            )
+            remaining_log_evidence = state.log_prior_volume + jnp.max(
+                jnp.where(state.live_mask, state.live_log_likelihood, -jnp.inf)
+            )
+            evidence_importance = jax.nn.sigmoid(
+                remaining_log_evidence - dead_log_evidence
+            )
+            posterior_importance = 1.0 - evidence_importance
+            priority = plan.dynamic.allocation_priority(
+                posterior_importance,
+                evidence_importance,
+            )
+            additions = min(
+                int(jnp.ceil(plan.dynamic.additional_live_per_batch * priority)),
+                free,
+            )
             added = 0
             for local in range(additions):
                 extra = propose(state, threshold, excluded_slot=-1, purpose=100 + local)

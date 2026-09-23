@@ -75,7 +75,7 @@ def _batch_ndim(field: DomainFunction, args: list[Any], /) -> int:
         factor = field.domain.factor(label)
         factor = getattr(factor, "base", factor)
         if isinstance(value, tuple):
-            ranks.extend(jnp.asarray(item).ndim for item in value)
+            ranks.append(sum(jnp.asarray(item).ndim for item in value))
             continue
         rank = jnp.asarray(value).ndim
         if isinstance(factor, AbstractGeometry):

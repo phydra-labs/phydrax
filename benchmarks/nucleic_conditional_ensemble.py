@@ -93,7 +93,7 @@ def _json_value(value):
     if isinstance(value, np.floating):
         value = float(value)
     if isinstance(value, float) and not math.isfinite(value):
-        return None
+        raise FloatingPointError("conditional-ensemble evidence must be finite")
     return value
 
 
@@ -344,7 +344,7 @@ def run(campaign_manifest: Path, *, max_steps: int, gradient_tolerance: float) -
     )
     representative_index = int(comparison.best_support_index)
     if representative_index < 0:
-        representative_index = 0
+        raise RuntimeError("no ensemble support passed independent validity gates")
     representative_fit = support_fits[representative_index]
     representative_model = support_models[representative_index]
 
@@ -556,16 +556,27 @@ def main() -> None:
     parser.add_argument("--gradient-tolerance", type=float, default=1e-6)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    result = run(
-        args.campaign_manifest,
-        max_steps=args.max_steps,
-        gradient_tolerance=args.gradient_tolerance,
-    )
+    try:
+        result = run(
+            args.campaign_manifest,
+            max_steps=args.max_steps,
+            gradient_tolerance=args.gradient_tolerance,
+        )
+    except (FloatingPointError, RuntimeError, ValueError) as error:
+        result = {
+            "status": "failed",
+            "error": f"{type(error).__name__}: {error}",
+            "assessment": {"execution_valid": False},
+        }
     encoded = json.dumps(result, indent=2, allow_nan=False)
     if args.output is None:
         print(encoded)
     else:
-        args.output.write_text(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(args.output, result)
+    if not result["assessment"]["execution_valid"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

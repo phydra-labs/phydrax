@@ -11,6 +11,7 @@ from collections.abc import Callable, Sequence
 from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
+import numpy as np
 from jaxtyping import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -26,7 +27,12 @@ from ._result import (
     ElectronicGroundStatePropertyEvaluation,
     ElectronicPeriodicEvaluation,
 )
-from ._task import ElectronicProperty, ElectronicTaskKind
+from ._task import (
+    ElectronicProperty,
+    ElectronicTaskKind,
+    ExcitedManifoldTaskPlan,
+    LinearResponseTaskPlan,
+)
 
 
 if TYPE_CHECKING:
@@ -295,6 +301,18 @@ class ElectronicProviderCapabilities(StrictModule, NonTrainableState):
             raise TypeError("embedding must be ElectronicEmbeddingCapabilities or None.")
         if not isinstance(execution_, ElectronicExecutionCapabilities):
             raise TypeError("execution must be ElectronicExecutionCapabilities or None.")
+        if any(
+            (
+                embedding_.point_charges,
+                embedding_.point_charge_forces,
+                embedding_.permanent_multipoles,
+                embedding_.polarizable,
+                embedding_.stress,
+            )
+        ):
+            raise ValueError(
+                "Electronic providers cannot advertise embedding contexts until a prepared implementation supplies evaluate_context."
+            )
         self.theory = theory
         self.geometry = geometry
         self.observables = observables
@@ -333,6 +351,19 @@ class ElectronicProviderCapabilities(StrictModule, NonTrainableState):
         execution: ElectronicExecutionKind = "host",
         concurrency: ElectronicConcurrencyKind = "serial",
     ) -> ElectronicProviderCapabilities:
+        derivative_orders = tuple(
+            sorted(
+                {
+                    order
+                    for property_, order in (
+                        (ElectronicProperty.ENERGY, 0),
+                        (ElectronicProperty.FORCES, 1),
+                        (ElectronicProperty.HESSIAN, 2),
+                    )
+                    if property_ in properties
+                }
+            )
+        )
         return cls(
             ElectronicTheoryCapabilities(
                 families,
@@ -342,7 +373,9 @@ class ElectronicProviderCapabilities(StrictModule, NonTrainableState):
             ),
             ElectronicGeometryCapabilities(finite=True),
             ElectronicObservableCapabilities(
-                (ElectronicTaskKind.GROUND_STATE,), properties
+                (ElectronicTaskKind.GROUND_STATE,),
+                properties,
+                derivative_orders=derivative_orders,
             ),
             embedding=ElectronicEmbeddingCapabilities(
                 point_charges=point_charges,
@@ -372,6 +405,10 @@ class ElectronicProviderCapabilities(StrictModule, NonTrainableState):
             )
         if not periodic_rank and not self.geometry.finite:
             raise ElectronicCapabilityError("Provider does not support finite geometry.")
+        if periodic_rank in (1, 2) and not self.geometry.low_dimensional_coulomb:
+            raise ElectronicCapabilityError(
+                "Provider lacks low-dimensional Coulomb support."
+            )
         method = calculation.model_chemistry.method
         if method.family not in self.theory.families:
             raise ElectronicCapabilityError(
@@ -380,6 +417,13 @@ class ElectronicProviderCapabilities(StrictModule, NonTrainableState):
         if method.reference not in self.theory.references:
             raise ElectronicCapabilityError(
                 f"Provider does not support reference kind {method.reference.value!r}."
+            )
+        if (
+            method.reference is ElectronicReferenceKind.NONCOLLINEAR
+            and not self.theory.spinor
+        ):
+            raise ElectronicCapabilityError(
+                "Noncollinear references require provider spinor support."
             )
         if calculation.task.task_kind not in self.observables.tasks:
             raise ElectronicCapabilityError(
@@ -394,6 +438,43 @@ class ElectronicProviderCapabilities(StrictModule, NonTrainableState):
             names = ", ".join(value.value for value in missing)
             raise ElectronicCapabilityError(
                 f"Provider lacks requested properties: {names}."
+            )
+        required_orders = {
+            order
+            for property_, order in (
+                (ElectronicProperty.ENERGY, 0),
+                (ElectronicProperty.FORCES, 1),
+                (ElectronicProperty.HESSIAN, 2),
+            )
+            if property_ in calculation.task.properties
+        }
+        if not required_orders.issubset(self.observables.derivative_orders):
+            raise ElectronicCapabilityError(
+                "Provider lacks the derivative orders required by the task."
+            )
+        if (
+            ElectronicProperty.STRESS in calculation.task.properties
+            and not self.geometry.variable_cell
+        ):
+            raise ElectronicCapabilityError(
+                "Stress calculations require variable-cell provider support."
+            )
+        if isinstance(calculation.task, LinearResponseTaskPlan):
+            if calculation.task.gauge not in self.observables.gauges:
+                raise ElectronicCapabilityError(
+                    "Provider does not support the requested response gauge."
+                )
+            if calculation.task.response_order not in self.observables.derivative_orders:
+                raise ElectronicCapabilityError(
+                    "Provider does not support the requested response order."
+                )
+        if (
+            isinstance(calculation.task, ExcitedManifoldTaskPlan)
+            and calculation.task.symmetry_sector is not None
+            and not self.theory.spatial_symmetry
+        ):
+            raise ElectronicCapabilityError(
+                "Provider does not support spatial-symmetry sectors."
             )
         state = calculation.state
         if state.total_charge != 0 and not self.theory.total_charge:
@@ -512,18 +593,41 @@ class CallablePreparedElectronicCalculation(AbstractPreparedElectronicCalculatio
         provider_id: str,
         /,
     ):
+        from ._calculation import ElectronicCalculationPlan
+
+        if not isinstance(calculation, ElectronicCalculationPlan):
+            raise TypeError("calculation must be ElectronicCalculationPlan.")
         if not isinstance(capabilities, ElectronicProviderCapabilities):
             raise TypeError("capabilities must be ElectronicProviderCapabilities.")
+        if not callable(evaluator):
+            raise TypeError("evaluator must be callable.")
+        identifier = str(provider_id).strip()
+        if not identifier:
+            raise ValueError("provider_id must be non-empty.")
+        capabilities.require(calculation)
+        embedding = capabilities.embedding
+        if any(
+            (
+                embedding.point_charges,
+                embedding.point_charge_forces,
+                embedding.permanent_multipoles,
+                embedding.polarizable,
+                embedding.stress,
+            )
+        ):
+            raise ElectronicCapabilityError(
+                "Callable prepared calculations cannot advertise context capabilities they do not implement."
+            )
         self.calculation = calculation
         self.capabilities = capabilities
         self.evaluator = evaluator
-        self.provider_id = provider_id
+        self.provider_id = identifier
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-callable-electronic-calculation",
                 "calculation": calculation.calculation_id,
                 "capabilities": capabilities.capabilities_id,
-                "provider": provider_id,
+                "provider": identifier,
             }
         )
 
@@ -533,6 +637,11 @@ class CallablePreparedElectronicCalculation(AbstractPreparedElectronicCalculatio
         cell_vectors: ArrayLike | None = None,
         /,
     ) -> ElectronicEvaluation:
+        from ._calculation import electronic_geometry_id
+
+        expected_geometry = electronic_geometry_id(
+            self.calculation.system, positions, cell_vectors
+        )
         result = self.evaluator(self.calculation, positions, cell_vectors)
         if not isinstance(
             result,
@@ -545,10 +654,33 @@ class CallablePreparedElectronicCalculation(AbstractPreparedElectronicCalculatio
             ),
         ):
             raise TypeError("Electronic evaluator returned an unsupported result type.")
-        if result.header.provider_id != self.provider_id:
-            raise ValueError("Electronic evaluator changed provider identity.")
-        if result.header.task_id != self.calculation.task.task_id:
-            raise ValueError("Electronic evaluator changed task identity.")
+        header = result.header
+        expected = {
+            "provider_id": self.provider_id,
+            "system_id": self.calculation.system.system_id,
+            "geometry_id": expected_geometry,
+            "state_id": self.calculation.state.prepared_id,
+            "model_chemistry_id": self.calculation.model_chemistry.model_chemistry_id,
+            "task_id": self.calculation.task.task_id,
+        }
+        if any(getattr(header, name) != value for name, value in expected.items()):
+            raise ValueError(
+                "Electronic evaluator changed a prepared calculation identity."
+            )
+        if (
+            header.units.unit_system_id != self.calculation.system.units.unit_system_id
+            or not np.array_equal(
+                np.asarray(header.stable_particle_ids),
+                np.asarray(self.calculation.system.particle_ids),
+            )
+            or not np.array_equal(
+                np.asarray(header.active_mask),
+                np.asarray(self.calculation.system.active_mask),
+            )
+        ):
+            raise ValueError(
+                "Electronic evaluator changed system units or particle support."
+            )
         return result
 
 

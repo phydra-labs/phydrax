@@ -82,13 +82,22 @@ def prepare_production_resource_forecast(
         budget, ProductionResourceBudget
     ):
         raise TypeError("Resource forecast requires worksets and budget.")
+    multiplier = float(ad_multiplier)
+    if not np.isfinite(multiplier) or multiplier < 0.0:
+        raise ValueError("ad_multiplier must be finite and nonnegative.")
+    if (
+        isinstance(output_snapshots, bool)
+        or not isinstance(output_snapshots, int)
+        or output_snapshots < 0
+    ):
+        raise ValueError("output_snapshots must be a nonnegative integer.")
     state_bytes = np.asarray(state).nbytes
     workset_bytes = sum(bucket.resident_bytes for bucket in worksets.buckets)
     compile_units = len(worksets.buckets) * len(worksets.operator_program.nodes)
     host_bytes = state_bytes + workset_bytes
     device_bytes = 2 * state_bytes + workset_bytes
-    ad_bytes = int(float(ad_multiplier) * device_bytes)
-    output_bytes = int(output_snapshots) * state_bytes
+    ad_bytes = int(multiplier * device_bytes)
+    output_bytes = output_snapshots * state_bytes
     admitted = bool(
         compile_units <= budget.maximum_compile_units
         and host_bytes <= budget.maximum_host_bytes

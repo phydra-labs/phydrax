@@ -88,6 +88,21 @@ class SDPBJobPlan:
     def __post_init__(self) -> None:
         if not isinstance(self.provider, SDPBProvider):
             raise TypeError("provider must be SDPBProvider.")
+        for name, value in (
+            ("precision_bits", self.precision_bits),
+            ("maximum_iterations", self.maximum_iterations),
+            ("maximum_output_bytes", self.maximum_output_bytes),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an integer.")
+        for name, value in (
+            ("find_primal_feasible", self.find_primal_feasible),
+            ("find_dual_feasible", self.find_dual_feasible),
+        ):
+            if type(value) is not bool:
+                raise TypeError(f"{name} must be a bool.")
+        if isinstance(self.timeout_seconds, bool):
+            raise TypeError("timeout_seconds must be a real duration.")
         if self.precision_bits < 64 or self.maximum_iterations < 1:
             raise ValueError("SDPB precision and iteration limits are invalid.")
         if (

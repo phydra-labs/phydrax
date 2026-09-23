@@ -86,10 +86,14 @@ def main() -> None:
     target = result.target.mesh
     corners = np.asarray(target.coordinates)[np.asarray(target.blocks[0].vertices)]
     measures = np.linalg.det(corners[:, 1:] - corners[:, :1]) / math.factorial(dim)
-    assert np.all(measures > 0), "Adaptation inverted a simplex"
-    assert np.isclose(measures.sum(), 1, atol=1e-12), "Adaptation changed domain measure"
-    assert len(corners) > len(cells), "Requested finer metric did not refine the carrier"
-    assert result.target.audit.passed and result.lineage_status == "unknown"
+    if not np.all(measures > 0):
+        raise RuntimeError("Adaptation inverted a simplex")
+    if not np.isclose(measures.sum(), 1, atol=1e-12):
+        raise RuntimeError("Adaptation changed domain measure")
+    if len(corners) <= len(cells):
+        raise RuntimeError("Requested finer metric did not refine the carrier")
+    if not result.target.audit.passed or result.lineage_status != "unknown":
+        raise RuntimeError("Omega_h audit or lineage evidence failed")
     owned = [
         sum(owner == part.rank for owner in part.cell_owner_ranks)
         for part in result.partitions
@@ -98,10 +102,12 @@ def main() -> None:
         sum(owner != part.rank for owner in part.cell_owner_ranks)
         for part in result.partitions
     ]
-    assert sum(owned) == len(corners) and all(value > 0 for value in owned)
-    if arguments.ranks > 1:
-        assert all(value > 0 for value in ghosts), "No real cross-rank ghost residence"
-    assert np.all(np.linalg.eigvalsh(result.metric.values) > 0)
+    if sum(owned) != len(corners) or not all(value > 0 for value in owned):
+        raise RuntimeError("Omega_h ownership evidence is incomplete")
+    if arguments.ranks > 1 and not all(value > 0 for value in ghosts):
+        raise RuntimeError("No real cross-rank ghost residence")
+    if not np.all(np.linalg.eigvalsh(result.metric.values) > 0):
+        raise RuntimeError("Omega_h returned a non-positive metric")
     print(
         json.dumps(
             {

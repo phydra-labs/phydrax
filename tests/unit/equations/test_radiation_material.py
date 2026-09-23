@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -89,3 +90,30 @@ def test_radiation_matter_exchange_is_exactly_conservative():
         rtol=1.0e-12,
     )
     assert bool(result.successful)
+
+
+@pytest.mark.parametrize(
+    ("temperature_axis", "pressure_axis"),
+    (
+        (jnp.asarray((200.0, jnp.nan)), jnp.asarray((1.0e4, 1.0e6))),
+        (jnp.asarray((200.0, 1000.0)), jnp.asarray((1.0e4, jnp.inf))),
+    ),
+)
+def test_radiation_coefficient_table_rejects_nonfinite_axes(
+    temperature_axis,
+    pressure_axis,
+):
+    grid = phx.equations.SpectralFrequencyGrid(
+        jnp.asarray((1.0e12, 2.0e12)),
+        jnp.asarray((0.5e12, 0.5e12)),
+    )
+
+    with pytest.raises(ValueError, match="table is invalid"):
+        phx.equations.RadiationCoefficientTable(
+            temperature_axis,
+            pressure_axis,
+            grid,
+            jnp.ones((2, 2, 2)),
+            phx.equations.RadiationCoefficientRole.ABSORPTION,
+            provenance="invalid-axis-regression",
+        )

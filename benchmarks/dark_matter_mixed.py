@@ -206,12 +206,24 @@ def main() -> None:
                 )
             ),
         },
+        "passed": bool(first_result.successful)
+        and bool(result.successful)
+        and bool(jnp.all(diagnostics.time_level_consistent))
+        and bool(
+            jnp.all(
+                diagnostics.gas_density_positive & diagnostics.gas_pressure_positive
+            )
+        ),
     }
-    encoded = json.dumps(payload, indent=2)
+    encoded = json.dumps(payload, allow_nan=False, indent=2)
     if arguments.output is None:
         print(encoded)
     else:
-        arguments.output.write_text(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
+    if not payload["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

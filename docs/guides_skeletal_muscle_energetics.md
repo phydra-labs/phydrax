@@ -115,13 +115,14 @@ source-compatible vessel anatomy; LTNE/discrete vascular networks and temperatur
 feedback into cells/mechanics remain separately gated. The field owns no force
 and makes no distributed-execution claim.
 
-Run:
+Run from a repository checkout. The thermal example imports a repository tool helper,
+so keep the repository root on its import path:
 
 ```text
 python examples/skeletal_muscle_energetics.py
 python tools/skeletal_muscle_energetics_qualification.py
 python benchmarks/skeletal_muscle_energetics.py
-python examples/skeletal_muscle_thermal.py
+PYTHONPATH=. python examples/skeletal_muscle_thermal.py
 python tools/skeletal_muscle_thermal_qualification.py --smoke
 python benchmarks/skeletal_muscle_thermal.py --smoke
 ```

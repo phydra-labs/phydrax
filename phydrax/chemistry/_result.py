@@ -106,15 +106,37 @@ class ElectronicConvergenceEvidence(StrictModule, NonTrainableState):
         density_residual: ArrayLike = jnp.nan,
         message: str = "not-reported",
     ):
-        converged_ = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
-        iterations_ = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
-        energy_ = jnp.asarray(energy_residual).reshape(())
-        density_ = jnp.asarray(density_residual, dtype=energy_.dtype).reshape(())
+        converged_host = np.asarray(converged)
+        iterations_host = np.asarray(iterations)
+        energy_host = np.asarray(energy_residual)
+        density_host = np.asarray(density_residual)
+        if converged_host.shape != ():
+            raise ValueError("converged must be scalar.")
+        if (
+            iterations_host.shape != ()
+            or iterations_host.dtype.kind not in "iu"
+            or iterations_host.dtype.kind == "b"
+            or int(iterations_host) < 0
+        ):
+            raise ValueError("Electronic iteration count must be a non-negative integer.")
+        if energy_host.shape != () or density_host.shape != ():
+            raise ValueError("Electronic convergence residuals must be scalar.")
+        if bool(converged_host) and (
+            not np.isfinite(energy_host)
+            or float(energy_host) < 0.0
+            or not np.isfinite(density_host)
+            or float(density_host) < 0.0
+        ):
+            raise ValueError(
+                "Converged electronic evidence requires finite non-negative residuals."
+            )
+        converged_ = jnp.asarray(converged_host, dtype=jnp.bool_).reshape(())
+        iterations_ = jnp.asarray(iterations_host, dtype=jnp.int32).reshape(())
+        energy_ = jnp.asarray(energy_host).reshape(())
+        density_ = jnp.asarray(density_host, dtype=energy_.dtype).reshape(())
         message_ = str(message).strip()
         if not message_:
             raise ValueError("Convergence evidence message must be non-empty.")
-        if int(iterations_) < 0:
-            raise ValueError("Electronic iteration count must be non-negative.")
         self.converged = converged_
         self.iterations = iterations_
         self.energy_residual = energy_
@@ -135,6 +157,16 @@ class ElectronicConvergenceEvidence(StrictModule, NonTrainableState):
             }
         )
 
+    @property
+    def valid(self) -> Array:
+        residuals_valid = (
+            jnp.isfinite(self.energy_residual)
+            & (self.energy_residual >= 0.0)
+            & jnp.isfinite(self.density_residual)
+            & (self.density_residual >= 0.0)
+        )
+        return ~self.converged | residuals_valid
+
 
 class ElectronicWorkEvidence(StrictModule, NonTrainableState):
     """Exact provider-call accounting for one returned evaluation."""
@@ -153,16 +185,24 @@ class ElectronicWorkEvidence(StrictModule, NonTrainableState):
         hessian_evaluations: int = 0,
         property_evaluations: int = 0,
     ):
-        values = tuple(
-            (
-                energy_evaluations,
-                force_evaluations,
-                hessian_evaluations,
-                property_evaluations,
-            )
+        values = (
+            energy_evaluations,
+            force_evaluations,
+            hessian_evaluations,
+            property_evaluations,
         )
-        if any(value < 0 for value in values):
-            raise ValueError("Electronic work counts must be non-negative.")
+        maximum = int(np.iinfo(np.int32).max)
+        if any(
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))
+            or int(value) < 0
+            or int(value) > maximum
+            for value in values
+        ):
+            raise ValueError(
+                "Electronic work counts must be exact non-negative int32 values."
+            )
+        values = tuple(int(value) for value in values)
         arrays = tuple(jnp.asarray(value, dtype=jnp.int32) for value in values)
         (
             self.energy_evaluations,
@@ -289,8 +329,10 @@ class ElectronicEvaluationHeader(StrictModule, NonTrainableState):
 
     @property
     def successful(self) -> Array:
-        return self.convergence.converged & (
-            self.status == int(ElectronicCalculationStatus.SUCCESS)
+        return (
+            self.convergence.valid
+            & self.convergence.converged
+            & (self.status == int(ElectronicCalculationStatus.SUCCESS))
         )
 
 

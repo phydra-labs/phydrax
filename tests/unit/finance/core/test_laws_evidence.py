@@ -69,8 +69,7 @@ def test_scenario_masks_weights_and_padding_are_observable_contracts():
         jnp.asarray((0.6, 0.4, 0.0)),
         jnp.asarray((0.0, 1.0, 0.0)),
         jnp.asarray(((True, True, False), (True, False, False), (False, False, False))),
-        "usd-history",
-        "usd-factors",
+        _physical(),
         "history-2026q3",
         "history-2026q3-r17",
     )
@@ -85,8 +84,7 @@ def test_scenario_masks_weights_and_padding_are_observable_contracts():
             scenarios.weights,
             scenarios.times,
             scenarios.valid,
-            scenarios.law_id,
-            scenarios.factor_layout_id,
+            scenarios.law,
             scenarios.semantic_id,
             "history-2026q3-r18",
         )
@@ -103,8 +101,7 @@ def test_scenario_semantic_and_numeric_identities_are_independent():
         weights,
         times,
         valid,
-        "usd-history",
-        "usd-factors",
+        _physical(),
         "history-meaning",
         "numeric-r1",
     )
@@ -113,8 +110,7 @@ def test_scenario_semantic_and_numeric_identities_are_independent():
         weights,
         times,
         valid,
-        "usd-history",
-        "usd-factors",
+        _physical(),
         "history-meaning",
         "numeric-r2",
     )

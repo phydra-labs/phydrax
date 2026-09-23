@@ -3,6 +3,7 @@
 #
 
 import diffrax as dfx
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -171,6 +172,50 @@ def test_neural_galerkin_rate_mismatch_and_certified_backsolve_policy():
         adjoint_policy=phx.solver.NeuralGalerkinAdjointPolicy("certified_backsolve"),
     )
     assert bool(result.successful)
+
+
+def test_neural_galerkin_replay_rejects_changed_frozen_boundaries():
+    _domain, _batch, first_problem = _constant_growth_problem(initial=1.0)
+    _domain, _batch, second_problem = _constant_growth_problem(initial=1.0)
+    first_grid = phx.dynamics.TimeGrid(jnp.asarray([0.0, 0.05]), time_id="epoch-first")
+    second_grid = phx.dynamics.TimeGrid(jnp.asarray([0.05, 0.1]), time_id="epoch-second")
+    plan = phx.solver.NeuralGalerkinEpochPlan(
+        (
+            phx.solver.NeuralGalerkinEpoch(
+                first_problem, first_grid, population_id="population-0"
+            ),
+            phx.solver.NeuralGalerkinEpoch(
+                second_problem, second_grid, population_id="population-1"
+            ),
+        )
+    )
+    solved = phx.solver.solve_neural_galerkin_epochs(
+        plan,
+        solver=dfx.Euler(),
+        dt0=0.01,
+    )
+    replayed = phx.solver.replay_neural_galerkin_epochs(
+        plan,
+        solved.replay_journal,
+        solver=dfx.Euler(),
+        dt0=0.01,
+    )
+    assert jnp.array_equal(
+        replayed.replay_journal.boundary_parameters,
+        solved.replay_journal.boundary_parameters,
+    )
+    changed = eqx.tree_at(
+        lambda value: value.boundary_parameters,
+        solved.replay_journal,
+        solved.replay_journal.boundary_parameters.at[0, 0].add(0.1),
+    )
+    with pytest.raises(ValueError, match="frozen boundary"):
+        phx.solver.replay_neural_galerkin_epochs(
+            plan,
+            changed,
+            solver=dfx.Euler(),
+            dt0=0.01,
+        )
 
 
 def test_neural_field_result_rejects_invalid_indices_and_missing_dense_output():

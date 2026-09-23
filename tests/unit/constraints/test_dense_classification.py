@@ -258,3 +258,16 @@ def test_dense_zero_weight_skips_nonfinite_predictions():
         return row + x[0] + jnp.nan
 
     assert disabled.loss({"u": poisoned}, batch=disabled.observed_batch()) == 0.0
+
+
+def test_dense_active_nonfinite_logits_propagate_to_the_objective():
+    term, _, _, _ = _binary_problem()
+
+    @term.component.domain.Function("data", "x")
+    def poisoned(row, x):
+        del row, x
+        return jnp.nan
+
+    loss = term.loss({"u": poisoned}, batch=term.observed_batch())
+
+    assert jnp.isnan(loss)

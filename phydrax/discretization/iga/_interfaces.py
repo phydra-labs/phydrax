@@ -895,6 +895,7 @@ class MortarInfSupCertificate(StrictModule, NonTrainableState):
 
     interface_certificate: InterfaceCertificate
     crosspoint_plan: MortarCrosspointPlan
+    coupling_id: str = eqx.field(static=True)
     minimum_singular_value: float = eqx.field(static=True)
     required_lower_bound: float = eqx.field(static=True)
     condition_number: float = eqx.field(static=True)
@@ -934,6 +935,12 @@ def certify_mortar_inf_sup(
     return MortarInfSupCertificate(
         interface_certificate,
         crosspoint_plan,
+        canonical_fingerprint(
+            {
+                "kind": "iga-mortar-normalized-coupling",
+                "coupling": array_tree_fingerprint(coupling),
+            }
+        ),
         minimum,
         lower_bound,
         condition,
@@ -987,16 +994,24 @@ class MortarInterfacePlan(StrictModule, NonTrainableState):
         certificate.assert_matches(interface)
         if stability.interface_certificate.certificate_id != certificate.certificate_id:
             raise ValueError("Mortar inf-sup evidence belongs to another interface.")
-        coupling = jnp.asarray(normalized_coupling)
+        coupling = np.asarray(normalized_coupling, dtype=np.float64)
         expected_shape = (
             stability.crosspoint_plan.multiplier_size,
             stability.crosspoint_plan.primal_trace_size,
         )
-        if coupling.shape != expected_shape:
+        if coupling.shape != expected_shape or np.any(~np.isfinite(coupling)):
             raise ValueError("Mortar coupling does not match its crosspoint plan.")
+        coupling_id = canonical_fingerprint(
+            {
+                "kind": "iga-mortar-normalized-coupling",
+                "coupling": array_tree_fingerprint(coupling),
+            }
+        )
+        if coupling_id != stability.coupling_id:
+            raise ValueError("Mortar coupling does not match its inf-sup certificate.")
         self.interface = interface
         self.certificate = certificate
-        self.normalized_coupling = coupling
+        self.normalized_coupling = jnp.asarray(coupling)
         self.stability = stability
         self.plan_id = canonical_fingerprint(
             {
@@ -1004,7 +1019,7 @@ class MortarInterfacePlan(StrictModule, NonTrainableState):
                 "interface": interface.interface_id,
                 "certificate": certificate.certificate_id,
                 "stability": stability.certificate_id,
-                "coupling": array_tree_fingerprint(np.asarray(coupling)),
+                "coupling": array_tree_fingerprint(coupling),
             }
         )
 

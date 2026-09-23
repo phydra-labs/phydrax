@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax.numpy as jnp
 from jaxtyping import Array
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...units import LENGTH, TIME, UnitDefinition
 from ..imaging import DenseDisplacementField2D
 
 
@@ -164,8 +166,60 @@ class PhysicalPIVResult2D(StrictModule, NonTrainableState):
     valid: Array
     source_field_id: str = eqx.field(static=True)
     transform_id: str = eqx.field(static=True)
-    spatial_unit: str = eqx.field(static=True)
-    time_unit: str = eqx.field(static=True)
+    spatial_unit: UnitDefinition = eqx.field(static=True)
+    time_unit: UnitDefinition = eqx.field(static=True)
+    frame_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        positions_xy,
+        displacement_xy,
+        velocity_xy,
+        valid,
+        source_field_id: str,
+        transform_id: str,
+        spatial_unit: UnitDefinition,
+        time_unit: UnitDefinition,
+        frame_id: str,
+        /,
+    ):
+        positions = jnp.asarray(positions_xy)
+        displacement = jnp.asarray(displacement_xy)
+        velocity = jnp.asarray(velocity_xy)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
+        if (
+            positions.ndim < 1
+            or positions.shape[-1] != 2
+            or displacement.shape != positions.shape
+            or velocity.shape != positions.shape
+            or validity.shape != positions.shape[:-1]
+        ):
+            raise ValueError(
+                "Physical PIV arrays must share (..., 2) vector shape and (...) validity."
+            )
+        if (
+            not isinstance(spatial_unit, UnitDefinition)
+            or spatial_unit.dimension != LENGTH
+        ):
+            raise ValueError("spatial_unit must be a length UnitDefinition.")
+        if not isinstance(time_unit, UnitDefinition) or time_unit.dimension != TIME:
+            raise ValueError("time_unit must be a time UnitDefinition.")
+        for name, value in (
+            ("source_field_id", source_field_id),
+            ("transform_id", transform_id),
+            ("frame_id", frame_id),
+        ):
+            if not isinstance(value, str) or not value or value != value.strip():
+                raise ValueError(f"{name} must be canonical nonempty text.")
+        self.positions_xy = positions
+        self.displacement_xy = displacement
+        self.velocity_xy = velocity
+        self.valid = validity
+        self.source_field_id = source_field_id
+        self.transform_id = transform_id
+        self.spatial_unit = spatial_unit
+        self.time_unit = time_unit
+        self.frame_id = frame_id
 
 
 class EnsemblePIVAccumulator(StrictModule, NonTrainableState):

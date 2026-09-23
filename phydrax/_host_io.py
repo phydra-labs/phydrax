@@ -54,14 +54,12 @@ def descriptor_relative_path(
     return DescriptorRelativePath(directory_descriptor, name)
 
 
-def open_directory_descriptor(
+def _open_directory_chain(
     path: str | os.PathLike[str],
     /,
     *,
     create: bool,
-) -> int:
-    """Open a directory component-by-component without following links."""
-
+) -> list[int]:
     value = Path(path)
     parts = value.parts
     if value.is_absolute() and len(parts) > 1 and parts[1] in {"var", "tmp"}:
@@ -75,7 +73,7 @@ def open_directory_descriptor(
             and os.readlink(alias) == expected_target
         ):
             parts = ("/", "private", parts[1], *parts[2:])
-    descriptor = os.open("/" if value.is_absolute() else ".", _DIRECTORY_OPEN_FLAGS)
+    descriptors = [os.open("/" if value.is_absolute() else ".", _DIRECTORY_OPEN_FLAGS)]
     start = 1 if value.is_absolute() else 0
     try:
         for part in parts[start:]:
@@ -85,17 +83,32 @@ def open_directory_descriptor(
                 raise ValueError("Host paths cannot contain parent traversal.")
             if create:
                 try:
-                    os.mkdir(part, mode=0o700, dir_fd=descriptor)
-                    os.fsync(descriptor)
+                    os.mkdir(part, mode=0o700, dir_fd=descriptors[-1])
+                    os.fsync(descriptors[-1])
                 except FileExistsError:
                     pass
-            following = os.open(part, _DIRECTORY_OPEN_FLAGS, dir_fd=descriptor)
-            os.close(descriptor)
-            descriptor = following
-        return descriptor
+            descriptors.append(
+                os.open(part, _DIRECTORY_OPEN_FLAGS, dir_fd=descriptors[-1])
+            )
+        return descriptors
     except BaseException:
-        os.close(descriptor)
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
         raise
+
+
+def open_directory_descriptor(
+    path: str | os.PathLike[str],
+    /,
+    *,
+    create: bool,
+) -> int:
+    """Open a directory component-by-component without following links."""
+
+    descriptors = _open_directory_chain(path, create=create)
+    for descriptor in descriptors[:-1]:
+        os.close(descriptor)
+    return descriptors[-1]
 
 
 def open_parent_descriptor(
@@ -197,6 +210,21 @@ def directory_identity(status: os.stat_result, /) -> tuple[int, ...]:
     return stat_identity(status)
 
 
+def _held_directory_identity(status: os.stat_result, /) -> tuple[int, int, int]:
+    return (int(status.st_dev), int(status.st_ino), int(status.st_mode))
+
+
+def _verify_bound_entry(
+    parent_descriptor: int,
+    name: str,
+    expected: os.stat_result,
+    /,
+) -> None:
+    current = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+    if _held_directory_identity(expected) != _held_directory_identity(current):
+        raise RuntimeError("A resource path component changed during admission.")
+
+
 @dataclass(slots=True)
 class OpenedHostFile:
     """Held descriptor and path identities for one admitted regular file."""
@@ -225,7 +253,9 @@ class OpenedHostFile:
         if stat_identity(self.file_status) != stat_identity(current):
             raise RuntimeError("The resource changed while it was open.")
         for descriptor, initial in self.directory_states:
-            if directory_identity(initial) != directory_identity(os.fstat(descriptor)):
+            if _held_directory_identity(initial) != _held_directory_identity(
+                os.fstat(descriptor)
+            ):
                 raise RuntimeError("A resource path component changed while it was open.")
         return current
 
@@ -245,10 +275,14 @@ class OpenedHostDirectory:
         """Verify target and traversed directory identities remain unchanged."""
 
         current = os.fstat(self.descriptor)
-        if directory_identity(self.directory_status) != directory_identity(current):
+        if _held_directory_identity(self.directory_status) != _held_directory_identity(
+            current
+        ):
             raise RuntimeError("The resource directory changed while it was open.")
         for descriptor, initial in self.directory_states:
-            if directory_identity(initial) != directory_identity(os.fstat(descriptor)):
+            if _held_directory_identity(initial) != _held_directory_identity(
+                os.fstat(descriptor)
+            ):
                 raise RuntimeError("A resource path component changed while it was open.")
         return current
 
@@ -270,13 +304,17 @@ def open_directory_beneath(
     )
     descriptors: list[int] = []
     directory_states: list[tuple[int, os.stat_result]] = []
+    component_bindings: list[tuple[int, str, os.stat_result]] = []
     try:
-        root_descriptor = os.open(root_text, _DIRECTORY_OPEN_FLAGS)
-        descriptors.append(root_descriptor)
+        root_descriptors = _open_directory_chain(root_text, create=False)
+        descriptors.extend(root_descriptors)
+        root_descriptor = root_descriptors[-1]
         root_status = os.fstat(root_descriptor)
         if not stat.S_ISDIR(root_status.st_mode):
             raise ValueError("The trusted resource root must be a real directory.")
-        directory_states.append((root_descriptor, root_status))
+        directory_states.extend(
+            (descriptor, os.fstat(descriptor)) for descriptor in root_descriptors
+        )
         parent_descriptor = root_descriptor
         for index, component in enumerate(components):
             descriptor = os.open(
@@ -288,6 +326,7 @@ def open_directory_beneath(
             status = os.fstat(descriptor)
             if not stat.S_ISDIR(status.st_mode):
                 raise ValueError("Resource path components must be real directories.")
+            component_bindings.append((parent_descriptor, component, status))
             parent_descriptor = descriptor
             if index + 1 < len(components):
                 directory_states.append((descriptor, status))
@@ -299,6 +338,9 @@ def open_directory_beneath(
             os.fstat(parent_descriptor),
             tuple(directory_states),
         )
+        for parent, component, status in component_bindings:
+            _verify_bound_entry(parent, component, status)
+        opened.verify_stable()
         yield opened
         opened.verify_stable()
     finally:
@@ -326,13 +368,17 @@ def open_regular_beneath(
     )
     descriptors: list[int] = []
     directory_states: list[tuple[int, os.stat_result]] = []
+    component_bindings: list[tuple[int, str, os.stat_result]] = []
     try:
-        root_descriptor = os.open(root_text, _DIRECTORY_OPEN_FLAGS)
-        descriptors.append(root_descriptor)
+        root_descriptors = _open_directory_chain(root_text, create=False)
+        descriptors.extend(root_descriptors)
+        root_descriptor = root_descriptors[-1]
         root_status = os.fstat(root_descriptor)
         if not stat.S_ISDIR(root_status.st_mode):
             raise ValueError("The trusted resource root must be a real directory.")
-        directory_states.append((root_descriptor, root_status))
+        directory_states.extend(
+            (descriptor, os.fstat(descriptor)) for descriptor in root_descriptors
+        )
         parent_descriptor = root_descriptor
         for component in components[:-1]:
             descriptor = os.open(
@@ -344,6 +390,7 @@ def open_regular_beneath(
             status = os.fstat(descriptor)
             if not stat.S_ISDIR(status.st_mode):
                 raise ValueError("Resource path components must be real directories.")
+            component_bindings.append((parent_descriptor, component, status))
             directory_states.append((descriptor, status))
             parent_descriptor = descriptor
         file_descriptor = os.open(
@@ -363,6 +410,10 @@ def open_regular_beneath(
             file_status,
             tuple(directory_states),
         )
+        for parent, component, status in component_bindings:
+            _verify_bound_entry(parent, component, status)
+        _verify_bound_entry(parent_descriptor, components[-1], file_status)
+        opened.verify_stable()
         yield opened
         opened.verify_stable()
     finally:

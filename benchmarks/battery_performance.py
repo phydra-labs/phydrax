@@ -585,8 +585,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     # The campaign outcome is already durable even if baseline comparison refuses.
     if arguments.compare is not None and "performance" in result:
         baseline = read_json_object(arguments.compare)
-        comparison = compare_performance(
-            result["performance"], baseline.get("performance", baseline)
+        baseline_performance = baseline.get("performance", baseline)
+        eligible = (
+            result["outcome"] == "passed"
+            and baseline.get("outcome", "passed") == "passed"
+            and not result["performance"]["infrastructure_failures"]
+            and not baseline_performance.get("infrastructure_failures", ())
+        )
+        comparison = (
+            compare_performance(result["performance"], baseline_performance)
+            if eligible
+            else {
+                "kind": "battery-performance-comparison",
+                "eligible": False,
+                "regressed": None,
+                "reason": "both campaigns must pass without infrastructure failures",
+            }
         )
         write_json_immutable(arguments.output.with_suffix(".comparison.json"), comparison)
     return {"passed": 0, "failed": 1, "preflight-refused": 2, "inconclusive": 3}[

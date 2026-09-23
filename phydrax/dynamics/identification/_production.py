@@ -54,8 +54,8 @@ class IdentificationStateTransform(StrictModule, NonTrainableState):
         offset_ = jnp.asarray(offset)
         scale_ = jnp.asarray(scale, dtype=offset_.dtype)
         if (
-            offset_.shape != physical_layout.state_shape
-            or scale_.shape != physical_layout.state_shape
+            offset_.shape != physical_layout.shape
+            or scale_.shape != physical_layout.shape
         ):
             raise ValueError(
                 "Transform offset and scale must match the physical state layout."
@@ -80,9 +80,9 @@ class IdentificationStateTransform(StrictModule, NonTrainableState):
         ):
             raise ValueError("Transform identities must be non-empty.")
         transformed = StateLayout(
-            physical_layout.state_shape,
+            physical_layout.shape,
+            axes=physical_layout.axes,
             component_names=physical_layout.component_names,
-            dtype=physical_layout.dtype,
             layout_id=canonical_fingerprint(
                 {
                     "kind": "transformed-state-layout",
@@ -116,10 +116,8 @@ class IdentificationStateTransform(StrictModule, NonTrainableState):
 
     def forward(self, physical_state: ArrayLike, /) -> Array:
         value = jnp.asarray(physical_state)
-        if (
-            value.shape[-len(self.physical_layout.state_shape) :]
-            != self.physical_layout.state_shape
-        ):
+        shape = self.physical_layout.shape
+        if shape and value.shape[-len(shape) :] != shape:
             raise ValueError("Physical state trailing shape does not match its layout.")
         shifted = value - self.offset
         if self.kind == "log-affine":
@@ -184,9 +182,9 @@ class IdentifiedDynamicsArtifact(StrictModule, NonTrainableState):
             or any(not value for value in evidence)
         ):
             raise ValueError("Identified dynamics identities must be non-empty.")
-        if system.state_layout.state_shape != transform.transformed_layout.state_shape:
+        if system.state_layout.layout_id != transform.transformed_layout.layout_id:
             raise ValueError(
-                "Identified system and transformed state layouts must match."
+                "Identified system must use the exact transformed state layout."
             )
         self.transform = transform
         self.system = system
@@ -225,14 +223,38 @@ def select_identified_dynamics(
         raise ValueError(
             "Candidates and validation scores must be non-empty and aligned."
         )
+    if any(not isinstance(model, IdentifiedDynamicsArtifact) for model in models):
+        raise TypeError("Every candidate must be an IdentifiedDynamicsArtifact.")
     host = np.asarray(scores)
     if np.any(~np.isfinite(host)):
         raise ValueError("Validation scores must be finite.")
-    partitions = {model.partition_id for model in models}
-    if len(partitions) != 1:
-        raise ValueError(
-            "Identification candidates must share one train/validation partition."
+    reference = models[0]
+    reference_input = (
+        None
+        if reference.system.input_layout is None
+        else reference.system.input_layout.layout_id
+    )
+    for model in models[1:]:
+        model_input = (
+            None
+            if model.system.input_layout is None
+            else model.system.input_layout.layout_id
         )
+        compatible = (
+            model.partition_id == reference.partition_id
+            and model.transform.transform_id == reference.transform.transform_id
+            and type(model.system) is type(reference.system)
+            and model.system.state_layout.layout_id
+            == reference.system.state_layout.layout_id
+            and model_input == reference_input
+            and model.formulation_id == reference.formulation_id
+            and model.support_id == reference.support_id
+        )
+        if not compatible:
+            raise ValueError(
+                "Identification candidates must share transform, system, input, "
+                "formulation, support, and partition contracts."
+            )
     index = int(np.argmin(host))
     ids = tuple(model.artifact_id for model in models)
     selection = IdentifiedDynamicsSelection(

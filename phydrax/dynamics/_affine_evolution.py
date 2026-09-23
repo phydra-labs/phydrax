@@ -5,10 +5,11 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import DenseLinearOperator, matrix_exponential_phi_combination_action
@@ -35,7 +36,11 @@ class PreparedAffineLinearEvolution(StrictModule, NonTrainableState):
         self.operator = DenseLinearOperator(matrix_)
         self.source = source_
         self.prepared_id = canonical_fingerprint(
-            {"kind": "affine-linear-evolution", "dimension": matrix_.shape[0]}
+            {
+                "kind": "affine-linear-evolution",
+                "dimension": matrix_.shape[0],
+                "content": array_tree_fingerprint({"matrix": matrix_, "source": source_}),
+            }
         )
 
     def step(
@@ -45,17 +50,37 @@ class PreparedAffineLinearEvolution(StrictModule, NonTrainableState):
         if state_.shape != self.source.shape:
             raise ValueError("Affine evolution state has incompatible shape.")
         time = jnp.asarray(duration, dtype=state_.real.dtype)
-        action = matrix_exponential_phi_combination_action(
-            self.operator,
-            (state_, self.source),
+        if time.shape != ():
+            raise ValueError("Affine evolution duration must be scalar.")
+        time = eqx.error_if(
             time,
+            ~jnp.isfinite(time) | (time < 0.0),
+            "Affine evolution duration must be finite and nonnegative.",
         )
-        value = action.value
-        finite = jnp.all(jnp.isfinite(value))
-        return AffineLinearEvolutionResult(
-            value,
-            action.successful & finite,
-            finite,
+
+        def advance(_):
+            action = matrix_exponential_phi_combination_action(
+                self.operator,
+                (state_, self.source),
+                time,
+            )
+            value = action.value
+            finite = jnp.all(jnp.isfinite(value))
+            return AffineLinearEvolutionResult(
+                value,
+                action.successful & finite,
+                finite,
+            )
+
+        return jax.lax.cond(
+            time == 0.0,
+            lambda _: AffineLinearEvolutionResult(
+                state_,
+                jnp.all(jnp.isfinite(state_)),
+                jnp.all(jnp.isfinite(state_)),
+            ),
+            advance,
+            operand=None,
         )
 
 

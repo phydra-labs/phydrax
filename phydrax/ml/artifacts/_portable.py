@@ -6,14 +6,12 @@ from __future__ import annotations
 
 import dataclasses
 import importlib.metadata
-import io
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-import equinox as eqx
 import numpy as np
 
 from ..._array_archive import (
@@ -22,12 +20,12 @@ from ..._array_archive import (
     read_array_archive,
     write_array_archive,
 )
-from ..._model import (
-    artifact_value_id,
-    deserialize_model_leaf,
-    model_from_structure_recipe,
-    model_structure_recipe,
-    serialize_model_leaf,
+from ..._model import AbstractArrayModel, artifact_value_id, model_structure_recipe
+from ..._model._structure import (
+    model_from_array_recipe,
+    model_recipe_array_inventory,
+    model_recipe_template,
+    pack_model_array_tree,
 )
 from .._contracts import FitResult
 from ._registry import register_native_ml_artifacts
@@ -137,6 +135,8 @@ def save_ml_artifact(
     licenses: Sequence[str] = (),
 ) -> Path:
     """Write a checksum-validated, pickle-free native ML model artifact."""
+    if not isinstance(model, AbstractArrayModel):
+        raise TypeError("Native ML artifacts require an AbstractArrayModel.")
     if (
         fit_result is not None
         and fit_result.model is not model
@@ -147,9 +147,12 @@ def save_ml_artifact(
     recipe = model_structure_recipe(model)
     if recipe.get("kind") != "dataclass" or not isinstance(recipe.get("type"), str):
         raise TypeError("Native ML artifacts require a registered dataclass model.")
-    stream = io.BytesIO()
-    eqx.tree_serialise_leaves(stream, model, filter_spec=serialize_model_leaf)
-    leaves = np.frombuffer(stream.getvalue(), dtype=np.uint8).copy()
+    arrays = pack_model_array_tree(
+        model,
+        recipe,
+        prefix="model/leaves",
+        limits=_ML_ARTIFACT_LIMITS,
+    )
     fit_metadata = _fit_metadata(fit_result)
     encoded_feature_schema = (
         None
@@ -176,7 +179,7 @@ def save_ml_artifact(
         path,
         manifest=manifest,
         limits=_ML_ARTIFACT_LIMITS,
-        arrays={"model/leaves": leaves},
+        arrays=arrays,
     )
 
 
@@ -202,34 +205,74 @@ def read_ml_artifact(path: str | Path, /) -> MLArtifact:
         raise ArrayArchiveCorruptionError(
             "Archive is not a supported Phydrax ML artifact."
         )
-    if set(arrays) != {"model/leaves"}:
-        raise ArrayArchiveCorruptionError("ML artifact model payload is invalid.")
     recipe = manifest["model_recipe"]
-    if not isinstance(recipe, dict):
-        raise ArrayArchiveCorruptionError("ML artifact model recipe is invalid.")
-    template = model_from_structure_recipe(recipe)
-    payload = np.asarray(arrays["model/leaves"], dtype=np.uint8).tobytes()
-    model = eqx.tree_deserialise_leaves(
-        io.BytesIO(payload),
-        template,
-        filter_spec=deserialize_model_leaf,
+    licenses = manifest["licenses"]
+    provenance = manifest["provenance"]
+    versions = manifest["versions"]
+    optional_mappings = (
+        manifest["feature_schema"],
+        manifest["target_schema"],
+        manifest["fit"],
     )
+    if (
+        not isinstance(manifest["model_type"], str)
+        or not manifest["model_type"]
+        or not isinstance(recipe, dict)
+        or not isinstance(licenses, list)
+        or any(not isinstance(item, str) or not item for item in licenses)
+        or not isinstance(provenance, dict)
+        or not isinstance(versions, dict)
+        or any(
+            not isinstance(key, str) or not key or not isinstance(value, str) or not value
+            for key, value in versions.items()
+        )
+        or any(
+            value is not None and not isinstance(value, dict)
+            for value in optional_mappings
+        )
+    ):
+        raise ArrayArchiveCorruptionError("ML artifact metadata is invalid.")
+    try:
+        template = model_recipe_template(recipe, limits=_ML_ARTIFACT_LIMITS)
+        inventory = model_recipe_array_inventory(
+            recipe,
+            prefix="model/leaves",
+            limits=_ML_ARTIFACT_LIMITS,
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ArrayArchiveCorruptionError(
+            "ML artifact model recipe is invalid."
+        ) from error
+    if not isinstance(template, AbstractArrayModel):
+        raise ArrayArchiveCorruptionError(
+            "ML artifact recipe did not declare an AbstractArrayModel."
+        )
+    expected_type = artifact_value_id(type(template))
+    if manifest["model_type"] != expected_type or recipe["type"] != expected_type:
+        raise ArrayArchiveCorruptionError("ML artifact model type is inconsistent.")
+    if set(arrays) != {entry.name for entry in inventory}:
+        raise ArrayArchiveCorruptionError(
+            "ML artifact model payload does not match its recipe."
+        )
+    try:
+        model = model_from_array_recipe(
+            recipe,
+            arrays,
+            prefix="model/leaves",
+            limits=_ML_ARTIFACT_LIMITS,
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ArrayArchiveCorruptionError(
+            "ML artifact model payload is incompatible with its recipe."
+        ) from error
+    if not isinstance(model, AbstractArrayModel):
+        raise ArrayArchiveCorruptionError(
+            "ML artifact payload did not restore an AbstractArrayModel."
+        )
     if model_structure_recipe(model) != recipe:
         raise ArrayArchiveCorruptionError(
             "ML artifact model structure changed during restoration."
         )
-    expected_type = artifact_value_id(type(model))
-    if manifest["model_type"] != expected_type or recipe["type"] != expected_type:
-        raise ArrayArchiveCorruptionError("ML artifact model type is inconsistent.")
-    licenses = manifest["licenses"]
-    provenance = manifest["provenance"]
-    versions = manifest["versions"]
-    if (
-        not isinstance(licenses, list)
-        or not isinstance(provenance, dict)
-        or not isinstance(versions, dict)
-    ):
-        raise ArrayArchiveCorruptionError("ML artifact metadata is invalid.")
     parsed = MLArtifactManifest(
         model_type=expected_type,
         model_recipe=MappingProxyType(recipe),
@@ -245,10 +288,8 @@ def read_ml_artifact(path: str | Path, /) -> MLArtifact:
         ),
         fit=(None if manifest["fit"] is None else MappingProxyType(manifest["fit"])),
         provenance=MappingProxyType(provenance),
-        licenses=tuple(str(item) for item in licenses),
-        versions=MappingProxyType(
-            {str(key): str(value) for key, value in versions.items()}
-        ),
+        licenses=tuple(licenses),
+        versions=MappingProxyType(dict(versions)),
     )
     return MLArtifact(model=model, manifest=parsed)
 

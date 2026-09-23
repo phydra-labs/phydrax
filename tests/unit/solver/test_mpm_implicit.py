@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
+import phydrax.solver._material_point_implicit as implicit_solver
 
 
 def _compiled(material):
@@ -67,6 +70,62 @@ def test_implicit_hyperelastic_step_converges_and_has_implicit_gradient():
 
     derivative = jax.grad(objective)(jnp.asarray(1.0))
     assert jnp.isfinite(derivative)
+
+
+@pytest.mark.parametrize("failure", ("tangent", "determinant"))
+def test_implicit_step_rejects_invalid_tangent_or_deformation_jacobian(
+    failure,
+    monkeypatch,
+):
+    material = phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(2)
+    compiled, position, volume = _compiled(material)
+    arguments = phx.equations.MaterialPointArguments(
+        phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(2.0, 8.0)
+    )
+    initial = compiled.initialize_state(
+        position,
+        jnp.zeros_like(position),
+        volume,
+        arguments,
+    )
+    if failure == "tangent":
+        material_type = type(compiled.dynamics.material)
+        evaluate_linearized = material_type.evaluate_linearized
+
+        def invalid_tangent(self, *args, **kwargs):
+            result = evaluate_linearized(self, *args, **kwargs)
+            return eqx.tree_at(
+                lambda value: value.tangent_successful,
+                result,
+                jnp.zeros_like(result.tangent_successful),
+            )
+
+        monkeypatch.setattr(material_type, "evaluate_linearized", invalid_tangent)
+    else:
+        solve_small_linear = implicit_solver.solve_small_linear
+
+        def invalid_determinant(*args, **kwargs):
+            result = solve_small_linear(*args, **kwargs)
+            return eqx.tree_at(
+                lambda value: value.determinant,
+                result,
+                -jnp.ones_like(result.determinant),
+            )
+
+        monkeypatch.setattr(
+            implicit_solver,
+            "solve_small_linear",
+            invalid_determinant,
+        )
+
+    detail = phx.solver.PreparedImplicitMPMDynamics(compiled.dynamics).step_detailed(
+        initial,
+        0.001,
+        arguments,
+    )
+
+    assert not bool(detail.successful)
+    assert eqx.tree_equal(detail.accepted_state, initial)
 
 
 def test_implicit_plane_stress_uses_condensed_material_tangent():

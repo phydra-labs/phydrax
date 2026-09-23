@@ -230,12 +230,21 @@ class TwoTemperatureThermodynamicsPlan(StrictModule, NonTrainableState):
         species_mass_density: ArrayLike,
         heavy_internal_energy_density: ArrayLike,
         /,
+        *,
+        maximum_iterations: int | None = None,
     ) -> tuple[Array, Array, Array, Array, Array]:
         density = jnp.asarray(species_mass_density)
         target = jnp.asarray(heavy_internal_energy_density, dtype=density.dtype)
         cell_shape = density.shape[:-1]
         if target.shape != cell_shape:
             raise ValueError("Heavy internal energy must match the density cells.")
+        iterations = (
+            self.maximum_iterations
+            if maximum_iterations is None
+            else int(maximum_iterations)
+        )
+        if iterations <= 0:
+            raise ValueError("maximum_iterations must be positive.")
         lower = jnp.full(
             cell_shape,
             self.heavy_thermodynamics.minimum_temperature,
@@ -259,7 +268,7 @@ class TwoTemperatureThermodynamicsPlan(StrictModule, NonTrainableState):
                 choose_lower, high, midpoint
             )
 
-        lower, upper = jax.lax.fori_loop(0, self.maximum_iterations, body, (lower, upper))
+        lower, upper = jax.lax.fori_loop(0, iterations, body, (lower, upper))
         raw = 0.5 * (lower + upper)
         heavy_state = self._heavy_state(density, raw)
         temperature = _implicit_heavy_temperature(
@@ -286,17 +295,30 @@ class TwoTemperatureThermodynamicsPlan(StrictModule, NonTrainableState):
         heavy_internal_energy_density: ArrayLike,
         mode_energy_densities: ArrayLike,
         /,
+        *,
+        maximum_iterations: int | None = None,
     ) -> TwoTemperatureRecovery:
         density = jnp.asarray(species_mass_density)
         heavy_energy = jnp.asarray(heavy_internal_energy_density, dtype=density.dtype)
         mode_energy = jnp.asarray(mode_energy_densities, dtype=density.dtype)
+        iterations = (
+            self.maximum_iterations
+            if maximum_iterations is None
+            else int(maximum_iterations)
+        )
+        if iterations <= 0:
+            raise ValueError("maximum_iterations must be positive.")
         heavy_temperature, heavy_residual, heavy_margin, heavy_successful, _ = (
-            self.solve_heavy_temperature(density, heavy_energy)
+            self.solve_heavy_temperature(
+                density,
+                heavy_energy,
+                maximum_iterations=iterations,
+            )
         )
         mode_result: ThermalModeTemperatureResult = self.modes.solve_temperatures(
             density,
             mode_energy,
-            maximum_iterations=self.maximum_iterations,
+            maximum_iterations=iterations,
         )
         state = self.evaluate(density, heavy_temperature, mode_result.temperatures)
         finite = (
@@ -311,7 +333,7 @@ class TwoTemperatureThermodynamicsPlan(StrictModule, NonTrainableState):
             mode_result.energy_residual,
             heavy_margin,
             mode_result.bracket_margin,
-            jnp.asarray(self.maximum_iterations, dtype=jnp.int32),
+            jnp.asarray(iterations, dtype=jnp.int32),
             finite,
             successful,
             self.model_id,
@@ -436,7 +458,12 @@ class TwoTemperatureMixtureEulerSystem(
         heavy_energy = (
             value[..., self.energy_index] - kinetic - jnp.sum(mode_energy, axis=-1)
         )
-        return self.thermodynamics.recover(species_density, heavy_energy, mode_energy)
+        return self.thermodynamics.recover(
+            species_density,
+            heavy_energy,
+            mode_energy,
+            maximum_iterations=self.maximum_thermal_iterations,
+        )
 
     def pressure(self, state: ArrayLike, /) -> Array:
         return self.recover_thermodynamics(state).state.pressure

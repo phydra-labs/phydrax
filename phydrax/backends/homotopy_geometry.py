@@ -49,6 +49,9 @@ _WORKER_PATH = Path(__file__).with_name("_homotopy_geometry_worker.jl")
 _WORKER_BYTES = _WORKER_PATH.read_bytes()
 HOMOTOPY_GEOMETRY_WORKER_SHA256 = hashlib.sha256(_WORKER_BYTES).hexdigest()
 _MAX_REQUEST_BYTES = 32 * 1024 * 1024
+_MAX_DIMENSION = 4_096
+_MAX_ENTITY_COUNT = 1_000_000
+_MAX_VALUE_COUNT = 10_000_000
 
 
 class HomotopyGeometryOperation(str, Enum):
@@ -96,6 +99,24 @@ def _positive_integer(value: Any, name: str, /) -> int:
     return result
 
 
+def _bounded_path_count(value: Any, name: str, /) -> int:
+    count = _positive_integer(value, name)
+    if count > _MAX_ENTITY_COUNT:
+        raise ValueError(f"{name} exceeds the hard path-entity bound.")
+    return count
+
+
+def _checked_path_product(*factors: int, name: str) -> int:
+    result = 1
+    for factor in factors:
+        if factor < 0 or (factor and result > _MAX_ENTITY_COUNT // factor):
+            raise ValueError(f"{name} exceeds the hard path-entity bound.")
+        result *= factor
+    if result < 1:
+        raise ValueError(f"{name} must be positive.")
+    return result
+
+
 def _strict_fields(value: Mapping[str, Any], expected: set[str], owner: str, /) -> None:
     actual = set(value)
     if actual != expected:
@@ -103,6 +124,28 @@ def _strict_fields(value: Mapping[str, Any], expected: set[str], owner: str, /) 
             f"{owner} must use the exact protocol fields; "
             f"missing={sorted(expected - actual)}, unknown={sorted(actual - expected)}."
         )
+
+
+def _decode_json_object(data: bytes, owner: str, /) -> dict[str, Any]:
+    def pairs(values):
+        record = {}
+        for key, value in values:
+            if key in record:
+                raise ValueError(f"{owner} contains duplicate field {key!r}.")
+            record[key] = value
+        return record
+
+    def reject_constant(value: str):
+        raise ValueError(f"{owner} contains non-finite constant {value!r}.")
+
+    decoded = json.loads(
+        data.decode("utf-8"),
+        object_pairs_hook=pairs,
+        parse_constant=reject_constant,
+    )
+    if not isinstance(decoded, dict):
+        raise ValueError(f"{owner} must be a JSON object.")
+    return decoded
 
 
 def _mapping(value: Any, name: str, /) -> Mapping[str, Any]:
@@ -122,9 +165,12 @@ def _complex_payload(value: ArrayLike, name: str, ndim: int, /) -> dict[str, Any
     if (
         array.ndim != ndim
         or array.dtype.kind not in "fciu"
+        or array.size > _MAX_VALUE_COUNT
+        or any(axis > _MAX_ENTITY_COUNT for axis in array.shape)
+        or (array.ndim > 1 and array.shape[-1] > _MAX_DIMENSION)
         or np.any(~np.isfinite(array))
     ):
-        raise ValueError(f"{name} must be a finite rank-{ndim} real or complex array.")
+        raise ValueError(f"{name} must be a bounded finite rank-{ndim} array.")
     stacked = np.stack((array.real, array.imag), axis=-1)
     return {
         "shape": list(array.shape),
@@ -134,8 +180,14 @@ def _complex_payload(value: ArrayLike, name: str, ndim: int, /) -> dict[str, Any
 
 def _real_payload(value: ArrayLike, name: str, ndim: int, /) -> list[Any]:
     array = np.asarray(value)
-    if array.ndim != ndim or array.dtype.kind not in "fiu" or np.any(~np.isfinite(array)):
-        raise ValueError(f"{name} must be a finite rank-{ndim} real array.")
+    if (
+        array.ndim != ndim
+        or array.dtype.kind not in "fiu"
+        or array.size > _MAX_VALUE_COUNT
+        or any(axis > _MAX_ENTITY_COUNT for axis in array.shape)
+        or np.any(~np.isfinite(array))
+    ):
+        raise ValueError(f"{name} must be a bounded finite rank-{ndim} real array.")
     return array.tolist()
 
 
@@ -143,13 +195,23 @@ def _complex_array(value: Any, name: str, ndim: int, /) -> np.ndarray:
     record = _mapping(value, name)
     _strict_fields(record, {"shape", "values"}, name)
     shape_values = _sequence(record["shape"], f"{name}.shape")
+    if len(shape_values) != ndim:
+        raise ValueError(f"{name} shape must have rank {ndim}.")
     shape = tuple(_nonnegative_integer(entry, f"{name} shape") for entry in shape_values)
-    pairs = np.asarray(record["values"])
+    count = 1
+    for axis, extent in enumerate(shape):
+        maximum = _MAX_DIMENSION if ndim > 1 and axis == ndim - 1 else _MAX_ENTITY_COUNT
+        if extent > maximum or (extent and count > _MAX_VALUE_COUNT // extent):
+            raise ValueError(f"{name} shape exceeds its resource bound.")
+        count *= extent
+    raw_pairs = record["values"]
+    if not isinstance(raw_pairs, list) or len(raw_pairs) != count:
+        raise ValueError(f"{name} value count disagrees with its shape.")
+    pairs = np.asarray(raw_pairs)
     if pairs.size == 0:
         pairs = np.empty((0, 2), dtype=np.float64)
     if (
-        len(shape) != ndim
-        or pairs.shape != (int(np.prod(shape, dtype=np.int64)), 2)
+        pairs.shape != (count, 2)
         or pairs.dtype.kind not in "fiu"
         or np.any(~np.isfinite(pairs))
     ):
@@ -162,8 +224,14 @@ def _complex_array(value: Any, name: str, ndim: int, /) -> np.ndarray:
 
 def _real_array(value: Any, name: str, ndim: int, /) -> np.ndarray:
     array = np.asarray(value)
-    if array.ndim != ndim or array.dtype.kind not in "fiu" or np.any(~np.isfinite(array)):
-        raise ValueError(f"{name} must be a finite real rank-{ndim} array.")
+    if (
+        array.ndim != ndim
+        or array.dtype.kind not in "fiu"
+        or array.size > _MAX_VALUE_COUNT
+        or any(axis > _MAX_ENTITY_COUNT for axis in array.shape)
+        or np.any(~np.isfinite(array))
+    ):
+        raise ValueError(f"{name} must be a bounded finite real rank-{ndim} array.")
     return array.astype("float64", copy=False)
 
 
@@ -180,51 +248,98 @@ def _system_record(system: SparsePolynomialSystem, /) -> dict[str, Any]:
 
 
 class HomotopyGeometryPolicy(StrictModule, NonTrainableState):
-    """Hard request, loop, stage, process-time, and output-byte bounds."""
+    """Hard request, tracking, process-time, output, and storage bounds."""
 
     path_capacity: int = eqx.field(static=True)
+    tracking_capacity: int = eqx.field(static=True)
     loop_capacity: int = eqx.field(static=True)
     stage_capacity: int = eqx.field(static=True)
     seed: int = eqx.field(static=True)
     timeout_seconds: float = eqx.field(static=True)
     maximum_output_bytes: int = eqx.field(static=True)
+    maximum_dimension: int = eqx.field(static=True)
+    maximum_entity_count: int = eqx.field(static=True)
+    maximum_term_count: int = eqx.field(static=True)
+    maximum_value_count: int = eqx.field(static=True)
+    maximum_storage_bytes: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         *,
         path_capacity: int = 10_000,
+        tracking_capacity: int | None = None,
         loop_capacity: int = 64,
         stage_capacity: int = 64,
         seed: int = 0,
         timeout_seconds: float = 3_600.0,
         maximum_output_bytes: int = 64 * 1024 * 1024,
+        maximum_dimension: int = 4_096,
+        maximum_entity_count: int = 1_000_000,
+        maximum_term_count: int = 1_000_000,
+        maximum_value_count: int = 10_000_000,
+        maximum_storage_bytes: int = 256 * 1024 * 1024,
     ):
         paths = _positive_integer(path_capacity, "path_capacity")
+        tracking = (
+            2 * paths
+            if tracking_capacity is None
+            else _positive_integer(tracking_capacity, "tracking_capacity")
+        )
         loops = _positive_integer(loop_capacity, "loop_capacity")
         stages = _positive_integer(stage_capacity, "stage_capacity")
         seed_ = _nonnegative_integer(seed, "seed")
         timeout = float(timeout_seconds)
         output_bytes = _positive_integer(maximum_output_bytes, "maximum_output_bytes")
+        resource_limits = (
+            _positive_integer(maximum_dimension, "maximum_dimension"),
+            _positive_integer(maximum_entity_count, "maximum_entity_count"),
+            _positive_integer(maximum_term_count, "maximum_term_count"),
+            _positive_integer(maximum_value_count, "maximum_value_count"),
+            _positive_integer(maximum_storage_bytes, "maximum_storage_bytes"),
+        )
+        hard_limits = (4_096, 1_000_000, 1_000_000, 10_000_000, 256 * 1024 * 1024)
+        if paths > 1_000_000:
+            raise ValueError("path_capacity exceeds the worker bound.")
+        if tracking > 2_000_000:
+            raise ValueError("tracking_capacity exceeds the worker bound.")
         if seed_ > 2**32 - 1:
             raise ValueError("seed must fit an unsigned 32-bit integer.")
         if not isfinite(timeout) or timeout <= 0.0:
             raise ValueError("timeout_seconds must be finite and positive.")
+        if any(
+            value > hard for value, hard in zip(resource_limits, hard_limits, strict=True)
+        ):
+            raise ValueError("Homotopy-geometry resource limits exceed worker bounds.")
         self.path_capacity = paths
+        self.tracking_capacity = tracking
         self.loop_capacity = loops
         self.stage_capacity = stages
         self.seed = seed_
         self.timeout_seconds = timeout
         self.maximum_output_bytes = output_bytes
+        (
+            self.maximum_dimension,
+            self.maximum_entity_count,
+            self.maximum_term_count,
+            self.maximum_value_count,
+            self.maximum_storage_bytes,
+        ) = resource_limits
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "homotopy-geometry-policy",
                 "paths": paths,
+                "tracking": tracking,
                 "loops": loops,
                 "stages": stages,
                 "seed": seed_,
                 "timeout_seconds": timeout,
                 "maximum_output_bytes": output_bytes,
+                "maximum_dimension": resource_limits[0],
+                "maximum_entity_count": resource_limits[1],
+                "maximum_term_count": resource_limits[2],
+                "maximum_value_count": resource_limits[3],
+                "maximum_storage_bytes": resource_limits[4],
             }
         )
 
@@ -594,7 +709,7 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
         path_count: int,
     ) -> HomotopyGeometryRequest:
         dimension_ = _nonnegative_integer(dimension, "dimension")
-        count = _positive_integer(path_count, "path_count")
+        count = _bounded_path_count(path_count, "path_count")
         payload = {
             "dimension": dimension_,
             "slice_matrix": _complex_payload(slice_matrix, "slice_matrix", 2),
@@ -619,6 +734,7 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
             raise TypeError("witness_set must be a WitnessSet.")
         if witness_set.system_id != system.system_id:
             raise ValueError("Witness set belongs to a different polynomial system.")
+        degree = _bounded_path_count(witness_set.degree, "witness path count")
         payload = {
             "witness_set_id": witness_set.witness_id,
             "dimension": witness_set.dimension,
@@ -640,7 +756,7 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
             HomotopyGeometryPathRequest(
                 f"transport:{witness_set.witness_id}:{value}", "transport", value
             )
-            for value in range(witness_set.degree)
+            for value in range(degree)
         )
         return cls(system, HomotopyGeometryOperation.WITNESS_TRANSPORT, payload, paths)
 
@@ -661,7 +777,15 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
         if witness_set.system_id != system.system_id:
             raise ValueError("Witness set belongs to a different polynomial system.")
         parameters = np.asarray(sample_parameters)
-        point_indices_ = tuple(index(value) for value in point_indices)
+        if parameters.ndim != 1:
+            raise ValueError("sample_parameters must be rank one.")
+        point_values = _sequence(point_indices, "point_indices")
+        _checked_path_product(
+            len(parameters),
+            len(point_values),
+            name="trace-test path count",
+        )
+        point_indices_ = tuple(index(value) for value in point_values)
         payload = {
             "witness_set_id": witness_set.witness_id,
             "point_indices": list(point_indices_),
@@ -697,7 +821,13 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
             raise TypeError("witness_set must be a WitnessSet.")
         if witness_set.system_id != system.system_id:
             raise ValueError("Witness set belongs to a different polynomial system.")
-        loops_ = tuple(loops)
+        loop_values = _sequence(loops, "loops")
+        _checked_path_product(
+            len(loop_values),
+            witness_set.degree,
+            name="monodromy path count",
+        )
+        loops_ = tuple(loop_values)
         payload_loops = [
             {
                 "loop_id": _identifier(loop_id, "loop_id"),
@@ -754,6 +884,10 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
                 target_slice_offset, "target_slice_offset", 1
             ),
         }
+        _bounded_path_count(
+            len(edge.expected_path_ids),
+            "regeneration path count",
+        )
         paths = tuple(
             HomotopyGeometryPathRequest(path_id, edge.edge_id, source)
             for source, path_id in enumerate(edge.expected_path_ids)
@@ -782,6 +916,7 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
             raise ValueError(
                 "Polynomial map source variables do not match the source system."
             )
+        count = _bounded_path_count(path_count, "path_count")
         map_record = _system_record(map_system)
         payload = {
             "source_system_id": source_system.system_id,
@@ -807,7 +942,6 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
                 image_slice_offset, "image_slice_offset", 1
             ),
         }
-        count = _positive_integer(path_count, "path_count")
         paths = tuple(
             HomotopyGeometryPathRequest(f"image:{value}", "image-degree", value)
             for value in range(count)
@@ -824,16 +958,38 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
         *,
         tolerance: float,
     ) -> HomotopyGeometryRequest:
-        witnesses = tuple(witness_sets)
-        if not witnesses or any(
-            not isinstance(witness, WitnessSet) for witness in witnesses
+        witness_values = _sequence(witness_sets, "witness_sets")
+        if len(witness_values) > _MAX_ENTITY_COUNT:
+            raise ValueError("witness_sets exceeds the hard entity bound.")
+        if len(witness_values) == 0 or any(
+            not isinstance(witness, WitnessSet) for witness in witness_values
         ):
             raise TypeError("witness_sets must contain at least one WitnessSet.")
-        if any(witness.system_id != system.system_id for witness in witnesses):
+        if any(witness.system_id != system.system_id for witness in witness_values):
             raise ValueError(
                 "All membership witnesses must belong to the requested system."
             )
         queries = np.asarray(query_points)
+        if queries.ndim != 2:
+            raise ValueError("query_points must be rank two.")
+        query_count = _bounded_path_count(len(queries), "membership query count")
+        path_count_ = 0
+        for witness in witness_values:
+            degree = _bounded_path_count(
+                witness.degree,
+                "membership witness degree",
+            )
+            contribution = _checked_path_product(
+                query_count,
+                degree,
+                name="membership path count",
+            )
+            if path_count_ > _MAX_ENTITY_COUNT - contribution:
+                raise ValueError(
+                    "membership path count exceeds the hard path-entity bound."
+                )
+            path_count_ += contribution
+        witnesses = tuple(witness_values)
         payload = {
             "witness_sets": [
                 {
@@ -889,6 +1045,38 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
             raise ValueError(
                 "Regeneration stage inventory exceeds policy.stage_capacity."
             )
+        support = self.system.support
+        map_terms = (
+            len(payload["map_equation_indices"])
+            if self.operation is HomotopyGeometryOperation.IMAGE_DEGREE
+            else 0
+        )
+        term_count = support.term_count + map_terms
+        exponent_entries = term_count * support.variable_count
+        estimated_bytes = (
+            len(self.payload_json.encode("utf-8"))
+            + support.variable_count * 64
+            + support.equation_count * 64
+            + term_count * 40
+            + exponent_entries * 8
+        )
+        resource_checks = (
+            (support.variable_count, policy.maximum_dimension, "variable_count"),
+            (support.equation_count, policy.maximum_dimension, "equation_count"),
+            (len(self.paths), policy.maximum_entity_count, "path_count"),
+            (term_count, policy.maximum_term_count, "term_count"),
+            (exponent_entries, policy.maximum_value_count, "exponent_entries"),
+            (
+                estimated_bytes,
+                policy.maximum_storage_bytes,
+                "estimated_storage_bytes",
+            ),
+        )
+        for observed, maximum, name in resource_checks:
+            if observed > maximum:
+                raise ValueError(
+                    f"Homotopy-geometry {name}={observed} exceeds {maximum}."
+                )
         return {
             "protocol": HOMOTOPY_GEOMETRY_PROTOCOL,
             "request_id": self.request_id,
@@ -911,9 +1099,15 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
             "support_id": self.support_id,
             "policy": {
                 "path_capacity": policy.path_capacity,
+                "tracking_capacity": policy.tracking_capacity,
                 "loop_capacity": policy.loop_capacity,
                 "stage_capacity": policy.stage_capacity,
                 "seed": policy.seed,
+                "maximum_dimension": policy.maximum_dimension,
+                "maximum_entity_count": policy.maximum_entity_count,
+                "maximum_term_count": policy.maximum_term_count,
+                "maximum_value_count": policy.maximum_value_count,
+                "maximum_storage_bytes": policy.maximum_storage_bytes,
             },
             "system": _system_record(self.system),
             "payload": payload,
@@ -1086,6 +1280,7 @@ _RESPONSE_FIELDS = {
     "support_id",
     "status",
     "budget_exhausted",
+    "seed",
     "paths",
     "result",
 }
@@ -1129,11 +1324,20 @@ def _decode_paths(
     budget_exhausted: Any,
     /,
 ) -> PathInventory:
+    if type(budget_exhausted) is not bool:
+        raise ValueError("budget_exhausted must be a Boolean.")
     records_sequence = _sequence(records_value, "paths")
     records: list[PathRecord] = []
     for value in records_sequence:
         record = _mapping(value, "path record")
         _strict_fields(record, _PATH_FIELDS, "path record")
+        if any(
+            not isinstance(record[name], str)
+            for name in ("path_id", "batch_id", "status", "diagnostic")
+        ):
+            raise ValueError(
+                "Path identity, status, and diagnostic fields must be strings."
+            )
         records.append(
             PathRecord(
                 str(record["path_id"]),
@@ -1149,7 +1353,7 @@ def _decode_paths(
         tuple(path.path_id for path in request.paths),
         records,
         path_capacity=policy.path_capacity,
-        budget_exhausted=bool(budget_exhausted),
+        budget_exhausted=budget_exhausted,
     )
     expected_specs = {
         path.path_id: (path.batch_id, path.source_index) for path in request.paths
@@ -1287,10 +1491,12 @@ def _decode_output(
             float(value["tolerance"]),
             paths,
         )
+        if type(value["passed"]) is not bool:
+            raise ValueError("Trace-test passed must be a Boolean.")
         numerical_pass = (
             evidence.affine_fit_residual <= evidence.tolerance and evidence.finite
         )
-        if bool(value["passed"]) != numerical_pass:
+        if value["passed"] is not numerical_pass:
             raise ValueError("Trace-test pass flag contradicts its residual evidence.")
         payload = request.payload
         if (
@@ -1474,6 +1680,7 @@ def _validate_path_targets(
     )
     if request.operation in (
         HomotopyGeometryOperation.GENERIC_SLICE,
+        HomotopyGeometryOperation.WITNESS_TRANSPORT,
         HomotopyGeometryOperation.REGENERATION_STAGE,
         HomotopyGeometryOperation.IMAGE_DEGREE,
     ):
@@ -1485,13 +1692,24 @@ def _validate_path_targets(
             if not isinstance(output, WitnessSet):
                 raise TypeError("Slice output must be a WitnessSet.")
             upper = output.degree
-        if any(
-            record.target_index is None or record.target_index >= upper
-            for record in successful
+        targets = tuple(record.target_index for record in successful)
+        if (
+            any(target is None or target >= upper for target in targets)
+            or len(targets) != upper
+            or set(targets) != set(range(upper))
         ):
-            raise ValueError("Successful path target index exceeds returned endpoints.")
+            raise ValueError(
+                "Successful paths must correspond bijectively to returned endpoints."
+            )
         return
     if request.operation is HomotopyGeometryOperation.MONODROMY:
+        if not isinstance(output, MonodromyEvidence):
+            raise TypeError("Monodromy output must be MonodromyEvidence.")
+        if any(
+            record.target_index is None or record.target_index >= output.point_count
+            for record in successful
+        ):
+            raise ValueError("Monodromy path target index is out of bounds.")
         return
     allowed_by_batch: dict[str, set[int]] = {}
     for path in request.paths:
@@ -1504,6 +1722,12 @@ def _validate_path_targets(
         raise ValueError(
             "Successful transport path target index is absent from its batch inventory."
         )
+    successful_by_batch: dict[str, list[int]] = {}
+    for record in successful:
+        assert record.target_index is not None
+        successful_by_batch.setdefault(record.batch_id, []).append(record.target_index)
+    if any(len(values) != len(set(values)) for values in successful_by_batch.values()):
+        raise ValueError("Successful path targets must be unique within each batch.")
 
 
 def decode_homotopy_geometry_result(
@@ -1524,6 +1748,8 @@ def decode_homotopy_geometry_result(
         raise TypeError("policy must be a HomotopyGeometryPolicy.")
     record = _mapping(value, "homotopy-geometry response")
     _strict_fields(record, _RESPONSE_FIELDS, "homotopy-geometry response")
+    if type(record["seed"]) is not int:
+        raise ValueError("Worker seed echo must be an integer.")
     provider = _identifier(provider_id, "provider_id")
     environment = _identifier(environment_id, "environment_id")
     identity_errors: list[str] = []
@@ -1536,6 +1762,7 @@ def decode_homotopy_geometry_result(
         "operation": request.operation.value,
         "system_id": request.system_id,
         "support_id": request.support_id,
+        "seed": policy.seed,
     }
     for field, expected in expected_echoes.items():
         if record[field] != expected:
@@ -1621,9 +1848,23 @@ def execute_homotopy_geometry(
         raise TypeError("policy must be a HomotopyGeometryPolicy.")
     if not isinstance(request, HomotopyGeometryRequest):
         raise TypeError("request must be a HomotopyGeometryRequest.")
-    project_toml, manifest_toml = provider.environment.verify()
-    if _WORKER_PATH.read_bytes() != _WORKER_BYTES:
-        raise ValueError("The fixed homotopy-geometry worker changed after import.")
+    try:
+        project_toml, manifest_toml = provider.environment.verify()
+        executable_digest = hashlib.sha256(
+            Path(provider.executable.path).read_bytes()
+        ).hexdigest()
+        if executable_digest != provider.executable.sha256:
+            raise ValueError("Pinned Julia executable SHA-256 changed.")
+        if _WORKER_PATH.read_bytes() != _WORKER_BYTES:
+            raise ValueError("The fixed homotopy-geometry worker changed after import.")
+    except (OSError, ValueError) as failure:
+        return _host_failure(
+            request,
+            provider,
+            HomotopyGeometryStatus.PROVIDER_FAILED,
+            None,
+            f"Pinned runtime verification failed before execution: {failure}",
+        )
     request_bytes = canonical_json(request.to_dict(provider, policy)).encode("utf-8")
     if len(request_bytes) > min(_MAX_REQUEST_BYTES, policy.maximum_output_bytes):
         raise ValueError("Serialized homotopy-geometry request exceeds its byte bound.")
@@ -1653,23 +1894,44 @@ def execute_homotopy_geometry(
             environment=environment,
         )
     except EnergyRuntimeError as failure:
-        provider.environment.verify()
-        if _WORKER_PATH.read_bytes() != _WORKER_BYTES:
-            raise ValueError(
-                "The fixed homotopy-geometry worker changed during execution."
+        diagnostic = str(failure)
+        try:
+            provider.environment.verify()
+            if _WORKER_PATH.read_bytes() != _WORKER_BYTES:
+                raise ValueError(
+                    "The fixed homotopy-geometry worker changed during execution."
+                )
+        except (OSError, ValueError) as verification_failure:
+            diagnostic = (
+                f"{diagnostic}; pinned runtime verification failed after execution: "
+                f"{verification_failure}"
             )
         return _host_failure(
             request,
             provider,
             HomotopyGeometryStatus.PROVIDER_FAILED,
             failure.result,
-            str(failure),
+            diagnostic,
         )
-    provider.environment.verify()
-    if _WORKER_PATH.read_bytes() != _WORKER_BYTES:
-        raise ValueError("The fixed homotopy-geometry worker changed during execution.")
     try:
-        response = json.loads(run.output("homotopy-geometry-result.json"))
+        provider.environment.verify()
+        if _WORKER_PATH.read_bytes() != _WORKER_BYTES:
+            raise ValueError(
+                "The fixed homotopy-geometry worker changed during execution."
+            )
+    except (OSError, ValueError) as failure:
+        return _host_failure(
+            request,
+            provider,
+            HomotopyGeometryStatus.PROVIDER_FAILED,
+            run,
+            f"Pinned runtime verification failed after execution: {failure}",
+        )
+    try:
+        response = _decode_json_object(
+            run.output("homotopy-geometry-result.json"),
+            "homotopy-geometry response",
+        )
         return decode_homotopy_geometry_result(
             request,
             policy,

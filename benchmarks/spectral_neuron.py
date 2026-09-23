@@ -132,7 +132,7 @@ def _benchmark_configuration(
     )
     input_gradient = jax.jit(jax.grad(lambda value: jnp.sum(model(value))))
     parameter_gradient = eqx.filter_jit(
-        eqx.filter_grad(lambda layer: jnp.sum(layer(points)))
+        eqx.filter_grad(lambda layer, samples: jnp.sum(layer(samples)))
     )
 
     cases = []
@@ -166,7 +166,7 @@ def _benchmark_configuration(
     parameter_case, _ = _timed_case(
         "spectral_neuron_parameter_gradient",
         parameter_gradient,
-        (model,),
+        (model, points),
         metadata=metadata,
         warmup=warmup,
         repeats=repeats,
@@ -226,18 +226,23 @@ def main() -> None:
         for case in cases
         if "reference_maximum_absolute_residual" in case
     ]
+    maximum_residual = max(residuals, default=0.0)
+    passed = all(case["output_all_finite"] for case in cases) and maximum_residual <= 1e-5
     payload = {
         "environment": capture_environment().to_dict(),
         "cases": cases,
-        "maximum_reference_residual": max(residuals, default=0.0),
-        "all_outputs_finite": all(case["output_all_finite"] for case in cases),
+        "maximum_reference_residual": maximum_residual,
+        "passed": passed,
     }
-    encoded = json.dumps(payload, indent=2)
+    encoded = json.dumps(payload, allow_nan=False, indent=2)
     if arguments.output is None:
         print(encoded)
     else:
-        arguments.output.parent.mkdir(parents=True, exist_ok=True)
-        arguments.output.write_text(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
+    if not passed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

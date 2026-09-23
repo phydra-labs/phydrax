@@ -2,10 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
+import phydrax.solver._gaussian_lindblad as gaussian_lindblad
 
 
 def test_gaussian_bosonic_lindblad_reaches_thermal_state():
@@ -16,6 +19,29 @@ def test_gaussian_bosonic_lindblad_reaches_thermal_state():
     solution = phx.solver.solve_gaussian_lindblad(problem, step_size=0.05, steps=10)
     assert bool(solution.valid)
     assert solution.covariances[-1, 0, 0] > solution.covariances[0, 0, 0]
+
+
+def test_stationary_gaussian_rejects_failed_mean_solve(monkeypatch):
+    problem = phx.solver.damped_thermal_oscillator(0.4, 1.0)
+    solve_linear = gaussian_lindblad.solve_linear
+    calls = 0
+
+    def fail_mean(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        result = solve_linear(*args, **kwargs)
+        if calls == 2:
+            result = eqx.tree_at(
+                lambda value: value.status,
+                result,
+                jnp.ones_like(result.status),
+            )
+        return result
+
+    monkeypatch.setattr(gaussian_lindblad, "solve_linear", fail_mean)
+
+    with pytest.raises(ValueError, match="certification failed"):
+        problem.stationary_state()
 
 
 def test_quantum_jump_ensemble_replays_and_decays():
@@ -109,7 +135,11 @@ def test_markov_process_tensor_contracts_identity_interventions():
     identity = jnp.eye(4, dtype="complex128")
     initial = jnp.asarray([[0.7 + 0.0j, 0.0j], [0.0j, 0.3 + 0.0j]])
     process = phx.tensor_network.markov_process_tensor((identity, identity), initial)
-    final, probability = process.contract()
-    assert jnp.allclose(final, initial)
-    assert jnp.allclose(probability, 1.0)
+    result = process.contract()
+    assert result.valid
+    assert int(result.status) == int(
+        phx.tensor_network.ProcessTensorContractionStatus.SUCCESS
+    )
+    assert jnp.allclose(result.final_state, initial)
+    assert jnp.allclose(result.probability, 1.0)
     assert bool(process.physicality().valid)

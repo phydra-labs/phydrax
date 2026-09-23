@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike, Key
 import phydrax.ein as ein
 
 from .._doc import DOC_KEY0
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from ..tensor_network import LocallyPurifiedDensity, MatrixProductState
@@ -81,6 +81,7 @@ class QuantumPOVM(StrictModule):
                 "kind": "quantum-povm",
                 "shape": values.shape,
                 "dtype": str(values.dtype),
+                "effects": array_tree_fingerprint(values),
                 "tolerance": tolerance_,
             }
         )
@@ -171,7 +172,8 @@ class QuantumInstrument(StrictModule):
                 "kind": "quantum-instrument",
                 "shape": operators.shape,
                 "dtype": str(operators.dtype),
-                "mask_shape": mask.shape,
+                "mask": array_tree_fingerprint(mask),
+                "kraus": array_tree_fingerprint(operators),
                 "tolerance": tolerance_,
             }
         )

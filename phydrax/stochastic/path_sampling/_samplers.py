@@ -493,6 +493,7 @@ class PreparedTIS(StrictModule, NonTrainableState):
 class TISState(StrictModule, NonTrainableState):
     replicas: tuple[TPSState, ...]
     step_index: Array
+    prepared_id: str = eqx.field(static=True)
 
 
 class TISStep(StrictModule):
@@ -539,6 +540,7 @@ def initialize_tis(prepared: PreparedTIS, /) -> TISState:
     return TISState(
         tuple(initialize_tps(replica) for replica in prepared.replicas),
         jnp.asarray(0, jnp.uint32),
+        prepared.prepared_id,
     )
 
 
@@ -552,6 +554,8 @@ def tis_step(
 ) -> TISStep:
     if not isinstance(prepared, PreparedTIS) or not isinstance(state, TISState):
         raise TypeError("tis_step requires PreparedTIS and TISState.")
+    if state.prepared_id != prepared.prepared_id:
+        raise ValueError("TIS state belongs to a different prepared runtime.")
     if len(state.replicas) != len(prepared.replicas) or any(
         replica_state.prepared_id != replica_prepared.prepared_id
         for replica_state, replica_prepared in zip(
@@ -565,7 +569,11 @@ def tis_step(
     move = tps_step(prepared.replicas[index], state.replicas[index], key)
     replicas = state.replicas[:index] + (move.state,) + state.replicas[index + 1 :]
     return TISStep(
-        TISState(replicas, state.step_index + jnp.asarray(1, jnp.uint32)),
+        TISState(
+            replicas,
+            state.step_index + jnp.asarray(1, jnp.uint32),
+            prepared.prepared_id,
+        ),
         index,
         move,
         prepared.prepared_id,
@@ -599,6 +607,7 @@ class RETISState(StrictModule, NonTrainableState):
     step_index: Array
     exchange_count: Array
     accepted_exchange_count: Array
+    prepared_id: str = eqx.field(static=True)
 
 
 class RETISStep(StrictModule):
@@ -683,6 +692,7 @@ def initialize_retis(prepared: PreparedRETIS, /) -> RETISState:
         jnp.asarray(0, jnp.uint32),
         jnp.asarray(0, jnp.uint32),
         jnp.asarray(0, jnp.uint32),
+        prepared.prepared_id,
     )
 
 
@@ -699,6 +709,8 @@ def retis_step(
 
     if not isinstance(prepared, PreparedRETIS) or not isinstance(state, RETISState):
         raise TypeError("retis_step requires PreparedRETIS and RETISState.")
+    if state.prepared_id != prepared.prepared_id:
+        raise ValueError("RETIS state belongs to a different prepared runtime.")
     if len(state.replicas) != len(prepared.replicas) or any(
         replica_state.prepared_id != replica_prepared.prepared_id
         for replica_state, replica_prepared in zip(
@@ -717,6 +729,7 @@ def retis_step(
             state.step_index + jnp.asarray(1, jnp.uint32),
             state.exchange_count,
             state.accepted_exchange_count,
+            prepared.prepared_id,
         )
         return RETISStep(
             next_state,
@@ -801,6 +814,7 @@ def retis_step(
         serial,
         state.exchange_count + jnp.asarray(1, jnp.uint32),
         state.accepted_exchange_count + exchange_accepted.astype(jnp.uint32),
+        prepared.prepared_id,
     )
     return RETISStep(
         next_state,

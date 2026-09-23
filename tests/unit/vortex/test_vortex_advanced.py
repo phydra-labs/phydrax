@@ -5,8 +5,10 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
+from phydrax.operators.integral.vortex._fmm_complete import VortexFMMPlan
 
 
 def test_reformulated_vpm_and_relaxation_report_their_invariants():
@@ -75,6 +77,37 @@ def test_barnes_hut_backend_matches_direct_for_small_cloud_and_detects_staleness
     assert bool(accelerated.successful)
     assert not bool(stale.successful)
     assert bool(stale.diagnostics.backend_diagnostics.stale_topology)
+
+
+def test_vortex_dynamics_rejects_a_stale_backend_evaluation():
+    reference = jnp.asarray(((-0.5, 0.0), (0.5, 0.0)))
+    particles = phx.discretization.ParticleSetPlan(
+        jnp.arange(2),
+        jnp.ones((2,)),
+        ambient_dimension=2,
+    ).prepare()
+    properties = phx.discretization.VortexParticleProperties(
+        jnp.full((2,), 0.1),
+        jnp.ones((2,)),
+    )
+    method = phx.discretization.VortexParticleMethodPlan(
+        VortexFMMPlan(
+            reference,
+            (-1.0, -1.0),
+            (1.0, 1.0),
+            depth=1,
+            maximum_reference_displacement=0.01,
+        )
+    )
+    compiled = phx.equations.compile_vortex_particle_flow(
+        phx.equations.VortexParticleFlowProblem("stale-backend", 2),
+        particles,
+        properties,
+        method,
+    )
+    state = compiled.initialize_state(reference + 0.1, jnp.asarray((1.0, -1.0)))
+    with pytest.raises(RuntimeError, match="backend rejected"):
+        compiled.dynamics(0.0, state)
 
 
 def test_actuator_sources_and_passive_probes_are_distinct():

@@ -43,6 +43,7 @@ from ._fd_boundary_lowering import (
 )
 from ._ir import PDEExpression, PDEProblemIR
 from ._stencil_compile import StencilStateLayout
+from ._validate import validate_pde_ir
 
 
 class FiniteDifferenceCompilationPolicy(StrictModule):
@@ -541,9 +542,15 @@ class _FiniteDifferenceExpressionEvaluator(StrictModule):
         if op == "negate":
             return -values[0]
         if op == "add":
-            return values[0] + values[1]
+            result = values[0]
+            for value in values[1:]:
+                result = result + value
+            return result
         if op == "multiply":
-            return values[0] * values[1]
+            result = values[0]
+            for value in values[1:]:
+                result = result * value
+            return result
         if op == "divide":
             return values[0] / values[1]
         if op == "power":
@@ -821,6 +828,17 @@ def compile_finite_difference_pde(
     """Compile a scalar/tensor strong PDE directly through prepared FD operators."""
     if not isinstance(problem, PDEProblemIR) or not isinstance(grid, PreparedTensorGrid):
         raise TypeError("problem and grid must be PDEProblemIR/PreparedTensorGrid.")
+    validate_pde_ir(problem)
+    unsupported_fields = tuple(
+        field.name
+        for field in problem.fields
+        if field.components != 1 or field.representation not in ("scalar", "pseudoscalar")
+    )
+    if unsupported_fields:
+        raise ValueError(
+            "Native FD compilation supports only scalar fields; "
+            f"component-valued fields={unsupported_fields!r}."
+        )
     policy_ = FiniteDifferenceCompilationPolicy() if policy is None else policy
     if not isinstance(policy_, FiniteDifferenceCompilationPolicy):
         raise TypeError("policy must be FiniteDifferenceCompilationPolicy.")

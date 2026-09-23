@@ -23,6 +23,7 @@ from typing import Iterator, Protocol
 import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
+from .._host_io import open_directory_beneath
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..logging import emit
@@ -428,7 +429,7 @@ class POSIXArtifactRepository:
         if not isinstance(policy, POSIXRepositoryPolicy):
             raise TypeError("policy must be POSIXRepositoryPolicy.")
         policy.filesystem_profile.require_transactional_support()
-        self.root = Path(root)
+        self.root = _admit_repository_root(root)
         self.policy = policy
         self.provider_id = policy.filesystem_profile.provider_id
         self.maximum_chunk_bytes = policy.maximum_chunk_bytes
@@ -445,6 +446,48 @@ class POSIXArtifactRepository:
             },
         )
         self._initialize()
+        with open_directory_beneath(
+            self.root,
+            trusted_root=self.root.parent,
+            maximum_depth=1,
+        ) as opened_root:
+            self._root_descriptor = os.dup(opened_root.descriptor)
+        self._directory_descriptors = {
+            name: os.open(
+                name,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=self._root_descriptor,
+            )
+            for name in (
+                "roots",
+                "artifacts",
+                "leases",
+                "holds",
+                "retention",
+                "tombstones",
+                "trash",
+                "staging",
+                "locks",
+            )
+        }
+        self._layout_identities = self._repository_layout_identities()
+        root_status = os.fstat(self._root_descriptor)
+        self._pinned_layout_identities = {
+            "": (root_status.st_dev, root_status.st_ino),
+            **{
+                name: (
+                    os.fstat(descriptor).st_dev,
+                    os.fstat(descriptor).st_ino,
+                )
+                for name, descriptor in self._directory_descriptors.items()
+            },
+        }
+        if self._pinned_layout_identities != self._layout_identities:
+            raise RepositoryCorruptionError(
+                "Repository storage layout changed while descriptors were pinned."
+            )
 
     def begin(
         self,
@@ -476,26 +519,24 @@ class POSIXArtifactRepository:
             )
             root = self._attempt_path(attempt)
             staging = self.root / "staging" / f"{attempt}.{secrets.token_hex(16)}.attempt"
-            staging.mkdir(mode=0o700)
+            self._make_directory(staging)
             try:
-                (staging / "chunks").mkdir(mode=0o700)
+                self._make_directory(staging / "chunks")
                 self._atomic_create_immutable(
                     staging / "transaction.json",
                     _json_bytes(transaction.to_record(), self.maximum_metadata_bytes),
                 )
-                _fsync_directory(staging / "chunks")
-                _fsync_directory(staging)
-                if root.exists():
+                self._fsync_repository_directory(staging / "chunks")
+                self._fsync_repository_directory(staging)
+                if self._repository_path_exists(root):
                     raise RepositoryConflictError(
                         f"Repository attempt {attempt!r} already exists."
                     )
-                os.rename(staging, root)
-                _fsync_directory(self.root / "staging")
-                _fsync_directory(self.root / "roots")
+                self._rename_repository_path(staging, root)
             finally:
-                if staging.exists():
-                    shutil.rmtree(staging)
-                    _fsync_directory(self.root / "staging")
+                if self._repository_path_exists(staging):
+                    self._remove_repository_tree(staging)
+                    self._fsync_repository_directory(self.root / "staging")
         emit(
             "DEBUG",
             "lifecycle.repository.transaction.started",
@@ -606,6 +647,7 @@ class POSIXArtifactRepository:
         return manifest
 
     def get_manifest(self, artifact_id: str, /) -> ArtifactManifest:
+        self._verify_repository_layout()
         artifact = _identifier(artifact_id, "artifact_id")
         pointer = self._read_pointer_optional(artifact)
         if pointer is None:
@@ -620,6 +662,7 @@ class POSIXArtifactRepository:
         *,
         maximum_plaintext_bytes: int | None = None,
     ) -> bytes:
+        self._verify_repository_layout()
         self._validate_manifest_argument(manifest, chunk)
         maximum = (
             self.maximum_chunk_bytes
@@ -628,7 +671,7 @@ class POSIXArtifactRepository:
         )
         if chunk.plaintext_size > maximum:
             raise RepositoryCorruptionError("Chunk exceeds requested plaintext bound.")
-        encoded = _read_bounded_file(
+        encoded = self._read_bounded_file(
             self.root / chunk.object_key,
             min(self.maximum_chunk_bytes, chunk.encoded_size),
         )
@@ -680,12 +723,13 @@ class POSIXArtifactRepository:
                 expires_at,
             )
             directory = self.root / "leases" / artifact
-            directory.mkdir(mode=0o700, exist_ok=True)
+            if not self._repository_path_exists(directory):
+                self._make_directory(directory)
             self._atomic_create_immutable(
                 directory / f"{lease.lease_id}.json",
                 _json_bytes(lease.to_record(), self.maximum_metadata_bytes),
             )
-            _fsync_directory(directory)
+            self._fsync_repository_directory(directory)
             return lease
 
     def release_lease(self, lease: LeaseRecord, /) -> None:
@@ -697,7 +741,7 @@ class POSIXArtifactRepository:
                 raise TypeError("lease must belong to this repository provider.")
             path = self.root / "leases" / lease.artifact_id / f"{lease.lease_id}.json"
             persisted = LeaseRecord.from_record(
-                _read_json_file(path, self.maximum_metadata_bytes)
+                self._read_json_file(path, self.maximum_metadata_bytes)
             )
             if persisted.record_id != lease.record_id:
                 raise RepositoryConflictError("Lease release record does not match.")
@@ -723,12 +767,13 @@ class POSIXArtifactRepository:
                 _now() if placed_at is None else placed_at,
             )
             directory = self.root / "holds" / artifact
-            directory.mkdir(mode=0o700, exist_ok=True)
+            if not self._repository_path_exists(directory):
+                self._make_directory(directory)
             self._atomic_create_immutable(
                 directory / f"{hold.hold_id}.json",
                 _json_bytes(hold.to_record(), self.maximum_metadata_bytes),
             )
-            _fsync_directory(directory)
+            self._fsync_repository_directory(directory)
             return hold
 
     def release_legal_hold(self, hold: LegalHoldRecord, /) -> None:
@@ -740,7 +785,7 @@ class POSIXArtifactRepository:
                 raise TypeError("hold must belong to this repository provider.")
             path = self.root / "holds" / hold.artifact_id / f"{hold.hold_id}.json"
             persisted = LegalHoldRecord.from_record(
-                _read_json_file(path, self.maximum_metadata_bytes)
+                self._read_json_file(path, self.maximum_metadata_bytes)
             )
             if persisted.record_id != hold.record_id:
                 raise RepositoryConflictError("Legal-hold release record does not match.")
@@ -911,10 +956,24 @@ class POSIXArtifactRepository:
             "staging",
             "locks",
         ):
-            (self.root / name).mkdir(mode=0o700, exist_ok=True)
+            directory = self.root / name
+            directory.mkdir(mode=0o700, exist_ok=True)
+            information = directory.lstat()
+            if not stat.S_ISDIR(information.st_mode) or stat.S_ISLNK(information.st_mode):
+                raise RepositoryCorruptionError(
+                    f"Repository storage component {name!r} is not a real directory."
+                )
         lock = self.root / "locks" / "repository.lock"
-        descriptor = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
-        os.close(descriptor)
+        descriptor = os.open(
+            lock,
+            os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise RepositoryCorruptionError("Repository lock is not a regular file.")
+        finally:
+            os.close(descriptor)
         for name in (
             "roots",
             "artifacts",
@@ -929,36 +988,66 @@ class POSIXArtifactRepository:
             _fsync_directory(self.root / name)
         _fsync_directory(self.root)
 
+    def _repository_layout_identities(self) -> dict[str, tuple[int, int]]:
+        identities: dict[str, tuple[int, int]] = {}
+        for name in (
+            "",
+            "roots",
+            "artifacts",
+            "leases",
+            "holds",
+            "retention",
+            "tombstones",
+            "trash",
+            "staging",
+            "locks",
+        ):
+            path = self.root if not name else self.root / name
+            information = path.lstat()
+            if not stat.S_ISDIR(information.st_mode) or stat.S_ISLNK(information.st_mode):
+                raise RepositoryCorruptionError(
+                    "Repository storage layout contains a symbolic link."
+                )
+            identities[name] = (information.st_dev, information.st_ino)
+        return identities
+
+    def _verify_repository_layout(self) -> None:
+        current = self._repository_layout_identities()
+        if (
+            current != self._layout_identities
+            or current != self._pinned_layout_identities
+        ):
+            raise RepositoryCorruptionError(
+                "Repository storage layout changed after initialization."
+            )
+
     def _remove_root(self, attempt_id: str, /) -> None:
         source = self._attempt_path(attempt_id)
         destination = self.root / "trash" / attempt_id
-        os.replace(source, destination)
-        _fsync_directory(self.root / "roots")
-        _fsync_directory(self.root / "trash")
-        shutil.rmtree(destination)
-        _fsync_directory(self.root / "trash")
+        self._rename_repository_path(source, destination, replace=True)
+        self._remove_repository_tree(destination)
+        self._fsync_repository_directory(self.root / "trash")
 
     def _cleanup_trash(self) -> None:
         trash = self.root / "trash"
-        for path in sorted(trash.iterdir()):
-            if not stat.S_ISDIR(path.lstat().st_mode):
+        for name, information in self._repository_directory_entries(trash):
+            if not stat.S_ISDIR(information.st_mode):
                 raise RepositoryCorruptionError(
                     "Repository trash contains a non-directory."
                 )
-            shutil.rmtree(path)
-        _fsync_directory(trash)
+            self._remove_repository_tree(trash / name)
+        self._fsync_repository_directory(trash)
 
     def _cleanup_staging(self, now: int, grace_seconds: int, /) -> None:
         staging = self.root / "staging"
-        for path in sorted(staging.iterdir()):
-            information = path.lstat()
+        for name, information in self._repository_directory_entries(staging):
             if not stat.S_ISDIR(information.st_mode):
                 raise RepositoryCorruptionError(
                     "Repository staging contains a non-directory."
                 )
             if now - int(information.st_mtime) >= grace_seconds:
-                shutil.rmtree(path)
-        _fsync_directory(staging)
+                self._remove_repository_tree(staging / name)
+        self._fsync_repository_directory(staging)
 
     def _validate_transaction(self, transaction: RepositoryTransaction, /) -> None:
         if not isinstance(transaction, RepositoryTransaction):
@@ -969,7 +1058,7 @@ class POSIXArtifactRepository:
             )
         path = self._attempt_path(transaction.attempt_id) / "transaction.json"
         record = RepositoryTransaction.from_record(
-            _read_json_file(path, self.maximum_metadata_bytes)
+            self._read_json_file(path, self.maximum_metadata_bytes)
         )
         if record.transaction_id != transaction.transaction_id:
             raise RepositoryConflictError(
@@ -990,7 +1079,7 @@ class POSIXArtifactRepository:
                 raise RepositoryConflictError(
                     "Manifest chunk does not belong to the attempt-private root."
                 )
-            encoded = _read_bounded_file(
+            encoded = self._read_bounded_file(
                 self.root / chunk.object_key,
                 min(self.maximum_chunk_bytes, chunk.encoded_size),
             )
@@ -1013,7 +1102,7 @@ class POSIXArtifactRepository:
     ) -> ArtifactManifest:
         _validate_pointer(pointer, self.provider_id, artifact)
         attempt = _identifier(str(pointer["attempt_id"]), "attempt_id")
-        manifest_payload = _read_bounded_file(
+        manifest_payload = self._read_bounded_file(
             self._attempt_path(attempt) / "manifest.json", self.maximum_metadata_bytes
         )
         if hashlib.sha256(manifest_payload).hexdigest() != pointer["manifest_sha256"]:
@@ -1026,7 +1115,7 @@ class POSIXArtifactRepository:
             or manifest.artifact_id != artifact
         ):
             raise RepositoryCorruptionError("Artifact pointer and manifest disagree.")
-        marker = _read_json_file(
+        marker = self._read_json_file(
             self._attempt_path(attempt) / "COMMIT", self.maximum_metadata_bytes
         )
         _validate_commit_marker(marker, pointer)
@@ -1039,17 +1128,21 @@ class POSIXArtifactRepository:
 
     def _read_pointer_optional(self, artifact: str, /) -> dict[str, object] | None:
         path = self._pointer_path(artifact)
-        if not path.exists():
+        if not self._repository_path_exists(path):
             return None
-        record = _read_json_file(path, _POINTER_LIMIT)
+        record = self._read_json_file(path, _POINTER_LIMIT)
         _validate_pointer(record, self.provider_id, artifact)
         return record
 
     def _all_pointers(self) -> dict[str, dict[str, object]]:
         pointers: dict[str, dict[str, object]] = {}
-        for path in sorted((self.root / "artifacts").glob("*.pointer")):
-            artifact = _identifier(path.stem, "artifact_id")
-            pointer = _read_json_file(path, _POINTER_LIMIT)
+        directory = self.root / "artifacts"
+        for name, _ in self._repository_directory_entries(directory):
+            if not name.endswith(".pointer"):
+                continue
+            artifact = _identifier(name.removesuffix(".pointer"), "artifact_id")
+            path = directory / name
+            pointer = self._read_json_file(path, _POINTER_LIMIT)
             _validate_pointer(pointer, self.provider_id, artifact)
             pointers[artifact] = pointer
         return pointers
@@ -1058,14 +1151,18 @@ class POSIXArtifactRepository:
         self,
     ) -> tuple[tuple[RepositoryTransaction, ArtifactManifest | None], ...]:
         roots: list[tuple[RepositoryTransaction, ArtifactManifest | None]] = []
-        for path in sorted((self.root / "roots").iterdir()):
-            if not stat.S_ISDIR(path.lstat().st_mode):
+        directory = self.root / "roots"
+        for name, information in self._repository_directory_entries(directory):
+            if not stat.S_ISDIR(information.st_mode):
                 raise RepositoryCorruptionError(
                     "Repository roots contain a non-directory."
                 )
-            attempt = _identifier(path.name, "attempt_id")
+            attempt = _identifier(name, "attempt_id")
+            path = directory / attempt
             transaction = RepositoryTransaction.from_record(
-                _read_json_file(path / "transaction.json", self.maximum_metadata_bytes)
+                self._read_json_file(
+                    path / "transaction.json", self.maximum_metadata_bytes
+                )
             )
             if (
                 transaction.attempt_id != attempt
@@ -1074,13 +1171,15 @@ class POSIXArtifactRepository:
                 raise RepositoryCorruptionError("Attempt transaction identity mismatch.")
             manifest_path = path / "manifest.json"
             marker_path = path / "COMMIT"
-            if marker_path.exists() and not manifest_path.exists():
+            marker_exists = self._repository_path_exists(marker_path)
+            manifest_exists = self._repository_path_exists(manifest_path)
+            if marker_exists and not manifest_exists:
                 raise RepositoryCorruptionError("Commit marker has no manifest.")
             manifest = (
                 None
-                if not marker_path.exists()
+                if not marker_exists
                 else ArtifactManifest.from_record(
-                    _read_json_file(manifest_path, self.maximum_metadata_bytes)
+                    self._read_json_file(manifest_path, self.maximum_metadata_bytes)
                 )
             )
             if manifest is not None:
@@ -1099,12 +1198,14 @@ class POSIXArtifactRepository:
                     raise RepositoryCorruptionError(
                         "Committed root manifest does not match its transaction."
                     )
-                marker = _read_json_file(marker_path, self.maximum_metadata_bytes)
+                marker = self._read_json_file(marker_path, self.maximum_metadata_bytes)
                 expected = _pointer_record(
                     transaction,
                     manifest,
                     hashlib.sha256(
-                        _read_bounded_file(manifest_path, self.maximum_metadata_bytes)
+                        self._read_bounded_file(
+                            manifest_path, self.maximum_metadata_bytes
+                        )
                     ).hexdigest(),
                 )
                 _validate_commit_marker(marker, expected)
@@ -1113,9 +1214,10 @@ class POSIXArtifactRepository:
 
     def _expire_and_collect_leases(self, now: int, /) -> tuple[str, ...]:
         expired: list[str] = []
-        for path in sorted((self.root / "leases").glob("*/*.json")):
+        directory = self.root / "leases"
+        for path in self._nested_repository_files(directory, suffix=".json"):
             lease = LeaseRecord.from_record(
-                _read_json_file(path, self.maximum_metadata_bytes)
+                self._read_json_file(path, self.maximum_metadata_bytes)
             )
             if lease.provider_id != self.provider_id:
                 raise RepositoryCorruptionError("Lease provider mismatch.")
@@ -1126,9 +1228,10 @@ class POSIXArtifactRepository:
 
     def _active_lease_artifacts(self, now: int, /) -> set[str]:
         active: set[str] = set()
-        for path in sorted((self.root / "leases").glob("*/*.json")):
+        directory = self.root / "leases"
+        for path in self._nested_repository_files(directory, suffix=".json"):
             lease = LeaseRecord.from_record(
-                _read_json_file(path, self.maximum_metadata_bytes)
+                self._read_json_file(path, self.maximum_metadata_bytes)
             )
             if lease.provider_id != self.provider_id:
                 raise RepositoryCorruptionError("Lease provider mismatch.")
@@ -1138,9 +1241,10 @@ class POSIXArtifactRepository:
 
     def _held_artifacts(self) -> set[str]:
         held: set[str] = set()
-        for path in sorted((self.root / "holds").glob("*/*.json")):
+        directory = self.root / "holds"
+        for path in self._nested_repository_files(directory, suffix=".json"):
             hold = LegalHoldRecord.from_record(
-                _read_json_file(path, self.maximum_metadata_bytes)
+                self._read_json_file(path, self.maximum_metadata_bytes)
             )
             if hold.provider_id != self.provider_id:
                 raise RepositoryCorruptionError("Legal-hold provider mismatch.")
@@ -1151,9 +1255,9 @@ class POSIXArtifactRepository:
         self, artifact: str, default: RetentionPolicy, /
     ) -> RetentionPolicy:
         path = self.root / "retention" / f"{artifact}.json"
-        if not path.exists():
+        if not self._repository_path_exists(path):
             return default
-        record = _read_json_file(path, self.maximum_metadata_bytes)
+        record = self._read_json_file(path, self.maximum_metadata_bytes)
         if (
             record.get("kind") != "artifact-retention"
             or record.get("provider_id") != self.provider_id
@@ -1165,21 +1269,205 @@ class POSIXArtifactRepository:
 
     def _tombstone_optional(self, artifact: str, /) -> TombstoneRecord | None:
         path = self.root / "tombstones" / f"{artifact}.json"
-        if not path.exists():
+        if not self._repository_path_exists(path):
             return None
         value = TombstoneRecord.from_record(
-            _read_json_file(path, self.maximum_metadata_bytes)
+            self._read_json_file(path, self.maximum_metadata_bytes)
         )
         if value.provider_id != self.provider_id or value.artifact_id != artifact:
             raise RepositoryCorruptionError("Tombstone provider or artifact mismatch.")
         return value
 
     @contextmanager
+    def _open_parent_descriptor(self, path: Path, /) -> Iterator[tuple[int, str]]:
+        try:
+            relative = path.relative_to(self.root)
+        except ValueError as error:
+            raise RepositoryCorruptionError(
+                "Repository path escaped its pinned root."
+            ) from error
+        if not relative.parts or any(
+            component in ("", ".", "..") for component in relative.parts
+        ):
+            raise RepositoryCorruptionError("Repository path is not canonical.")
+        first = relative.parts[0]
+        if len(relative.parts) > 1 and first in self._directory_descriptors:
+            descriptors = [os.dup(self._directory_descriptors[first])]
+            traversed = relative.parts[1:-1]
+        else:
+            descriptors = [os.dup(self._root_descriptor)]
+            traversed = relative.parts[:-1]
+        try:
+            parent = descriptors[-1]
+            for component in traversed:
+                parent = os.open(
+                    component,
+                    os.O_RDONLY
+                    | getattr(os, "O_DIRECTORY", 0)
+                    | getattr(os, "O_NOFOLLOW", 0),
+                    dir_fd=parent,
+                )
+                descriptors.append(parent)
+            yield parent, relative.parts[-1]
+        finally:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
+
+    def _repository_directory_entries(
+        self,
+        directory: Path,
+        /,
+    ) -> tuple[tuple[str, os.stat_result], ...]:
+        with self._open_parent_descriptor(directory) as (parent, name):
+            descriptor = os.open(
+                name,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=parent,
+            )
+            try:
+                entries = tuple(sorted(os.listdir(descriptor)))
+                return tuple(
+                    (
+                        entry,
+                        os.stat(entry, dir_fd=descriptor, follow_symlinks=False),
+                    )
+                    for entry in entries
+                )
+            finally:
+                os.close(descriptor)
+
+    def _nested_repository_files(
+        self,
+        directory: Path,
+        /,
+        *,
+        suffix: str,
+    ) -> tuple[Path, ...]:
+        paths: list[Path] = []
+        for child_name, child_status in self._repository_directory_entries(directory):
+            if not stat.S_ISDIR(child_status.st_mode):
+                raise RepositoryCorruptionError(
+                    f"Repository directory {directory.name!r} contains a non-directory."
+                )
+            child = directory / child_name
+            for name, information in self._repository_directory_entries(child):
+                if stat.S_ISDIR(information.st_mode):
+                    raise RepositoryCorruptionError(
+                        f"Repository directory {child.name!r} contains a nested directory."
+                    )
+                if name.endswith(suffix):
+                    paths.append(child / name)
+        return tuple(sorted(paths))
+
+    def _remove_repository_tree(self, path: Path, /) -> None:
+        with self._open_parent_descriptor(path) as (parent, name):
+            information = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            if not stat.S_ISDIR(information.st_mode):
+                raise RepositoryCorruptionError(
+                    "Repository cleanup target is not a directory."
+                )
+            shutil.rmtree(name, dir_fd=parent)
+
+    def _repository_path_exists(self, path: Path, /) -> bool:
+        with self._open_parent_descriptor(path) as (parent, name):
+            try:
+                os.stat(name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                return False
+            return True
+
+    def _make_directory(self, path: Path, /) -> None:
+        with self._open_parent_descriptor(path) as (parent, name):
+            os.mkdir(name, 0o700, dir_fd=parent)
+            os.fsync(parent)
+
+    def _fsync_repository_directory(self, path: Path, /) -> None:
+        with self._open_parent_descriptor(path) as (parent, name):
+            descriptor = os.open(
+                name,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=parent,
+            )
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+
+    def _rename_repository_path(
+        self, source: Path, destination: Path, /, *, replace: bool = False
+    ) -> None:
+        with self._open_parent_descriptor(source) as (source_parent, source_name):
+            with self._open_parent_descriptor(destination) as (
+                destination_parent,
+                destination_name,
+            ):
+                operation = os.replace if replace else os.rename
+                operation(
+                    source_name,
+                    destination_name,
+                    src_dir_fd=source_parent,
+                    dst_dir_fd=destination_parent,
+                )
+                os.fsync(source_parent)
+                if destination_parent != source_parent:
+                    os.fsync(destination_parent)
+
+    def _read_bounded_file(self, path: Path, maximum: int, /) -> bytes:
+        maximum_ = _nonnegative(maximum, "maximum read bytes")
+        with self._open_parent_descriptor(path) as (parent, name):
+            descriptor = os.open(
+                name,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=parent,
+            )
+            try:
+                before = os.fstat(descriptor)
+                if not stat.S_ISREG(before.st_mode) or before.st_size > maximum_:
+                    raise RepositoryCorruptionError(
+                        f"Repository file {path.name!r} violates its byte bound."
+                    )
+                payload = bytearray()
+                while len(payload) <= maximum_:
+                    block = os.read(descriptor, min(1 << 20, maximum_ + 1 - len(payload)))
+                    if not block:
+                        break
+                    payload.extend(block)
+                after = os.fstat(descriptor)
+            finally:
+                os.close(descriptor)
+        if (
+            len(payload) > maximum_
+            or len(payload) != before.st_size
+            or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+            != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+        ):
+            raise RepositoryCorruptionError(
+                f"Repository file {path.name!r} changed while being read."
+            )
+        return bytes(payload)
+
+    def _read_json_file(self, path: Path, maximum: int, /) -> dict[str, object]:
+        return _json_record(self._read_bounded_file(path, maximum))
+
+    @contextmanager
     def _exclusive_lock(self) -> Iterator[None]:
-        descriptor = os.open(self.root / "locks" / "repository.lock", os.O_RDWR)
+        self._verify_repository_layout()
+        lock_path = self.root / "locks" / "repository.lock"
+        with self._open_parent_descriptor(lock_path) as (parent, name):
+            descriptor = os.open(
+                name,
+                os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=parent,
+            )
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX)
+            self._verify_repository_layout()
             yield
+            self._verify_repository_layout()
         finally:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
             os.close(descriptor)
@@ -1188,72 +1476,105 @@ class POSIXArtifactRepository:
         self._atomic_replace_file(self._pointer_path(artifact), payload)
 
     def _atomic_replace_file(self, destination: Path, payload: bytes, /) -> None:
-        temporary = (
-            destination.parent / f".{destination.name}.{secrets.token_hex(16)}.tmp"
-        )
-        self._create_immutable_file(temporary, payload)
-        os.replace(temporary, destination)
-        _fsync_directory(destination.parent)
+        temporary_name = f".{destination.name}.{secrets.token_hex(16)}.tmp"
+        with self._open_parent_descriptor(destination) as (parent, name):
+            self._create_immutable_at(parent, temporary_name, payload)
+            try:
+                os.replace(
+                    temporary_name,
+                    name,
+                    src_dir_fd=parent,
+                    dst_dir_fd=parent,
+                )
+                os.fsync(parent)
+            finally:
+                try:
+                    os.unlink(temporary_name, dir_fd=parent)
+                except FileNotFoundError:
+                    pass
 
-    def _create_immutable_file(self, path: Path, payload: bytes, /) -> None:
+    @staticmethod
+    def _create_immutable_at(parent: int, name: str, payload: bytes, /) -> None:
         try:
             descriptor = os.open(
-                path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+                name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+                dir_fd=parent,
             )
         except FileExistsError as error:
             raise RepositoryConflictError(
-                f"Immutable repository object {path.name!r} already exists."
+                f"Immutable repository object {name!r} already exists."
             ) from error
         try:
             view = memoryview(payload)
             while view:
                 written = os.write(descriptor, view)
                 if written <= 0:
-                    raise RepositoryError(f"Cannot write repository file {path}.")
+                    raise RepositoryError(f"Cannot write repository file {name}.")
                 view = view[written:]
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
 
+    def _create_immutable_file(self, path: Path, payload: bytes, /) -> None:
+        with self._open_parent_descriptor(path) as (parent, name):
+            self._create_immutable_at(parent, name, payload)
+
     def _atomic_create_immutable(self, path: Path, payload: bytes, /) -> None:
-        temporary = path.parent / f".{path.name}.{secrets.token_hex(16)}.immutable.tmp"
-        self._create_immutable_file(temporary, payload)
-        try:
+        temporary_name = f".{path.name}.{secrets.token_hex(16)}.immutable.tmp"
+        with self._open_parent_descriptor(path) as (parent, name):
+            self._create_immutable_at(parent, temporary_name, payload)
             try:
-                os.link(temporary, path)
-            except FileExistsError as error:
-                raise RepositoryConflictError(
-                    f"Immutable repository object {path.name!r} already exists."
-                ) from error
-            _fsync_directory(path.parent)
-        finally:
-            temporary.unlink(missing_ok=True)
+                try:
+                    os.link(
+                        temporary_name,
+                        name,
+                        src_dir_fd=parent,
+                        dst_dir_fd=parent,
+                        follow_symlinks=False,
+                    )
+                except FileExistsError as error:
+                    raise RepositoryConflictError(
+                        f"Immutable repository object {name!r} already exists."
+                    ) from error
+                os.fsync(parent)
+            finally:
+                os.unlink(temporary_name, dir_fd=parent)
 
     def _create_or_verify_immutable(self, path: Path, payload: bytes, /) -> None:
-        temporary = path.parent / f".{path.name}.{secrets.token_hex(16)}.immutable.tmp"
-        self._create_immutable_file(temporary, payload)
-        try:
+        temporary_name = f".{path.name}.{secrets.token_hex(16)}.immutable.tmp"
+        with self._open_parent_descriptor(path) as (parent, name):
+            self._create_immutable_at(parent, temporary_name, payload)
             try:
-                os.link(temporary, path)
-            except FileExistsError:
-                existing = _read_bounded_file(path, len(payload))
-                if existing != payload:
-                    raise RepositoryConflictError(
-                        f"Immutable repository object {path.name!r} conflicts."
+                try:
+                    os.link(
+                        temporary_name,
+                        name,
+                        src_dir_fd=parent,
+                        dst_dir_fd=parent,
+                        follow_symlinks=False,
                     )
-            else:
-                _fsync_directory(path.parent)
-        finally:
-            temporary.unlink(missing_ok=True)
+                except FileExistsError:
+                    existing = self._read_bounded_file(path, len(payload))
+                    if existing != payload:
+                        raise RepositoryConflictError(
+                            f"Immutable repository object {name!r} conflicts."
+                        )
+                else:
+                    os.fsync(parent)
+            finally:
+                os.unlink(temporary_name, dir_fd=parent)
 
     def _unlink_existing(self, path: Path, /) -> None:
-        try:
-            path.unlink()
-        except FileNotFoundError as error:
-            raise RepositoryConflictError(
-                f"Repository record {path.name!r} no longer exists."
-            ) from error
-        _fsync_directory(path.parent)
+        with self._open_parent_descriptor(path) as (parent, name):
+            try:
+                os.unlink(name, dir_fd=parent)
+            except FileNotFoundError as error:
+                raise RepositoryConflictError(
+                    f"Repository record {name!r} no longer exists."
+                ) from error
+            os.fsync(parent)
 
     def _attempt_path(self, attempt: str, /) -> Path:
         return self.root / "roots" / _identifier(attempt, "attempt_id")
@@ -2296,6 +2617,21 @@ def _unique_json_object(
             raise ValueError(f"Duplicate JSON member {name!r} is forbidden.")
         value[name] = item
     return value
+
+
+def _admit_repository_root(root: str | os.PathLike[str], /) -> Path:
+    candidate = Path(root).absolute()
+    current = Path(candidate.anchor)
+    for component in candidate.parts[1:]:
+        current = current / component
+        try:
+            information = current.lstat()
+        except FileNotFoundError:
+            current.mkdir(mode=0o700)
+            information = current.lstat()
+        if stat.S_ISLNK(information.st_mode) or not stat.S_ISDIR(information.st_mode):
+            raise ValueError("Repository path components must be real directories.")
+    return candidate
 
 
 def _read_json_file(path: Path, maximum: int, /) -> dict[str, object]:

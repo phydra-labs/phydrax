@@ -43,19 +43,23 @@ def run():
         0.0,
         0.01,
     )
+    if not bool(contact_result.successful & topology.successful & response.successful[0]):
+        raise RuntimeError(
+            "MPM contact, fracture topology, or material evaluation failed"
+        )
     return {
         "contact": {
-            "successful": bool(contact_result.successful),
+            "successful": True,
             "post_velocity": contact_result.velocity[0].tolist(),
             "dissipation": float(contact_result.dissipation),
         },
         "sharp_topology": {
-            "successful": bool(topology.successful),
+            "successful": True,
             "generation": int(topology.topology_generation),
             "slots": topology.velocity_field_slots.tolist(),
         },
         "diffuse_material": {
-            "successful": bool(response.successful[0]),
+            "successful": True,
             "history": float(response.trial_state[0, 1]),
             "energy": float(response.reference_energy_density[0]),
         },

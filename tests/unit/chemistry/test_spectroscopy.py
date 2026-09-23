@@ -46,6 +46,9 @@ def test_linear_dipole_surface_produces_finite_ir_line_strengths():
             np.sum(delta**2),
             forces=-2.0 * delta,
             dipole=np.sum(charges[:, None] * value, axis=0),
+            convergence=phx.chemistry.ElectronicConvergenceEvidence(
+                True, energy_residual=0.0, density_residual=0.0
+            ),
         )
 
     capabilities = phx.chemistry.ElectronicProviderCapabilities.molecular_ground_state(

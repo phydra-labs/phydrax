@@ -55,6 +55,24 @@ class LogProbabilityModel(Protocol):
     def predict_log_proba(self, x: Any, /) -> Any: ...
 
 
+@runtime_checkable
+class PredictionModel(Protocol):
+    """Structural contract for models exposing consumer-facing predictions."""
+
+    def predict(self, x: Any, /) -> Any: ...
+
+
+@runtime_checkable
+class ProbabilityModel(Protocol):
+    """Structural contract for classifiers exposing normalized probabilities."""
+
+    def predict_proba(self, x: Any, /) -> Any: ...
+
+
+def _protocol_model(model: AbstractArrayModel, /) -> AbstractArrayModel:
+    return model.as_trainable() if isinstance(model, FrozenModel) else model
+
+
 class MLGradientRequest(StrictModule):
     """Explicit admission request for one prediction or fitting gradient surface."""
 
@@ -319,6 +337,11 @@ class FitResult(StrictModule):
 class AbstractRecipe(StrictModule):
     """Immutable configuration for a pure ML fitting operation."""
 
+    @property
+    def is_fresh_fit(self) -> bool:
+        """Whether fitting starts without learned state from an earlier dataset."""
+        return True
+
     @abstractmethod
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         raise NotImplementedError
@@ -343,6 +366,8 @@ __all__ = [
     "GradientLevel",
     "GradientSurface",
     "LogProbabilityModel",
+    "PredictionModel",
+    "ProbabilityModel",
     "MLGradientAdmission",
     "MLGradientRequest",
 ]

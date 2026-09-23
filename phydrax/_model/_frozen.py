@@ -16,6 +16,10 @@ class FrozenModel(AbstractArrayModel, NonTrainableState):
     model: AbstractArrayModel
     in_size: int | tuple[int, ...] | Literal["scalar"]
     out_size: int | tuple[int, ...] | Literal["scalar"]
+    _input_binding = staticmethod(lambda wrapper: wrapper.model.input_binding())
+    _delegated_methods = frozenset(
+        {"decision_function", "predict", "predict_log_proba", "predict_proba"}
+    )
 
     def __init__(self, model: AbstractArrayModel, /):
         if not isinstance(model, AbstractArrayModel):
@@ -26,6 +30,12 @@ class FrozenModel(AbstractArrayModel, NonTrainableState):
 
     def __call__(self, x: Any, /, *, key: Any = None):
         return self.model(x, key=key)
+
+    def __getattr__(self, name: str, /):
+        if name not in self._delegated_methods:
+            raise AttributeError(name)
+        model = object.__getattribute__(self, "model")
+        return getattr(model, name)
 
     def as_trainable(self, /) -> AbstractArrayModel:
         """Return the wrapped model without copying its array leaves."""

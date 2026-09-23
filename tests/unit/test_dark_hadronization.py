@@ -71,22 +71,6 @@ def _contracts():
         observer_id="observer",
         orientation_id="future-right-handed",
     )
-    runtime = DarkSectorEpochPlan(
-        packet_capacity=1,
-        event_capacity=4,
-        product_capacity=8,
-        radiation_capacity=1,
-        work_capacity=8,
-        frontier_capacity=8,
-        packet_width=1,
-        event_width=8,
-        product_width=4,
-        radiation_width=1,
-        work_width=8,
-        frontier_width=8,
-        species_revision_id="3" * 64,
-        topology_revision_id="4" * 64,
-    )
     catalog = ParticleCatalogReference(
         source_id="dark-hadrons",
         provider_release="test",
@@ -100,6 +84,22 @@ def _contracts():
         catalog=catalog,
         energy_unit=units.energy_unit,
         charge_unit=COULOMB,
+    )
+    runtime = DarkSectorEpochPlan(
+        packet_capacity=1,
+        event_capacity=4,
+        product_capacity=8,
+        radiation_capacity=1,
+        work_capacity=8,
+        frontier_capacity=8,
+        packet_width=1,
+        event_width=8,
+        product_width=4,
+        radiation_width=1,
+        work_width=8,
+        frontier_width=8,
+        species_revision_id=species.table_id,
+        topology_revision_id="4" * 64,
     )
     return units, frame, runtime, species
 
@@ -151,6 +151,7 @@ def test_declared_dark_string_spectrum_is_normalized_and_conservative():
         jnp.asarray(((17, 0), (0, 17))),
         jnp.asarray((0.2, 0.3, 0.7)),
         parent_entity_id="string-parent",
+        draw_id="string-draw-0",
     )
     assert bool(result.successful)
     assert not string.supports_generic_qcd
@@ -158,6 +159,12 @@ def test_declared_dark_string_spectrum_is_normalized_and_conservative():
     np.testing.assert_allclose(result.four_momentum_residual, 0.0, atol=1e-6)
     np.testing.assert_allclose(result.charge_residual, 0.0, atol=1e-12)
     assert result.output_pdg_ids.shape == (2,)
+    np.testing.assert_allclose(
+        jnp.sum(result.output_four_momenta, axis=0),
+        result.input_four_momentum,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(jnp.sum(result.output_charges), 0.0, atol=1e-12)
 
 
 def test_dark_cluster_decay_and_fission_normalize_channels_and_preserve_lineage_quantities():
@@ -169,6 +176,7 @@ def test_dark_cluster_decay_and_fission_normalize_channels_and_preserve_lineage_
         jnp.asarray(0.0),
         jnp.asarray((0.4, 0.2, 0.8)),
         parent_entity_id="cluster-parent",
+        draw_id="cluster-decay-draw-0",
     )
     fission = fission_dark_cluster(
         cluster,
@@ -176,13 +184,22 @@ def test_dark_cluster_decay_and_fission_normalize_channels_and_preserve_lineage_
         jnp.asarray(0.0),
         jnp.asarray((0.7, 0.6, 0.1)),
         parent_entity_id="cluster-parent",
+        draw_id="cluster-fission-draw-0",
     )
     assert bool(decay.successful)
     assert int(fission.status) == 0
+    assert bool(fission.successful)
     np.testing.assert_allclose(decay.channel_probabilities.sum(), 1.0, atol=1e-7)
     np.testing.assert_allclose(fission.channel_probabilities.sum(), 1.0, atol=1e-7)
     np.testing.assert_allclose(decay.four_momentum_residual, 0.0, atol=1e-5)
     np.testing.assert_allclose(fission.four_momentum_residual, 0.0, atol=1e-5)
     np.testing.assert_allclose(decay.charge_residual, 0.0, atol=1e-12)
     np.testing.assert_allclose(fission.charge_residual, 0.0, atol=1e-12)
+    for result in (decay, fission):
+        np.testing.assert_allclose(
+            jnp.sum(result.output_four_momenta, axis=0),
+            result.input_four_momentum,
+            atol=1e-5,
+        )
+        np.testing.assert_allclose(jnp.sum(result.output_charges), 0.0, atol=1e-12)
     assert decay.parent_entity_id == fission.parent_entity_id == "cluster-parent"

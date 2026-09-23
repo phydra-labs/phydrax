@@ -24,7 +24,6 @@ from ._particle import (
     PARTICLE_FILTER_SUCCESS,
     PARTICLE_FILTER_TRANSITION_FAILURE,
     PARTICLE_FILTER_WEIGHT_DEGENERACY,
-    resample_indices,
     ResamplingMethod,
 )
 
@@ -107,8 +106,8 @@ def _particle_configuration(
     count = int(num_particles)
     if count < 2:
         raise ValueError("Conditional SMC requires at least two particles.")
-    if method not in ("systematic", "stratified", "multinomial", "residual"):
-        raise ValueError("Unknown resampling_method.")
+    if method != "multinomial":
+        raise ValueError("Conditional SMC supports multinomial resampling only.")
     return count, method
 
 
@@ -139,7 +138,7 @@ def conditional_particle_filter(
     *,
     num_particles: int,
     ancestor_sampling: bool = False,
-    resampling_method: ResamplingMethod = "systematic",
+    resampling_method: ResamplingMethod = "multinomial",
     raise_on_failure: bool = False,
 ) -> ConditionalParticleFilterResult:
     """Run conditional bootstrap SMC, optionally with ancestor sampling (PGAS)."""
@@ -234,26 +233,35 @@ def conditional_particle_filter(
             value = flat_values[case_index, step]
             mask = flat_masks[case_index, step]
             context = problem.step_context(case_index, step)
+            zero_duration = bool(jnp.equal(start, end))
             resampling_key = state_space_key(
                 key, "conditional-smc-resampling", case_id, step
             )
-            ancestors = resample_indices(
-                resampling_key, log_weights[case_index], method=method
-            )
             if use_ancestor_sampling:
                 reference_next = flat_reference[case_index, step + 1]
-                backward_log_weights = log_weights[case_index] + jnp.stack(
-                    [
-                        problem.model.transition.log_prob(
-                            reference_next,
-                            particles[case_index, particle_index],
-                            start,
-                            end,
-                            context,
-                        )
-                        for particle_index in range(count)
-                    ]
-                )
+                if zero_duration:
+                    matches = jnp.all(
+                        (particles[case_index] == reference_next).reshape((count, -1)),
+                        axis=-1,
+                    )
+                    backward_log_weights = jnp.where(
+                        matches,
+                        log_weights[case_index],
+                        -jnp.inf,
+                    )
+                else:
+                    backward_log_weights = log_weights[case_index] + jnp.stack(
+                        [
+                            problem.model.transition.log_prob(
+                                reference_next,
+                                particles[case_index, particle_index],
+                                start,
+                                end,
+                                context,
+                            )
+                            for particle_index in range(count)
+                        ]
+                    )
                 normalized_backward, _, backward_valid = normalize_log_weights(
                     backward_log_weights
                 )
@@ -269,33 +277,53 @@ def conditional_particle_filter(
                 ).astype(jnp.int32)
             else:
                 conditioned_ancestor = jnp.asarray(0, dtype=jnp.int32)
-            ancestors = ancestors.at[0].set(conditioned_ancestor)
+            other_ancestors = jr.categorical(
+                resampling_key,
+                log_weights[case_index],
+                shape=(count - 1,),
+            ).astype(jnp.int32)
+            ancestors = jax.lax.stop_gradient(
+                jnp.concatenate((conditioned_ancestor[None], other_ancestors))
+            )
             parents = particles[case_index, ancestors]
             proposed = [flat_reference[case_index, step + 1]]
-            proposal_valid = [jnp.asarray(True)]
-            if problem.model.transition.has_log_density:
+            proposal_valid = [
+                jnp.asarray(context.input_valid)
+                & (
+                    jnp.all(proposed[0] == parents[0])
+                    if zero_duration
+                    else jnp.asarray(True)
+                )
+            ]
+            if problem.model.transition.has_log_density and not zero_duration:
                 reference_log_prob = problem.model.transition.log_prob(
                     proposed[0], parents[0], start, end, context
                 )
                 proposal_valid[0] = jnp.isfinite(reference_log_prob)
             for particle_index in range(1, count):
-                transition_key = state_space_key(
-                    key,
-                    "conditional-smc-transition",
-                    case_id,
-                    step,
-                    member=particle_index,
-                )
-                sample = problem.model.transition.sample(
-                    transition_key,
-                    parents[particle_index],
-                    start,
-                    end,
-                    context,
-                )
-                valid = jnp.all(sample.valid) & jnp.all(sample.status == 0)
-                proposed.append(jnp.where(valid, sample.values, parents[particle_index]))
-                proposal_valid.append(valid)
+                if zero_duration:
+                    proposed.append(parents[particle_index])
+                    proposal_valid.append(jnp.asarray(context.input_valid))
+                else:
+                    transition_key = state_space_key(
+                        key,
+                        "conditional-smc-transition",
+                        case_id,
+                        step,
+                        member=particle_index,
+                    )
+                    sample = problem.model.transition.sample(
+                        transition_key,
+                        parents[particle_index],
+                        start,
+                        end,
+                        context,
+                    )
+                    valid = jnp.all(sample.valid) & jnp.all(sample.status == 0)
+                    proposed.append(
+                        jnp.where(valid, sample.values, parents[particle_index])
+                    )
+                    proposal_valid.append(valid)
             proposed = jnp.stack(proposed)
             proposal_valid = jnp.stack(proposal_valid)
             observation_log_weights = jnp.stack(
@@ -439,7 +467,7 @@ def particle_gibbs(
     num_warmup: int = 0,
     thinning: int = 1,
     ancestor_sampling: bool = True,
-    resampling_method: ResamplingMethod = "systematic",
+    resampling_method: ResamplingMethod = "multinomial",
 ) -> ParticleGibbsResult:
     """Sample latent trajectories with conditional SMC or PGAS transitions."""
     samples_count = int(num_samples)

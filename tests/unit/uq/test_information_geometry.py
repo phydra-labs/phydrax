@@ -3,6 +3,7 @@
 #
 
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 
@@ -24,6 +25,14 @@ def test_bernoulli_information_geometry_matches_analytic_fisher_and_duality():
     assert jnp.allclose(midpoint.values, jnp.asarray([0.2]))
     assert bool(mixture.valid)
     assert geometry.kl_divergence(natural, right) >= 0.0
+
+
+def test_information_geometry_rejects_coordinates_from_another_family():
+    geometry = phx.uq.ExponentialFamilyInformationGeometry(phx.uq.BernoulliFamily())
+    natural = phx.uq.PoissonFamily().natural(jnp.asarray([0.0]))
+
+    with pytest.raises(ValueError, match="signature"):
+        geometry.fisher_action(natural, jnp.asarray([1.0]))
 
 
 def _log_normalizer_bregman(family, left, right):

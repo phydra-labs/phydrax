@@ -36,12 +36,17 @@ def markov_benchmark(*, chains: int, draws: int, dimension: int):
     def log_target(value):
         return -0.5 * jnp.sum(value**2)
 
-    state = kernel.initialize(log_target, initial)
+    target = phx.sampling.FullMarkovTarget(
+        log_target,
+        target_id=f"benchmark-standard-normal-{dimension}d",
+    )
+
+    state = kernel.initialize(target, initial)
 
     @eqx.filter_jit
     def run(current, key):
         return phx.sampling.sample_markov(
-            log_target,
+            target,
             kernel,
             current,
             key=key,
@@ -253,7 +258,10 @@ def spin_chain_benchmark(
         problem_id=f"benchmark-periodic-tfim-{num_sites}",
     )
     state = problem.initial_state(key=run_key)
-    target = _model_log_target(state.model)
+    target = phx.sampling.FullMarkovTarget(
+        _model_log_target(state.model),
+        target_id=f"{problem.problem_id}:benchmark-density",
+    )
     refreshed = problem.kernel.refresh(target, state.markov_state)
     sampled, sampler_seconds = _seconds(
         lambda: phx.sampling.sample_markov(

@@ -31,7 +31,9 @@ class ThirdBodyGravity(AbstractAstrodynamicsForce):
     def __init__(self, ephemeris: TabulatedEphemeris, body_index: int, /):
         if not isinstance(ephemeris, TabulatedEphemeris):
             raise TypeError("ephemeris must be a TabulatedEphemeris.")
-        index = int(body_index)
+        if isinstance(body_index, bool) or not isinstance(body_index, int):
+            raise TypeError("body_index must be an integer.")
+        index = body_index
         if not 0 <= index < ephemeris.catalog.capacity:
             raise ValueError("body_index is outside ephemeris capacity.")
         self.ephemeris = ephemeris

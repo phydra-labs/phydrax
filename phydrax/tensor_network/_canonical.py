@@ -20,6 +20,7 @@ class MPSCanonicalEvidence(StrictModule):
     right_residuals: Array
     center_norm: Array
     valid: Array
+    tolerance: float = eqx.field(static=True)
     center: int
 
     def __init__(
@@ -30,15 +31,20 @@ class MPSCanonicalEvidence(StrictModule):
         /,
         *,
         center: int,
+        tolerance: float,
     ):
         self.left_residuals = jnp.asarray(left_residuals)
         self.right_residuals = jnp.asarray(right_residuals)
         self.center_norm = jnp.asarray(center_norm)
+        tolerance_ = float(tolerance)
         self.valid = (
             jnp.all(jnp.isfinite(self.left_residuals))
             & jnp.all(jnp.isfinite(self.right_residuals))
             & jnp.isfinite(self.center_norm)
+            & (jnp.max(self.left_residuals, initial=0.0) <= tolerance_)
+            & (jnp.max(self.right_residuals, initial=0.0) <= tolerance_)
         )
+        self.tolerance = tolerance_
         self.center = int(center)
 
 
@@ -47,6 +53,7 @@ class LPDOCanonicalEvidence(StrictModule):
     right_residuals: Array
     raw_trace: Array
     valid: Array
+    tolerance: float = eqx.field(static=True)
     center: int
 
     def __init__(
@@ -57,16 +64,21 @@ class LPDOCanonicalEvidence(StrictModule):
         /,
         *,
         center: int,
+        tolerance: float,
     ):
         self.left_residuals = jnp.asarray(left_residuals)
         self.right_residuals = jnp.asarray(right_residuals)
         self.raw_trace = jnp.asarray(raw_trace)
+        tolerance_ = float(tolerance)
         self.valid = (
             jnp.all(jnp.isfinite(self.left_residuals))
             & jnp.all(jnp.isfinite(self.right_residuals))
             & jnp.isfinite(self.raw_trace)
             & (self.raw_trace > 0.0)
+            & (jnp.max(self.left_residuals, initial=0.0) <= tolerance_)
+            & (jnp.max(self.right_residuals, initial=0.0) <= tolerance_)
         )
+        self.tolerance = tolerance_
         self.center = int(center)
 
 
@@ -127,11 +139,17 @@ def _mps_evidence(
     /,
 ) -> MPSCanonicalEvidence:
     left, right = _canonical_residuals(tensors, center, precision)
+    real_dtype = tensors[0].real.dtype
+    maximum_matrix_dimension = max(
+        max(tensor.shape[0], tensor.shape[-1]) for tensor in tensors
+    )
+    tolerance = float(128 * maximum_matrix_dimension * jnp.finfo(real_dtype).eps)
     return MPSCanonicalEvidence(
         left,
         right,
         precision.norm(tensors[center]),
         center=center,
+        tolerance=tolerance,
     )
 
 
@@ -176,11 +194,17 @@ def canonicalize_lpdo(
     tensors = _canonical_sweep(state.tensors, center_, state.precision)
     result = LocallyPurifiedDensity(tensors, precision=state.precision)
     left, right = _canonical_residuals(result.tensors, center_, result.precision)
+    real_dtype = result.tensors[0].real.dtype
+    maximum_matrix_dimension = max(
+        max(tensor.shape[0], tensor.shape[-1]) for tensor in result.tensors
+    )
+    tolerance = float(128 * maximum_matrix_dimension * jnp.finfo(real_dtype).eps)
     return result, LPDOCanonicalEvidence(
         left,
         right,
         result.raw_trace(),
         center=center_,
+        tolerance=tolerance,
     )
 
 

@@ -7,6 +7,7 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
+from phydrax._trainable import partition_trainable
 
 
 def _dataset(*, cases=6, size=4):
@@ -115,6 +116,41 @@ def test_native_flow_operator_distribution_batches_samples_logs_and_differentiat
     assert configuration["condition_inputs"] == ("state",)
     assert configuration["uncertainty_source"] == "process"
     assert model.operator_contract.capabilities.topology == "unused"
+
+
+def test_native_flow_fixed_masks_and_positive_scale_survive_trainable_updates():
+    layer = phx.nn.flows.AffineCouplingLayer(
+        2,
+        0,
+        jnp.asarray([1, 0]),
+        width=4,
+        depth=1,
+        key=jr.key(40),
+    )
+    trainable, _fixed = partition_trainable(layer)
+    assert trainable.mask is None
+    assert layer.mask.dtype == jnp.bool_
+    with pytest.raises(ValueError, match="binary"):
+        phx.nn.flows.AffineCouplingLayer(
+            2,
+            0,
+            jnp.asarray([1.0, 0.5]),
+            width=4,
+            depth=1,
+            key=jr.key(41),
+        )
+
+    normal = phx.nn.flows.NormalFlowDistribution(
+        jnp.zeros((2,)),
+        jnp.ones((2,)),
+    )
+    updated = eqx.tree_at(
+        lambda distribution: distribution._raw_scale,
+        normal,
+        replace=jnp.full((2,), -100.0),
+    )
+    assert jnp.all(updated.scale > 0.0)
+    assert jnp.isfinite(updated.log_prob(updated.location))
 
 
 def test_native_flow_fixed_query_accepts_loader_broadcast_but_rejects_changed_geometry():

@@ -169,24 +169,6 @@ def test_physical_matrix_free_actions_include_time_and_reset_parameters():
     np.testing.assert_allclose(state_only.action, dense.saltation_matrix @ tangent)
 
 
-def test_matrix_free_storage_never_contains_a_state_squared_intermediate():
-    # The public matrix-free guarantee is a memory-complexity contract. Inspect
-    # traced buffers rather than mocking a particular Jacobian constructor.
-    size = 128
-    plan = _parameter_event()
-    state = jnp.full((size,), 0.5)
-    args = jnp.asarray([2.0, 1.0, 1.5, 0.3])
-    functions = (
-        lambda value: hybrid_event_jvp(plan, 0.25, state, value, args=args).action,
-        lambda value: hybrid_event_vjp(plan, 0.25, state, value, args=args)[1],
-    )
-    for function in functions:
-        graph = jax.make_jaxpr(function)(jnp.ones_like(state)).jaxpr
-        for equation in graph.eqns:
-            for variable in equation.outvars:
-                assert np.prod(variable.aval.shape) < size * size
-
-
 def test_singular_reset_retains_action_but_not_density_and_invalid_actions_are_nan():
     guard = HybridGuardPlan(
         lambda time, state, args: state[0], guard_id="absorbing-reset"

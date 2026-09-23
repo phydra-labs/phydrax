@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+import phydrax.sampling._gauge_updates as gauge_updates
 from phydrax.discretization import polygonal_cell_complex, prepare_cell_boundary_paths
 from phydrax.graph import MatrixGaugeLinkSpace
 from phydrax.graph._gauge_transport import GaugeStaplePlan
@@ -69,6 +70,28 @@ def test_su2_heatbath_and_overrelaxation_preserve_measure_support():
     assert space.contains(reflected.state.links)
     assert jnp.allclose(reflected.evidence.log_target_ratio, 0.0, atol=3e-5)
     assert jnp.all(reflected.evidence.exact_target_correction)
+
+
+def test_failed_overrelaxation_correction_rolls_back_every_link(monkeypatch):
+    space, prepared = _prepared(SpecialUnitaryGroup(2), kind="overrelaxation")
+    initial = initialize_gauge_update_state(prepared, space.identity())
+    calls = 0
+
+    def non_microcanonical_weight(*_args):
+        nonlocal calls
+        value = jnp.asarray(float(calls % 2))
+        calls += 1
+        return value
+
+    monkeypatch.setattr(gauge_updates, "_local_log_weight", non_microcanonical_weight)
+    result = gauge_update_sweeps(prepared, initial, key=jax.random.key(131))
+
+    assert jnp.any(
+        result.evidence.status
+        == gauge_updates.GaugeUpdateStatus.MICROCANONICAL_INVARIANCE_FAILURE
+    )
+    assert not jnp.any(result.evidence.accepted)
+    assert jnp.array_equal(result.state.links, initial.links)
 
 
 def test_su3_cabibbo_marinari_subgroups_remain_special_unitary():

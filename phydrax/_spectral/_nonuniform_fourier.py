@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from numbers import Integral
 from typing import Literal
 
 import equinox as eqx
@@ -21,6 +22,20 @@ from .._trainable import NonTrainableState
 
 NonuniformFourierType = Literal[1, 2]
 NonuniformFourierRoute = Literal["direct", "chunked"]
+
+
+def _static_int(value: int, name: str, /) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError(f"{name} must be an integer.")
+    return int(value)
+
+
+def _complex_dtype(*arrays: Array) -> jnp.dtype:
+    real_dtype = jnp.result_type(
+        *(array.real.dtype for array in arrays),
+        jnp.float32,
+    )
+    return jnp.dtype(jnp.complex64 if real_dtype.itemsize <= 4 else jnp.complex128)
 
 
 class NonuniformFourierPlan(StrictModule):
@@ -45,23 +60,34 @@ class NonuniformFourierPlan(StrictModule):
         route: NonuniformFourierRoute = "direct",
         chunk_size: int = 256,
     ):
-        shape = tuple(mode_shape)
-        if not shape or len(shape) > 3 or any(size <= 0 for size in shape):
+        supplied_shape = tuple(mode_shape)
+        if not supplied_shape or len(supplied_shape) > 3:
             raise ValueError(
                 "Nonuniform Fourier mode_shape must contain one to three positive sizes."
             )
-        if transform_type not in (1, 2):
+        shape = tuple(
+            _static_int(size, "Nonuniform Fourier mode size") for size in supplied_shape
+        )
+        if any(size <= 0 for size in shape):
+            raise ValueError(
+                "Nonuniform Fourier mode_shape must contain one to three positive sizes."
+            )
+        transform = _static_int(transform_type, "Nonuniform Fourier transform_type")
+        if transform not in (1, 2):
             raise ValueError("Nonuniform Fourier transform_type must be one or two.")
-        if sign not in (-1, 1):
+        exponent_sign = _static_int(sign, "Nonuniform Fourier sign")
+        if exponent_sign not in (-1, 1):
             raise ValueError("Nonuniform Fourier sign must be -1 or 1.")
+        if not isinstance(centered, bool):
+            raise TypeError("Nonuniform Fourier centered must be a bool.")
         if route not in ("direct", "chunked"):
             raise ValueError("Unknown nonuniform Fourier route.")
-        chunk = int(chunk_size)
+        chunk = _static_int(chunk_size, "Nonuniform Fourier chunk_size")
         if chunk < 1:
             raise ValueError("Nonuniform Fourier chunk_size must be positive.")
         self.mode_shape = shape
-        self.transform_type = transform_type
-        self.sign = sign
+        self.transform_type = transform
+        self.sign = exponent_sign
         self.centered = centered
         self.route = route
         self.chunk_size = chunk
@@ -69,8 +95,8 @@ class NonuniformFourierPlan(StrictModule):
             {
                 "kind": "nonuniform-fourier-plan",
                 "mode_shape": shape,
-                "type": transform_type,
-                "sign": sign,
+                "type": transform,
+                "sign": exponent_sign,
                 "centered": centered,
                 "route": route,
                 "chunk_size": chunk,
@@ -93,24 +119,28 @@ class PreparedNonuniformFourier(StrictModule, NonTrainableState):
     ):
         if not isinstance(plan, NonuniformFourierPlan):
             raise TypeError("plan must be a NonuniformFourierPlan.")
+        resolved_dtype = jnp.dtype(dtype)
+        if not jnp.issubdtype(resolved_dtype, jnp.floating):
+            raise TypeError("Nonuniform Fourier modes require a real floating dtype.")
         modes = []
         for size in plan.mode_shape:
             if plan.centered:
-                values = jnp.arange(size, dtype=dtype) - size // 2
+                values = jnp.arange(size, dtype=resolved_dtype) - size // 2
             else:
-                values = jnp.fft.fftfreq(size).astype(dtype) * size
+                values = jnp.fft.fftfreq(size).astype(resolved_dtype) * size
             modes.append(values)
         self.modes = tuple(modes)
         self.plan = plan
 
     def _type2_direct(self, points: Array, values: Array, /) -> Array:
-        result = values
+        dtype = jnp.result_type(values.dtype, _complex_dtype(points, values, *self.modes))
+        result = values.astype(dtype)
+        imaginary_unit = jnp.asarray(1j, dtype=dtype)
         for position, (mode, coordinate) in enumerate(
             zip(self.modes, points.T, strict=True)
         ):
-            phase = jnp.exp(
-                1j * self.plan.sign * coordinate[:, None] * mode[None, :]
-            ).astype(values.dtype)
+            angle = self.plan.sign * coordinate[:, None] * mode[None, :]
+            phase = jnp.exp(imaginary_unit * angle)
             result = (
                 ein.contract("mk,k...->m...", phase, result)
                 if position == 0
@@ -127,6 +157,8 @@ class PreparedNonuniformFourier(StrictModule, NonTrainableState):
             raise ValueError(
                 "Nonuniform Fourier coordinates must have shape (points, dimension)."
             )
+        if jnp.issubdtype(points.dtype, jnp.complexfloating):
+            raise TypeError("Nonuniform Fourier coordinates must be real-valued.")
         if values.shape[: len(self.modes)] != self.plan.mode_shape:
             raise ValueError("Nonuniform Fourier coefficients do not match mode_shape.")
         point_count = points.shape[0]
@@ -154,11 +186,12 @@ class PreparedNonuniformFourier(StrictModule, NonTrainableState):
         return outputs.reshape((padded_count, *outputs.shape[2:]))[:point_count]
 
     def _type1_direct(self, points: Array, values: Array, /) -> Array:
-        result = values
+        dtype = jnp.result_type(values.dtype, _complex_dtype(points, values, *self.modes))
+        result = values.astype(dtype)
+        imaginary_unit = jnp.asarray(1j, dtype=dtype)
         for axis, mode in enumerate(self.modes):
-            phase = jnp.exp(
-                1j * self.plan.sign * points[:, axis, None] * mode[None, :]
-            ).astype(values.dtype)
+            angle = self.plan.sign * points[:, axis, None] * mode[None, :]
+            phase = jnp.exp(imaginary_unit * angle)
             result = ein.contract("m...,mk->m...k", result, phase)
         return ein.contract("m...->...", result)
 
@@ -171,6 +204,8 @@ class PreparedNonuniformFourier(StrictModule, NonTrainableState):
             raise ValueError(
                 "Nonuniform Fourier coordinates must have shape (points, dimension)."
             )
+        if jnp.issubdtype(points.dtype, jnp.complexfloating):
+            raise TypeError("Nonuniform Fourier coordinates must be real-valued.")
         if values.shape[0] != points.shape[0]:
             raise ValueError(
                 "Nonuniform Fourier strengths need one leading value per point."

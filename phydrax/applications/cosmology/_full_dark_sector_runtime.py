@@ -1514,6 +1514,24 @@ class FullDarkSectorCheckpointPlan(StrictModule, NonTrainableState):
         if not bool(np.asarray(_state_consistency(self.runtime, state))):
             raise ValueError("Checkpoint state is not stage-consistent.")
 
+    def _validate_parent_manifest(
+        self, parent_manifest: CheckpointManifest | None, /
+    ) -> None:
+        if parent_manifest is None:
+            return
+        if not isinstance(parent_manifest, CheckpointManifest):
+            raise TypeError("parent_manifest must be a CheckpointManifest or None.")
+        if (
+            not parent_manifest.complete
+            or parent_manifest.analysis_plan_id != self.analysis_plan_id
+            or parent_manifest.numeric_revision_id != self.numeric_revision_id
+            or parent_manifest.execution_plan_id != self.execution_plan_id
+            or parent_manifest.checkpoint_id == self.checkpoint_id
+        ):
+            raise ValueError(
+                "Parent checkpoint is not the compatible current runtime checkpoint."
+            )
+
     def publish(
         self,
         repository: ArtifactRepository,
@@ -1523,17 +1541,22 @@ class FullDarkSectorCheckpointPlan(StrictModule, NonTrainableState):
         writer_id: str,
         attempt_id: str | None = None,
         encoding: ChunkEncoding = "identity",
+        parent_manifest: CheckpointManifest | None = None,
     ) -> ProcessCheckpointPublication:
         self.validate_state(state)
+        self._validate_parent_manifest(parent_manifest)
         return publish_process_checkpoint(
             repository,
             self.checkpoint_id,
             self.execution_plan_id,
             state,
+            analysis_plan_id=self.analysis_plan_id,
+            numeric_revision_id=self.numeric_revision_id,
             writer_id=writer_id,
             attempt_id=attempt_id,
             topology_epoch=self.stage.epoch_sequence,
             encoding=encoding,
+            parent_manifest=parent_manifest,
         )
 
     def assemble(
@@ -1542,9 +1565,10 @@ class FullDarkSectorCheckpointPlan(StrictModule, NonTrainableState):
         /,
         *,
         expected_process_count: int,
-        parent_checkpoint_id: str | None = None,
+        parent_manifest: CheckpointManifest | None = None,
         diagnostic_ids: Sequence[str] = (),
     ) -> CheckpointManifest:
+        self._validate_parent_manifest(parent_manifest)
         return assemble_distributed_checkpoint_manifest(
             self.checkpoint_id,
             self.analysis_plan_id,
@@ -1552,7 +1576,7 @@ class FullDarkSectorCheckpointPlan(StrictModule, NonTrainableState):
             self.execution_plan_id,
             publications,
             expected_process_count=expected_process_count,
-            parent_checkpoint_id=parent_checkpoint_id,
+            parent_manifest=parent_manifest,
             diagnostic_ids=diagnostic_ids,
         )
 

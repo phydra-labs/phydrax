@@ -86,6 +86,48 @@ def test_exact_linear_bsde_has_zero_local_global_and_terminal_residuals():
     assert phx.stochastic.bsde_diagnostics(evaluation).passed
 
 
+def test_scalar_bsde_preserves_sample_and_time_axes():
+    times = jnp.asarray([0.0, 0.5, 1.0])
+    increments = jnp.asarray([[0.2, -0.1], [-0.3, 0.4]])
+    states = jnp.concatenate(
+        (jnp.zeros((2, 1)), jnp.cumsum(increments, axis=1)),
+        axis=1,
+    )
+    paths = phx.stochastic.BSDEPathBatch(
+        times,
+        states,
+        increments,
+        sample_shape=(2,),
+        state_shape=(),
+        noise_shape=(),
+        path_id="scalar-paths",
+        process_id="scalar-brownian",
+    )
+    problem = phx.stochastic.BSDEProblem(
+        lambda _key: paths,
+        lambda _time, state, _args: jnp.zeros_like(state),
+        lambda _time, _state, _args: jnp.asarray(1.0),
+        lambda _time, _state, value, _control, _args: jnp.zeros_like(value),
+        lambda state, _args: state,
+        state_shape=(),
+        noise_shape=(),
+        output_shape=(),
+        problem_id="scalar-bsde",
+        process_id="scalar-brownian",
+    )
+    evaluation = phx.stochastic.evaluate_bsde(
+        problem,
+        paths,
+        lambda _time, state: state,
+        control_predictor=lambda _time, _state: jnp.asarray(1.0),
+    )
+
+    assert evaluation.values.shape == (2, 3)
+    assert evaluation.controls.shape == (2, 2)
+    assert evaluation.local_residuals.shape == (2, 2)
+    assert jnp.allclose(evaluation.global_residual, 0.0)
+
+
 def test_bsde_objective_masks_nonfinite_invalid_paths_before_squaring():
     paths = _brownian_paths(num_paths=2, num_steps=2)
     terminal = jnp.asarray([[1.0, 2.0], [jnp.nan, jnp.nan]])

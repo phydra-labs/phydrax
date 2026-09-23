@@ -163,7 +163,7 @@ class BPHZSubtractionResult(StrictModule, NonTrainableState):
         result = jnp.zeros(values.shape[:-1], dtype=self.coefficients.dtype)
         for index in np.ndindex(self.coefficients.shape):
             result = result + self.coefficients[index] * jnp.prod(
-                values ** jnp.asarray(index)
+                values ** jnp.asarray(index), axis=-1
             )
         return result
 

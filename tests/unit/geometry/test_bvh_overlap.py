@@ -47,9 +47,11 @@ def test_touching_boxes_are_excluded_unless_zero_measure_is_requested():
     index = build_host_aabb_overlap_bvh([[0.0, 0.0]], [[1.0, 1.0]], global_ids=[4])
     lower = [[1.0, 0.0]]
     upper = [[2.0, 1.0]]
-    assert _query(index, lower, upper).candidate_count == 0
-    result = _query(index, lower, upper, include_zero_measure=True)
-    assert result.candidate_count == 1
+    excluded = _query(index, lower, upper)
+    included = _query(index, lower, upper, include_zero_measure=True)
+    assert excluded.candidate_count == 0
+    assert included.candidate_count == 1
+    assert excluded.content_identity != included.content_identity
 
 
 def test_candidates_are_stably_sorted_and_permutation_invariant():

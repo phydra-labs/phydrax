@@ -323,22 +323,47 @@ def run_nuts_scheduling_benchmark(
         for target in selected_targets
         for chain_count in selected_chain_counts
     )
-    scenarios = tuple(
-        _case(
-            target=target,
-            num_chains=chain_count,
-            num_warmup=num_warmup,
-            num_draws=num_draws,
-            seed=root_seed + index,
-        )
-        for index, (target, chain_count) in enumerate(cases)
-    )
+    scenario_values = []
+    for index, (target, chain_count) in enumerate(cases):
+        seed = root_seed + index
+        try:
+            scenario = _case(
+                target=target,
+                num_chains=chain_count,
+                num_warmup=num_warmup,
+                num_draws=num_draws,
+                seed=seed,
+            )
+        except Exception as error:
+            scenario = ScenarioResult(
+                name=f"nuts-scheduling-{target}-{chain_count}",
+                description="NUTS scheduling provider failure",
+                seed=seed,
+                metadata={
+                    "provider": "phydrax-native-nuts",
+                    "target": target,
+                    "chain_count": chain_count,
+                },
+                error_type=type(error).__name__,
+                error_message=str(error),
+            )
+        scenario_values.append(scenario)
+    scenarios = tuple(scenario_values)
+    try:
+        environment = collect_environment()
+        environment_complete = True
+    except Exception as error:
+        environment = {
+            "collection_error": {"type": type(error).__name__, "message": str(error)}
+        }
+        environment_complete = False
     return BenchmarkReport(
         profile=profile,
         root_seed=root_seed,
         started_at_utc=started_at,
         duration_seconds=time.perf_counter() - started,
         configuration={
+            "environment_complete": environment_complete,
             "profile": profile,
             "targets": list(selected_targets),
             "chain_counts": list(selected_chain_counts),
@@ -346,7 +371,7 @@ def run_nuts_scheduling_benchmark(
             "num_draws": num_draws,
             "speed_metrics_are_release_gates": False,
         },
-        environment=collect_environment(),
+        environment=environment,
         scenarios=scenarios,
         suite="phydrax-uq-nuts-scheduling",
     )

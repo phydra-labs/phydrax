@@ -2,10 +2,19 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import meshio
 import numpy as np
 import pytest
 
 from phydrax import SpatialCoordinateContract
+from phydrax.geometry.surface import (
+    export_surface,
+    import_surface,
+    SurfaceExportPolicy,
+    SurfaceFileFormat,
+    SurfaceImportPolicy,
+    SurfaceOrientationPolicy,
+)
 from phydrax.geometry.surface._contracts import (
     InterfaceSide,
     SurfaceAuditPolicy,
@@ -15,6 +24,7 @@ from phydrax.geometry.surface._contracts import (
     SurfacePreparationStatus,
 )
 from phydrax.geometry.surface._model import SurfaceModel
+from phydrax.units import METER
 
 
 def _metadata(*, tags=()):
@@ -206,3 +216,38 @@ def test_selections_interfaces_and_refresh_remain_exactly_topology_bound():
         refreshed.chart_mapping.cell_global_ids,
         realization.chart_mapping.cell_global_ids,
     )
+
+
+def test_bounded_surface_interop_preserves_source_identity_and_noop_repair(tmp_path):
+    points = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+    faces = np.asarray(((0, 1, 2),), dtype=np.int32)
+    source = tmp_path / "source.vtu"
+    meshio.write(source, meshio.Mesh(points, (("triangle", faces),)))
+    imported = import_surface(
+        source,
+        SurfaceImportPolicy(
+            METER,
+            orientation=SurfaceOrientationPolicy.REPAIR_WITH_EVIDENCE,
+            allow_lossy=True,
+        ),
+    )
+
+    assert imported.model.metadata.source_id == str(source.absolute())
+    assert not imported.report.orientation_changed
+    assert imported.model.orientation_repair is not None
+
+    destination = tmp_path / "roundtrip.vtu"
+    exported = export_surface(
+        destination,
+        imported.model,
+        SurfaceExportPolicy(
+            METER,
+            allow_lossy=True,
+            maximum_file_bytes=1_000_000,
+        ),
+        file_format=SurfaceFileFormat.VTU,
+    )
+    assert destination.is_file()
+    assert exported.artifact_digest
+    with pytest.raises(ValueError, match="maximum_file_bytes"):
+        SurfaceExportPolicy(METER, maximum_file_bytes=0)

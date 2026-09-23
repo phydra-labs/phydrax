@@ -19,6 +19,7 @@ from phydrax.ein import contract
 
 from .._admissibility import guard_derivative_validity
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._model import register_artifact_value
 from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
 from ._certificates import _operator_numeric_fingerprint
@@ -640,9 +641,26 @@ def matrix_function_action(
             policy=selected,
             rhs_layout=rhs_layout,
         )
+    if selected.differentiation.mode in ("rhs-only", "none"):
+        operator = jax.tree.map(jax.lax.stop_gradient, operator)
+        if spectral is not None:
+            spectral = jax.tree.map(jax.lax.stop_gradient, spectral)
+            spectral = eqx.tree_at(lambda item: item.operator, spectral, operator)
+        if decomposition is not None:
+            decomposition = jax.tree.map(jax.lax.stop_gradient, decomposition)
+            if isinstance(decomposition, PreparedKrylovProjection):
+                decomposition = eqx.tree_at(
+                    lambda item: item.operator,
+                    decomposition,
+                    operator,
+                )
     validated_vector = operator.source.validate(vector)
+    if selected.differentiation.mode == "none":
+        validated_vector = jax.tree.map(jax.lax.stop_gradient, validated_vector)
     coordinates = operator.source.flatten(validated_vector)
     scale_ = jnp.asarray(scale)
+    if selected.differentiation.mode == "none":
+        scale_ = jax.lax.stop_gradient(scale_)
     if scale_.shape != ():
         raise ValueError("scale must be scalar.")
     scalar = scale_.astype(jnp.result_type(coordinates.dtype, scale_.dtype))
@@ -1367,6 +1385,19 @@ def _chebyshev_action(
         result = result + last_term
         previous, current = current, following
     return result, jnp.linalg.norm(last_term)
+
+
+for _artifact_value in (
+    MatrixFunctionPolicy,
+    TransformDiagonalRepresentation,
+    MatrixFunctionResult,
+):
+    register_artifact_value(
+        f"phydrax.linalg.matrix_function:{_artifact_value.__name__}",
+        _artifact_value,
+    )
+
+del _artifact_value
 
 
 __all__ = [

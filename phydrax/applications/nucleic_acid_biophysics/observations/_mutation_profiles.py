@@ -217,15 +217,17 @@ class MutationProfileBatch(StrictModule, NonTrainableState):
         ):
             if value.dtype != bool and not np.issubdtype(value.dtype, np.integer):
                 raise TypeError(f"Mapped {name} must be a boolean or integer array.")
+        if any(
+            np.any((value != 0) & (value != 1))
+            for value in (mutation_, observed_, coverage_)
+        ):
+            raise ValueError(
+                "Mutation, observed-mask, and coverage fields must be binary."
+            )
         mutation_ = mutation_.astype(np.int8)
         observed_ = observed_.astype("bool")
         coverage_ = coverage_.astype(np.int8)
-        if (
-            np.any((mutation_ != 0) & (mutation_ != 1))
-            or np.any((coverage_ != 0) & (coverage_ != 1))
-            or np.any(observed_ & (coverage_ == 0))
-            or np.any((mutation_ == 1) & ~observed_)
-        ):
+        if np.any(observed_ & (coverage_ == 0)) or np.any((mutation_ == 1) & ~observed_):
             raise ValueError(
                 "Coverage and mutation must be binary, effective depth must be covered, "
                 "and every mutation must be effectively observed."
@@ -285,6 +287,7 @@ class MutationProfileBatch(StrictModule, NonTrainableState):
             source_rows.shape != (profiles,)
             or not np.issubdtype(source_rows.dtype, np.integer)
             or np.any(source_rows < 1)
+            or np.any(source_rows > np.iinfo(np.int32).max)
             or included.shape != (profiles,)
             or included.dtype != bool
         ):

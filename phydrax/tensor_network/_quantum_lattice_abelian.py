@@ -57,6 +57,7 @@ class QuantumLatticeAbelianMPOEvidence(StrictModule):
     exact: bool = eqx.field(static=True)
     bond_dimension: int = eqx.field(static=True)
     tensor_elements: int = eqx.field(static=True)
+    physical_basis_permutations: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     charge_labels: tuple[str, ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
@@ -99,6 +100,20 @@ def _catalog(charges: tuple[tuple[int, ...], ...], /):
         offsets[term] = starts[charge] + used[charge]
         used[charge] += 1
     return ordered, capacities, offsets
+
+
+def _physical_charge_catalog(
+    charges: tuple[tuple[int, ...], ...],
+    /,
+) -> tuple[tuple[tuple[int, ...], ...], tuple[int, ...], tuple[int, ...]]:
+    ordered = tuple(dict.fromkeys(charges))
+    indices = tuple(
+        tuple(index for index, value in enumerate(charges) if value == charge)
+        for charge in ordered
+    )
+    capacities = tuple(len(value) for value in indices)
+    permutation = tuple(index for group in indices for index in group)
+    return ordered, capacities, permutation
 
 
 def lower_quantum_lattice_to_abelian_mpo(
@@ -159,39 +174,48 @@ def lower_quantum_lattice_to_abelian_mpo(
         forecast += left_size * space.dimension * space.dimension * right_size
     if forecast > policy.maximum_tensor_elements:
         raise ValueError("Abelian MPO exceeds maximum_tensor_elements before allocation.")
+    physical_permutations = []
     tensors = []
     for site, space in enumerate(spaces):
         left_charges, left_capacities = cut_catalogs[site]
         right_charges, right_capacities = cut_catalogs[site + 1]
         left_leg = AbelianLeg(group, left_charges, left_capacities, orientation=1)
         right_leg = AbelianLeg(group, right_charges, right_capacities, orientation=-1)
-        physical_charges = tuple(
+        raw_physical_charges = tuple(
             tuple(int(value) for value in row) for row in np.asarray(space.charges)
         )
+        physical_charges, physical_capacities, physical_permutation = (
+            _physical_charge_catalog(raw_physical_charges)
+        )
+        physical_permutations.append(physical_permutation)
         output_leg = AbelianLeg(
             group,
             physical_charges,
-            (1,) * space.dimension,
+            physical_capacities,
             orientation=-1,
         )
         input_leg = AbelianLeg(
             group,
             physical_charges,
-            (1,) * space.dimension,
+            physical_capacities,
             orientation=1,
         )
         dense = np.zeros(
             (left_leg.size, space.dimension, space.dimension, right_leg.size),
             dtype=np.complex128,
         )
+        physical_indices = np.asarray(physical_permutation, dtype=np.int32)
         for term, monomial in enumerate(prepared.monomials):
             coefficient = complex(np.asarray(monomial.coefficient)) if site == 0 else 1.0
+            local_matrix = local_products[term][site][
+                np.ix_(physical_indices, physical_indices)
+            ]
             dense[
                 cut_offsets[site][term],
                 :,
                 :,
                 cut_offsets[site + 1][term],
-            ] += coefficient * local_products[term][site]
+            ] += coefficient * local_matrix
         layout = AbelianTensorLayout((left_leg, output_leg, input_leg, right_leg))
         tensors.append(AbelianTensor.from_dense(layout, jnp.asarray(dense)))
     operator = AbelianMatrixProductOperator(tuple(tensors))
@@ -204,6 +228,7 @@ def lower_quantum_lattice_to_abelian_mpo(
         True,
         max((1,) + tuple(sum(value[1]) for value in cut_catalogs)),
         actual,
+        tuple(physical_permutations),
         labels,
         prepared.prepared_id,
         policy.policy_id,
@@ -214,6 +239,7 @@ def lower_quantum_lattice_to_abelian_mpo(
                 "policy": policy.policy_id,
                 "term_count": term_count,
                 "tensor_elements": actual,
+                "physical_basis_permutations": tuple(physical_permutations),
             }
         ),
     )

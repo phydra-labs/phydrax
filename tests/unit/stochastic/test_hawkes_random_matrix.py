@@ -101,6 +101,22 @@ def test_hawkes_stability_evidence_and_seeded_prefix_are_explicit():
         small.observation.channels[:stored], large.observation.channels[:stored]
     )
 
+    exhausted = simulate_hawkes(
+        ExponentialHawkesProcess(
+            jnp.asarray([100.0]),
+            jnp.asarray([[0.0]]),
+            jnp.asarray([[1.0]]),
+        ),
+        jr.key(12),
+        start_time=0.0,
+        end_time=100.0,
+        capacity=10,
+        max_proposals=1,
+    )
+    assert exhausted.proposal_exhausted
+    assert not exhausted.overflow
+    assert not exhausted.successful
+
 
 def test_rmt_cleaning_is_psd_trace_preserving_and_diagnosed():
     covariance = jnp.diag(jnp.asarray([0.1, 0.5, 1.0, 10.0]))

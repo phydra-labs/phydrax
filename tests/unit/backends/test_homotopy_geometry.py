@@ -7,6 +7,7 @@ import copy
 import numpy as np
 import pytest
 
+import phydrax.backends.homotopy_geometry as homotopy_geometry_module
 from phydrax.algebraic._positive_dimensional import WitnessSet
 from phydrax.algebraic._system import SparsePolynomialSystem
 from phydrax.backends.homotopy_geometry import (
@@ -100,6 +101,7 @@ def _response(request, result, paths, status, *, budget_exhausted=False):
         "support_id": request.support_id,
         "status": status,
         "budget_exhausted": budget_exhausted,
+        "seed": 0,
         "paths": paths,
         "result": result,
     }
@@ -407,3 +409,145 @@ def test_response_status_cannot_falsely_claim_success_over_failed_paths():
     extra_field["unbounded_diagnostic"] = "not admitted"
     with pytest.raises(ValueError, match="exact protocol fields"):
         _decode(request, HomotopyGeometryPolicy(path_capacity=2), extra_field)
+
+
+def test_response_requires_boolean_budget_and_trace_flags():
+    system = _parabola_system()
+    request = HomotopyGeometryRequest.generic_slice(
+        system,
+        1,
+        np.asarray([[0.0, 1.0]]),
+        np.asarray([-1.0]),
+        path_count=2,
+    )
+    response = _response(
+        request,
+        _witness_result([[-1.0, 1.0], [1.0, 1.0]]),
+        _path_records(request, targets=(0, 1)),
+        "success",
+    )
+    response["budget_exhausted"] = "false"
+
+    with pytest.raises(ValueError, match="Boolean"):
+        _decode(request, HomotopyGeometryPolicy(path_capacity=2), response)
+
+    witness = _parabola_witness(system)
+    trace_request = HomotopyGeometryRequest.trace_test(
+        system,
+        witness,
+        (0, 1),
+        np.asarray([-1.0, 0.0, 1.0]),
+        np.asarray([[-0.5], [-1.0], [-1.5]]),
+        tolerance=1.0e-8,
+    )
+    trace_result = {
+        "witness_set_id": witness.witness_id,
+        "point_indices": [0, 1],
+        "sample_parameters": [-1.0, 0.0, 1.0],
+        "trace_values": _wire([[-1.0, 2.0], [0.0, 2.0], [1.0, 2.0]]),
+        "affine_fit_residual": 0.0,
+        "tolerance": 1.0e-8,
+        "passed": "true",
+    }
+    trace_response = _response(
+        trace_request,
+        trace_result,
+        _path_records(trace_request),
+        "success",
+    )
+    with pytest.raises(ValueError, match="Boolean"):
+        _decode(
+            trace_request,
+            HomotopyGeometryPolicy(path_capacity=6),
+            trace_response,
+        )
+
+
+def test_seed_echo_and_endpoint_bijection_are_enforced():
+    system = _parabola_system()
+    request = HomotopyGeometryRequest.generic_slice(
+        system,
+        1,
+        np.asarray([[0.0, 1.0]]),
+        np.asarray([-1.0]),
+        path_count=2,
+    )
+    response = _response(
+        request,
+        _witness_result([[-1.0, 1.0], [1.0, 1.0]]),
+        _path_records(request, targets=(0, 0)),
+        "success",
+    )
+
+    with pytest.raises(ValueError, match="bijectively"):
+        _decode(request, HomotopyGeometryPolicy(path_capacity=2), response)
+
+    identity_response = copy.deepcopy(response)
+    identity_response["paths"] = _path_records(request, targets=(0, 1))
+    decoded = _decode(
+        request,
+        HomotopyGeometryPolicy(path_capacity=2, seed=7),
+        identity_response,
+    )
+    assert decoded.status is HomotopyGeometryStatus.IDENTITY_MISMATCH
+    assert "seed" in decoded.error
+
+
+def test_path_factories_refuse_oversized_products_before_record_allocation(monkeypatch):
+    system = _parabola_system()
+    map_system = SparsePolynomialSystem.from_coo(
+        ("x", "y"),
+        ("x-coordinate",),
+        np.asarray([0]),
+        np.asarray([[1, 0]]),
+        np.asarray([1.0]),
+    )
+    large_witness = WitnessSet(
+        system.system_id,
+        1,
+        np.asarray([[0.0, 1.0]]),
+        np.asarray([-1.0]),
+        np.broadcast_to(
+            np.asarray([[0.0, 1.0]], dtype=np.complex128),
+            (1001, 2),
+        ),
+        np.zeros(1001),
+    )
+
+    def reject_record_allocation(*args, **kwargs):
+        raise AssertionError("path records must not be allocated")
+
+    monkeypatch.setattr(
+        homotopy_geometry_module,
+        "HomotopyGeometryPathRequest",
+        reject_record_allocation,
+    )
+
+    with pytest.raises(ValueError, match="hard path-entity"):
+        HomotopyGeometryRequest.generic_slice(
+            system,
+            1,
+            np.asarray([[0.0, 1.0]]),
+            np.asarray([-1.0]),
+            path_count=1_000_001,
+        )
+    with pytest.raises(ValueError, match="hard path-entity"):
+        HomotopyGeometryRequest.image_degree(
+            system,
+            map_system,
+            "x-projection",
+            1,
+            1,
+            np.zeros((0, 2)),
+            np.zeros((0,)),
+            np.asarray([[1.0]]),
+            np.asarray([-1.0]),
+            path_count=1_000_001,
+        )
+    with pytest.raises(ValueError, match="hard path-entity"):
+        HomotopyGeometryRequest.membership(
+            system,
+            (large_witness,) * 1000,
+            np.asarray([[0.0, 1.0]]),
+            tolerance=1.0e-8,
+        )

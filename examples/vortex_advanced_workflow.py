@@ -31,8 +31,10 @@ reconstruction = phx.applications.vortex_flow.PeriodicVorticityReconstructionPla
     (count, count),
     (1.0, 1.0),
 ).reconstruct(vorticity)
+if not bool(accelerated.successful & reconstruction.successful):
+    raise RuntimeError("Accelerated vortex or reconstruction evaluation failed")
 
 print("accelerated velocity", accelerated.velocity)
 print("tree error bound", accelerated.diagnostics.backend_diagnostics.truncation_bound)
 print("reconstructed velocity norm", jnp.linalg.norm(reconstruction.velocity))
-print("successful", bool(accelerated.successful & reconstruction.successful))
+print("successful", True)

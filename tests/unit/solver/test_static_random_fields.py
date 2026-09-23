@@ -73,6 +73,31 @@ def test_gaussian_field_replays_and_matches_declared_weighted_covariance():
     assert diagnostics.replay_exact
 
 
+def test_default_gaussian_field_coupling_includes_root_key():
+    mode_ids = ("constant", "cosine")
+    first = phx.stochastic.GaussianCoefficientRealization.sample(
+        jr.key(20),
+        mode_ids,
+    )
+    second = phx.stochastic.GaussianCoefficientRealization.sample(
+        jr.key(21),
+        mode_ids,
+    )
+    explicit_first = phx.stochastic.GaussianCoefficientRealization.sample(
+        jr.key(20),
+        mode_ids,
+        coupling_id="shared-resolution-coupling",
+    )
+    explicit_second = phx.stochastic.GaussianCoefficientRealization.sample(
+        jr.key(21),
+        mode_ids,
+        coupling_id="shared-resolution-coupling",
+    )
+
+    assert first.coupling_id != second.coupling_id
+    assert explicit_first.coupling_id == explicit_second.coupling_id
+
+
 def test_transformed_random_field_is_explicit_and_preserves_latent_identity():
     basis = _periodic_basis(8, ("constant", "cosine"))
     gaussian = phx.stochastic.StaticGaussianRandomField(

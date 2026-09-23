@@ -168,3 +168,21 @@ def test_mapped_domain_guard_preserves_jvp_and_transpose_in_both_transform_order
     nested = jax.vmap(jax.vmap(problem.residual))
     nested_gradient = jax.jit(jax.grad(lambda x: jnp.sum(nested(x))))(nested_states)
     assert jnp.allclose(nested_gradient, jnp.asarray([[[0.0], [1.0]], [[0.25], [0.0]]]))
+
+
+@pytest.mark.parametrize("method", (nl.NewtonKrylov(), nl.NewtonTrustRegion()))
+def test_guarded_trials_consume_only_actual_residual_budget(method):
+    result = method.solve(
+        _problem(),
+        jnp.asarray([10.0]),
+        termination=nl.NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            maximum_steps=4,
+            maximum_evaluations=2,
+        ),
+    )
+
+    assert int(result.diagnostics.residual_evaluations) == 2
+    assert int(result.diagnostics.domain_failures) > 0
+    assert not jnp.array_equal(result.state, jnp.asarray([10.0]))

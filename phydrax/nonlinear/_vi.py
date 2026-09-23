@@ -19,7 +19,12 @@ from .._cone import AbstractConvexCone
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite, tree_norm, validate_real_inexact_tree
-from ..linalg import LinearSystem, PyTreeSpace, solve as solve_linear
+from ..linalg import (
+    LinearSolveControl,
+    LinearSystem,
+    PyTreeSpace,
+    solve as solve_linear,
+)
 from ._linearization import prepare_jacobian
 from ._newton import NewtonKrylov
 from ._prepared import (
@@ -1031,10 +1036,21 @@ def _solve_projected_semismooth(
             args,
         )
         right_hand_side = jax.tree.map(jnp.negative, jacobian.residual)
+        linear_control = (
+            None
+            if termination.maximum_linear_iterations is None
+            else LinearSolveControl(
+                maximum_steps=jnp.maximum(
+                    termination.maximum_linear_iterations - current.linear_iterations,
+                    1,
+                )
+            )
+        )
         linear_result = solve_linear(
             LinearSystem(jacobian.operator),
             right_hand_side,
             policy=method.newton.linear_policy,
+            control=linear_control,
         )
         newton_direction = linear_result.value
         newton_image = jacobian.operator.mv(newton_direction)

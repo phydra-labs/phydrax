@@ -107,7 +107,9 @@ class ElectronImpactIonizationPlan(StrictModule, NonTrainableState):
         safe_electrons = jnp.clip(electrons, 0, electron_population.active.size - 1)
         valid_pair = (
             (ions >= 0)
+            & (ions < ion_population.active.size)
             & (electrons >= 0)
+            & (electrons < electron_population.active.size)
             & ion_population.active[safe_ions]
             & electron_population.active[safe_electrons]
             & (ion_charge.charge_number[safe_ions] < ion_model.maximum_charge_number)
@@ -141,12 +143,24 @@ class ElectronImpactIonizationPlan(StrictModule, NonTrainableState):
         stable = jnp.all(
             jnp.where(valid_pair, probability <= self.maximum_probability, True)
         )
-        event = (
+        sampled_event = (
             valid_pair
             & (energy >= self.ionization_energy)
             & (jr.uniform(key, probability.shape, dtype=probability.dtype) < probability)
             & stable
         )
+        distinct_pair = ~jnp.eye(self.maximum_events, dtype=jnp.bool_)
+        pair_conflict = (
+            sampled_event[:, None]
+            & sampled_event[None, :]
+            & distinct_pair
+            & (
+                (ions[:, None] == ions[None, :])
+                | (electrons[:, None] == electrons[None, :])
+            )
+        )
+        matching = ~jnp.any(pair_conflict)
+        event = sampled_event & matching
         requested_masses = jnp.where(event, electron_mass, 1.0)
         allocation = electron_population_plan.allocate(
             electron_population,
@@ -237,41 +251,8 @@ class ElectronImpactIonizationPlan(StrictModule, NonTrainableState):
         electron_particle_candidate = PICParticleState(
             electron_candidate_position, electron_candidate_velocity
         )
-        success = allocation.successful & transition.successful & stable
-        ion_particle_accepted = PICParticleState(
-            jnp.where(success, ion_particle_candidate.position, ion_particles.position),
-            jnp.where(
-                success,
-                ion_particle_candidate.proper_velocity,
-                ion_particles.proper_velocity,
-            ),
-        )
-        electron_particle_accepted = PICParticleState(
-            jnp.where(
-                success, electron_particle_candidate.position, electron_particles.position
-            ),
-            jnp.where(
-                success,
-                electron_particle_candidate.proper_velocity,
-                electron_particles.proper_velocity,
-            ),
-        )
-        electron_charge_accepted = PICChargeState(
-            jnp.where(
-                success,
-                electron_charge_candidate.charge_number,
-                electron_charge.charge_number,
-            ),
-            jnp.where(
-                success,
-                electron_charge_candidate.transition_count,
-                electron_charge.transition_count,
-            ),
-            jnp.where(
-                success,
-                electron_charge_candidate.last_transition_step,
-                electron_charge.last_transition_step,
-            ),
+        candidate_success = (
+            allocation.successful & transition.successful & stable & matching
         )
         momentum_before = jnp.sum(
             ion_mass[:, None] * ion_velocity + electron_mass[:, None] * electron_velocity,
@@ -286,13 +267,103 @@ class ElectronImpactIonizationPlan(StrictModule, NonTrainableState):
             axis=0,
         )
         momentum_defect = jnp.sqrt(jnp.sum((momentum_after - momentum_before) ** 2))
-        finite = jnp.all(jnp.isfinite(ion_particle_candidate.proper_velocity)) & jnp.all(
-            jnp.isfinite(electron_particle_candidate.proper_velocity)
+        finite = (
+            jnp.all(jnp.isfinite(ion_particle_candidate.position))
+            & jnp.all(jnp.isfinite(ion_particle_candidate.proper_velocity))
+            & jnp.all(jnp.isfinite(electron_particle_candidate.position))
+            & jnp.all(jnp.isfinite(electron_particle_candidate.proper_velocity))
+        )
+        momentum_scale = jnp.maximum(1.0, jnp.sqrt(jnp.sum(momentum_before**2)))
+        momentum_tolerance = 256.0 * jnp.finfo(momentum_defect.dtype).eps * momentum_scale
+        momentum_conservative = momentum_defect <= momentum_tolerance
+        successful = candidate_success & finite & momentum_conservative
+        ion_charge_accepted = PICChargeState(
+            jnp.where(
+                successful,
+                transition.candidate_state.charge_number,
+                ion_charge.charge_number,
+            ),
+            jnp.where(
+                successful,
+                transition.candidate_state.transition_count,
+                ion_charge.transition_count,
+            ),
+            jnp.where(
+                successful,
+                transition.candidate_state.last_transition_step,
+                ion_charge.last_transition_step,
+            ),
+        )
+        ion_particle_accepted = PICParticleState(
+            jnp.where(
+                successful, ion_particle_candidate.position, ion_particles.position
+            ),
+            jnp.where(
+                successful,
+                ion_particle_candidate.proper_velocity,
+                ion_particles.proper_velocity,
+            ),
+        )
+        electron_population_accepted = ParticlePopulationState(
+            jnp.where(
+                successful,
+                allocation.candidate_state.active,
+                electron_population.active,
+            ),
+            jnp.where(
+                successful,
+                allocation.candidate_state.mass,
+                electron_population.mass,
+            ),
+            jnp.where(
+                successful,
+                allocation.candidate_state.incarnation,
+                electron_population.incarnation,
+            ),
+            jnp.where(
+                successful,
+                allocation.candidate_state.ever_occupied,
+                electron_population.ever_occupied,
+            ),
+            jnp.where(
+                successful,
+                allocation.candidate_state.retired,
+                electron_population.retired,
+            ),
+        )
+        electron_particle_accepted = PICParticleState(
+            jnp.where(
+                successful,
+                electron_particle_candidate.position,
+                electron_particles.position,
+            ),
+            jnp.where(
+                successful,
+                electron_particle_candidate.proper_velocity,
+                electron_particles.proper_velocity,
+            ),
+        )
+        electron_charge_accepted = PICChargeState(
+            jnp.where(
+                successful,
+                electron_charge_candidate.charge_number,
+                electron_charge.charge_number,
+            ),
+            jnp.where(
+                successful,
+                electron_charge_candidate.transition_count,
+                electron_charge.transition_count,
+            ),
+            jnp.where(
+                successful,
+                electron_charge_candidate.last_transition_step,
+                electron_charge.last_transition_step,
+            ),
         )
         return PICIonizationResult(
-            transition.accepted_state,
+            ion_charge_accepted,
             ion_particle_accepted,
-            allocation.accepted_state,
+            electron_population_accepted,
             electron_particle_accepted,
             electron_charge_accepted,
             use,
@@ -303,7 +374,7 @@ class ElectronImpactIonizationPlan(StrictModule, NonTrainableState):
             self.ionization_energy * jnp.sum(use, dtype=energy.dtype),
             allocation.capacity_available,
             finite,
-            success & finite,
+            successful,
             self.plan_id,
         )
 

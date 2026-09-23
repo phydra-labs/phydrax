@@ -72,6 +72,8 @@ def write_atomistic_spin_checkpoint(
         raise TypeError("state must be ClassicalSpinDynamicsState.")
     if state.prepared_dynamics_id != plan.dynamics.prepared_id:
         raise ValueError("Spin checkpoint state belongs to another dynamics runtime.")
+    if not bool(state.successful):
+        raise ValueError("Cannot checkpoint an unsuccessful spin dynamics state.")
     arrays: dict[str, object] = {}
     specification = pack_array_tree("spin-runtime", state, arrays)
     manifest = {
@@ -81,6 +83,7 @@ def write_atomistic_spin_checkpoint(
         "prepared_dynamics_id": plan.dynamics.prepared_id,
         "hamiltonian_id": plan.dynamics.plan.hamiltonian.prepared_id,
         "unit_system": plan.dynamics.plan.hamiltonian.plan.system.plan.units.to_dict(),
+        "successful": True,
         "state": specification,
         **({} if plan.scope_id is None else {"scope_id": plan.scope_id}),
     }
@@ -91,6 +94,7 @@ def write_atomistic_spin_checkpoint(
             "time": float(state.time),
             "step": int(state.step_index),
             "wiener": state.wiener_realization_id,
+            "successful": True,
             "state": specification,
             "arrays": array_tree_fingerprint(arrays),
         }
@@ -113,6 +117,8 @@ def read_atomistic_spin_checkpoint(
         raise TypeError("template must be ClassicalSpinDynamicsState.")
     if template.prepared_dynamics_id != plan.dynamics.prepared_id:
         raise ValueError("Spin checkpoint template belongs to another dynamics runtime.")
+    if not bool(template.successful):
+        raise ValueError("Spin checkpoint template must be a successful runtime state.")
     manifest, arrays = read_array_archive(path)
     expected = {
         "format",
@@ -121,6 +127,7 @@ def read_atomistic_spin_checkpoint(
         "prepared_dynamics_id",
         "hamiltonian_id",
         "unit_system",
+        "successful",
         "state",
         "payload_id",
         "arrays",
@@ -135,6 +142,7 @@ def read_atomistic_spin_checkpoint(
         "checkpoint_id": plan.checkpoint_id,
         "prepared_dynamics_id": plan.dynamics.prepared_id,
         "hamiltonian_id": plan.dynamics.plan.hamiltonian.prepared_id,
+        "successful": True,
     }
     if plan.scope_id is not None:
         identities["scope_id"] = plan.scope_id
@@ -148,6 +156,8 @@ def read_atomistic_spin_checkpoint(
     state = unpack_array_tree(manifest["state"], arrays, template)
     if not isinstance(state, ClassicalSpinDynamicsState):
         raise TypeError("Checkpoint did not reconstruct ClassicalSpinDynamicsState.")
+    if not bool(state.successful):
+        raise ValueError("Spin checkpoint contains an unsuccessful runtime state.")
     payload_id = str(manifest["payload_id"])
     expected_payload = canonical_fingerprint(
         {
@@ -156,6 +166,7 @@ def read_atomistic_spin_checkpoint(
             "time": float(state.time),
             "step": int(state.step_index),
             "wiener": state.wiener_realization_id,
+            "successful": True,
             "state": manifest["state"],
             "arrays": array_tree_fingerprint(arrays),
         }

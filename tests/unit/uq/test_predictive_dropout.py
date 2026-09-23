@@ -63,6 +63,25 @@ def test_predictive_conditional_variance_broadcasts_over_valid_sample_axis():
         )
 
 
+def test_dropout_conformal_rejects_unattainable_finite_sample_coverage():
+    predictive = phx.uq.PredictiveField(
+        cx.AxisArray(
+            jnp.asarray([[0.0, 0.0, 0.0], [2.0, 2.0, 2.0]]),
+            dims=("draw", "case"),
+        ),
+        (phx.uq.SampleAxis("draw", "epistemic"),),
+    )
+
+    with pytest.raises(ValueError, match="unattainable"):
+        phx.uq.MCDropoutCalibration.fit(
+            predictive,
+            cx.AxisArray(jnp.full((3,), 1.5), dims=("case",)),
+            nominal_coverage=0.99,
+            method="normalized_conformal",
+            split_identity="tiny-calibration",
+        )
+
+
 def test_feature_dropout_is_function_locked_and_requires_key():
     layer = phx.nn.layers.Dropout(32, p=0.5, mode="feature")
     values = jnp.ones((7, 32))
@@ -90,5 +109,6 @@ def test_mlp_dropout_scan_matches_unrolled_and_inference_is_deterministic():
     x = jnp.asarray([0.2, -0.3])
 
     assert jnp.allclose(unrolled(x, key=jr.key(3)), scanned(x, key=jr.key(3)))
-    deterministic = phx.nn.layers.inference_mode(unrolled)
-    assert jnp.array_equal(deterministic(x), deterministic(x))
+    deterministic_unrolled = phx.nn.layers.inference_mode(unrolled)
+    deterministic_scanned = phx.nn.layers.inference_mode(scanned)
+    assert jnp.allclose(deterministic_unrolled(x), deterministic_scanned(x))

@@ -556,12 +556,16 @@ def gibbs_sweep(
     finite_score = jnp.isfinite(scores)
     valid = state.valid & (invalid_count == 0) & finite_score
     status = jnp.where(
-        invalid_count > 0,
-        int(GibbsTransitionStatus.INFEASIBLE_CONDITIONAL),
+        ~state.valid,
+        int(GibbsTransitionStatus.INVALID_STATE),
         jnp.where(
-            ~finite_score,
-            int(GibbsTransitionStatus.NONFINITE_SCORE),
-            int(GibbsTransitionStatus.SUCCESS),
+            invalid_count > 0,
+            int(GibbsTransitionStatus.INFEASIBLE_CONDITIONAL),
+            jnp.where(
+                ~finite_score,
+                int(GibbsTransitionStatus.NONFINITE_SCORE),
+                int(GibbsTransitionStatus.SUCCESS),
+            ),
         ),
     ).astype(jnp.int32)
     denominator = max(prepared.graph.num_variables, 1)

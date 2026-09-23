@@ -21,6 +21,7 @@ from ...linalg import (
     DenseLU,
     DensePropertyVerificationPolicy,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSystem,
     solve,
     verify_dense_properties,
@@ -84,6 +85,7 @@ class OpenHallTransportResult(StrictModule, NonTrainableState):
     steady_residual: Array
     trace_residual: Array
     positive_semidefinite: Array
+    linear_solve: LinearSolveResult
     successful: Array
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
@@ -98,13 +100,12 @@ def solve_open_hall_transport(plan: OpenHallTransportPlan, /) -> OpenHallTranspo
     right = (
         jnp.zeros((dimension * dimension,), dtype=plan.liouvillian.dtype).at[-1].set(1.0)
     )
-    vector = solve(
+    linear_solve = solve(
         LinearSystem(DenseLinearOperator(matrix)),
         right,
         policy=LinearSolvePolicy(DenseLU()),
-    ).value
-    density = vector.reshape((dimension, dimension))
-    density = 0.5 * (density + jnp.conj(density.T))
+    )
+    density = linear_solve.value.reshape((dimension, dimension))
     currents = jnp.real(jnp.trace(plan.current_operators @ density, axis1=-2, axis2=-1))
     steady = jnp.sqrt(jnp.sum(jnp.abs(plan.liouvillian @ density.reshape((-1,))) ** 2))
     trace_residual = jnp.abs(jnp.trace(density) - 1.0)
@@ -116,7 +117,8 @@ def solve_open_hall_transport(plan: OpenHallTransportPlan, /) -> OpenHallTranspo
         ),
     )
     successful = (
-        properties.successful
+        linear_solve.successful
+        & properties.successful
         & (steady <= plan.residual_tolerance)
         & (trace_residual <= plan.residual_tolerance)
     )
@@ -126,6 +128,7 @@ def solve_open_hall_transport(plan: OpenHallTransportPlan, /) -> OpenHallTranspo
         steady,
         trace_residual,
         properties.positive_semidefinite,
+        linear_solve,
         successful,
         plan.plan_id,
         canonical_fingerprint(

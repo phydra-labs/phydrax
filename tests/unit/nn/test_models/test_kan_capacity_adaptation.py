@@ -111,8 +111,6 @@ def test_identical_hidden_block_layouts_preserve_scan_and_gradients():
     inputs = jnp.asarray([0.17, -0.29])
     gradient = eqx.filter_grad(lambda candidate: jnp.sum(candidate(inputs) ** 2))(adapted)
 
-    assert model._scan_enabled
-    assert adapted._scan_enabled
     assert len(report.paths) == len(indicators)
     assert np.allclose(
         np.asarray(eqx.filter_jit(adapted)(inputs)),

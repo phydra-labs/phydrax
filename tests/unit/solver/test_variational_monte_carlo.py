@@ -21,6 +21,19 @@ class _TableModel(eqx.Module):
         return phx.operators.LogAmplitude(value, 1.0 + 0.0j)
 
 
+class _StaticTableModel(eqx.Module):
+    parameters: jax.Array
+    offset: float = eqx.field(static=True)
+
+    def __call__(self, configuration):
+        bits = (configuration > 0).astype(jnp.int32)
+        index = 2 * bits[0] + bits[1]
+        return phx.operators.LogAmplitude(
+            self.parameters[index] + self.offset,
+            1.0 + 0.0j,
+        )
+
+
 def _operator():
     def diagonal(configurations):
         return -configurations[..., 0] * configurations[..., 1]
@@ -278,7 +291,8 @@ def test_vmc_target_factory_identity_is_explicit_and_stable():
     default = phx.solver.VariationalMonteCarloProblem(*arguments)
     assert default.target_factory is None
     assert default.target_factory_id is None
-    assert default.initial_state().markov_state.target_id == "raw-callable"
+    assert default.initial_state().markov_state.target_id == default.target_id
+    assert isinstance(default.target_for_model(model), phx.sampling.FullMarkovTarget)
 
     with pytest.raises(ValueError, match="target_factory_id"):
         phx.solver.VariationalMonteCarloProblem(
@@ -433,6 +447,40 @@ def test_vmc_checkpoint_resume_matches_uninterrupted_training(tmp_path):
             one_step,
             state=restored,
             key=jr.key(22),
+        )
+
+
+def test_vmc_checkpoint_rejects_changed_static_model_configuration(tmp_path):
+    parameters = jnp.asarray([0.2, -0.1, 0.1, -0.2])
+    common = (_operator(), _kernel(), _initial_configurations())
+    original = phx.solver.VariationalMonteCarloProblem(
+        _StaticTableModel(parameters, 0.0),
+        *common,
+        problem_id="static-model-checkpoint",
+    )
+    changed = phx.solver.VariationalMonteCarloProblem(
+        _StaticTableModel(parameters, 0.5),
+        *common,
+        problem_id="static-model-checkpoint",
+    )
+    policy = phx.solver.VariationalMonteCarloPolicy(
+        num_iterations=0,
+        draws_per_iteration=2,
+        final_evaluation_draws=2,
+        final_chain_diagnostics=False,
+    )
+    checkpoint = tmp_path / "static-model-vmc.zip"
+    phx.solver.write_variational_monte_carlo_checkpoint(
+        checkpoint,
+        original,
+        policy,
+        original.initial_state(key=jr.key(30)),
+    )
+    with pytest.raises(phx.uq.CheckpointCompatibilityError):
+        phx.solver.read_variational_monte_carlo_checkpoint(
+            checkpoint,
+            changed,
+            policy,
         )
 
 

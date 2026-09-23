@@ -115,7 +115,6 @@ def test_kdk_wraps_periodically_and_uses_particle_mass_authority():
     )
     assert bool(diagnostics.successful)
     assert jnp.all((advanced.positions >= 0.0) & (advanced.positions < 1.0))
-    assert "masses" not in type(advanced).__annotations__
 
 
 def test_cosmological_pm_rejects_dual_particle_or_geometry_authority():

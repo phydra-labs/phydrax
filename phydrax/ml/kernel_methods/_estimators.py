@@ -129,7 +129,7 @@ class LeastSquaresSVMModel(AbstractKernelLinearModel):
     def predict(self, x: ArrayLike, /) -> Array:
         return jnp.where(self(x) >= 0.0, 1, -1).astype(jnp.int32)
 
-    def probabilities(self, x: ArrayLike, /, *, temperature: ArrayLike = 1.0) -> Array:
+    def predict_proba(self, x: ArrayLike, /, *, temperature: ArrayLike = 1.0) -> Array:
         positive = temperature_sigmoid(self(x), temperature=temperature)
         return jnp.stack((1.0 - positive, positive), axis=-1)
 
@@ -143,7 +143,7 @@ class SupportVectorClassifierModel(AbstractKernelLinearModel):
     def predict(self, x: ArrayLike, /) -> Array:
         return jnp.where(self(x) >= 0.0, 1, -1).astype(jnp.int32)
 
-    def probabilities(self, x: ArrayLike, /, *, temperature: ArrayLike = 1.0) -> Array:
+    def predict_proba(self, x: ArrayLike, /, *, temperature: ArrayLike = 1.0) -> Array:
         p = temperature_sigmoid(self(x), temperature=temperature)
         return jnp.stack((1.0 - p, p), axis=-1)
 

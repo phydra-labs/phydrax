@@ -219,10 +219,20 @@ class _DistributedPeriodicFullFlowDrift(StrictModule):
         )
 
     def nonlinear(self, time: Array, state: Array, args: Any, /) -> Array:
-        return self.stage(time, state, args).rates.nonlinear_rate
+        stage = self.stage(time, state, args)
+        return jnp.where(
+            stage.forcing_successful,
+            stage.rates.nonlinear_rate,
+            jnp.full_like(stage.rates.nonlinear_rate, jnp.nan),
+        )
 
     def __call__(self, time: Array, state: Array, args: Any) -> Array:
-        return self.stage(time, state, args).rates.total_rate
+        stage = self.stage(time, state, args)
+        return jnp.where(
+            stage.forcing_successful,
+            stage.rates.total_rate,
+            jnp.full_like(stage.rates.total_rate, jnp.nan),
+        )
 
 
 class CompiledDistributedPeriodicLESDynamics(StrictModule, NonTrainableState):
@@ -413,6 +423,13 @@ class PreparedDistributedPeriodicLESMethod(AbstractFixedStepMethod):
             raise TypeError("coordinates must be HermitianSpectralCoordinates.")
         if coordinates.state_shape != dynamics.state_shape:
             raise ValueError("Hermitian coordinates and distributed dynamics disagree.")
+        if (
+            coordinates.discretization.prepared_id
+            != dynamics.backend.scientific.grid_filter.discretization.prepared_id
+        ):
+            raise ValueError(
+                "Hermitian coordinates belong to another distributed discretization."
+            )
         if plan.method == "ssprk33":
             order = 3
             stage_count = 3
@@ -516,6 +533,7 @@ class PreparedDistributedPeriodicLESMethod(AbstractFixedStepMethod):
             incoming_valid
             & restriction.finite
             & stage.finite
+            & stage.forcing_successful
             & rate_finite
             & (allowed > 0.0)
             & (step <= allowed)
@@ -670,6 +688,13 @@ class DistributedPeriodicLESStatisticsPlan(StrictModule, NonTrainableState):
             raise TypeError("coordinates must be HermitianSpectralCoordinates.")
         if coordinates.state_shape != dynamics.state_shape:
             raise ValueError("Statistics coordinates and dynamics disagree.")
+        if (
+            coordinates.discretization.prepared_id
+            != dynamics.backend.scientific.grid_filter.discretization.prepared_id
+        ):
+            raise ValueError(
+                "Statistics coordinates belong to another distributed discretization."
+            )
         self.dynamics = dynamics
         self.coordinates = coordinates
         self.plan_id = canonical_fingerprint(

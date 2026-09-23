@@ -284,3 +284,31 @@ def test_spectral_dynamics_accepts_exact_integer_power_literals():
             space,
             closure,
         )
+
+
+def test_spectral_compilation_identity_includes_measure_mask():
+    space = _fourier_space(8)
+    problem = _quadratic_problem()
+    method = phx.discretization.PseudospectralMethodPlan(
+        dealiasing=phx.discretization.PolynomialClosureDealiasingPlan(2),
+    )
+    first_mask = jnp.ones(space.physical_shape, dtype=jnp.bool_)
+    second_mask = first_mask.at[0].set(False)
+
+    def compile_with(mask):
+        return phx.equations.compile_spectral_residual(
+            problem,
+            space,
+            method,
+            data_layout=phx.equations.SpectralResidualDataLayout(
+                field_coordinates={"u": ("x",)},
+                measure_mask=mask,
+                maximum_trial_shape=space.modal_shape,
+                maximum_evaluation_shape=space.physical_shape,
+            ),
+        )
+
+    first = compile_with(first_mask)
+    second = compile_with(second_mask)
+
+    assert first.compilation_id != second.compilation_id

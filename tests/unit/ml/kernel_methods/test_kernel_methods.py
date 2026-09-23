@@ -118,7 +118,7 @@ def test_ls_svm_svc_svr_and_one_class_expose_smooth_and_hard_contracts():
     for result in (ls_result, svc_result):
         model = result.as_trainable()
         assert model(x[:2]).shape == (2,)
-        assert model.probabilities(x[:2]).shape == (2, 2)
+        assert model.predict_proba(x[:2]).shape == (2, 2)
         assert model.predict(x[:2]).dtype == jnp.int32
         assert "predict" in result.gradient_contract.nondifferentiable_outputs
     assert svr_result.as_trainable()(x[:2]).shape == (2,)
@@ -200,7 +200,7 @@ def test_gp_classification_reuses_exact_and_finite_uq_factor_geometry():
     exact_posterior = exact_model.posteriors[0]
     assert isinstance(exact_posterior.factor, ExactGaussianProcessFactor)
     assert exact_posterior.factor.cholesky.shape == (x.shape[0], x.shape[0])
-    probability = exact_model.probabilities(x[:3])
+    probability = exact_model.predict_proba(x[:3])
     assert probability.shape == (3, 2)
     assert jnp.allclose(jnp.sum(probability, axis=-1), 1.0, atol=1e-5)
     assert jnp.all(jnp.isfinite(jax.grad(lambda point: exact_model(point)[1])(x[0])))

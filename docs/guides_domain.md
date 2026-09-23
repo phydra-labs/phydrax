@@ -382,9 +382,11 @@ batch = domain.component().sample(
 
 `phx.sampling.design_capabilities(...)` reports whether a design is randomized,
 count-dependent, prefix-stable, random-access, factorwise-composable, or JAX-native.
-IID and Latin-hypercube designs are factorwise-composable. Hammersley is finite and
-count-dependent; Sobol and Halton are sequences whose joint dimensions must stay
-together.
+IID and Latin-hypercube designs are factorwise-composable. Hammersley is a finite,
+count-dependent one-shot design: changing the requested count changes its existing
+points, so a filtered rejection sampler cannot extend it after a rejected batch.
+Use a prefix-stable sequence or a randomized sampler when rejection may request more
+points. Sobol and Halton are sequences whose joint dimensions must stay together.
 
 Per-label `where` and global `where_all` component predicates remain indicator masks
 on the target measure. They do not condition the reference design by rejection.

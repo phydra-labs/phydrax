@@ -623,3 +623,37 @@ def test_sparse_grid_requires_complete_coupled_axes_with_fixed_labels():
 
     assert realization.batch.batch.points.points["t"].dims == ()
     assert realization.batch.batch.points.points["t"].data == 0.0
+
+
+def test_mapped_reduction_ignores_nonfinite_values_on_masked_points():
+    rule = phx.integration.ReferenceIntervalRule(phx.integration.GaussLegendreRule(8))
+    base = phx.integration.mapped(
+        rule,
+        lambda reference: reference[:, 0],
+        lambda reference: jnp.ones(reference.shape[0]),
+        mask=lambda points: points < 0.5,
+    )
+    target = phx.integration.normalized_density(
+        base,
+        lambda points: jnp.where(points < 0.5, 0.0, jnp.nan),
+    )
+
+    estimate = phx.integration.integrate(
+        lambda points: jnp.where(points < 0.5, 1.0, jnp.nan),
+        target,
+        phx.integration.CellQuadraturePlan(rule),
+    )
+
+    assert estimate.successful
+    assert jnp.allclose(estimate.value.data, 1.0)
+
+
+def test_mapped_target_requires_scalar_positive_mass():
+    rule = phx.integration.ReferenceIntervalRule(phx.integration.GaussLegendreRule(2))
+    with pytest.raises(ValueError, match="one scalar"):
+        phx.integration.mapped(
+            rule,
+            lambda reference: reference[:, 0],
+            lambda reference: jnp.ones(reference.shape[0]),
+            target_mass=jnp.ones((2,)),
+        )

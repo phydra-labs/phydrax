@@ -25,6 +25,15 @@ def test_hammersley_sampler_is_deterministic_and_bounded():
     assert np.unique(sample, axis=0).shape[0] == 16
 
 
+def test_hammersley_factory_rejects_incremental_extension():
+    factory = host_design_factory("hammersley", dimension=3, seed=0)
+    first = factory(4)
+
+    assert first.shape == (4, 3)
+    with pytest.raises(ValueError, match="count-dependent"):
+        factory(4)
+
+
 def test_hammersley_first_axis_is_stratified():
     sample = host_design_factory("hammersley", dimension=2, seed=0)(8)
     expected = (np.arange(1, 9) - 0.5) / 8.0
@@ -160,6 +169,22 @@ def test_typed_design_capabilities_and_random_access():
             key=jr.key(0),
             start=1,
         )
+
+
+def test_randomized_qmc_signature_binds_replay_configuration():
+    base = phx.sampling.RandomizedQMCDesign(num_replicates=4)
+    different_replicates = phx.sampling.RandomizedQMCDesign(num_replicates=8)
+    arbitrary_count = phx.sampling.RandomizedQMCDesign(
+        num_replicates=4,
+        allow_arbitrary_count=True,
+    )
+
+    assert phx.sampling.design_signature(base) != phx.sampling.design_signature(
+        different_replicates
+    )
+    assert phx.sampling.design_signature(base) != phx.sampling.design_signature(
+        arbitrary_count
+    )
 
 
 def test_semantic_sample_addresses_are_stable_and_distinct():

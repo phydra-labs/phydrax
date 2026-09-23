@@ -60,6 +60,8 @@ implicit_candidate = implicit.candidate(
     jnp.zeros((1,)),
     jnp.asarray(1.0e-5),
 )
+if not bool(candidate.successful & implicit_candidate.successful):
+    raise RuntimeError("Explicit or implicit musculotendon candidate failed")
 
 print("tendon force [N]", evaluation.tendon_force_N)
 print(
@@ -67,7 +69,7 @@ print(
     evaluation.evidence.force_equilibrium_residual_normalized,
 )
 print("power-balance residual [W]", evaluation.evidence.power_balance_residual_W)
-print("candidate accepted", bool(candidate.successful))
+print("candidate accepted", True)
 print("accepted normalized tendon force", accepted.normalized_tendon_force)
 print("implicit S25 residual", implicit_candidate.evidence.algebraic_residual)
-print("implicit candidate accepted", bool(implicit_candidate.successful))
+print("implicit candidate accepted", True)

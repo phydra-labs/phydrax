@@ -13,6 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax.ein import contract
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -24,6 +26,7 @@ class ManyBodyTwistChernResult(StrictModule, NonTrainableState):
     raw_chern: Array
     nearest_integer: Array
     quantization_residual: Array
+    normalization_residual: Array
     minimum_link_singular_value: Array
     minimum_direct_gap: Array
     successful: Array
@@ -38,6 +41,7 @@ def many_body_twist_chern(
     gap_tolerance: float = 1.0e-8,
     link_tolerance: float = 1.0e-10,
     quantization_tolerance: float = 1.0e-6,
+    maximum_state_elements: int = 8_000_000,
 ) -> ManyBodyTwistChernResult:
     """Evaluate one periodic two-dimensional twist grid of degenerate manifolds."""
 
@@ -46,6 +50,7 @@ def many_body_twist_chern(
     gap_tol = float(gap_tolerance)
     link_tol = float(link_tolerance)
     quant_tol = float(quantization_tolerance)
+    maximum_elements = int(maximum_state_elements)
     if (
         values.ndim != 4
         or values.shape[0] < 2
@@ -53,6 +58,8 @@ def many_body_twist_chern(
         or values.shape[2] < 1
         or values.shape[3] < 1
         or gaps.shape != values.shape[:2]
+        or maximum_elements < 1
+        or values.size > maximum_elements
         or np.any(~np.isfinite(values))
         or np.any(~np.isfinite(gaps))
         or any(
@@ -61,7 +68,7 @@ def many_body_twist_chern(
         )
     ):
         raise ValueError("Many-body twist states, gaps, or tolerances are invalid.")
-    gram = np.einsum("xyda,xydb->xyab", np.conj(values), values)
+    gram = contract("xyda,xydb->xyab", np.conj(values), values, backend="numpy")
     normalization = float(np.max(np.abs(gram - np.eye(values.shape[-1]))))
     links = np.empty(values.shape[:2] + (2,), dtype=np.complex128)
     minimum = np.inf
@@ -103,6 +110,7 @@ def many_body_twist_chern(
         jnp.asarray(raw),
         jnp.asarray(nearest, dtype=jnp.int32),
         jnp.asarray(quantization),
+        jnp.asarray(normalization),
         jnp.asarray(minimum),
         jnp.asarray(np.min(gaps)),
         jnp.asarray(successful),
@@ -114,6 +122,8 @@ def many_body_twist_chern(
                 ),
                 "raw_chern": raw,
                 "nearest_integer": nearest,
+                "normalization_residual": normalization,
+                "maximum_state_elements": maximum_elements,
             }
         ),
     )

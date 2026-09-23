@@ -25,6 +25,43 @@ foreach(
   endif()
 endforeach()
 
+get_filename_component(
+  _phydrax_vorocrust_source_root
+  "${VOROCRUST_SOURCE_DIR}"
+  REALPATH
+)
+get_filename_component(
+  _phydrax_vorocrust_build_root
+  "${VOROCRUST_BUILD_DIR}"
+  REALPATH
+)
+file(
+  STRINGS "${_phydrax_vorocrust_cache}"
+  _phydrax_vorocrust_cached_source
+  REGEX "^CMAKE_HOME_DIRECTORY:INTERNAL="
+)
+if(NOT _phydrax_vorocrust_cached_source)
+  message(FATAL_ERROR "VoroCrust CMakeCache.txt does not identify its source checkout.")
+endif()
+string(
+  REGEX REPLACE
+  "^CMAKE_HOME_DIRECTORY:INTERNAL="
+  ""
+  _phydrax_vorocrust_cached_source
+  "${_phydrax_vorocrust_cached_source}"
+)
+get_filename_component(
+  _phydrax_vorocrust_cached_source
+  "${_phydrax_vorocrust_cached_source}"
+  REALPATH
+)
+if(NOT "${_phydrax_vorocrust_cached_source}" STREQUAL "${_phydrax_vorocrust_source_root}")
+  message(
+    FATAL_ERROR
+    "VOROCRUST_SOURCE_DIR and VOROCRUST_BUILD_DIR do not belong to the same configured checkout."
+  )
+endif()
+
 set(
   PHYDRAX_VOROCRUST_REVISION
   ""
@@ -95,6 +132,36 @@ if(NOT VOROCRUST_MESH_LIBRARY)
   )
 endif()
 
+get_filename_component(
+  _phydrax_vorocrust_library
+  "${VOROCRUST_MESH_LIBRARY}"
+  REALPATH
+)
+string(
+  FIND
+  "${_phydrax_vorocrust_library}"
+  "${_phydrax_vorocrust_build_root}/"
+  _phydrax_vorocrust_library_prefix
+)
+if(NOT _phydrax_vorocrust_library_prefix EQUAL 0)
+  message(FATAL_ERROR "VoroCrust library must reside below VOROCRUST_BUILD_DIR.")
+endif()
+file(
+  SHA256
+  "${_phydrax_vorocrust_source}/MeshingVoronoiMesher.h"
+  PHYDRAX_VOROCRUST_SOURCE_SHA256
+)
+file(
+  SHA256
+  "${_phydrax_vorocrust_binary}/Config.h"
+  PHYDRAX_VOROCRUST_CONFIG_SHA256
+)
+file(
+  SHA256
+  "${_phydrax_vorocrust_library}"
+  PHYDRAX_VOROCRUST_LIBRARY_SHA256
+)
+
 file(
   STRINGS "${_phydrax_vorocrust_cache}"
   _phydrax_vorocrust_openmp
@@ -112,7 +179,11 @@ set_target_properties(
 )
 target_compile_definitions(
   phydrax-vorocrust
-  PRIVATE "PHYDRAX_VOROCRUST_REVISION=\"${PHYDRAX_VOROCRUST_REVISION}\""
+  PRIVATE
+    "PHYDRAX_VOROCRUST_REVISION=\"${PHYDRAX_VOROCRUST_REVISION}\""
+    "PHYDRAX_VOROCRUST_SOURCE_SHA256=\"${PHYDRAX_VOROCRUST_SOURCE_SHA256}\""
+    "PHYDRAX_VOROCRUST_CONFIG_SHA256=\"${PHYDRAX_VOROCRUST_CONFIG_SHA256}\""
+    "PHYDRAX_VOROCRUST_LIBRARY_SHA256=\"${PHYDRAX_VOROCRUST_LIBRARY_SHA256}\""
 )
 target_include_directories(
   phydrax-vorocrust

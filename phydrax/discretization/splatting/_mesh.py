@@ -652,7 +652,17 @@ class PreparedMeshParticleGridSplat(StrictModule, NonTrainableState):
             support=routes.evidence.supported,
         )
         interpolation = apply_gather_stencil(values, stencil)
-        successful = jnp.all(routes.evidence.finite & ~routes.evidence.route_overflow)
+        active_value_mask = active_.reshape(
+            active_.shape + (1,) * (interpolation.values.ndim - 1)
+        )
+        gathered_finite = jnp.all(
+            jnp.where(active_value_mask, jnp.isfinite(interpolation.values), True)
+        )
+        successful = (
+            jnp.all(routes.evidence.finite & ~routes.evidence.route_overflow)
+            & jnp.all(jnp.isfinite(values))
+            & gathered_finite
+        )
         if self.boundary == "reject":
             successful = successful & jnp.all(routes.evidence.complete)
         return MeshSplatGatherResult(

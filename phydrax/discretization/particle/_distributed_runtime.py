@@ -286,6 +286,7 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
         )
         capacity_ok = jnp.all(counts <= self.plan.layout.capacity_per_device)
         ids_unique = ~jnp.any(active[1:] & active[:-1] & (ids[1:] == ids[:-1]))
+        ids_valid = jnp.all(jnp.where(active, ids >= 0, ids == -1))
         finite = (
             jnp.all(jnp.isfinite(position) | ~active[:, None])
             & jnp.all(jnp.isfinite(momentum) | ~active[:, None])
@@ -294,8 +295,8 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
         )
         packed_positions = eqx.error_if(
             packed_positions,
-            ~capacity_ok | ~finite | ~ids_unique,
-            "Initial distributed particle ownership exceeds capacity, contains duplicate stable IDs, or is non-finite.",
+            ~capacity_ok | ~finite | ~ids_unique | ~ids_valid,
+            "Initial distributed particle ownership exceeds capacity, has invalid stable IDs, or is non-finite.",
         )
         return DistributedParticleState(
             jax.device_put(packed_positions, self.vector_sharding),

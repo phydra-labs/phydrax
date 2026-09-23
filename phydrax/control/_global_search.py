@@ -7,10 +7,12 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..optim import DifferentialEvolutionSearch
 from ..optim._differential_evolution import _bounded_differential_evolution
@@ -163,8 +165,29 @@ class ControlSearchResult(StrictModule):
         self.time_id = problem.time_grid.time_id
         self.parameterization_id = parameterization.parameterization_id
         self.approximation_id = parameterization.approximation_id
-        self.result_id = (
-            f"control-search:{problem.problem_id}:{parameterization.parameterization_id}"
+        self.result_id = "control-search:" + canonical_fingerprint(
+            {
+                "problem": problem.problem_id,
+                "dynamics": problem.dynamics.dynamics_id,
+                "time": problem.time_grid.time_id,
+                "parameterization": parameterization.parameterization_id,
+                "method": "bounded-differential-evolution-control-search",
+                "design_signature": self.design_signature,
+                "evaluation": evaluation.result_id,
+                "termination_reason": self.termination_reason,
+                "generations": self.generations,
+                "objective_evaluations": self.objective_evaluations,
+                "content": array_tree_fingerprint(
+                    {
+                        "coefficients": self.coefficients,
+                        "objective": self.objective,
+                        "population_coefficients": self.population_coefficients,
+                        "population_objectives": self.population_objectives,
+                        "best_objective_history": self.best_objective_history,
+                        "key": jax.random.key_data(self.key),
+                    }
+                ),
+            }
         )
         self.method_id = "bounded-differential-evolution-control-search"
         self.rollout_method_id = evaluation.method_id

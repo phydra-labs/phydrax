@@ -33,6 +33,10 @@ def main() -> None:
         or arguments.shards <= 0
     ):
         raise ValueError("Cell, group, repetition, and shard counts must be positive.")
+    if arguments.shards != 1:
+        raise ValueError(
+            "this benchmark has no distributed execution path; --shards must be one"
+        )
 
     edges = jnp.geomspace(1.0, 1.0e3, arguments.groups + 1)
     system = CosmologicalMultigroupM1System(
@@ -74,12 +78,12 @@ def main() -> None:
 
     start = time.perf_counter()
     first = action(state)
-    jax.block_until_ready(first[2].accepted_state)
+    jax.block_until_ready(first)
     compile_and_first = time.perf_counter() - start
     start = time.perf_counter()
     for _ in range(arguments.repetitions):
         result = action(state)
-    jax.block_until_ready(result[2].accepted_state)
+    jax.block_until_ready(result)
     execution = (time.perf_counter() - start) / arguments.repetitions
     redshift, realizability, reflux = result
     if not bool(
@@ -92,7 +96,7 @@ def main() -> None:
         "packets": 0,
         "cells": arguments.cells,
         "groups": arguments.groups,
-        "collectives": 2 * arguments.shards,
+        "collectives": 0,
         "compile_and_first_ms": 1000.0 * compile_and_first,
         "execution_ms": 1000.0 * execution,
         "cell_groups_per_second": arguments.cells * arguments.groups / execution,

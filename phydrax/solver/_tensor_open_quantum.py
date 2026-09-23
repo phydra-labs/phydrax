@@ -410,6 +410,7 @@ def solve_lpdo_steady_state(
     residuals_ = jnp.stack(residuals)
     trace_residual = jnp.abs(current.raw_trace() - initial_state.raw_trace())
     finite = jnp.all(jnp.isfinite(residuals_)) & jnp.isfinite(trace_residual)
+    cumulative_trace_valid = trace_residual <= trace_tolerance
     converged = finite & (residuals_[-1] <= tolerance)
     solve_id = canonical_fingerprint(
         {
@@ -419,6 +420,10 @@ def solve_lpdo_steady_state(
             "maximum_iterations": iterations,
             "purification_capacity": int(maximum_purification_dimension),
             "convergence_tolerance": tolerance,
+            "trace_tolerance": float(trace_tolerance),
+            "maximum_discarded_weight_per_sweep": float(
+                maximum_discarded_weight_per_sweep
+            ),
         }
     )
     return LPDOSteadyStateResult(
@@ -427,7 +432,7 @@ def solve_lpdo_steady_state(
         trace_residual,
         converged,
         finite,
-        finite & jnp.all(jnp.stack(all_valid)) & converged,
+        finite & jnp.all(jnp.stack(all_valid)) & cumulative_trace_valid & converged,
         iterations,
         solve_id,
     )

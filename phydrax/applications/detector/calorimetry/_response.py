@@ -106,6 +106,7 @@ class CalorimeterResponse(StrictModule, NonTrainableState):
     reconstructed_cell_energy: Array
     derivative_valid: Array
     plan_id: str = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
 
 
 def apply_calorimeter_response(
@@ -164,6 +165,7 @@ def apply_calorimeter_response(
         reconstructed,
         jnp.zeros_like(active),
         plan.plan_id,
+        plan.geometry.geometry_id,
     )
 
 

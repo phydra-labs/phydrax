@@ -23,6 +23,8 @@ from ...equations._gas_transport_properties import (
 class TransportPropertyReuseState(StrictModule):
     temperature: Array
     pressure: Array
+    reference_temperature: Array
+    reference_pressure: Array
     properties: GasTransportPropertyEvaluation
     reuse_count: Array
     plan_id: str = eqx.field(static=True)
@@ -115,11 +117,19 @@ class TransportPropertyReusePlan(StrictModule, NonTrainableState):
             jnp.asarray(temperature), jnp.asarray(pressure)
         )
         evaluated = self.properties.evaluate(temperature_, pressure_)
+        references_temperature = jnp.broadcast_to(
+            temperature_[..., None], temperature_.shape + (3,)
+        )
+        references_pressure = jnp.broadcast_to(
+            pressure_[..., None], pressure_.shape + (3,)
+        )
         return TransportPropertyReuseState(
             temperature_,
             pressure_,
+            references_temperature,
+            references_pressure,
             evaluated,
-            jnp.zeros(temperature_.shape, dtype=jnp.int32),
+            jnp.zeros(temperature_.shape + (3,), dtype=jnp.int32),
             self.plan_id,
         )
 
@@ -141,17 +151,28 @@ class TransportPropertyReusePlan(StrictModule, NonTrainableState):
         if temperature_.shape != accepted.temperature.shape:
             raise ValueError("Transport reuse query shape changed after preparation.")
         tiny = jnp.finfo(temperature_.dtype).tiny
-        relative_temperature = jnp.abs(
-            jnp.log(
-                jnp.maximum(temperature_, tiny) / jnp.maximum(accepted.temperature, tiny)
+        relative_temperature = tuple(
+            jnp.abs(
+                jnp.log(
+                    jnp.maximum(temperature_, tiny)
+                    / jnp.maximum(accepted.reference_temperature[..., index], tiny)
+                )
             )
+            for index in range(3)
         )
-        relative_pressure = jnp.abs(
-            jnp.log(jnp.maximum(pressure_, tiny) / jnp.maximum(accepted.pressure, tiny))
+        relative_pressure = tuple(
+            jnp.abs(
+                jnp.log(
+                    jnp.maximum(pressure_, tiny)
+                    / jnp.maximum(accepted.reference_pressure[..., index], tiny)
+                )
+            )
+            for index in range(3)
         )
         estimated = tuple(
-            sensitivity[0] * relative_temperature + sensitivity[1] * relative_pressure
-            for sensitivity in self.logarithmic_sensitivities
+            sensitivity[0] * relative_temperature[index]
+            + sensitivity[1] * relative_pressure[index]
+            for index, sensitivity in enumerate(self.logarithmic_sensitivities)
         )
         in_support = (
             (temperature_ >= self.temperature_bounds[0])
@@ -161,11 +182,12 @@ class TransportPropertyReusePlan(StrictModule, NonTrainableState):
             & jnp.isfinite(temperature_)
             & jnp.isfinite(pressure_)
         )
-        within_count = accepted.reuse_count < self.maximum_reuse_count
         reused = tuple(
-            in_support & within_count & (bound <= maximum)
-            for bound, maximum in zip(
-                estimated, self.maximum_relative_errors, strict=True
+            in_support
+            & (accepted.reuse_count[..., index] < self.maximum_reuse_count)
+            & (bound <= maximum)
+            for index, (bound, maximum) in enumerate(
+                zip(estimated, self.maximum_relative_errors, strict=True)
             )
         )
         reuse_all = reused[0] & reused[1] & reused[2]
@@ -210,11 +232,22 @@ class TransportPropertyReusePlan(StrictModule, NonTrainableState):
             successful,
             self.properties.property_id,
         )
+        reuse_mask = jnp.stack(reused, axis=-1)
         proposed = TransportPropertyReuseState(
             temperature_,
             pressure_,
+            jnp.where(
+                reuse_mask,
+                accepted.reference_temperature,
+                temperature_[..., None],
+            ),
+            jnp.where(
+                reuse_mask,
+                accepted.reference_pressure,
+                pressure_[..., None],
+            ),
             evaluation,
-            jnp.where(reuse_all, accepted.reuse_count + 1, 0),
+            jnp.where(reuse_mask, accepted.reuse_count + 1, 0),
             self.plan_id,
         )
         return TransportPropertyReuseCandidate(

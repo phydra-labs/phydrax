@@ -108,8 +108,8 @@ def _line_search(
     residual,
     direction,
     args,
-    termination,
     maximum_steps,
+    evaluation_limit,
     precision,
     /,
 ):
@@ -139,8 +139,8 @@ def _line_search(
     def condition(item):
         within = (
             jnp.asarray(True)
-            if termination.maximum_evaluations is None
-            else item.evaluations < termination.maximum_evaluations
+            if evaluation_limit is None
+            else item.evaluations < evaluation_limit
         )
         return (
             ~item.accepted
@@ -251,6 +251,14 @@ class Broyden(AbstractNonlinearMethod):
         if not isinstance(termination, NonlinearTermination):
             raise TypeError("termination must be NonlinearTermination.")
         self.precision.validate_tolerance(termination.absolute_residual)
+        if (
+            _initial_evaluation is None
+            and termination.maximum_evaluations is not None
+            and termination.maximum_evaluations < 2
+        ):
+            raise ValueError(
+                "Broyden requires at least two residual evaluations to solve and certify."
+            )
         if _initial_evaluation is None:
             state_tree = problem.validate_state(initial_state)
             residual_tree, auxiliary = problem.evaluate(state_tree, args)
@@ -308,7 +316,7 @@ class Broyden(AbstractNonlinearMethod):
             within = (
                 jnp.asarray(True)
                 if termination.maximum_evaluations is None
-                else current.residual_evaluations < termination.maximum_evaluations
+                else (current.residual_evaluations < termination.maximum_evaluations - 1)
             )
             return (
                 (current.status == int(NonlinearStatus.ITERATING))
@@ -333,8 +341,14 @@ class Broyden(AbstractNonlinearMethod):
                 current.residual,
                 direction,
                 args,
-                termination,
                 self.maximum_line_search_steps,
+                (
+                    None
+                    if termination.maximum_evaluations is None
+                    else termination.maximum_evaluations
+                    - current.residual_evaluations
+                    - 1
+                ),
                 self.precision,
             )
             step = search.state - current.state
@@ -427,7 +441,7 @@ class Broyden(AbstractNonlinearMethod):
             exhausted = (
                 jnp.asarray(False)
                 if termination.maximum_evaluations is None
-                else next_evaluations >= termination.maximum_evaluations
+                else next_evaluations >= termination.maximum_evaluations - 1
             )
             status = jnp.where(
                 converged,
@@ -474,9 +488,18 @@ class Broyden(AbstractNonlinearMethod):
             )
 
         run = jax.lax.while_loop(condition, body, run)
+        evaluation_exhausted = (
+            jnp.asarray(False)
+            if termination.maximum_evaluations is None
+            else run.residual_evaluations >= termination.maximum_evaluations - 1
+        )
         status = jnp.where(
             run.status == int(NonlinearStatus.ITERATING),
-            int(NonlinearStatus.MAXIMUM_STEPS_REACHED),
+            jnp.where(
+                evaluation_exhausted,
+                int(NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED),
+                int(NonlinearStatus.MAXIMUM_STEPS_REACHED),
+            ),
             run.status,
         ).astype(jnp.int32)
         final_state = source.unflatten(run.state)
@@ -569,6 +592,13 @@ class Chord(AbstractNonlinearMethod):
         if not isinstance(termination, NonlinearTermination):
             raise TypeError("termination must be NonlinearTermination.")
         self.precision.validate_tolerance(termination.absolute_residual)
+        if (
+            termination.maximum_evaluations is not None
+            and termination.maximum_evaluations < 2
+        ):
+            raise ValueError(
+                "Chord requires at least two residual evaluations to solve and certify."
+            )
         state_tree = problem.validate_state(initial_state)
         residual_tree, auxiliary = problem.evaluate(state_tree, args)
         self.precision.validate_trees(state_tree, residual_tree)
@@ -603,6 +633,10 @@ class Chord(AbstractNonlinearMethod):
         while (
             status == int(NonlinearStatus.ITERATING)
             and iterations < termination.maximum_steps
+            and (
+                termination.maximum_evaluations is None
+                or evaluations < termination.maximum_evaluations - 1
+            )
         ):
             linear_result = solve_linear(prepared, -residual)
             direction = self.precision.direction(linear_result.value)
@@ -614,8 +648,12 @@ class Chord(AbstractNonlinearMethod):
                 residual,
                 direction,
                 args,
-                termination,
                 self.maximum_line_search_steps,
+                (
+                    None
+                    if termination.maximum_evaluations is None
+                    else termination.maximum_evaluations - evaluations - 1
+                ),
                 self.precision,
             )
             step_norm = _coordinate_norm(search.state - state, self.precision)
@@ -639,7 +677,12 @@ class Chord(AbstractNonlinearMethod):
             ):
                 status = int(NonlinearStatus.RESIDUAL_STAGNATION)
         if status == int(NonlinearStatus.ITERATING):
-            status = int(NonlinearStatus.MAXIMUM_STEPS_REACHED)
+            status = (
+                int(NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED)
+                if termination.maximum_evaluations is not None
+                and evaluations >= termination.maximum_evaluations - 1
+                else int(NonlinearStatus.MAXIMUM_STEPS_REACHED)
+            )
         final_state = source.unflatten(state)
         final_residual, final_auxiliary = problem_.evaluate(final_state, args)
         diagnostics = NonlinearDiagnostics(

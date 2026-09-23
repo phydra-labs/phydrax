@@ -4,6 +4,7 @@
 
 from ._core import (
     correlation_candidate_profiles,
+    ForceReconstructionResult,
     h1_frequency_response,
     modal_assurance_criterion,
     reconstruct_force,
@@ -22,6 +23,7 @@ from ._workflow import (
 
 __all__ = [
     "FrequencyResponseCorrelationResult",
+    "ForceReconstructionResult",
     "ModalCorrelationResult",
     "correlation_candidate_profiles",
     "h1_frequency_response",

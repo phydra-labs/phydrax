@@ -103,3 +103,20 @@ def test_bspline_derivative_fits_each_segment_independently():
     np.testing.assert_allclose(
         np.asarray(estimate.values), np.asarray(expected), rtol=3e-4, atol=3e-4
     )
+
+
+def test_bspline_derivative_preserves_complex_state_components():
+    time = jnp.linspace(0.0, 1.0, 8)
+    values = (time**3 + 1j * 2.0 * time**3)[:, None]
+    data = phx.dynamics.TrajectoryData(
+        time,
+        values,
+        state_layout=phx.dynamics.StateLayout((1,)),
+        source_id="complex-cubic",
+    )
+
+    estimate = phx.dynamics.identification.bspline_derivative(data)
+
+    expected = (3.0 * time**2 + 1j * 6.0 * time**2)[:, None]
+    assert jnp.issubdtype(estimate.values.dtype, jnp.complexfloating)
+    np.testing.assert_allclose(estimate.values, expected, rtol=3e-4, atol=3e-4)

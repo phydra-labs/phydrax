@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 
@@ -68,6 +70,14 @@ def test_neutrino_oscillation_unitarity_and_rate_chain():
     rates = neutrino.predict_neutrino_rates(rate_plan, oscillated)
     assert bool(rates.valid)
     assert jnp.all(rates.reconstructed_rates >= 0.0)
+    mismatched = neutrino.oscillation_probabilities(
+        parameters,
+        jnp.asarray([1.1, 2.1]),
+        jnp.asarray([295.0, 295.0]),
+        matter_density_g_cm3=2.6,
+    )
+    with pytest.raises(eqx.EquinoxRuntimeError, match="flux-bin centers"):
+        neutrino.predict_neutrino_rates(rate_plan, mismatched)
     transfer = neutrino.apply_near_far_transfer(
         jnp.asarray([10.0, 20.0]), jnp.eye(2) * 0.5, transfer_id="near-far"
     )

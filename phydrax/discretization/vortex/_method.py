@@ -488,15 +488,22 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
         )
 
     def __call__(self, time: ArrayLike, state: ArrayLike, args: Any = None, /) -> Array:
-        _, _, velocity, strength_rate, core_rate, _, _ = self.evaluate(
-            time,
-            state,
-            args,
+        _, _, velocity, strength_rate, core_rate, velocity_result, diffusion_result = (
+            self.evaluate(
+                time,
+                state,
+                args,
+            )
         )
-        return self.state_layout.pack(
+        derivative = self.state_layout.pack(
             velocity,
             strength_rate,
             core_rate if self.state_layout.dynamic_core else None,
+        )
+        return eqx.error_if(
+            derivative,
+            ~(velocity_result.successful & diffusion_result.successful),
+            "Vortex dynamics backend rejected its field evaluation.",
         )
 
     def diagnostics(

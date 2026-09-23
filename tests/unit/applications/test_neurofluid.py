@@ -134,6 +134,39 @@ def test_image_space_inverse_reports_rank_and_builds_state_design_problem():
     np.testing.assert_allclose(problem.objective(state, jnp.asarray((1.0, 2.0))), 0.0)
 
 
+def test_rank_deficient_identifiability_reports_infinite_condition_number():
+    operator = phx.spatial_sampling.ObservationSamplingPlan(
+        np.asarray(((0,), (1,))),
+        np.ones((2, 1)),
+        (2,),
+        operator_kind="identity",
+        source_geometry_id="rank-deficient-state",
+        require_complete_coverage=True,
+    ).prepare()
+    observation = phx.applications.neurofluid.ImageSpaceObservation(
+        operator,
+        np.asarray((1.0, 1.0)),
+        np.asarray((True, True)),
+        np.asarray((0.1, 0.1)),
+        observation_id="rank-deficient-image",
+    )
+    schema = phx.applications.neurofluid.NeurofluidParameterSchema(
+        ("first", "second"),
+        np.asarray((-10.0, -10.0)),
+        np.asarray((10.0, 10.0)),
+        np.asarray((0.0, 0.0)),
+    )
+    inverse = phx.applications.neurofluid.NeurofluidInverseProblem(
+        schema,
+        observation,
+        lambda design: jnp.asarray((design[0] + design[1],) * 2),
+    )
+
+    report = inverse.identifiability(np.asarray((1.0, 2.0)))
+    assert not bool(report.full_rank)
+    assert jnp.isinf(report.condition_number)
+
+
 def test_pipeline_manifest_requires_topological_order():
     first = phx.applications.neurofluid.NeurofluidPipelineStage(
         "ingest", "image-ingest", ("source",), ("image",)

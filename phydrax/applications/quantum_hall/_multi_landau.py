@@ -44,21 +44,26 @@ class ProjectedOrbitalTerm:
         creators: Sequence[int],
         annihilators: Sequence[int],
         coefficient: complex,
-        term_id: str,
     ):
         creators_ = tuple(int(value) for value in creators)
         annihilators_ = tuple(int(value) for value in annihilators)
         coefficient_ = complex(coefficient)
-        identifier = str(term_id).strip()
         if (
             not creators_
             or len(creators_) != len(annihilators_)
             or len(set(creators_)) != len(creators_)
             or len(set(annihilators_)) != len(annihilators_)
             or not np.isfinite(coefficient_)
-            or not identifier
         ):
             raise ValueError("Projected orbital term is invalid.")
+        identifier = canonical_fingerprint(
+            {
+                "kind": "projected-orbital-term",
+                "creators": creators_,
+                "annihilators": annihilators_,
+                "coefficient": (coefficient_.real, coefficient_.imag),
+            }
+        )
         object.__setattr__(self, "creators", creators_)
         object.__setattr__(self, "annihilators", annihilators_)
         object.__setattr__(self, "coefficient", coefficient_)
@@ -118,15 +123,12 @@ class MultiLandauLevelSpherePlan(StrictModule, NonTrainableState):
             for value in terms_
         ):
             raise ValueError("Projected terms reference unavailable orbitals.")
+        if len({value.term_id for value in terms_}) != len(terms_):
+            raise ValueError("Projected orbital term identities must be unique.")
         if maximum_basis < 1 or maximum_terms_ < len(terms_) or maximum_table < 1:
             raise ValueError("Multi-level resource limits are invalid.")
         self.particle_count = particles
-        self.manifolds = tuple(
-            sorted(
-                manifolds_,
-                key=lambda value: (value.landau_level, value.component.component_id),
-            )
-        )
+        self.manifolds = manifolds_
         self.sector = sector
         self.terms = terms_
         self.maximum_basis_dimension = maximum_basis
@@ -138,7 +140,15 @@ class MultiLandauLevelSpherePlan(StrictModule, NonTrainableState):
                 "particle_count": particles,
                 "manifolds": tuple(value.manifold_id for value in self.manifolds),
                 "sector": sector.sector_id,
-                "terms": tuple(value.term_id for value in terms_),
+                "terms": tuple(
+                    {
+                        "id": value.term_id,
+                        "creators": value.creators,
+                        "annihilators": value.annihilators,
+                        "coefficient": (value.coefficient.real, value.coefficient.imag),
+                    }
+                    for value in terms_
+                ),
                 "resources": (maximum_basis, maximum_terms_, maximum_table),
             }
         )

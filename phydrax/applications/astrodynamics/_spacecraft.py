@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.particle import (
@@ -91,7 +91,7 @@ class SpacecraftDynamicsPlan(StrictModule, NonTrainableState):
                 "bodies": bodies.prepared_id,
                 "context": context.context_id,
                 "load_id": identifier,
-                "num_times": times_host.size,
+                "times": array_tree_fingerprint(times_host),
             }
         )
 
@@ -103,9 +103,41 @@ class SpacecraftDynamicsPlan(StrictModule, NonTrainableState):
     ) -> SpacecraftDynamicsResult:
         if not isinstance(initial, RigidBodyKinematics):
             raise TypeError("initial must be RigidBodyKinematics.")
+        if (
+            initial.position.shape
+            != (self.bodies.capacity, self.bodies.ambient_dimension)
+            or initial.velocity.shape != initial.position.shape
+            or initial.orientation.shape
+            != (self.bodies.capacity, self.bodies.orientation_dimension)
+            or initial.angular_velocity.shape
+            != (self.bodies.capacity, self.bodies.angular_dimension)
+        ):
+            raise ValueError(
+                "Initial rigid-body kinematics do not match the prepared bodies."
+            )
+        orientation_norm = jnp.sum(initial.orientation * initial.orientation, axis=-1)
+        initial_valid = (
+            jnp.all(jnp.isfinite(initial.position))
+            & jnp.all(jnp.isfinite(initial.velocity))
+            & jnp.all(jnp.isfinite(initial.orientation))
+            & jnp.all(orientation_norm > 0.0)
+            & jnp.all(jnp.isfinite(initial.angular_velocity))
+        )
         initial_load = self.load_function(self.times[0], initial, args)
         if not isinstance(initial_load, RigidBodyLoad):
             raise TypeError("load_function must return RigidBodyLoad.")
+        if (
+            initial_load.force.shape != initial.position.shape
+            or initial_load.torque.shape != initial.angular_velocity.shape
+        ):
+            raise ValueError(
+                "Initial rigid-body load does not match prepared body support."
+            )
+        initial_valid = (
+            initial_valid
+            & jnp.all(jnp.isfinite(initial_load.force))
+            & jnp.all(jnp.isfinite(initial_load.torque))
+        )
 
         def step(carry, interval):
             kinematics, load, active = carry
@@ -139,7 +171,7 @@ class SpacecraftDynamicsPlan(StrictModule, NonTrainableState):
         intervals = jnp.stack((self.times[:-1], self.times[1:]), axis=-1)
         (_, _, completed), outputs = jax.lax.scan(
             step,
-            (initial, initial_load, jnp.asarray(True)),
+            (initial, initial_load, initial_valid),
             intervals,
         )
         kinematics, loads, valid_tail = outputs
@@ -153,9 +185,6 @@ class SpacecraftDynamicsPlan(StrictModule, NonTrainableState):
         )
         force = jnp.concatenate((initial_load.force[None], loads.force), axis=0)
         torque = jnp.concatenate((initial_load.torque[None], loads.torque), axis=0)
-        initial_valid = jnp.all(jnp.isfinite(position[0])) & jnp.all(
-            jnp.isfinite(orientation[0])
-        )
         valid = jnp.concatenate((initial_valid[None], valid_tail))
         status = jnp.where(
             valid,

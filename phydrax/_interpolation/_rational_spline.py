@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from math import comb
+from numbers import Integral
 from typing import Sequence
 
 import equinox as eqx
@@ -14,7 +15,11 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from .._strict import StrictModule
-from ._tensor_bspline import MultiIndex, TensorBSplineJetPlan
+from ._tensor_bspline import (
+    _validated_multi_index,
+    MultiIndex,
+    TensorBSplineJetPlan,
+)
 
 
 def _multi_binomial(alpha: MultiIndex, beta: MultiIndex) -> int:
@@ -35,9 +40,16 @@ def _rational_quotient_jets(
     """Apply the multivariate quotient recurrence on a downward-closed jet."""
     numerator = jnp.asarray(numerator_jets)
     denominator = jnp.asarray(denominator_jets)
-    indices = tuple(tuple(value) for value in multi_indices)
-    if not indices:
+    supplied_indices = tuple(tuple(value) for value in multi_indices)
+    if not supplied_indices:
         raise ValueError("Rational spline jets require at least the value multi-index.")
+    dimension = len(supplied_indices[0])
+    indices = tuple(
+        _validated_multi_index(value, dimension, "Rational spline jet multi-index")
+        for value in supplied_indices
+    )
+    if isinstance(jet_axis, bool) or not isinstance(jet_axis, Integral):
+        raise TypeError("Rational spline jet_axis must be an integer.")
     axis = int(jet_axis)
     if axis < 0:
         axis += denominator.ndim
@@ -167,7 +179,11 @@ class RationalSplineJet(StrictModule):
         return self.plan.tensor_indices
 
     def derivative(self, multi_index: Sequence[int], /) -> Array:
-        derivative = tuple(multi_index)
+        derivative = _validated_multi_index(
+            multi_index,
+            self.plan.dimension,
+            "Rational spline derivative multi-index",
+        )
         if derivative not in self.plan.multi_indices:
             raise ValueError("Requested rational derivative is absent from this jet.")
         index = self.plan.multi_indices.index(derivative)

@@ -129,7 +129,10 @@ def run_case(*, temperature_count, denaturant_count, repeats, posterior_samples)
         ExperimentConditions(t, d), groups=groups
     )
     predicted = heldout(problem.parameters.decode(fit.coordinates))
-    heldout_error = np.asarray(predicted) - _signal(t, d, channel)
+    heldout_observed = _signal(t, d, channel) + 0.0005 * np.sin(
+        (np.arange(t.size) + 10_000) * np.sqrt(3.0)
+    )
+    heldout_error = np.asarray(predicted) - heldout_observed
     deficient = protein_experiment_identifiability(
         _problem(temperature_count, denaturant_count, isotherm=True)
     )
@@ -143,6 +146,8 @@ def run_case(*, temperature_count, denaturant_count, repeats, posterior_samples)
         "free_parameter_names": problem.parameters.free_names,
         "preparation_seconds": preparation_seconds,
         "residual_compilation": asdict(compilation),
+        "heldout_observation_source": "disjoint-synthetic-perturbed-observations",
+        "heldout_observation_standard_error": 0.02,
         "residual_execution": residual_time.to_dict(),
         "residual_compiler": asdict(native_compiler),
         "cold_complete_fit_seconds": cold_fit_seconds,
@@ -223,9 +228,11 @@ def main():
             posterior_samples=args.posterior_samples,
         ),
     }
-    text = json.dumps(report, indent=2, sort_keys=True)
+    text = json.dumps(report, allow_nan=False, indent=2, sort_keys=True)
     if args.output is not None:
-        args.output.write_text(text + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(args.output, report)
     print(text)
     if not report["case"]["successful"]:
         raise SystemExit(1)

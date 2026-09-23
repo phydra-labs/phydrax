@@ -212,6 +212,38 @@ def test_finite_lqr_nonfinite_value_constants_and_residuals_have_nonfinite_statu
     assert int(result.status) == RiccatiStatus.NONFINITE
 
 
+def test_finite_lqr_rejects_complex_data_nan_tolerances_and_nan_query_times():
+    stage = jnp.ones((1, 1, 1))
+    with pytest.raises(TypeError, match="real-valued"):
+        finite_horizon_lqr(
+            stage.astype(jnp.complex128),
+            stage,
+            stage,
+            stage,
+            jnp.ones((1, 1)),
+        )
+    with pytest.raises(ValueError, match="finite and positive"):
+        finite_horizon_lqr(stage, stage, stage, stage, jnp.ones((1, 1)), tolerance=np.nan)
+    with pytest.raises(ValueError, match="finite and positive"):
+        solve_continuous_are(
+            jnp.zeros((1, 1)),
+            stage[0],
+            stage[0],
+            stage[0],
+            pbh_tolerance=np.nan,
+        )
+
+    result = finite_horizon_lqr(stage, stage, stage, stage, jnp.ones((1, 1)))
+    with pytest.raises(eqx.EquinoxRuntimeError, match="physical grid"):
+        result.policy.evaluate(
+            jnp.asarray(0.0),
+            jnp.asarray(jnp.nan),
+            state=jnp.ones((1,)),
+        )
+    with pytest.raises(eqx.EquinoxRuntimeError, match="physical grid"):
+        result.value.evaluate(jnp.asarray(jnp.nan), jnp.ones((1,)))
+
+
 def test_singular_or_indefinite_costs_are_rejected_without_regularization():
     stage = jnp.ones((2, 1, 1))
     with pytest.raises(eqx.EquinoxRuntimeError, match="singular control costs"):

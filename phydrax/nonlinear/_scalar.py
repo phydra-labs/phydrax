@@ -591,6 +591,14 @@ class AbstractSafeguardedDerivativeRoot(AbstractScalarRootMethod):
         if not isinstance(precision_, NonlinearPrecisionPolicy):
             raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         precision_.validate_tolerance(termination.absolute_residual)
+        if (
+            termination.maximum_evaluations is not None
+            and termination.maximum_evaluations < 3
+        ):
+            raise ValueError(
+                "Safeguarded derivative roots require at least three residual "
+                "evaluations to establish and certify a bracket."
+            )
         if problem.lower is None or problem.upper is None:
             raise ValueError("Safeguarded derivative roots require a bracket.")
         derivative = (
@@ -648,8 +656,15 @@ class AbstractSafeguardedDerivativeRoot(AbstractScalarRootMethod):
         )
 
         def condition(value):
-            return (value.status == int(NonlinearStatus.ITERATING)) & (
-                value.iterations < termination.maximum_steps
+            within_evaluations = (
+                jnp.asarray(True)
+                if termination.maximum_evaluations is None
+                else value.evaluations < termination.maximum_evaluations - 1
+            )
+            return (
+                (value.status == int(NonlinearStatus.ITERATING))
+                & (value.iterations < termination.maximum_steps)
+                & within_evaluations
             )
 
         def body(value):
@@ -727,9 +742,18 @@ class AbstractSafeguardedDerivativeRoot(AbstractScalarRootMethod):
             )
 
         run = jax.lax.while_loop(condition, body, run)
+        evaluation_exhausted = (
+            jnp.asarray(False)
+            if termination.maximum_evaluations is None
+            else run.evaluations >= termination.maximum_evaluations - 1
+        )
         status = jnp.where(
             run.status == int(NonlinearStatus.ITERATING),
-            int(NonlinearStatus.MAXIMUM_STEPS_REACHED),
+            jnp.where(
+                evaluation_exhausted,
+                int(NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED),
+                int(NonlinearStatus.MAXIMUM_STEPS_REACHED),
+            ),
             run.status,
         ).astype(jnp.int32)
         certificate_state = precision_.certificate(run.current)

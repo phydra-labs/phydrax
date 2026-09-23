@@ -183,6 +183,17 @@ def test_bphz_polynomial_subtraction_annihilates_declared_taylor_conditions():
     derivative_at_point = 16.0
     expected = polynomial - value_at_point - derivative_at_point * (x - 1.0)
     np.testing.assert_allclose(result.evaluate(jnp.asarray([x])), expected, atol=1e-12)
+    batched = result.evaluate(jnp.asarray([[x], [2.0 * x]]))
+    second_x = 2.0 * x
+    second_polynomial = 3.0 + 2.0 * second_x + second_x**2 + 4.0 * second_x**3
+    expected_second = (
+        second_polynomial - value_at_point - derivative_at_point * (second_x - 1.0)
+    )
+    np.testing.assert_allclose(
+        batched,
+        jnp.asarray([expected, expected_second]),
+        atol=1e-12,
+    )
 
 
 def test_native_weighted_quadrature_preserves_mass_and_reports_sampling_error():

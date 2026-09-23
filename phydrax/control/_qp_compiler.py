@@ -15,6 +15,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._bounds import Bounds
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
 from ..linalg import OperatorProperties
@@ -171,6 +172,7 @@ class LinearQuadraticControlProblem(StrictModule):
     num_terminal_inequalities: int = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     dynamics_id: str = eqx.field(static=True)
+    specification_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -480,6 +482,56 @@ class LinearQuadraticControlProblem(StrictModule):
         self.num_terminal_inequalities = num_terminal_inequalities
         self.problem_id = _identifier(problem_id, "problem_id")
         self.dynamics_id = _identifier(dynamics_id, "dynamics_id")
+        self.specification_id = "linear-control-specification:" + canonical_fingerprint(
+            {
+                "kind": "linear-quadratic-control-problem",
+                "problem": self.problem_id,
+                "dynamics": self.dynamics_id,
+                "time_id": time_grid.time_id,
+                "case_shape": list(case_shape),
+                "horizon": horizon,
+                "state_size": state_size,
+                "control_size": control_size,
+                "constraint_counts": [
+                    num_stage_equalities,
+                    num_stage_inequalities,
+                    num_terminal_equalities,
+                    num_terminal_inequalities,
+                ],
+                "numeric": array_tree_fingerprint(
+                    {
+                        "dynamics_matrices": a,
+                        "control_matrices": b,
+                        "initial_state": initial,
+                        "state_costs": q,
+                        "control_costs": r,
+                        "terminal_state_cost": q_terminal,
+                        "dynamics_bias": c,
+                        "state_control_cross": cross,
+                        "state_linear": q_linear,
+                        "control_linear": r_linear,
+                        "stage_constants": constants,
+                        "terminal_linear": terminal_linear_value,
+                        "terminal_constant": terminal_constant_value,
+                        "state_lower_bounds": state_lower,
+                        "state_upper_bounds": state_upper,
+                        "control_lower_bounds": control_lower,
+                        "control_upper_bounds": control_upper,
+                        "stage_equality_state_matrix": stage_eq_state,
+                        "stage_equality_control_matrix": stage_eq_control,
+                        "stage_equality_rhs": stage_eq_rhs,
+                        "stage_inequality_state_matrix": stage_ineq_state,
+                        "stage_inequality_control_matrix": stage_ineq_control,
+                        "stage_inequality_rhs": stage_ineq_rhs,
+                        "terminal_equality_matrix": terminal_eq_matrix,
+                        "terminal_equality_rhs": terminal_eq_rhs,
+                        "terminal_inequality_matrix": terminal_ineq_matrix,
+                        "terminal_inequality_rhs": terminal_ineq_rhs,
+                        "times": time_grid.times,
+                    }
+                ),
+            }
+        )
 
     @staticmethod
     def _stage_constraints(
@@ -1547,36 +1599,65 @@ def refresh_linear_quadratic_control(
 
 
 def decode_linear_control_solution(
-    compilation: LinearControlQPCompilation,
+    prepared: PreparedLinearControlQP,
     result: ConvexProgramResult,
     /,
     *,
     solution_id: str | None = None,
 ) -> LinearControlQPSolution:
-    """Decode exactly the primal returned by a canonical QP solver."""
-    if not isinstance(compilation, LinearControlQPCompilation):
-        raise TypeError("compilation must be a LinearControlQPCompilation.")
+    """Decode exactly the primal returned by this prepared canonical QP."""
+    if not isinstance(prepared, PreparedLinearControlQP):
+        raise TypeError("prepared must be a PreparedLinearControlQP.")
     if not isinstance(result, ConvexProgramResult):
         raise TypeError("result must be a ConvexProgramResult.")
+    compilation = prepared.compilation
     program = compilation.program
+    provenance = result.provenance
+    if (
+        provenance.problem_id != program.problem_id
+        or provenance.structure_id != program.structure_id
+        or provenance.numeric_binding_id != prepared.prepared.numeric_binding_id
+    ):
+        raise ValueError("QP result provenance does not match the prepared compilation.")
+    primal = eqx.error_if(
+        result.primal,
+        provenance.numeric_version != prepared.prepared.numeric_version,
+        "QP result numeric version does not match the prepared compilation.",
+    )
     if result.batch_shape != program.batch_shape:
         raise ValueError("QP result batch shape does not match the compilation.")
-    if result.primal.shape[-1] != program.num_variables:
+    if primal.shape[-1] != program.num_variables:
         raise ValueError("QP result primal dimension does not match the compilation.")
     specification = compilation.specification
-    states, controls = compilation.decode(result.primal)
+    states, controls = compilation.decode(primal)
     finite_nodes = jnp.all(jnp.isfinite(states), axis=-1)
-    trajectory_valid = result.valid[..., None] & finite_nodes
+    finite_controls = jnp.all(jnp.isfinite(controls), axis=-1)
+    terminal_valid = result.valid[..., None]
+    trajectory_valid = (
+        jnp.concatenate(
+            (result.valid[..., None] & finite_controls, terminal_valid),
+            axis=-1,
+        )
+        & finite_nodes
+    )
+    decoded_valid = (
+        result.valid & jnp.all(finite_nodes, axis=-1) & jnp.all(finite_controls, axis=-1)
+    )
+    decoded_status = jnp.where(
+        (result.status == int(ConvexProgramStatus.OPTIMAL)) & ~decoded_valid,
+        int(ConvexProgramStatus.NONFINITE_OUTPUT),
+        result.status,
+    ).astype(jnp.int32)
     control_status = jnp.where(
-        result.valid,
+        decoded_valid,
         CONTROL_SUCCESS,
         jnp.where(
-            result.status == int(ConvexProgramStatus.PRIMAL_INFEASIBLE),
+            decoded_status == int(ConvexProgramStatus.PRIMAL_INFEASIBLE),
             CONTROL_INFEASIBLE,
             CONTROL_DYNAMICS_FAILED,
         ),
     ).astype(jnp.int32)
-    policy_id = f"{specification.problem_id}:qp-policy"
+    policy_id = f"{specification.specification_id}:qp-policy"
     policy = PiecewiseConstantControlParameterization(
         specification.time_grid,
         (specification.control_size,),
@@ -1588,7 +1669,7 @@ def decode_linear_control_solution(
         controls=controls,
         valid=trajectory_valid,
         status=control_status,
-        backend_status=result.status,
+        backend_status=decoded_status,
         case_shape=specification.case_shape,
         state_shape=(specification.state_size,),
         control_shape=(specification.control_size,),
@@ -1601,7 +1682,22 @@ def decode_linear_control_solution(
         approximation_id=policy.approximation_id,
     )
     identifier = (
-        f"{specification.problem_id}:qp-solution"
+        "control-qp-solution:"
+        + canonical_fingerprint(
+            {
+                "specification": specification.specification_id,
+                "numeric_binding": provenance.numeric_binding_id,
+                "method": provenance.method_id,
+                "result": array_tree_fingerprint(
+                    {
+                        "primal": primal,
+                        "objective": result.objective,
+                        "status": decoded_status,
+                        "valid": decoded_valid,
+                    }
+                ),
+            }
+        )
         if solution_id is None
         else _identifier(solution_id, "solution_id")
     )
@@ -1612,8 +1708,8 @@ def decode_linear_control_solution(
         policy=policy,
         parameters=controls,
         objective=result.objective + compilation.objective_constant,
-        valid=result.valid,
-        status=result.status,
+        valid=decoded_valid,
+        status=decoded_status,
         solution_id=identifier,
         method_id=f"control:qp:{result.method}",
     )
@@ -1633,7 +1729,7 @@ def solve_prepared_linear_quadratic_control(
         prepared.prepared,
         warm_start=warm_start,
     )
-    return decode_linear_control_solution(prepared.compilation, execution.result)
+    return decode_linear_control_solution(prepared, execution.result)
 
 
 def solve_linear_quadratic_control(

@@ -445,6 +445,7 @@ def evaluate_mean_field_control_planner(
         quadrature,
     )
     base = problem.base_problem
+    path_identity_valid = _path_identity(problem, paths)
     evaluation = evaluate_bsde(
         base.as_bsde_problem(),
         paths,
@@ -609,7 +610,7 @@ def evaluate_mean_field_control_planner(
     effective_sample_size_sufficient = (
         minimum_effective_sample_size >= problem.minimum_effective_sample_size
     )
-    path_identity_valid = _path_identity(problem, paths)
+    path_identity_valid = jnp.asarray(path_identity_valid)
 
     externality = problem.externality
     finite_particle_evidence_matches_law = jnp.asarray(
@@ -621,14 +622,21 @@ def evaluate_mean_field_control_planner(
         dtype=jnp.float64,
     )
 
-    flat_snapshot_weights = snapshots.weights
-    expected_running_welfare = jnp.sum(
-        flat_snapshot_weights[:-1] * flat_running_welfare.T,
-        axis=-1,
-    )
-    running_welfare = jnp.sum(expected_running_welfare * dt)
-    terminal_welfare = jnp.sum(flat_snapshot_weights[-1] * flat_terminal_welfare)
-    welfare = running_welfare + terminal_welfare
+    if problem.mean_field.sample_shape == paths.sample_shape:
+        flat_snapshot_weights = snapshots.weights.reshape((num_steps + 1, sample_count))
+        expected_running_welfare = jnp.sum(
+            flat_snapshot_weights[:-1] * flat_running_welfare.T,
+            axis=-1,
+        )
+        running_welfare = jnp.sum(expected_running_welfare * dt)
+        terminal_welfare = jnp.sum(flat_snapshot_weights[-1] * flat_terminal_welfare)
+        welfare = running_welfare + terminal_welfare
+    else:
+        welfare_dtype = flat_running_welfare.dtype
+        expected_running_welfare = jnp.full((num_steps,), jnp.nan, dtype=welfare_dtype)
+        running_welfare = jnp.asarray(jnp.nan, dtype=welfare_dtype)
+        terminal_welfare = jnp.asarray(jnp.nan, dtype=welfare_dtype)
+        welfare = jnp.asarray(jnp.nan, dtype=welfare_dtype)
 
     bsde_valid = jnp.all(evaluation.valid_paths)
     externality_finite = (

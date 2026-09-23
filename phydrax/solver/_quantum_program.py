@@ -14,6 +14,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._model import register_artifact_value
 from .._strict import StrictModule
 from ..operators.quantum._operations import LocalUnitaryOperation, QuantumProgram
 from ..operators.quantum._propagation import (
@@ -564,6 +565,28 @@ def execute_dense_quantum_program(
         prepared.numeric_version,
         prepared.prepared_id,
     )
+
+
+register_artifact_value(
+    "phydrax.quantum:DenseQuantumProgramPolicy",
+    DenseQuantumProgramPolicy,
+)
+register_artifact_value(
+    "phydrax.quantum:DenseQuantumProgramCostEstimate",
+    DenseQuantumProgramCostEstimate,
+)
+register_artifact_value(
+    "phydrax.quantum:DenseQuantumProgramPlan",
+    DenseQuantumProgramPlan,
+)
+register_artifact_value(
+    "phydrax.quantum:DenseQuantumOperationEvidence",
+    DenseQuantumOperationEvidence,
+)
+register_artifact_value(
+    "phydrax.quantum:PreparedDenseQuantumProgram",
+    PreparedDenseQuantumProgram,
+)
 
 
 __all__ = [

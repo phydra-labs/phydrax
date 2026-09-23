@@ -35,6 +35,13 @@ def _model(space, **kwargs):
     return GlobalPrimitiveEquationPlan(space, vertical, dt=20.0, **kwargs).prepare()
 
 
+def test_global_atmosphere_integer_controls_reject_boolean_aliases(space):
+    with pytest.raises(TypeError, match="filter_order"):
+        _model(space, filter_order=True)
+    with pytest.raises(TypeError, match="cadence"):
+        GlobalAtmosphereProcesses(cadence=True)
+
+
 def test_isothermal_rest_and_closed_column_continuity(space):
     model = _model(space)
     initial = model.initialize()
@@ -334,6 +341,28 @@ def test_moist_precipitation_budget_and_cadenced_restart(space, tmp_path):
         tmp_path / "global.npz", model, first.continuation
     )
     restored = read_global_atmosphere_checkpoint(path, model, initial)
+    other = _model(space, filter_rate=0.01)
+    with pytest.raises(ValueError, match="another runtime"):
+        other.advance(first.continuation)
+    with pytest.raises(ValueError, match="another prepared runtime"):
+        other.view(first.continuation.state)
+    with pytest.raises(ValueError, match="another runtime"):
+        write_global_atmosphere_checkpoint(
+            tmp_path / "wrong-runtime.npz",
+            other,
+            first.continuation,
+        )
+    nonfinite = eqx.tree_at(
+        lambda value: value.state.temperature,
+        first.continuation,
+        jnp.full_like(first.continuation.state.temperature, jnp.nan),
+    )
+    with pytest.raises(ValueError, match="nonfinite"):
+        write_global_atmosphere_checkpoint(
+            tmp_path / "nonfinite.npz",
+            model,
+            nonfinite,
+        )
     uninterrupted, restarted = first.continuation, restored
     # Cross the held-forcing refresh boundary after loading, not only a static read.
     for _ in range(3):

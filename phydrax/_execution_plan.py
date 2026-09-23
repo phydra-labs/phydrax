@@ -591,9 +591,54 @@ class ExecutionPlan:
 
     @classmethod
     def from_payload(cls, value: Mapping[str, Any]) -> ExecutionPlan:
+        if not isinstance(value, Mapping):
+            raise TypeError("Execution plan payload must be a mapping.")
+        if any(not isinstance(key, str) for key in value):
+            raise TypeError("Execution plan payload field names must be strings.")
+        allowed = {
+            "kind",
+            "execution_plan_id",
+            "backend",
+            "precision_policy_id",
+            "solver_policy_id",
+            "device_mesh_id",
+            "reduction_policy_id",
+            "cache_key",
+            "policy_id",
+            "requirements_id",
+            "inventory_id",
+            "group",
+            "axis_bindings",
+            "value_placements",
+            "providers",
+            "determinism",
+            "recovery",
+            "topology_epoch",
+            "decision_evidence",
+            "resource_evidence",
+            "plan_fingerprint",
+        }
+        unknown = set(value) - allowed
+        if unknown:
+            raise ValueError(
+                f"Execution plan payload has unknown fields {sorted(unknown)!r}."
+            )
+        if value.get("kind") != "execution-plan":
+            raise ValueError("Execution plan payload kind must be 'execution-plan'.")
+        expected_fingerprint = value.get("plan_fingerprint")
+        if not isinstance(expected_fingerprint, str) or not expected_fingerprint:
+            raise ValueError("Execution plan payload requires plan_fingerprint.")
+        topology_epoch = value.get("topology_epoch", 0)
+        if isinstance(topology_epoch, bool) or not isinstance(topology_epoch, int):
+            raise TypeError("Execution plan topology_epoch must be an integer.")
+        decision_evidence = value.get("decision_evidence", ())
+        if not isinstance(decision_evidence, (tuple, list)) or any(
+            not isinstance(item, str) for item in decision_evidence
+        ):
+            raise TypeError("Execution plan decision_evidence must contain strings.")
         group_payload = value.get("group")
         group = None if group_payload is None else _group_from_payload(group_payload)
-        return cls(
+        plan = cls(
             value["execution_plan_id"],
             value["backend"],
             value["precision_policy_id"],
@@ -626,9 +671,12 @@ class ExecutionPlan:
             recovery=RecoveryPolicy(
                 value.get("recovery", RecoveryPolicy.FAIL_FAST.value)
             ),
-            topology_epoch=int(value.get("topology_epoch", 0)),
-            decision_evidence=tuple(value.get("decision_evidence", ())),
+            topology_epoch=topology_epoch,
+            decision_evidence=tuple(decision_evidence),
         )
+        if expected_fingerprint != plan.plan_fingerprint:
+            raise ValueError("Execution plan fingerprint does not match its payload.")
+        return plan
 
 
 class ExecutionAdmissionError(RuntimeError):

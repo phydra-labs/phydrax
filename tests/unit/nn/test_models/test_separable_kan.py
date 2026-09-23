@@ -107,4 +107,3 @@ def test_separable_bspline_kan_scan_matches_loop():
 
     assert scanned_value.shape == (4, 5)
     assert jnp.allclose(scanned_value, loop_value)
-    assert all(model._scan_enabled for model in scanned.model.models)

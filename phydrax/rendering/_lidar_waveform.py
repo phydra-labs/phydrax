@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Integral
 
 import equinox as eqx
 import jax
@@ -21,6 +22,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..measurement import PulseResponse, WaveformSupport
+from ..units import conversion_factor, derived_unit, LENGTH, TIME, UnitDefinition
 from ._lidar import PreparedLidarSurface
 
 
@@ -55,6 +57,58 @@ def _shifted_pulse(
     )(delays)
 
 
+def _wave_speed_in_support_units(
+    wave_speed: float,
+    wave_speed_unit: UnitDefinition,
+    length_unit: UnitDefinition,
+    time_unit: UnitDefinition,
+    /,
+) -> float:
+    if not isinstance(wave_speed_unit, UnitDefinition):
+        raise TypeError("wave_speed_unit must be UnitDefinition.")
+    if length_unit.dimension != LENGTH or time_unit.dimension != TIME:
+        raise ValueError("Waveform length and time units have invalid dimensions.")
+    target = derived_unit(
+        "waveform-length-per-time",
+        ((length_unit, 1), (time_unit, -1)),
+    )
+    speed = float(wave_speed) * float(conversion_factor(wave_speed_unit, target))
+    if not np.isfinite(speed) or speed <= 0.0:
+        raise ValueError("wave_speed must be finite and positive.")
+    return speed
+
+
+def _pulse_in_support_unit(
+    pulse: PulseResponse,
+    time_unit: UnitDefinition,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    if not isinstance(pulse, PulseResponse):
+        raise TypeError("pulse responses must be PulseResponse values.")
+    factor = float(conversion_factor(pulse.time_unit, time_unit))
+    return pulse.times * factor, pulse.amplitudes / factor
+
+
+def _response_kernel(
+    response: PulseResponse,
+    support: WaveformSupport,
+    /,
+) -> np.ndarray:
+    if support.delay_axis.sample_count < 2 or not support.delay_axis.is_uniform:
+        raise ValueError("Waveform convolution requires a uniform multi-bin delay axis.")
+    times, values = _pulse_in_support_unit(response, support.delay_axis.time_unit)
+    interval = support.delay_axis.interval_in(support.delay_axis.time_unit)
+    assert interval is not None
+    lower = int(np.floor(times[0] / interval))
+    upper = int(np.ceil(times[-1] / interval))
+    lags = interval * np.arange(lower, upper + 1)
+    kernel = np.interp(lags, times, values, left=0.0, right=0.0)
+    total = float(np.sum(kernel))
+    if not np.isfinite(total) or total <= 0.0:
+        raise ValueError("Pulse response has no support on the waveform delay grid.")
+    return kernel / total
+
+
 class HardSurfaceLidarWaveformPlan(StrictModule, NonTrainableState):
     surface: PreparedLidarSurface
     support: WaveformSupport = eqx.field(static=True)
@@ -75,6 +129,7 @@ class HardSurfaceLidarWaveformPlan(StrictModule, NonTrainableState):
         /,
         *,
         wave_speed: float,
+        wave_speed_unit: UnitDefinition,
         backscatter: float = 1.0,
         receiver_gains: ArrayLike | None = None,
     ):
@@ -86,14 +141,19 @@ class HardSurfaceLidarWaveformPlan(StrictModule, NonTrainableState):
             )
         if surface.support_id != support.rays.support_id:
             raise ValueError("Waveform rays must match the prepared LiDAR surface rays.")
-        speed, scatter = float(wave_speed), float(backscatter)
-        if (
-            not np.isfinite(speed)
-            or speed <= 0.0
-            or not np.isfinite(scatter)
-            or scatter < 0.0
-        ):
-            raise ValueError("wave_speed must be positive and backscatter nonnegative.")
+        pulse_times, pulse_values = _pulse_in_support_unit(
+            pulse, support.delay_axis.time_unit
+        )
+        receiver_values = _response_kernel(receiver, support)
+        speed = _wave_speed_in_support_units(
+            wave_speed,
+            wave_speed_unit,
+            surface.range_unit,
+            support.delay_axis.time_unit,
+        )
+        scatter = float(backscatter)
+        if not np.isfinite(scatter) or scatter < 0.0:
+            raise ValueError("backscatter must be finite and nonnegative.")
         gains = (
             np.ones((len(support.receiver_ids),))
             if receiver_gains is None
@@ -109,9 +169,9 @@ class HardSurfaceLidarWaveformPlan(StrictModule, NonTrainableState):
             )
         self.surface = surface
         self.support = support
-        self.pulse_times = jnp.asarray(pulse.times)
-        self.pulse_values = jnp.asarray(pulse.amplitudes)
-        self.receiver_values = jnp.asarray(receiver.amplitudes)
+        self.pulse_times = jnp.asarray(pulse_times)
+        self.pulse_values = jnp.asarray(pulse_values)
+        self.receiver_values = jnp.asarray(receiver_values)
         self.receiver_gains = jnp.asarray(gains)
         self.wave_speed = speed
         self.backscatter = scatter
@@ -123,6 +183,7 @@ class HardSurfaceLidarWaveformPlan(StrictModule, NonTrainableState):
                 "pulse": pulse.response_id,
                 "receiver": receiver.response_id,
                 "speed": speed,
+                "speed_unit": wave_speed_unit.unit_id,
                 "backscatter": scatter,
                 "gains": gains.tolist(),
             }
@@ -193,6 +254,12 @@ class LidarReturnExtractionPlan:
     def __post_init__(self) -> None:
         if not isinstance(self.pulse, PulseResponse):
             raise TypeError("pulse must be PulseResponse.")
+        for name, value in (
+            ("return_capacity", self.return_capacity),
+            ("minimum_bin_separation", self.minimum_bin_separation),
+        ):
+            if isinstance(value, bool) or not isinstance(value, Integral):
+                raise TypeError(f"{name} must be an integer.")
         if (
             not np.isfinite(self.threshold)
             or self.threshold < 0.0
@@ -206,8 +273,15 @@ class LidarReturnExtractionPlan:
     def evaluate(
         self, waveform: LidarWaveformResult, support: WaveformSupport, /
     ) -> LidarReturnExtractionResult:
+        if not isinstance(waveform, LidarWaveformResult):
+            raise TypeError("waveform must be LidarWaveformResult.")
+        if not isinstance(support, WaveformSupport):
+            raise TypeError("support must be WaveformSupport.")
+        expected = support.sample_shape
+        if waveform.values.shape != expected:
+            raise ValueError(f"waveform values must have shape {expected}.")
         values = jnp.max(waveform.values, axis=-1)
-        template = jnp.asarray(self.pulse.amplitudes)
+        template = jnp.asarray(_response_kernel(self.pulse, support))
         matched = jax.vmap(
             lambda value: jnp.convolve(value, template[::-1], mode="same")
         )(values)
@@ -276,16 +350,30 @@ class AtmosphericLidarPlan(StrictModule, NonTrainableState):
         /,
         *,
         wave_speed: float,
+        range_unit: UnitDefinition,
+        wave_speed_unit: UnitDefinition,
         overlap: ArrayLike = 1.0,
     ):
-        ranges = np.asarray(range_samples, dtype=np.float64)
-        lengths = np.asarray(segment_lengths, dtype=np.float64)
+        if not isinstance(support, WaveformSupport):
+            raise TypeError("support must be WaveformSupport.")
+        if not isinstance(range_unit, UnitDefinition) or range_unit.dimension != LENGTH:
+            raise ValueError("range_unit must be a length UnitDefinition.")
+        range_factor = float(
+            conversion_factor(range_unit, support.rays.coordinate_contract.length_unit)
+        )
+        pulse_times, pulse_values = _pulse_in_support_unit(
+            pulse, support.delay_axis.time_unit
+        )
+        ranges = np.asarray(range_samples, dtype=np.float64) * range_factor
+        lengths = np.asarray(segment_lengths, dtype=np.float64) * range_factor
         if (
             ranges.ndim != 2
             or ranges.shape != lengths.shape
             or ranges.shape[0] != support.rays.sample_shape[0]
             or np.any(ranges < 0.0)
             or np.any(lengths < 0.0)
+            or not np.all(np.isfinite(ranges))
+            or not np.all(np.isfinite(lengths))
         ):
             raise ValueError(
                 "range_samples and segment_lengths must share shape (ray_count, segment_count)."
@@ -296,11 +384,16 @@ class AtmosphericLidarPlan(StrictModule, NonTrainableState):
         if np.any(overlap_ < 0.0) or not np.all(np.isfinite(overlap_)):
             raise ValueError("overlap must be finite and nonnegative.")
         self.support = support
-        self.pulse_times = jnp.asarray(pulse.times)
-        self.pulse_values = jnp.asarray(pulse.amplitudes)
+        self.pulse_times = jnp.asarray(pulse_times)
+        self.pulse_values = jnp.asarray(pulse_values)
         self.range_samples = jnp.asarray(ranges)
         self.segment_lengths = jnp.asarray(lengths)
-        self.wave_speed = float(wave_speed)
+        self.wave_speed = _wave_speed_in_support_units(
+            wave_speed,
+            wave_speed_unit,
+            support.rays.coordinate_contract.length_unit,
+            support.delay_axis.time_unit,
+        )
         self.overlap = jnp.asarray(overlap_)
         self.plan_id = canonical_fingerprint(
             {
@@ -310,6 +403,8 @@ class AtmosphericLidarPlan(StrictModule, NonTrainableState):
                 "ranges": ranges.tolist(),
                 "lengths": lengths.tolist(),
                 "speed": self.wave_speed,
+                "range_unit": range_unit.unit_id,
+                "speed_unit": wave_speed_unit.unit_id,
             }
         )
 
@@ -371,6 +466,7 @@ class SpecularLidarMultipathPlan(StrictModule, NonTrainableState):
     pulse_times: Array
     pulse_values: Array
     wave_speed: float = eqx.field(static=True)
+    path_length_factor: float = eqx.field(static=True)
     path_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -381,12 +477,38 @@ class SpecularLidarMultipathPlan(StrictModule, NonTrainableState):
         /,
         *,
         wave_speed: float,
+        path_length_unit: UnitDefinition,
+        wave_speed_unit: UnitDefinition,
         path_capacity: int,
     ):
+        if not isinstance(support, WaveformSupport):
+            raise TypeError("support must be WaveformSupport.")
+        if (
+            not isinstance(path_length_unit, UnitDefinition)
+            or path_length_unit.dimension != LENGTH
+        ):
+            raise ValueError("path_length_unit must be a length UnitDefinition.")
+        if isinstance(path_capacity, bool) or not isinstance(path_capacity, Integral):
+            raise TypeError("path_capacity must be an integer.")
+        if path_capacity < 1:
+            raise ValueError("path_capacity must be positive.")
+        pulse_times, pulse_values = _pulse_in_support_unit(
+            pulse, support.delay_axis.time_unit
+        )
         self.support = support
-        self.pulse_times = jnp.asarray(pulse.times)
-        self.pulse_values = jnp.asarray(pulse.amplitudes)
-        self.wave_speed = float(wave_speed)
+        self.pulse_times = jnp.asarray(pulse_times)
+        self.pulse_values = jnp.asarray(pulse_values)
+        self.path_length_factor = float(
+            conversion_factor(
+                path_length_unit, support.rays.coordinate_contract.length_unit
+            )
+        )
+        self.wave_speed = _wave_speed_in_support_units(
+            wave_speed,
+            wave_speed_unit,
+            support.rays.coordinate_contract.length_unit,
+            support.delay_axis.time_unit,
+        )
         self.path_capacity = int(path_capacity)
         self.plan_id = canonical_fingerprint(
             {
@@ -394,6 +516,8 @@ class SpecularLidarMultipathPlan(StrictModule, NonTrainableState):
                 "support": support.support_id,
                 "pulse": pulse.response_id,
                 "speed": self.wave_speed,
+                "path_length_unit": path_length_unit.unit_id,
+                "speed_unit": wave_speed_unit.unit_id,
                 "capacity": self.path_capacity,
             }
         )
@@ -413,7 +537,9 @@ class SpecularLidarMultipathPlan(StrictModule, NonTrainableState):
             or valid.shape != expected
         ):
             raise ValueError(f"Multipath arrays must have shape {expected}.")
-        delays = lengths / self.wave_speed
+        active_lengths = jnp.where(valid, lengths * self.path_length_factor, 0.0)
+        active_powers = jnp.where(valid, powers, 0.0)
+        delays = active_lengths / self.wave_speed
         times = jnp.asarray(self.support.delay_axis.sample_times)
         shifted = jax.vmap(
             jax.vmap(
@@ -428,17 +554,17 @@ class SpecularLidarMultipathPlan(StrictModule, NonTrainableState):
                 )
             )
         )(delays)
-        waveform = jnp.sum(
-            jnp.where(valid[..., None], powers[..., None] * shifted, 0.0), axis=1
-        )[..., None]
+        waveform = jnp.sum(active_powers[..., None] * shifted, axis=1)[..., None]
         waveform = jnp.broadcast_to(
             waveform, waveform.shape[:-1] + (len(self.support.receiver_ids),)
         )
-        finite = jnp.all(jnp.isfinite(waveform)) & jnp.all(
-            jnp.where(valid, powers >= 0.0, True)
+        finite = (
+            jnp.all(jnp.isfinite(waveform))
+            & jnp.all(jnp.where(valid, jnp.isfinite(lengths) & (lengths >= 0.0), True))
+            & jnp.all(jnp.where(valid, jnp.isfinite(powers) & (powers >= 0.0), True))
         )
         received = jnp.sum(waveform * jnp.asarray(self.support.bin_widths)[None, :, None])
-        emitted = jnp.sum(jnp.where(valid, powers, 0.0))
+        emitted = jnp.sum(active_powers)
         return LidarWaveformResult(
             waveform,
             LidarWaveformEvidence(
@@ -472,19 +598,43 @@ class TimeResolvedMultipleScatteringPlan(StrictModule, NonTrainableState):
         extinction: float,
         scattering_albedo: float,
         wave_speed: float,
+        distance_unit: UnitDefinition,
+        wave_speed_unit: UnitDefinition,
     ):
+        if not isinstance(support, WaveformSupport):
+            raise TypeError("support must be WaveformSupport.")
+        if (
+            not isinstance(distance_unit, UnitDefinition)
+            or distance_unit.dimension != LENGTH
+        ):
+            raise ValueError("distance_unit must be a length UnitDefinition.")
+        for name, value in (
+            ("packet_count", packet_count),
+            ("event_count", event_count),
+        ):
+            if isinstance(value, bool) or not isinstance(value, Integral):
+                raise TypeError(f"{name} must be an integer.")
+        distance_factor = float(
+            conversion_factor(distance_unit, support.rays.coordinate_contract.length_unit)
+        )
         self.support = support
         self.packet_count = int(packet_count)
         self.event_count = int(event_count)
-        self.extinction = float(extinction)
+        self.extinction = float(extinction) / distance_factor
         self.scattering_albedo = float(scattering_albedo)
-        self.wave_speed = float(wave_speed)
+        self.wave_speed = _wave_speed_in_support_units(
+            wave_speed,
+            wave_speed_unit,
+            support.rays.coordinate_contract.length_unit,
+            support.delay_axis.time_unit,
+        )
         if (
             self.packet_count < 1
             or self.event_count < 1
+            or not np.isfinite(self.extinction)
             or self.extinction <= 0.0
+            or not np.isfinite(self.scattering_albedo)
             or not 0.0 <= self.scattering_albedo <= 1.0
-            or self.wave_speed <= 0.0
         ):
             raise ValueError(
                 "Multiple-scattering parameters are outside their physical domains."
@@ -498,6 +648,8 @@ class TimeResolvedMultipleScatteringPlan(StrictModule, NonTrainableState):
                 "extinction": self.extinction,
                 "albedo": self.scattering_albedo,
                 "speed": self.wave_speed,
+                "distance_unit": distance_unit.unit_id,
+                "speed_unit": wave_speed_unit.unit_id,
             }
         )
 

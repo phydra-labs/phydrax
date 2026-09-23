@@ -104,6 +104,8 @@ def qualification():
         1,
         True,
         units,
+        water_system.system_id,
+        water.structure_id,
         ("qualification-hessian",),
         "qualification-hessian-plan",
     )
@@ -214,7 +216,11 @@ def qualification():
         "constrained_modes": {
             "constraint_rank": constrained.constraint_rank,
             "mode_count": constrained.vibration.internal_mode_count,
+            "hessian_system_id": hessian.system_id,
+            "hessian_geometry_id": hessian.geometry_id,
             "passed": bool(constrained.successful)
+            and hessian.system_id == water_system.system_id
+            and hessian.geometry_id == water.structure_id
             and constrained.constraint_rank == 1
             and constrained.vibration.internal_mode_count == 2,
         },

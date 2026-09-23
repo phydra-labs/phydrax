@@ -35,5 +35,5 @@ def test_ensure_special_kwonly_args_enforces_kwonly_key():
     def f(x, key):
         return (x, key)
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="`key` must be a keyword-only argument"):
         _ensure_special_kwonly_args(f)

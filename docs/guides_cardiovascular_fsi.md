@@ -258,19 +258,3 @@ measures. The immersed leakage callback is likewise a declared numerical observa
 Neither route certifies an exact seal, and `exact_sealing_certified` is always false.
 Refine the geometry, repeat the qualification, and compare leakage across resolution
 before interpreting it physically.
-
-## Qualification and benchmark
-
-Run the focused unit contract with the repository test policy, then execute:
-
-```text
-python benchmarks/cardiovascular_fsi.py \
-  --grid-counts 16 32 64 \
-  --marker-counts 16 64 256
-```
-
-The benchmark records cell count, marker capacity, fixed route count, relation and
-workspace bytes, compile and execution time, transpose residuals, direct-forcing
-residual, and ALE GCL/admissibility evidence. `dense_matrix_entries` is always zero;
-route count changes with marker capacity and stencil width, not with the product of
-cell and marker counts.

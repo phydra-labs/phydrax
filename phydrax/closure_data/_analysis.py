@@ -490,8 +490,8 @@ def _scalar_flux_target(
     density: ClosureField | None,
     target_kind: Literal["species_flux", "enthalpy_flux"],
 ) -> ClosureTarget:
-    _compatible_fields(velocity, scalar)
     scalar_values = _scalar_values(scalar)
+    _compatible_fields(velocity, scalar, right_values=scalar_values)
     if velocity.values.ndim != prepared_filter.spatial_rank + 1:
         raise ValueError("Velocity must have exactly one trailing component axis.")
     if density is None:
@@ -509,8 +509,8 @@ def _scalar_flux_target(
         inputs = (velocity.field_id, scalar.field_id)
         units = f"({velocity.units})*({scalar.units})"
     else:
-        _compatible_fields(velocity, density)
         rho = _scalar_values(density)
+        _compatible_fields(velocity, density, right_values=rho)
         favre = FavreFilter(prepared_filter)
         mean_density = favre.mean_density(rho)
         mean_velocity = favre.apply(velocity.values, rho)
@@ -555,13 +555,22 @@ def _require_field(value: ClosureField, name: str) -> None:
         raise TypeError(f"{name} must be a ClosureField.")
 
 
-def _compatible_fields(left: ClosureField, right: ClosureField) -> None:
+def _compatible_fields(
+    left: ClosureField,
+    right: ClosureField,
+    /,
+    *,
+    left_values: Array | None = None,
+    right_values: Array | None = None,
+) -> None:
     _require_field(left, "left")
     _require_field(right, "right")
     if left.schema_id != right.schema_id:
         raise ValueError("Closure fields must share one schema identity.")
-    rank = min(left.values.ndim, right.values.ndim)
-    if left.values.shape[:rank] != right.values.shape[:rank]:
+    left_array = left.values if left_values is None else jnp.asarray(left_values)
+    right_array = right.values if right_values is None else jnp.asarray(right_values)
+    rank = min(left_array.ndim, right_array.ndim)
+    if left_array.shape[:rank] != right_array.shape[:rank]:
         raise ValueError("Closure fields have incompatible spatial shapes.")
 
 

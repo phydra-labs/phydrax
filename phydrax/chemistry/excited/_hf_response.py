@@ -16,7 +16,10 @@ from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...operators.quantum.gaussian import dipole_integrals, electron_repulsion_tensor
 from ...units import BOHR, derived_unit, ELEMENTARY_CHARGE, HARTREE
-from ..electronic_structure._mean_field import RestrictedMeanFieldState
+from ..electronic_structure._mean_field import (
+    mean_field_owner_id,
+    RestrictedMeanFieldState,
+)
 from ..electronic_structure._molecular_hf import MolecularHartreeFockPlan
 from ._rpa import RandomPhaseApproximationPlan
 from ._tda import ExcitedStateManifoldPlan, TammDancoffPlan
@@ -47,6 +50,10 @@ class HartreeFockExcitedResponsePlan(StrictModule, NonTrainableState):
             state.evidence.converged
         ):
             raise ValueError("Excited response requires a converged restricted HF state.")
+        if state.owner_id != mean_field_owner_id(hartree_fock.plan_id, positions_bohr):
+            raise ValueError(
+                "Excited response state belongs to another HF plan or geometry."
+            )
         spin = str(spin_sector).strip().lower()
         if spin not in ("singlet", "triplet"):
             raise ValueError(

@@ -126,6 +126,11 @@ def run(*, output: str | Path = ".tmp/gravitational-wave-example.phxresult"):
     )
     weights = jnp.exp(result.posterior_log_weights)
     posterior_mean = jnp.sum(weights * result.samples["amplitude"])
+    if not bool(result.valid):
+        raise RuntimeError(
+            f"Gravitational-wave nested sampling failed with status "
+            f"{phx.uq.nested_sampling_status_name(int(result.status))}"
+        )
     destination = phx.uq.export_result(
         result,
         Path(output),
@@ -133,7 +138,7 @@ def run(*, output: str | Path = ".tmp/gravitational-wave-example.phxresult"):
     )
     summary = {
         "status": phx.uq.nested_sampling_status_name(int(result.status)),
-        "valid": bool(result.valid),
+        "valid": True,
         "injected_amplitude": float(injected_amplitude),
         "posterior_mean_amplitude": float(posterior_mean),
         "absolute_error": float(jnp.abs(posterior_mean - injected_amplitude)),

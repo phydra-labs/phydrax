@@ -138,6 +138,9 @@ def integrate_mapped(
         integrand, batch, key=key, kwargs=callback_kwargs
     )
     values = precision_.evaluation(values)
+    active_shape = (batch.mask.shape[0],) + (1,) * (values.ndim - 1)
+    active_values = jnp.reshape(batch.mask, active_shape)
+    safe_values = jnp.where(active_values, values, 0.0)
     weights = precision_.accumulation(jnp.where(batch.mask, batch.weights, 0.0))
     if isinstance(target, DensityTarget):
         log_values, log_dims = _mapped_values(
@@ -146,20 +149,28 @@ def integrate_mapped(
         log_values = precision_.evaluation(log_values)
         if log_dims or log_values.ndim != 1:
             raise ValueError("Mapped log density must be scalar-valued per point.")
-        weights = weights * jnp.exp(log_values)
+        safe_logs = jnp.where(batch.mask, log_values, 0.0)
+        weights = weights * jnp.where(batch.mask, jnp.exp(safe_logs), 0.0)
         normalized = target.normalized
     else:
         normalized = False
     count = batch.weights.shape[0]
     expanded = jnp.reshape(weights, (count,) + (1,) * (values.ndim - 1))
     numerator = jnp.sum(
-        precision_.accumulation(expanded * values),
+        precision_.accumulation(expanded * safe_values),
         axis=0,
     )
     mass = jnp.sum(weights)
-    finite_operands = jnp.all(jnp.isfinite(values)) & jnp.all(jnp.isfinite(weights))
+    finite_operands = jnp.all(jnp.isfinite(safe_values)) & jnp.all(jnp.isfinite(weights))
     if normalized:
-        value = numerator / mass
+        mass_valid = jnp.isfinite(mass) & (mass != 0.0)
+        safe_mass = jnp.where(mass_valid, mass, jnp.ones_like(mass))
+        normalized_value = numerator / safe_mass
+        value = jnp.where(
+            mass_valid,
+            normalized_value,
+            jnp.full_like(normalized_value, jnp.nan),
+        )
         zero_mass = jnp.isfinite(mass) & (mass == 0.0)
     else:
         value = numerator

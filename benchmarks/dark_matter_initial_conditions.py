@@ -70,10 +70,10 @@ def _transfer(space):
         artifact_kind="component-transfer-matrix-benchmark",
         content_digest=checksum,
         producer="PHYDRA-benchmark",
-        producer_version="current",
-        build_id="contract",
+        producer_version=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        build_id=checksum,
         license_id=manifest.license_id,
-        resource_id="in-memory",
+        resource_id=f"synthetic-inline:{checksum}",
         status="complete",
         parent_artifact_ids=(manifest.manifest_id, *manifest.lineage_ids),
     )
@@ -85,9 +85,9 @@ def _transfer(space):
         numerical_policy_id="fixed-fourier-grid",
         physics_policy_id="correlated-two-component-transfer",
         scale_id=background.scale.scale_id,
-        source_kind="external",
+        source_kind="native",
         differentiation="constant",
-        parent_product_ids=(artifact.artifact_id, manifest.manifest_id),
+        parent_product_ids=(artifact.artifact_id,),
     )
     transfer = ComponentTransferMatrixProduct(
         (0.1, 1.0),
@@ -99,7 +99,6 @@ def _transfer(space):
         provenance=provenance,
         realization=background.realization,
         artifact=artifact,
-        manifest=manifest,
         gauge="synchronous",
         spatial_dimension=len(space.axes),
     )

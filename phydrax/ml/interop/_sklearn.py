@@ -55,7 +55,7 @@ from ._contracts import (
 )
 
 
-_CONVERTER_SCHEMA = "phydrax.sklearn.fitted.canonical"
+_CONVERTER_IDENTITY = "phydrax.sklearn.fitted"
 _LICENSE = "BSD-3-Clause"
 _NUMERIC_KINDS = frozenset("fiu")
 
@@ -2475,7 +2475,7 @@ def from_sklearn(estimator: object, /) -> ConversionResult:
             f"Malformed fitted state for {source_type.__module__}.{source_type.__qualname__}: {error}"
         ) from error
     configuration = dict(converted.configuration)
-    configuration["converter_schema"] = _CONVERTER_SCHEMA
+    configuration["converter_identity"] = _CONVERTER_IDENTITY
     configuration["semantic_notes"] = converted.semantic_notes
     snapshot.configuration(configuration)
     configuration["sha256"] = snapshot.hexdigest()

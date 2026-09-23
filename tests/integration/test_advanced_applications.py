@@ -1,4 +1,6 @@
+import equinox as eqx
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 
@@ -220,6 +222,16 @@ def test_wind_and_marine_workflows_close_dynamic_residuals():
     assert jnp.all(marine.successful)
     assert jnp.all(marine.residual_norm < 1e-10)
     assert jnp.all(marine.absorbed_power_w >= 0)
+    with pytest.raises(ValueError, match="finite"):
+        phx.applications.marine_dynamics.MarineFrequencySystem.create(
+            jnp.asarray((1.0, jnp.inf)),
+            jnp.asarray(((1.0,),)),
+            jnp.asarray(((0.1,),)),
+            jnp.asarray(((4.0,),)),
+            jnp.zeros((2, 1, 1)),
+            jnp.ones((2, 1, 1)) * 0.2,
+            jnp.asarray(((0.3,),)),
+        )
 
 
 def test_reservoir_pressure_workflow_conserves_pore_volume():
@@ -294,3 +306,5 @@ def test_mineral_recycle_circuit_preserves_component_mass():
     assert bool(result.successful)
     assert jnp.allclose(result.component_balance_residual_kg_s, 0, atol=1e-12)
     assert jnp.all(result.product_concentrate_kg_s > 0)
+    compiled = eqx.filter_jit(circuit.solve)(jnp.asarray((10.0, 90.0)))
+    assert bool(compiled.successful)

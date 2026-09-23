@@ -178,11 +178,22 @@ def multistart_minimize(
     if not isinstance(termination_, OptimizationTermination):
         raise TypeError("termination must be OptimizationTermination or None.")
     space, starts = _starts(problem, initial_parameters, policy_)
-    per_steps = max(1, termination_.maximum_steps // policy_.count)
+    if termination_.maximum_steps < policy_.count:
+        raise ValueError(
+            "maximum_steps must provide at least one local step per multistart."
+        )
+    if (
+        termination_.maximum_evaluations is not None
+        and termination_.maximum_evaluations < policy_.count
+    ):
+        raise ValueError(
+            "maximum_evaluations must provide at least one evaluation per multistart."
+        )
+    per_steps = termination_.maximum_steps // policy_.count
     per_evaluations = (
         None
         if termination_.maximum_evaluations is None
-        else max(1, termination_.maximum_evaluations // policy_.count)
+        else termination_.maximum_evaluations // policy_.count
     )
     local_termination = OptimizationTermination(
         absolute_optimality=termination_.absolute_optimality,
@@ -231,12 +242,12 @@ def multistart_minimize(
     statuses = jnp.stack([result.status for result in results])
     certified = jnp.stack([result.successful for result in results])
     feasibility = jnp.stack([result.diagnostics.primal_feasibility for result in results])
-    score = jnp.where(
-        certified,
-        objectives,
-        objectives + 1e12 * (1.0 + feasibility),
-    )
-    best_index = jnp.argmin(score)
+    finite_objectives = jnp.where(jnp.isfinite(objectives), objectives, jnp.inf)
+    any_certified = jnp.any(certified)
+    certified_index = jnp.argmin(jnp.where(certified, finite_objectives, jnp.inf))
+    finite_feasibility = jnp.where(jnp.isfinite(feasibility), feasibility, jnp.inf)
+    fallback_index = jnp.lexsort((finite_objectives, finite_feasibility))[0]
+    best_index = jnp.where(any_certified, certified_index, fallback_index)
     best = results[int(best_index)]
     final_points = jnp.stack([space.flatten(result.parameters) for result in results])
     return MultiStartResult(

@@ -15,10 +15,26 @@ from jaxtyping import ArrayLike
 from scipy.spatial import Delaunay, QhullError
 
 from ...measurement.lidar import LidarPointProduct
-from .._contracts import GeometryKernel, GeometrySource
+from .._capabilities import (
+    ClosestPointProvider,
+    ContactCurvatureProvider,
+    SeamDiagnosticsProvider,
+    SupportMapProvider,
+)
+from .._contracts import (
+    ClosestPointResult,
+    ContactCurvatureResult,
+    GeometryKernel,
+    GeometrySource,
+)
+from .._cubature import CubatureComponent
+from .._validity import representation_validity
 from ..design._schema import _ParameterCollector
-from ..simplicial import MeshRegion, planar_region_from_triangles, PlanarMeshRegion
-from ..simplicial._io import _canonical_triangle_arrays
+from ..simplicial._io import (
+    _canonical_triangle_arrays,
+    planar_region_from_triangles,
+)
+from ..simplicial._regions import MeshRegion, PlanarMeshRegion
 from ..simplicial._topology import TriangleTopology
 
 
@@ -101,6 +117,9 @@ class _ReconstructedGeometryKernel(GeometryKernel):
     def field_certificate(self):
         return self.child.field_certificate
 
+    def geometry_validity(self, state, /):
+        return representation_validity(self.child, state)
+
     def boundary_field(self, state, points, /):
         return self.child.boundary_field(state, points)
 
@@ -109,6 +128,27 @@ class _ReconstructedGeometryKernel(GeometryKernel):
 
     def boundary_normal(self, state, points, /):
         return self.child.boundary_normal(state, points)
+
+    def closest_point(self, state, points, /):
+        if not isinstance(self.child, ClosestPointProvider):
+            raise TypeError("Reconstructed child lacks a closest-point provider.")
+        result = self.child.closest_point(state, points)
+        if not isinstance(result, ClosestPointResult):
+            raise TypeError("Child closest-point query returned an invalid result.")
+        return result
+
+    def contact_curvature(self, state, points, /):
+        if not isinstance(self.child, ContactCurvatureProvider):
+            raise TypeError("Reconstructed child lacks a contact-curvature provider.")
+        result = self.child.contact_curvature(state, points)
+        if not isinstance(result, ContactCurvatureResult):
+            raise TypeError("Child contact-curvature query returned an invalid result.")
+        return result
+
+    def support_map(self, state, directions, /):
+        if not isinstance(self.child, SupportMapProvider):
+            raise TypeError("Reconstructed child lacks a support-map provider.")
+        return self.child.support_map(state, directions)
 
     def bounds(self, state, /):
         return self.child.bounds(state)
@@ -138,6 +178,14 @@ class _ReconstructedGeometryKernel(GeometryKernel):
 
     def boundary_atlas(self, state, /):
         return self.child.boundary_atlas(state)
+
+    def cubature_atlas(self, state, component: CubatureComponent, /):
+        return self.child.cubature_atlas(state, component)
+
+    def seam_residual(self, state, /):
+        if not isinstance(self.child, SeamDiagnosticsProvider):
+            raise TypeError("Reconstructed child lacks a seam-diagnostics provider.")
+        return self.child.seam_residual(state)
 
 
 def _point_digest(points: np.ndarray) -> str:

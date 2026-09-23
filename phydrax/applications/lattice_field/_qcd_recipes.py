@@ -213,6 +213,13 @@ class SU3GaugeGeometry(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Distributed QCD requires canonical site-major positive link routes."
                 )
+            if not np.array_equal(
+                np.asarray(transport.forward_sites),
+                np.asarray(decomposition.neighbor_ids)[:, :, 1],
+            ) or not np.all(np.asarray(decomposition.neighbor_valid)[:, :, 1]):
+                raise ValueError(
+                    "Distributed QCD fermion routes and decomposition neighbors disagree."
+                )
             scope: RecipeExecutionScope = "decomposed-global-reference"
         else:
             scope = "single-domain-reference"

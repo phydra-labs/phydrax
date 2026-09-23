@@ -92,3 +92,22 @@ def test_quantum_algebra_validates_shapes_and_hbar():
         phx.operators.quantum_bracket(square, square, hbar=1.0j)
     with pytest.raises(ValueError, match="hbar must be a scalar"):
         phx.operators.quantum_bracket(square, square, hbar=jnp.ones((2,)))
+
+
+def test_quantum_bracket_rejects_nonpositive_or_nonfinite_scalar_arrays():
+    time = phx.domain.TimeInterval(0.0, 1.0)
+    square = time.Function()(jnp.eye(2))
+
+    for invalid in (
+        jnp.asarray(0.0),
+        jnp.asarray(-1.0),
+        jnp.asarray(jnp.nan),
+        jnp.asarray(jnp.inf),
+    ):
+        with pytest.raises(ValueError, match="hbar must be positive"):
+            phx.operators.quantum_bracket(square, square, hbar=invalid)
+
+    compiled = jax.jit(
+        lambda hbar: phx.operators.quantum_bracket(square, square, hbar=hbar).func()
+    )(jnp.asarray(2.0))
+    assert jnp.all(jnp.isfinite(compiled))

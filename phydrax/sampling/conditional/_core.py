@@ -95,6 +95,8 @@ class ConditionalInteractionGroup(StrictModule):
         tails = tuple(jnp.asarray(value, dtype=jnp.int32) for value in tail_indices)
         if heads.size == 0:
             raise ValueError("Conditional interactions require at least one head node.")
+        if np.unique(np.asarray(heads)).size != heads.size:
+            raise ValueError("Conditional head indices must be unique.")
         if not head_group or any(not group for group in groups):
             raise ValueError("Interaction group names must be non-empty.")
         if len(groups) != len(tails):
@@ -262,6 +264,7 @@ class ConditionalProgramState(StrictModule):
     values: tuple[Any, ...]
     kernel_states: tuple[Any, ...]
     step_index: Array
+    program_id: str = eqx.field(static=True)
 
 
 class ConditionalSampleResult(AbstractChainSampleResult):
@@ -369,6 +372,8 @@ def initialize_conditional_program(
     /,
 ) -> ConditionalProgramState:
     """Validate chain-leading PyTree states and initialize every stateful kernel."""
+    if not isinstance(program, PreparedConditionalUpdateProgram):
+        raise TypeError("program must be PreparedConditionalUpdateProgram.")
     if set(values) != set(program.group_names):
         raise ValueError("Conditional initial-state keys must match group names.")
     state_values = []
@@ -414,6 +419,7 @@ def initialize_conditional_program(
         values=tuple(state_values),
         kernel_states=kernel_states,
         step_index=jnp.asarray(0, dtype=jnp.uint32),
+        program_id=program.program_id,
     )
 
 
@@ -424,6 +430,12 @@ def conditional_program_step(
     /,
 ) -> ConditionalProgramState:
     """Advance every validated stage while preserving immutable snapshot semantics."""
+    if not isinstance(program, PreparedConditionalUpdateProgram):
+        raise TypeError("program must be PreparedConditionalUpdateProgram.")
+    if not isinstance(state, ConditionalProgramState):
+        raise TypeError("state must be ConditionalProgramState.")
+    if state.program_id != program.program_id:
+        raise ValueError("Conditional state belongs to another prepared program.")
     values = list(state.values)
     kernel_states = list(state.kernel_states)
     lookup = {name: index for index, name in enumerate(program.group_names)}
@@ -489,6 +501,7 @@ def conditional_program_step(
         values=tuple(values),
         kernel_states=tuple(kernel_states),
         step_index=state.step_index + 1,
+        program_id=program.program_id,
     )
 
 
@@ -503,6 +516,12 @@ def sample_conditional_program(
     steps_per_draw: int = 1,
 ) -> ConditionalSampleResult:
     """Warm and retain arbitrary-PyTree conditional-program chain states."""
+    if not isinstance(program, PreparedConditionalUpdateProgram):
+        raise TypeError("program must be PreparedConditionalUpdateProgram.")
+    if not isinstance(state, ConditionalProgramState):
+        raise TypeError("state must be ConditionalProgramState.")
+    if state.program_id != program.program_id:
+        raise ValueError("Conditional state belongs to another prepared program.")
     warmup = int(warmup_steps)
     draws = int(num_draws)
     transitions = int(steps_per_draw)

@@ -53,8 +53,8 @@ class FiniteLocalTerm(StrictModule):
             {
                 "kind": "finite-local-term",
                 "start": start_,
-                "shapes": tuple(tuple(value.shape) for value in values),
-                "dtypes": tuple(str(value.dtype) for value in values),
+                "operators": array_tree_fingerprint(values),
+                "coefficient": array_tree_fingerprint(coefficient_),
             }
         )
 

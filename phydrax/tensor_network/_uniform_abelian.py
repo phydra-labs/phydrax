@@ -19,6 +19,7 @@ from ._uniform import UniformMatrixProductOperator, UniformMatrixProductState
 class UniformAbelianMatrixProductState(StrictModule):
     state: UniformMatrixProductState
     group: AbelianGroup = eqx.field(static=True)
+    charge_labels: tuple[str, ...] = eqx.field(static=True)
     physical_charges: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
     unit_cell_charge: tuple[int, ...] = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
@@ -27,6 +28,7 @@ class UniformAbelianMatrixProductState(StrictModule):
         self,
         state: UniformMatrixProductState,
         group: AbelianGroup,
+        charge_labels: Sequence[str],
         physical_charges: Sequence[Sequence[Sequence[int]]],
         unit_cell_charge: Sequence[int],
         /,
@@ -35,6 +37,13 @@ class UniformAbelianMatrixProductState(StrictModule):
             group, AbelianGroup
         ):
             raise TypeError("state and group have invalid types.")
+        labels = tuple(str(value).strip() for value in charge_labels)
+        if (
+            len(labels) != len(group.components)
+            or any(not value for value in labels)
+            or len(set(labels)) != len(labels)
+        ):
+            raise ValueError("charge_labels must uniquely name every Abelian component.")
         charges = tuple(
             tuple(group.normalize(value) for value in site) for site in physical_charges
         )
@@ -46,6 +55,7 @@ class UniformAbelianMatrixProductState(StrictModule):
             raise ValueError("Uniform physical charges do not match the MPS unit cell.")
         self.state = state
         self.group = group
+        self.charge_labels = labels
         self.physical_charges = charges
         self.unit_cell_charge = cell_charge
         self.state_id = canonical_fingerprint(
@@ -53,6 +63,7 @@ class UniformAbelianMatrixProductState(StrictModule):
                 "kind": "uniform-abelian-mps",
                 "state": state.structure_id,
                 "group": group.group_id,
+                "charge_labels": labels,
                 "physical_charges": charges,
                 "unit_cell_charge": cell_charge,
             }
@@ -62,6 +73,7 @@ class UniformAbelianMatrixProductState(StrictModule):
 class UniformAbelianMatrixProductOperator(StrictModule):
     operator: UniformMatrixProductOperator
     group: AbelianGroup = eqx.field(static=True)
+    charge_labels: tuple[str, ...] = eqx.field(static=True)
     physical_charges: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
@@ -69,6 +81,7 @@ class UniformAbelianMatrixProductOperator(StrictModule):
         self,
         operator: UniformMatrixProductOperator,
         group: AbelianGroup,
+        charge_labels: Sequence[str],
         physical_charges: Sequence[Sequence[Sequence[int]]],
         /,
     ):
@@ -76,6 +89,13 @@ class UniformAbelianMatrixProductOperator(StrictModule):
             group, AbelianGroup
         ):
             raise TypeError("operator and group have invalid types.")
+        labels = tuple(str(value).strip() for value in charge_labels)
+        if (
+            len(labels) != len(group.components)
+            or any(not value for value in labels)
+            or len(set(labels)) != len(labels)
+        ):
+            raise ValueError("charge_labels must uniquely name every Abelian component.")
         charges = tuple(
             tuple(group.normalize(value) for value in site) for site in physical_charges
         )
@@ -86,12 +106,14 @@ class UniformAbelianMatrixProductOperator(StrictModule):
             raise ValueError("Uniform physical charges do not match the MPO unit cell.")
         self.operator = operator
         self.group = group
+        self.charge_labels = labels
         self.physical_charges = charges
         self.operator_id = canonical_fingerprint(
             {
                 "kind": "uniform-abelian-mpo",
                 "operator": operator.structure_id,
                 "group": group.group_id,
+                "charge_labels": labels,
                 "physical_charges": charges,
             }
         )

@@ -123,6 +123,12 @@ def test_pde_conditioned_operator_composes_canonical_tasks_and_contracts():
         == model.operator.operator_output_specs["output"].channels
     )
     assert ("dimension_basis", ()) in model.operator_contract.configuration
+    wrapped_capability = model.operator.operator_contract.capabilities
+    conditioned_capability = model.operator_contract.capabilities
+    assert conditioned_capability.minimum_sources == wrapped_capability.minimum_sources
+    assert conditioned_capability.maximum_sources == wrapped_capability.maximum_sources
+    assert conditioned_capability.global_condition_sources == ("pde",)
+    assert model.operator_contract.validate(conditioned).compatible
     length_encoder = phx.nn.operator.architectures.PDEConditionEncoder(
         width=4,
         depth=1,

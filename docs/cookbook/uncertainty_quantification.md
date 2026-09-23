@@ -810,7 +810,6 @@ flow_config = phx.uq.FlowNUTSConfig(
     history_capacity_per_chain=4,
     history_thinning=1,
     flow_layers=1,
-    num_knots=4,
     nn_width=8,
     nn_depth=1,
     max_epochs=2,

@@ -124,6 +124,24 @@ def test_compact_group_hmc_adaptation_returns_frozen_kernel():
     assert adaptation.step_size_history.shape == (3,)
     assert adaptation.acceptance_history.shape == (3,)
     assert 0.01 < adaptation.kernel.step_size < 0.4
+    assert adaptation.final_state.kernel_id == adaptation.kernel.kernel_id
+
+
+def test_compact_group_hmc_rejects_state_from_another_kernel():
+    action, first = _u1_kernel(step_size=0.1)
+    _, second = _u1_kernel(step_size=0.2)
+    state = phx.sampling.initialize_compact_group_hamiltonian_state(
+        first,
+        jnp.zeros((1,) + action.configuration_shape),
+    )
+
+    with pytest.raises(ValueError, match="another prepared kernel"):
+        phx.sampling.sample_compact_group_hamiltonian(
+            second,
+            state,
+            key=jax.random.key(17),
+            num_draws=1,
+        )
 
 
 def test_compact_group_hmc_rejects_wrong_measure_and_nonmembers():

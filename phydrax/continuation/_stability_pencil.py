@@ -239,20 +239,25 @@ class GeneralizedPencilStabilityAnalyzer(AbstractStabilityAnalyzer):
         leading_index = jnp.argmax(real_parts)
         leading = values[leading_index]
         complex_mask = mask & (jnp.abs(jnp.imag(values)) > self.zero_tolerance)
-        complex_real = jnp.where(complex_mask, jnp.real(values), -jnp.inf)
-        complex_index = jnp.argmax(complex_real)
-        leading_complex = values[complex_index]
+        pair_scale = self.pair_tolerance * (1.0 + jnp.abs(values[:, None]))
+        pair_matches = jnp.abs(values[:, None] - jnp.conj(values)[None, :]) <= pair_scale
+        pair_matches = pair_matches & complex_mask[:, None] & complex_mask[None, :]
+        pair_matches = pair_matches & ~jnp.eye(values.size, dtype=jnp.bool_)
+        has_pair = jnp.any(pair_matches, axis=1)
+        paired_positive = complex_mask & (jnp.imag(values) > 0.0) & has_pair
+        complex_index = jnp.argmax(jnp.where(paired_positive, jnp.real(values), -jnp.inf))
+        leading_complex = jnp.where(
+            jnp.any(paired_positive),
+            values[complex_index],
+            jnp.asarray(jnp.nan, dtype=values.dtype),
+        )
         unstable_count = jnp.sum(mask & (jnp.real(values) > self.zero_tolerance))
         marginal_count = jnp.sum(
             mask & (jnp.abs(jnp.real(values)) <= self.zero_tolerance)
         )
         near_zero_count = jnp.sum(mask & (jnp.abs(values) <= self.zero_tolerance))
-        pair_matrix = jnp.abs(values[:, None] - jnp.conj(values[None, :]))
-        paired = complex_mask & jnp.any(
-            pair_matrix <= self.pair_tolerance * (1 + jnp.abs(values[:, None])), axis=1
-        )
-        pair_count = jnp.sum(paired) // 2
-        unpaired_count = jnp.sum(complex_mask & (~paired))
+        pair_count = jnp.sum(paired_positive, dtype=jnp.int32)
+        unpaired_count = jnp.sum(complex_mask & (~has_pair), dtype=jnp.int32)
         finite = jnp.all(jnp.where(mask, jnp.isfinite(values), True))
         successful = result.successful & finite & jnp.any(mask)
         stability = jnp.where(

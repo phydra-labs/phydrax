@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -125,3 +126,34 @@ def test_affine_piecewise_clocks_and_frame_routes_are_bounded():
     np.testing.assert_allclose(rotation, np.eye(3), atol=1e-12)
     np.testing.assert_allclose(translation, (0.5, 2.0, 0.0), atol=1e-12)
     assert bool(evidence.successful)
+
+
+def test_frame_route_rejects_equal_shortest_paths_that_merge_before_target():
+    axis = phx.measurement.SampleTimeAxis(
+        "ambiguous-frame-time", np.asarray((0.0, 1.0)), phx.units.SECOND
+    )
+    frames = (
+        phx.geometry.RigidFrame.identity(3),
+        phx.geometry.RigidFrame.identity(3),
+    )
+
+    def timeline(source, target):
+        return phx.geometry.FrameTransformTimeline(
+            source,
+            target,
+            axis,
+            frames,
+            f"{source}-{target}",
+        )
+
+    graph = phx.geometry.FrameTransformGraph(
+        (
+            timeline("source", "first"),
+            timeline("source", "second"),
+            timeline("first", "merge"),
+            timeline("second", "merge"),
+            timeline("merge", "target"),
+        )
+    )
+    with pytest.raises(ValueError, match="uniquely shortest"):
+        graph.prepare_route("source", "target")

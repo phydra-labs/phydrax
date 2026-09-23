@@ -22,6 +22,43 @@ def test_gaussian_and_student_t_likelihoods_are_finite_and_sample_shapes_match()
     assert student.sample(jr.key(1), location).shape == location.shape
 
 
+def test_elementwise_likelihoods_align_trailing_scalar_events_at_any_batch_rank():
+    location = jnp.zeros((2, 3, 1))
+    target = jnp.ones((2, 3))
+    likelihoods = (
+        phx.uq.GaussianLikelihood(0.5),
+        phx.uq.StudentTLikelihood(df=4.0, scale=0.75),
+        phx.uq.ContaminatedGaussianLikelihood(0.5),
+    )
+
+    for likelihood in likelihoods:
+        assert likelihood.log_prob(location, target).shape == target.shape
+
+    heteroscedastic = phx.uq.GaussianLocationScaleLikelihood()
+    raw_scale = jnp.zeros(location.shape)
+    assert (
+        heteroscedastic.log_prob(
+            location,
+            target,
+            raw_scale=raw_scale,
+        ).shape
+        == target.shape
+    )
+
+    poisson = phx.uq.ScalarNaturalExponentialFamilyLikelihood(phx.uq.PoissonFamily())
+    assert poisson.log_prob(location, target).shape == target.shape
+
+    censored = phx.uq.CensoredGaussianLikelihood(0.5, -2.0, 2.0)
+    codes = jnp.zeros(target.shape, dtype=jnp.int32)
+    assert censored.log_prob(location, target, censoring=codes).shape == target.shape
+    with pytest.raises(ValueError, match="aligned observation shape"):
+        censored.log_prob(
+            location,
+            target,
+            censoring=jnp.zeros((3,), dtype=jnp.int32),
+        )
+
+
 def test_proper_scores_match_reference_identities():
     gaussian_at_center = phx.uq.gaussian_crps(0.0, 1.0, 0.0)
     expected = (jnp.sqrt(2.0) - 1.0) / jnp.sqrt(jnp.pi)
@@ -262,6 +299,23 @@ def test_conformal_rejects_invalid_scale_axes_and_l2_box_intervals():
     )
     with pytest.raises(ValueError, match="norm ball"):
         l2.interval(jnp.zeros((2,)))
+
+
+def test_functional_l2_conformal_masks_nonfinite_padding_before_reduction():
+    center = jnp.zeros((9, 2))
+    target = jnp.ones((9, 2)).at[:, 1].set(jnp.nan)
+    mask = jnp.ones((9, 2), dtype=jnp.bool_).at[:, 1].set(False)
+
+    calibrator = phx.uq.FunctionalConformal.calibrate(
+        center,
+        target,
+        alpha=0.2,
+        mask=mask,
+        score="l2",
+    )
+
+    assert jnp.isfinite(calibrator.radius)
+    assert jnp.allclose(calibrator.radius, 1.0)
 
 
 def test_three_way_split_is_disjoint_complete_and_nonempty():

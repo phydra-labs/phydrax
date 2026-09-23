@@ -170,8 +170,10 @@ state_only = phx.optim.StateDesignProblem(
     ),
     problem_id="rigid-unit-sample-response",
 ).solve_state(initial_design, sample_state)
-assert state_only.successful
-assert state_only.residual_norm <= 1.0e-9
+if not bool(state_only.successful):
+    raise RuntimeError(f"Reference state solve failed with status {state_only.status}")
+if not bool(state_only.residual_norm <= 1.0e-9):
+    raise RuntimeError("Reference state residual exceeds tolerance")
 reference_responses = responses(state_only.state, initial_design)
 
 constraints = (
@@ -226,11 +228,13 @@ optimized = phx.optim.solve_state_design(
         maximum_steps=8,
     ),
 )
-assert optimized.successful
-assert all(
-    value <= 2.0e-6
+if not bool(optimized.successful):
+    raise RuntimeError(f"State-design solve failed with status {optimized.status}")
+if not all(
+    bool(value <= 2.0e-6)
     for value in design_problem.constraint_values(optimized.state, optimized.design)
-)
+):
+    raise RuntimeError("Optimized design violates a declared constraint")
 
 
 def refined_reanalysis(design, nodal_load):
@@ -297,7 +301,8 @@ def refined_reanalysis(design, nodal_load):
         refined_reference.rest_lengths,
     )
     solved = mn.member_network_equilibrium(problem, inputs, initial)
-    assert solved.successful
+    if not bool(solved.successful):
+        raise RuntimeError(f"Refined reanalysis failed with status {solved.status}")
     displacement = solved.state.kinematics.positions - positions
     return jnp.sum(loads * displacement)
 
@@ -305,7 +310,10 @@ def refined_reanalysis(design, nodal_load):
 reanalysis_responses = jnp.stack(
     tuple(refined_reanalysis(optimized.design, load) for load in (vertical, horizontal))
 )
-assert jnp.allclose(reanalysis_responses, reference_responses, atol=2.0e-5, rtol=0.15)
+if not bool(
+    jnp.allclose(reanalysis_responses, reference_responses, atol=2.0e-5, rtol=0.15)
+):
+    raise RuntimeError("Refined reanalysis disagrees with the reference response")
 print("design", optimized.design)
 print("reference responses", reference_responses)
 print("refined reanalysis", reanalysis_responses)

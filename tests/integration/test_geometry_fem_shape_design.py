@@ -51,7 +51,10 @@ def test_state_design_acceptance_uses_the_same_dynamic_fe_realization():
     design = geometry.state.replace_at(radius_index, jnp.asarray(1.1))
 
     def area(current_design):
-        realization = motion.realize(current_design)
+        realization = motion.realize(
+            current_design,
+            numeric_version="shape-design-area",
+        )
         blocks = discretization.evaluate_geometry(
             "u",
             realization.runtime.coordinates,
@@ -62,10 +65,16 @@ def test_state_design_acceptance_uses_the_same_dynamic_fe_realization():
         lambda state, current_design, _args: state - area(current_design),
         lambda state, _design, _args: 0.5 * state**2,
         state_admissibility=lambda _state, current_design, _args: (
-            motion.realize(current_design).accepted
+            motion.realize(
+                current_design,
+                numeric_version="shape-design-admissibility",
+            ).accepted
         ),
         state_realization=lambda _state, current_design, _args: (
-            motion.realize(current_design).accepted
+            motion.realize(
+                current_design,
+                numeric_version="shape-design-realization",
+            ).accepted
         ),
         problem_id="geometry-fe-shape-design",
     )

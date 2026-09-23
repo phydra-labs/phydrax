@@ -40,7 +40,6 @@ def _timed_case(name: str, function):
         "name": name,
         "host_seconds": seconds,
         "logical_bytes": logical_array_bytes(value),
-        "successful": True,
     }, value
 
 
@@ -92,6 +91,10 @@ def benchmark_cases() -> list[dict[str, object]]:
         ),
     )
     case["scientific_residual"] = float(irrep.evidence.covariance_residual)
+    case["successful"] = bool(
+        np.isfinite(case["scientific_residual"])
+        and case["scientific_residual"] <= 1e-8
+    )
     cases.append(case)
 
     case, virasoro = _timed_case(
@@ -108,6 +111,9 @@ def benchmark_cases() -> list[dict[str, object]]:
     case["scientific_residual"] = float(
         np.max(np.asarray(virasoro.gram_condition_numbers))
     )
+    case["successful"] = bool(
+        np.all(np.isfinite(np.asarray(virasoro.gram_condition_numbers)))
+    )
     cases.append(case)
 
     generator = np.random.default_rng(21)
@@ -121,6 +127,11 @@ def benchmark_cases() -> list[dict[str, object]]:
         ),
     )
     case["scientific_residual"] = float(pfaffian.determinant_identity_residual)
+    case["successful"] = bool(
+        pfaffian.value_finite
+        and not pfaffian.singular
+        and case["scientific_residual"] <= 1e-8
+    )
     cases.append(case)
 
     case, fuzzy = _timed_case(
@@ -137,6 +148,10 @@ def benchmark_cases() -> list[dict[str, object]]:
         ),
     )
     case["scientific_residual"] = float(fuzzy.evidence.hermiticity_residual)
+    case["successful"] = bool(
+        np.isfinite(case["scientific_residual"])
+        and case["scientific_residual"] <= 1e-8
+    )
     cases.append(case)
 
     sm_plan = NativeSpectrumModelPlan("sm-one-loop", scheme="msbar")
@@ -146,6 +161,9 @@ def benchmark_cases() -> list[dict[str, object]]:
         lambda: integrate_native_rge(sm_plan, sm_initial, 91.1876, 10_000.0),
     )
     case["accepted_steps"] = history.accepted_step_sizes.size
+    case["successful"] = bool(
+        int(history.status) == 0 and history.accepted_step_sizes.size > 0
+    )
     cases.append(case)
 
     potential = phase_field.PolynomialDefectPotential(
@@ -172,6 +190,7 @@ def benchmark_cases() -> list[dict[str, object]]:
         ),
     )
     case["scientific_residual"] = float(defect.evidence.residual_norm)
+    case["successful"] = bool(defect.evidence.converged)
     cases.append(case)
 
     radial_points = np.linspace(0.0, np.pi / 2.0 - 0.05, 33)
@@ -191,6 +210,9 @@ def benchmark_cases() -> list[dict[str, object]]:
         lambda: nr.run_spherical_conformal_ads(ads_plan, ads_initial),
     )
     case["scientific_residual"] = float(ads.evidence.relative_mass_change)
+    case["successful"] = bool(
+        ads.evidence.finite and ads.evidence.status == "complete"
+    )
     cases.append(case)
 
     time = np.linspace(-2.0, 2.0, 32, endpoint=False)
@@ -219,6 +241,7 @@ def benchmark_cases() -> list[dict[str, object]]:
         lambda: wave.propagate_coupled_envelope(envelope_plan, envelope_initial),
     )
     case["scientific_residual"] = float(envelope.evidence.relative_energy_change)
+    case["successful"] = bool(envelope.evidence.finite)
     cases.append(case)
 
     case, boost = _timed_case(
@@ -230,6 +253,7 @@ def benchmark_cases() -> list[dict[str, object]]:
         ),
     )
     case["scientific_residual"] = float(boost.unitarity_residual)
+    case["successful"] = bool(boost.accepted)
     cases.append(case)
     return cases
 
@@ -238,15 +262,21 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=str)
     arguments = parser.parse_args()
+    cases = benchmark_cases()
     payload = {
         "environment": capture_environment().to_dict(),
-        "cases": benchmark_cases(),
+        "cases": cases,
+        "passed": all(case["successful"] for case in cases),
     }
-    encoded = json.dumps(payload, indent=2, sort_keys=True)
+    encoded = json.dumps(payload, allow_nan=False, indent=2, sort_keys=True)
     if arguments.output is None:
         print(encoded)
     else:
-        Path(arguments.output).write_text(encoded + "\n", encoding="utf-8")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
+    if not payload["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

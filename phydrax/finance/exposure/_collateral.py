@@ -303,6 +303,71 @@ class CloseoutConvention(StrictModule):
         self.convention_id = _identifier(convention_id, "convention_id")
 
 
+class CloseoutIdentityBinding(StrictModule):
+    """Exact netting/default identities admitted by a closeout calculation."""
+
+    netting_set_id: str = eqx.field(static=True)
+    counterparty_reference_entity_id: str = eqx.field(static=True)
+    counterparty_law_id: str = eqx.field(static=True)
+    counterparty_realization_id: str = eqx.field(static=True)
+    counterparty_coupling_id: str = eqx.field(static=True)
+    own_reference_entity_id: str = eqx.field(static=True)
+    own_law_id: str = eqx.field(static=True)
+    own_realization_id: str = eqx.field(static=True)
+    own_coupling_id: str = eqx.field(static=True)
+    binding_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        netting_set_id: str,
+        counterparty_reference_entity_id: str,
+        counterparty_law_id: str,
+        counterparty_realization_id: str,
+        counterparty_coupling_id: str,
+        own_reference_entity_id: str,
+        own_law_id: str,
+        own_realization_id: str,
+        own_coupling_id: str,
+    ):
+        values = tuple(
+            _identifier(value, name)
+            for value, name in (
+                (netting_set_id, "netting_set_id"),
+                (
+                    counterparty_reference_entity_id,
+                    "counterparty_reference_entity_id",
+                ),
+                (counterparty_law_id, "counterparty_law_id"),
+                (counterparty_realization_id, "counterparty_realization_id"),
+                (counterparty_coupling_id, "counterparty_coupling_id"),
+                (own_reference_entity_id, "own_reference_entity_id"),
+                (own_law_id, "own_law_id"),
+                (own_realization_id, "own_realization_id"),
+                (own_coupling_id, "own_coupling_id"),
+            )
+        )
+        (
+            self.netting_set_id,
+            self.counterparty_reference_entity_id,
+            self.counterparty_law_id,
+            self.counterparty_realization_id,
+            self.counterparty_coupling_id,
+            self.own_reference_entity_id,
+            self.own_law_id,
+            self.own_realization_id,
+            self.own_coupling_id,
+        ) = values
+        self.binding_id = canonical_fingerprint(
+            {
+                "kind": "finance-closeout-identity-binding",
+                "netting_set": self.netting_set_id,
+                "counterparty": list(values[1:5]),
+                "own": list(values[5:]),
+            }
+        )
+
+
 class CloseoutPath(StrictModule):
     """Raw closeout residual before positive/negative exposure is taken."""
 
@@ -508,6 +573,7 @@ def resolve_closeout(
     collateral: CollateralPath,
     agreement: CollateralAgreement,
     convention: CloseoutConvention,
+    binding: CloseoutIdentityBinding,
     counterparty_default: DefaultEventState,
     own_default: DefaultEventState,
     /,
@@ -526,8 +592,15 @@ def resolve_closeout(
         raise TypeError("agreement must be a CollateralAgreement.")
     if not isinstance(convention, CloseoutConvention):
         raise TypeError("convention must be a CloseoutConvention.")
+    if not isinstance(binding, CloseoutIdentityBinding):
+        raise TypeError("binding must be a CloseoutIdentityBinding.")
     if collateral.agreement_id != agreement.agreement_id:
         raise ValueError("Collateral path and agreement identities differ.")
+    if (
+        collateral.netting_set_id != agreement.netting_set_id
+        or agreement.netting_set_id != binding.netting_set_id
+    ):
+        raise ValueError("Closeout netting-set identities differ.")
     if collateral.times.shape != nodes.shape or not np.array_equal(
         np.asarray(jax.device_get(collateral.times)), np.asarray(jax.device_get(nodes))
     ):
@@ -543,6 +616,32 @@ def resolve_closeout(
             raise TypeError(f"{name} must be a DefaultEventState.")
         if event.default_times.shape != (path_count,):
             raise ValueError(f"{name} path shape is incompatible with values.")
+    expected = (
+        (
+            counterparty_default,
+            binding.counterparty_reference_entity_id,
+            binding.counterparty_law_id,
+            binding.counterparty_realization_id,
+            binding.counterparty_coupling_id,
+            "counterparty_default",
+        ),
+        (
+            own_default,
+            binding.own_reference_entity_id,
+            binding.own_law_id,
+            binding.own_realization_id,
+            binding.own_coupling_id,
+            "own_default",
+        ),
+    )
+    for event, entity, law, realization, coupling, name in expected:
+        if (
+            event.reference_entity_id != entity
+            or event.law_id != law
+            or event.realization_id != realization
+            or event.coupling_id != coupling
+        ):
+            raise ValueError(f"{name} does not match the closeout identity binding.")
 
     cp_time = jnp.where(
         counterparty_default.occurred, counterparty_default.default_times, jnp.inf
@@ -631,6 +730,7 @@ def collateral_agreement_identity(agreement: CollateralAgreement, /) -> str:
 
 
 __all__ = [
+    "CloseoutIdentityBinding",
     "CloseoutConvention",
     "CloseoutObservation",
     "CloseoutPath",

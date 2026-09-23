@@ -552,7 +552,16 @@ class FiniteElementMeshMotionPlan(StrictModule):
             determinants.append(jnp.linalg.det(jacobian))
         return tuple(determinants)
 
-    def realize(self, design: Any, /) -> FiniteElementMeshRealization:
+    def realize(
+        self,
+        design: Any,
+        /,
+        *,
+        numeric_version: str,
+    ) -> FiniteElementMeshRealization:
+        version = str(numeric_version)
+        if not version:
+            raise ValueError("numeric_version must be non-empty.")
         boundary = _normalized_boundary(self.boundary_provider, design)
         if boundary.proposed_points.shape != (
             self.boundary_indices.shape[0],
@@ -675,7 +684,13 @@ class FiniteElementMeshMotionPlan(StrictModule):
         safe = jnp.where(evidence.accepted, proposed, self.reference_coordinates)
         runtime = self.discretization.prepare_runtime(
             safe,
-            numeric_version=self.plan_id,
+            numeric_version=canonical_fingerprint(
+                {
+                    "kind": "finite-element-mesh-motion-runtime",
+                    "plan": self.plan_id,
+                    "numeric_version": version,
+                }
+            ),
         )
         return FiniteElementMeshRealization(proposed, safe, runtime, evidence)
 

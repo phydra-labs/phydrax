@@ -152,6 +152,31 @@ def test_joint_blocks_parallel_tempering_clusters_and_online_reducers():
             jax.random.key(8),
         )
 
+    with pytest.raises(TypeError, match="integers"):
+        phx.pgm.initialize_parallel_tempering(
+            prepared,
+            jnp.asarray([[0.9, 0.0, 0.0]] * 3),
+            method,
+        )
+    with pytest.raises(ValueError, match="inside graph support"):
+        phx.pgm.initialize_parallel_tempering(
+            prepared,
+            jnp.asarray([[0, 0, 0], [0, 2, 0], [1, 1, 1]]),
+            method,
+        )
+    with pytest.raises(TypeError, match="integers"):
+        phx.pgm.wolff_cluster_step(
+            ising_prepared,
+            jnp.asarray([0.9, 0.0, 0.0]),
+            jax.random.key(10),
+        )
+    with pytest.raises(ValueError, match="outside graph support"):
+        phx.pgm.wolff_cluster_step(
+            ising_prepared,
+            jnp.asarray([0, 2, 0]),
+            jax.random.key(11),
+        )
+
 
 def test_training_objectives_persistent_chains_and_exact_em():
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(1,), num_states=2)
@@ -209,6 +234,40 @@ def test_training_objectives_persistent_chains_and_exact_em():
     assert em.objective_after == pytest.approx(float(em.objective_before))
 
 
+def test_gibbs_transitions_preserve_invalid_input_status():
+    graph = _triangle_graph()
+    prepared = phx.pgm.prepare_chromatic_gibbs(graph)
+    state = phx.pgm.initialize_gibbs(prepared, jnp.asarray([[0, 0, 0]]))
+    invalid = eqx.tree_at(
+        lambda value: value.valid,
+        state,
+        jnp.asarray([False]),
+    )
+    key = jax.random.key(12)
+
+    _, ordinary = phx.pgm.gibbs_sweep(prepared, invalid, key)
+    _, random_scan = phx.pgm.gibbs_sweep_with_policy(
+        prepared,
+        invalid,
+        key,
+        phx.pgm.GibbsScanPolicy("random-scan"),
+    )
+    _, block = phx.pgm.joint_block_sweep(
+        prepared,
+        invalid,
+        phx.pgm.JointDiscreteBlock((0, 1), maximum_configurations=4),
+        key,
+    )
+
+    expected = int(phx.pgm.GibbsTransitionStatus.INVALID_STATE)
+    assert jnp.all(ordinary.status == expected)
+    assert jnp.all(random_scan.status == expected)
+    assert jnp.all(block.status == expected)
+    assert not jnp.any(ordinary.valid)
+    assert not jnp.any(random_scan.valid)
+    assert not jnp.any(block.valid)
+
+
 def test_factor_graph_checkpoint_round_trip(tmp_path):
     graph = _triangle_graph()
     belief_plan = phx.pgm.prepare_belief_propagation(graph)
@@ -217,14 +276,48 @@ def test_factor_graph_checkpoint_round_trip(tmp_path):
     gibbs_state = phx.pgm.initialize_gibbs(gibbs_plan, jnp.asarray([[0, 0, 0]]))
     path = tmp_path / "graph.phx"
 
+    root_key = jax.random.key(13)
     phx.pgm.write_factor_graph_checkpoint(
         path,
         graph,
         belief_state=belief_state,
+        belief_prepared=belief_plan,
         gibbs_state=gibbs_state,
+        gibbs_root_key=root_key,
     )
     restored = phx.pgm.read_factor_graph_checkpoint(path)
 
     assert restored.graph.structure_id == graph.structure_id
     assert jnp.array_equal(restored.belief_state.messages, belief_state.messages)
     assert jnp.array_equal(restored.gibbs_state.positions, gibbs_state.positions)
+    assert jnp.array_equal(
+        jax.random.key_data(restored.gibbs_root_key),
+        jax.random.key_data(root_key),
+    )
+
+    malformed = phx.pgm.BeliefPropagationState(
+        belief_state.messages,
+        phx.pgm.VariableStateValues(
+            jnp.zeros((graph.num_variable_states - 1,)),
+            structure_id=graph.structure_id,
+        ),
+    )
+    with pytest.raises(ValueError, match="evidence must have shape"):
+        phx.pgm.write_factor_graph_checkpoint(
+            tmp_path / "malformed.phx",
+            graph,
+            belief_state=malformed,
+            belief_prepared=belief_plan,
+        )
+
+    nonfinite = phx.pgm.BeliefPropagationState(
+        belief_state.messages.at[0].set(jnp.nan),
+        belief_state.evidence,
+    )
+    with pytest.raises(ValueError, match="finite values and -inf"):
+        phx.pgm.write_factor_graph_checkpoint(
+            tmp_path / "nonfinite.phx",
+            graph,
+            belief_state=nonfinite,
+            belief_prepared=belief_plan,
+        )

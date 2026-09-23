@@ -217,6 +217,18 @@ def resolve_evaluation_parameters(
     return evaluation_parameters
 
 
+def _finite_selection_value(value: Any, name: str, /) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise TypeError(f"{name} must be a real scalar.")
+    try:
+        scalar = float(value)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"{name} must be a real scalar.") from exc
+    if not np.isfinite(scalar):
+        raise ValueError(f"{name} must be finite.")
+    return scalar
+
+
 @dataclass(frozen=True, slots=True)
 class TrainingProgress:
     """Serializable logical cursor and model-selection state for one training run."""
@@ -248,6 +260,8 @@ class TrainingProgress:
                 raise ValueError(f"{name} must be non-negative.")
         if int(self.stale_validations) < 0:
             raise ValueError("stale_validations must be non-negative.")
+        if self.best_value is not None:
+            _finite_selection_value(self.best_value, "best_value")
         if self.iteration_session_id is None and (
             self.iteration_control_id is not None
             or self.iteration_session_cursor != 0
@@ -456,19 +470,16 @@ def update_training_selection(
 
     if mode not in ("min", "max"):
         raise ValueError("mode must be 'min' or 'max'.")
-    if float(min_delta) < 0.0:
+    delta = _finite_selection_value(min_delta, "min_delta")
+    if delta < 0.0:
         raise ValueError("min_delta must be non-negative.")
     if patience is not None and int(patience) <= 0:
         raise ValueError("patience must be positive when provided.")
-    current = float(value)
+    current = _finite_selection_value(value, "selection value")
     best = progress.best_value
     improved = best is None
     if best is not None:
-        improved = (
-            current < best - float(min_delta)
-            if mode == "min"
-            else current > best + float(min_delta)
-        )
+        improved = current < best - delta if mode == "min" else current > best + delta
     if improved:
         return (
             replace(
@@ -501,17 +512,23 @@ def _update_validation_selection(
     relative_minimum_delta: float,
     patience: int | None,
 ) -> tuple[TrainingProgress, bool]:
-    current = float(value)
+    current = _finite_selection_value(value, "validation value")
     previous = progress.best_value
     strict_better = previous is None or (
         current < previous if mode == "min" else current > previous
     )
+    absolute_delta = _finite_selection_value(minimum_delta, "minimum_delta")
+    relative_delta = _finite_selection_value(
+        relative_minimum_delta, "relative_minimum_delta"
+    )
+    if absolute_delta < 0.0 or relative_delta < 0.0:
+        raise ValueError("Validation selection deltas must be non-negative.")
     required = (
-        float(minimum_delta)
+        absolute_delta
         if previous is None
         else max(
-            float(minimum_delta),
-            float(relative_minimum_delta) * max(abs(previous), 1e-12),
+            absolute_delta,
+            relative_delta * max(abs(previous), 1e-12),
         )
     )
     meaningful = previous is None or (

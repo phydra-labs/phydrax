@@ -130,9 +130,14 @@ def solve_pooled_structured_nonlinear(
                 continue
             state = states[lane]
             available_lane_iterations += 1
+            within_evaluations = (
+                termination_.maximum_evaluations is None
+                or int(state.objective_evaluations) < termination_.maximum_evaluations
+            )
             if (
                 int(state.status) == int(OptimizationStatus.ITERATING)
                 and int(state.iteration) < termination_.maximum_steps
+                and within_evaluations
             ):
                 state = advance_sparse_structured_ipm(
                     prepared,
@@ -144,17 +149,29 @@ def solve_pooled_structured_nonlinear(
                     sufficient_decrease=method.sufficient_decrease,
                     maximum_line_search_steps=method.maximum_line_search_steps,
                     regularization=method.kkt_regularization,
+                    optimality_threshold=termination_.optimality_threshold(
+                        initial_norms[lane]
+                    ),
+                    maximum_evaluations=termination_.maximum_evaluations,
                 )
                 active_lane_iterations += 1
-            if (
-                int(state.status) == int(OptimizationStatus.ITERATING)
-                and int(state.iteration) >= termination_.maximum_steps
+            exhausted_evaluations = (
+                termination_.maximum_evaluations is not None
+                and int(state.objective_evaluations) >= termination_.maximum_evaluations
+            )
+            if int(state.status) == int(OptimizationStatus.ITERATING) and (
+                int(state.iteration) >= termination_.maximum_steps
+                or exhausted_evaluations
             ):
                 state = eqx.tree_at(
                     lambda value: value.status,
                     state,
                     jnp.asarray(
-                        int(OptimizationStatus.MAXIMUM_STEPS_REACHED),
+                        int(
+                            OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
+                            if exhausted_evaluations
+                            else OptimizationStatus.MAXIMUM_STEPS_REACHED
+                        ),
                         dtype=jnp.int32,
                     ),
                 )

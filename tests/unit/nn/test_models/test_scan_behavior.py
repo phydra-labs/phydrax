@@ -3,6 +3,7 @@
 #
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
@@ -61,7 +62,10 @@ def test_mlp_scan_gradient_smoke():
         return jnp.sum(y**2)
 
     grads = loss_fn(model, x)
-    assert grads is not None
+    leaves = [leaf for leaf in jax.tree.leaves(grads) if eqx.is_array(leaf)]
+    assert leaves
+    assert all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
+    assert any(bool(jnp.any(leaf != 0.0)) for leaf in leaves)
 
 
 def test_mlp_scan_fallback_heterogeneous_hidden_sizes():
@@ -70,7 +74,6 @@ def test_mlp_scan_fallback_heterogeneous_hidden_sizes():
     y = model(x)
     assert y.shape == (2,)
     assert model.scan
-    assert not model._scan_enabled
 
 
 def test_feynmann_scan_parity():
@@ -114,7 +117,10 @@ def test_feynmann_scan_gradient_smoke():
         return jnp.sum(y**2)
 
     grads = loss_fn(model, x)
-    assert grads is not None
+    leaves = [leaf for leaf in jax.tree.leaves(grads) if eqx.is_array(leaf)]
+    assert leaves
+    assert all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
+    assert any(bool(jnp.any(leaf != 0.0)) for leaf in leaves)
 
 
 def test_fno_one_dimensional_scan_parity():
@@ -280,4 +286,3 @@ def test_kan_scan_fallback_heterogeneous():
     y = model(x)
     assert y.shape == (2,)
     assert model.scan
-    assert not model._scan_enabled

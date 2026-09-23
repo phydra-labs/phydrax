@@ -4,13 +4,9 @@
 
 from __future__ import annotations
 
-import importlib.util
-
 import jax
 import pytest
 
-import phydrax.interchange as interchange
-import phydrax.velocimetry.io as velocimetry_io
 from phydrax.interchange import (
     AdapterError,
     AdapterLoss,
@@ -78,19 +74,3 @@ def test_require_lossless_accepts_lossless_and_reports_declared_loss():
     with pytest.raises(AdapterError, match="cannot represent") as error:
         require_lossless(declared)
     assert error.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
-
-
-def test_interchange_is_the_canonical_report_import_surface():
-    expected = {
-        "AdapterError",
-        "AdapterLoss",
-        "AdapterReport",
-        "AdapterStatus",
-        "require_lossless",
-    }
-    removed = expected | {"AdapterDirection", "AdapterLossCategory"}
-
-    assert expected <= set(interchange.__all__)
-    assert AdapterReport.__module__ == "phydrax.interchange._report"
-    assert removed.isdisjoint(vars(velocimetry_io))
-    assert importlib.util.find_spec("phydrax.velocimetry.io._report") is None

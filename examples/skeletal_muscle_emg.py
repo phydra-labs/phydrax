@@ -27,9 +27,11 @@ def main() -> None:
         jnp.asarray(((True, True),)),
         jnp.arange(10) * 0.001,
     )
+    if not bool(result.evidence.successful):
+        raise RuntimeError("Skeletal-muscle EMG synthesis failed")
     payload = {
         "plan_id": result.plan_id,
-        "successful": bool(result.evidence.successful),
+        "successful": True,
         "sample_times_s": result.sample_times_s.tolist(),
         "surface_voltage_V": result.voltage_V[0].tolist(),
         "claim_scope": "supplied MUAP template superposition; not activation-to-EMG",

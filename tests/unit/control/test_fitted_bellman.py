@@ -97,6 +97,7 @@ def _paths(
         coupling_id=f"{role}:coupling",
         independence_labels=jnp.arange(count, dtype=jnp.int32),
         noise_shape=(1,),
+        time_grid=problem.time_grid,
     )
     return rollout_feedback(problem, policy, prepared, policy_id=policy_id)
 

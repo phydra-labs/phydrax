@@ -37,6 +37,10 @@ def test_raw_trace_samples_reduce_to_the_existing_estimate_and_replay():
         policy=policy,
     )
 
+    hessian_diagonal = jnp.asarray([12.0 * state[0] ** 2, 2.0, 6.0])
+    expected_trace = jnp.sum(hessian_diagonal * jnp.diag(matrix))
+    assert jnp.abs(samples.mean - expected_trace) <= 4.0 * samples.standard_error
+    assert jnp.abs(estimate.value - expected_trace) <= 4.0 * estimate.standard_error
     assert samples.values.shape == (512,)
     assert jnp.array_equal(samples.mean, estimate.value)
     assert jnp.array_equal(samples.standard_error, estimate.standard_error)

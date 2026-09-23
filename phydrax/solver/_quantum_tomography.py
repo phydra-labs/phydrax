@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from math import isfinite
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -99,11 +101,34 @@ class QuantumTomographyPolicy(StrictModule):
         contraction: float = 0.5,
         likelihood_tolerance: float = 1e-9,
     ):
-        self.iterations = int(iterations)
-        self.learning_rate = float(learning_rate)
-        self.maximum_backtracks = int(maximum_backtracks)
-        self.contraction = float(contraction)
-        self.likelihood_tolerance = float(likelihood_tolerance)
+        if (
+            isinstance(iterations, bool)
+            or not isinstance(iterations, int)
+            or iterations < 0
+            or isinstance(maximum_backtracks, bool)
+            or not isinstance(maximum_backtracks, int)
+            or maximum_backtracks < 0
+        ):
+            raise ValueError(
+                "Tomography iteration and backtrack capacities must be nonnegative integers."
+            )
+        rate = float(learning_rate)
+        contraction_ = float(contraction)
+        tolerance = float(likelihood_tolerance)
+        if (
+            not isfinite(rate)
+            or rate <= 0.0
+            or not isfinite(contraction_)
+            or not 0.0 < contraction_ < 1.0
+            or not isfinite(tolerance)
+            or tolerance < 0.0
+        ):
+            raise ValueError("Tomography line-search policy is invalid.")
+        self.iterations = iterations
+        self.learning_rate = rate
+        self.maximum_backtracks = maximum_backtracks
+        self.contraction = contraction_
+        self.likelihood_tolerance = tolerance
 
 
 class QuantumTomographyResult(StrictModule):

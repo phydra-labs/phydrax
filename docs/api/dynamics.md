@@ -10,10 +10,12 @@
 
 The separation is intentional. A `ContinuousSystem` does not select an ODE solver.
 A `DiscreteSystem` does not claim that its transition is an exact flow map. An
-`EvolutionTrajectory` is numerical output; a `TrajectoryData` is estimator input with
+`EvolutionTrajectory` is numerical output and its `trajectory_id` is the exact
+content identity consumed by downstream trajectory adapters; shape, grid name, or
+source display text is not a substitute. A `TrajectoryData` is estimator input with
 case axes, reset boundaries, weights, and optional controls or derivatives. Analysis
-never infers a missing mask, changes an estimator after failure, or silently replaces a
-geometric state by flattened Euclidean coordinates.
+never infers a missing mask, changes an estimator after failure, or silently replaces
+a geometric state by flattened Euclidean coordinates.
 
 `TrajectoryData` composes the coordinate-neutral `phydrax.series` substrate.
 Its sampled state is node-aligned, while transition validity is the support's
@@ -78,6 +80,11 @@ physical-time normalization and iteration normalization remain distinct. An evol
 segment returns `EvolutionStep`; a tangent action returns `EvolutionTangentStep`.
 `EvolutionTrajectory.valid` is a node mask, while `status` and `backend_status` retain
 segment-level failure evidence.
+
+An opaque `DAEEquationBlock` residual must declare both `residual_semantic_id` and
+`residual_numeric_id`. The semantic ID names equation meaning while the numeric ID
+names the exact callback realization; neither is inferred from a callable's Python
+name or from matching shapes.
 
 `AbstractDifferentiableEvolution` exposes prepared state and argument
 linearizations. `EvolutionJacobianAction` and

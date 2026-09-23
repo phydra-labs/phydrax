@@ -24,7 +24,12 @@ from ._gibbs import (
     GibbsTransitionInfo,
     PreparedChromaticGibbs,
 )
-from ._model import factor_graph_log_score, IsingFactorGroup
+from ._model import (
+    factor_graph_contains,
+    factor_graph_log_score,
+    IsingFactorGroup,
+    pack_assignments,
+)
 from ._types import GibbsTransitionStatus
 
 
@@ -353,19 +358,24 @@ def gibbs_sweep_with_policy(
         factor_graph_log_score(prepared.graph, positions)
     )
     valid = valid & jnp.isfinite(scores)
+    accepted = state.valid & valid
     next_state = GibbsState(
         positions,
         scores,
-        valid=state.valid & valid,
+        valid=accepted,
         sweep_index=state.sweep_index + 1,
     )
     return next_state, GibbsTransitionInfo(
         status=jnp.where(
-            valid,
-            int(GibbsTransitionStatus.SUCCESS),
-            int(GibbsTransitionStatus.INFEASIBLE_CONDITIONAL),
+            ~state.valid,
+            int(GibbsTransitionStatus.INVALID_STATE),
+            jnp.where(
+                valid,
+                int(GibbsTransitionStatus.SUCCESS),
+                int(GibbsTransitionStatus.INFEASIBLE_CONDITIONAL),
+            ),
         ),
-        valid=valid,
+        valid=accepted,
         invalid_conditional_count=(~valid).astype(jnp.int32),
         state_change_fraction=changed.astype("float64") / max(attempted_updates, 1),
     )
@@ -409,19 +419,24 @@ def joint_block_sweep(
 
     positions, valid, changed = jax.vmap(one)(state.positions, chain_indices)
     scores = prepared.precision.accumulation(factor_graph_log_score(graph, positions))
+    accepted = state.valid & valid
     next_state = GibbsState(
         positions,
         scores,
-        valid=state.valid & valid,
+        valid=accepted,
         sweep_index=state.sweep_index + 1,
     )
     return next_state, GibbsTransitionInfo(
         status=jnp.where(
-            valid,
-            int(GibbsTransitionStatus.SUCCESS),
-            int(GibbsTransitionStatus.INFEASIBLE_CONDITIONAL),
+            ~state.valid,
+            int(GibbsTransitionStatus.INVALID_STATE),
+            jnp.where(
+                valid,
+                int(GibbsTransitionStatus.SUCCESS),
+                int(GibbsTransitionStatus.INFEASIBLE_CONDITIONAL),
+            ),
         ),
-        valid=valid,
+        valid=accepted,
         invalid_conditional_count=(~valid).astype(jnp.int32),
         state_change_fraction=changed.astype("float64"),
     )
@@ -433,10 +448,12 @@ def initialize_parallel_tempering(
     method: ParallelTempering,
     /,
 ) -> ParallelTemperingState:
-    states = jnp.asarray(positions, dtype=jnp.int32)
+    states = pack_assignments(prepared.graph, positions)
     expected = (method.inverse_temperatures.shape[0], prepared.graph.num_variables)
     if states.shape != expected:
         raise ValueError(f"positions must have shape {expected}.")
+    if not bool(jnp.all(factor_graph_contains(prepared.graph, states))):
+        raise ValueError("Every replica must start inside graph support.")
     scores = prepared.precision.accumulation(
         factor_graph_log_score(prepared.graph, states)
     )
@@ -590,9 +607,15 @@ def wolff_cluster_step(
     if not np.isfinite(beta) or beta <= 0.0:
         raise ValueError("inverse_temperature must be finite and positive.")
     graph = prepared.graph
-    state = np.asarray(position, dtype=np.int32).copy()
-    if state.shape != (graph.num_variables,):
+    raw_state = np.asarray(position)
+    if raw_state.shape != (graph.num_variables,):
         raise ValueError("position must have one state per graph variable.")
+    if not np.issubdtype(raw_state.dtype, np.integer):
+        raise TypeError("position must contain integers.")
+    cardinalities = np.asarray(graph.cardinalities)
+    if np.any(raw_state < 0) or np.any(raw_state >= cardinalities):
+        raise ValueError("position contains values outside graph support.")
+    state = raw_state.astype(np.int32, copy=True)
     adjacency: list[list[tuple[int, float]]] = [[] for _ in range(graph.num_variables)]
     for group, scope in zip(graph.factor_groups, graph.factor_scopes):
         if not isinstance(group, IsingFactorGroup):

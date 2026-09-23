@@ -34,6 +34,7 @@ from ._iterative import (
     MinimizationProblem,
     MinimizationResult,
     OptimizationCapabilities,
+    OptimizationCertificate,
     OptimizationDiagnostics,
     OptimizationProvenance,
     OptimizationStatus,
@@ -228,17 +229,22 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             jnp.vdot(slack, inequality_dual).real / max(mi, 1),
         )
         filter_pairs = []
-        accepted = rejected = evaluations = gradients = constraints = linear_solves = 0
+        accepted = rejected = linear_solves = 0
+        evaluations = gradients = constraints = 1
+        globalization_evaluations = 0
         iterations = restorations = factorizations = factorization_reuses = 0
         step_norm = 0.0
         status = int(OptimizationStatus.ITERATING)
         initial_optimality = None
-        auxiliary = problem.value(parameters, args)[1]
         while (
             status == int(OptimizationStatus.ITERATING)
             and iterations < termination.maximum_steps
+            and (
+                termination.maximum_evaluations is None
+                or evaluations + self.maximum_line_search_steps
+                <= termination.maximum_evaluations
+            )
         ):
-            evaluation = model.evaluate(parameters, args)
             raw_jacobian = evaluation.constraint_jacobian
             equality_jacobian = raw_jacobian[model.equality_indices]
             lower_jacobian = raw_jacobian[model.lower_indices]
@@ -443,9 +449,11 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                 equality_dual = candidate_equality_duals[selected]
                 accepted += 1
             alpha = selected_alpha
-            evaluations += 1
-            gradients += 1
-            constraints += 1
+            trial_evaluations = self.maximum_line_search_steps
+            evaluations += trial_evaluations
+            gradients += trial_evaluations
+            constraints += trial_evaluations
+            globalization_evaluations += trial_evaluations
             iterations += 1
             step_norm = float(jnp.linalg.norm(alpha * direction.primal))
             if accepted_trial:
@@ -463,40 +471,58 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                 ]
             else:
                 restorations += 1
-                constraint_matrix = jnp.concatenate(
-                    [equality_jacobian, inequality_jacobian], axis=0
-                )
-                restoration_rhs = -jnp.concatenate(
-                    [equality_residual, inequality_residual]
-                )
-                restoration_direction = self.precision.direction(
-                    solve_linear(
-                        LeastSquaresProblem(
-                            DenseLinearOperator(
-                                self.precision.accumulation(constraint_matrix)
-                            )
-                        ),
-                        self.precision.accumulation(restoration_rhs),
-                        policy=self.precision.bind_linear(self.linear),
-                    ).value
-                )
-                parameters = model.unflatten(
-                    jnp.asarray(
-                        evaluation.coordinates + 0.5 * restoration_direction,
-                        dtype=evaluation.coordinates.dtype,
+                if (
+                    termination.maximum_evaluations is not None
+                    and evaluations >= termination.maximum_evaluations
+                ):
+                    status = int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED)
+                else:
+                    constraint_matrix = jnp.concatenate(
+                        [equality_jacobian, inequality_jacobian], axis=0
                     )
-                )
-                restored = model.evaluate(parameters, args)
-                slack = jnp.maximum(restored.inequality_slacks, 1e-8)
-                if restorations >= self.maximum_restoration_steps:
-                    status = int(OptimizationStatus.RESTORATION_FAILED)
-            if step_norm <= float(
+                    restoration_rhs = -jnp.concatenate(
+                        [equality_residual, inequality_residual]
+                    )
+                    restoration_direction = self.precision.direction(
+                        solve_linear(
+                            LeastSquaresProblem(
+                                DenseLinearOperator(
+                                    self.precision.accumulation(constraint_matrix)
+                                )
+                            ),
+                            self.precision.accumulation(restoration_rhs),
+                            policy=self.precision.bind_linear(self.linear),
+                        ).value
+                    )
+                    parameters = model.unflatten(
+                        jnp.asarray(
+                            evaluation.coordinates + 0.5 * restoration_direction,
+                            dtype=evaluation.coordinates.dtype,
+                        )
+                    )
+                    restored = model.evaluate(parameters, args)
+                    evaluation = restored
+                    evaluations += 1
+                    gradients += 1
+                    constraints += 1
+                    slack = jnp.maximum(restored.inequality_slacks, 1e-8)
+                    if restorations >= self.maximum_restoration_steps:
+                        status = int(OptimizationStatus.RESTORATION_FAILED)
+            if status == int(OptimizationStatus.ITERATING) and step_norm <= float(
                 termination.step_threshold(jnp.linalg.norm(evaluation.coordinates))
             ):
                 status = int(OptimizationStatus.STAGNATION)
         if status == int(OptimizationStatus.ITERATING):
-            status = int(OptimizationStatus.MAXIMUM_STEPS_REACHED)
-        final = model.evaluate(parameters, args)
+            status = (
+                int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED)
+                if (
+                    termination.maximum_evaluations is not None
+                    and evaluations + self.maximum_line_search_steps
+                    > termination.maximum_evaluations
+                )
+                else int(OptimizationStatus.MAXIMUM_STEPS_REACHED)
+            )
+        final = evaluation
         raw_jacobian = final.constraint_jacobian
         equality_jacobian = raw_jacobian[model.equality_indices]
         inequality_jacobian = jnp.concatenate(
@@ -540,20 +566,50 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                 model.unflatten(dual_residual),
             ),
         )
-        certificate = certify_constrained_physical(
-            model,
-            parameters,
-            canonical,
-            termination.absolute_optimality,
-            kind="active-kkt",
-            args=args,
-            linear=self.linear,
-            precision=self.precision,
-        )
+        if termination.maximum_evaluations is None:
+            certificate = certify_constrained_physical(
+                model,
+                parameters,
+                canonical,
+                termination.absolute_optimality,
+                kind="active-kkt",
+                args=args,
+                linear=self.linear,
+                precision=self.precision,
+            )
+        else:
+            canonical_optimality = jnp.maximum(
+                canonical.primal_feasibility,
+                jnp.maximum(
+                    canonical.dual_feasibility,
+                    canonical.complementarity,
+                ),
+            )
+            finite = (
+                final.finite
+                & jnp.isfinite(canonical_optimality)
+                & jnp.isfinite(final.objective)
+            )
+            certificate = OptimizationCertificate(
+                kind="active-kkt",
+                tolerance=termination.absolute_optimality,
+                optimality_norm=canonical_optimality,
+                primal_feasibility=canonical.primal_feasibility,
+                dual_feasibility=canonical.dual_feasibility,
+                complementarity=canonical.complementarity,
+                projected_stationarity=canonical.dual_feasibility,
+                finite=finite,
+                regular=True,
+                certified=finite
+                & (canonical_optimality <= termination.absolute_optimality),
+                evaluation_work=0,
+                certificate_id=f"{problem.problem_id}/budgeted-active-kkt",
+                precision_evidence=canonical.precision_evidence,
+            )
         status_evidence = reconcile_optimization_status(
             status,
             certificate,
-            allow_certificate_promotion=True,
+            allow_certificate_promotion=False,
         )
         evidence = FilterInteriorPointEvidence(
             kkt_plan.plan_id,
@@ -564,16 +620,24 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             jnp.asarray(restorations, dtype=jnp.int32),
             jnp.asarray(barrier),
         )
+        if (
+            termination.maximum_evaluations is None
+            or evaluations < termination.maximum_evaluations
+        ):
+            objective, auxiliary = problem.value(parameters, args)
+            evaluations += 1
+        else:
+            objective, auxiliary = final.objective, None
         diagnostics = OptimizationDiagnostics(
             iterations=iterations,
             accepted_steps=accepted,
             rejected_steps=rejected,
-            objective_evaluations=evaluations + 2 + certificate.evaluation_work,
-            gradient_evaluations=gradients + 1 + certificate.evaluation_work,
-            constraint_evaluations=constraints + 1 + certificate.evaluation_work,
+            objective_evaluations=evaluations + certificate.evaluation_work,
+            gradient_evaluations=gradients + certificate.evaluation_work,
+            constraint_evaluations=constraints + certificate.evaluation_work,
             linear_solves=linear_solves,
             linear_iterations=linear_solves,
-            globalization_evaluations=accepted + rejected,
+            globalization_evaluations=globalization_evaluations,
             initial_optimality_norm=(
                 certificate.optimality_norm
                 if initial_optimality is None
@@ -600,7 +664,6 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                 f"restorations={restorations};kkt-plan={kkt_plan.plan_id};internal-status={status}"
             ),
         )
-        objective, auxiliary = problem.value(parameters, args)
         output_parameters = jax.tree.map(self.precision.output, parameters)
         precision_evidence = self.precision.evidence_for(
             parameters,

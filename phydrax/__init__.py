@@ -158,7 +158,6 @@ from .interchange import cosmology as _cosmology_interchange  # noqa: F401
 
 # Explicit re-exports for star import
 __all__ = [
-
     "AbstractArrayModel",
     "AdmissibilityHeader",
     "AdmissibilityReason",

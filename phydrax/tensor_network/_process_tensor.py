@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -131,7 +132,12 @@ class QuantumIntervention(StrictModule):
         probability = self.precision.decision(
             jnp.real(self.precision.sum(jnp.diag(output)))
         )
-        normalized = jnp.where(probability > 0.0, output / probability, output)
+        positive = jnp.isfinite(probability) & (probability > 0.0)
+        normalized = jnp.where(
+            positive,
+            output / jnp.where(positive, probability, 1.0),
+            jnp.zeros_like(output),
+        )
         return self.precision.output(normalized), probability
 
 
@@ -180,6 +186,21 @@ class ProcessTensorPhysicality(StrictModule):
         )
         self.precision_evidence = precision_evidence
         self.status = str(status)
+
+
+class ProcessTensorContractionStatus(IntEnum):
+    SUCCESS = 0
+    ZERO_PROBABILITY = 1
+    NONFINITE = 2
+    INVALID_INTERVENTION = 3
+
+
+class ProcessTensorContractionResult(StrictModule):
+    final_state: Array
+    probability: Array
+    valid: Array
+    status: Array
+    process_id: str = eqx.field(static=True)
 
 
 class ProcessTensorMPO(StrictModule):
@@ -260,7 +281,7 @@ class ProcessTensorMPO(StrictModule):
         self,
         interventions: Sequence[QuantumIntervention] | None = None,
         /,
-    ) -> tuple[Array, Array]:
+    ) -> ProcessTensorContractionResult:
         operations = (
             tuple(interventions)
             if interventions is not None
@@ -281,6 +302,7 @@ class ProcessTensorMPO(StrictModule):
             raise ValueError("One intervention is required per process time slot.")
         state = self.precision.contraction(self.initial_density.reshape((1, -1)))
         probability = self.precision.decision(1.0)
+        valid = jnp.asarray(True)
         for tensor, intervention in zip(self.tensors, operations, strict=True):
             tensor_ = self.precision.contraction(tensor)
             superoperator = self.precision.contraction(intervention.superoperator)
@@ -292,11 +314,41 @@ class ProcessTensorMPO(StrictModule):
             trace = self.precision.decision(
                 jnp.real(self.precision.sum(jnp.diag(density)))
             )
+            positive = jnp.isfinite(trace) & (trace > 0.0)
+            intervention_valid = intervention.valid & positive
+            valid = valid & intervention_valid
             probability = self.precision.decision(probability * trace)
-            state = state / jnp.maximum(trace, 1e-30)
-        return (
-            self.precision.output(state[0].reshape((self.dimension, self.dimension))),
+            state = jnp.where(
+                positive,
+                state / jnp.where(positive, trace, 1.0),
+                jnp.zeros_like(state),
+            )
+        final_state = self.precision.output(
+            state[0].reshape((self.dimension, self.dimension))
+        )
+        finite = jnp.all(jnp.isfinite(final_state)) & jnp.isfinite(probability)
+        status = jnp.where(
+            ~finite,
+            int(ProcessTensorContractionStatus.NONFINITE),
+            jnp.where(
+                probability <= 0.0,
+                int(ProcessTensorContractionStatus.ZERO_PROBABILITY),
+                jnp.where(
+                    ~valid,
+                    int(ProcessTensorContractionStatus.INVALID_INTERVENTION),
+                    int(ProcessTensorContractionStatus.SUCCESS),
+                ),
+            ),
+        ).astype(jnp.int32)
+        accepted = (
+            valid & finite & (status == int(ProcessTensorContractionStatus.SUCCESS))
+        )
+        return ProcessTensorContractionResult(
+            final_state,
             probability,
+            accepted,
+            status,
+            self.process_id,
         )
 
     def physicality(self) -> ProcessTensorPhysicality:
@@ -343,8 +395,12 @@ class ProcessTensorMPO(StrictModule):
                 for index, report in enumerate(reports)
             },
         )
-        _, identity_probability = self.contract()
-        causality_residual = jnp.abs(identity_probability - 1.0)
+        identity_result = self.contract()
+        causality_residual = jnp.where(
+            identity_result.valid,
+            jnp.abs(identity_result.probability - 1.0),
+            jnp.asarray(jnp.inf, dtype=identity_result.probability.dtype),
+        )
         return ProcessTensorPhysicality(
             jnp.stack([report.cp_margin for report in reports]),
             jnp.stack([report.trace_preservation_residual for report in reports]),
@@ -379,6 +435,8 @@ def markov_process_tensor(
 
 
 __all__ = [
+    "ProcessTensorContractionResult",
+    "ProcessTensorContractionStatus",
     "ProcessTensorMPO",
     "ProcessTensorPhysicality",
     "QuantumIntervention",

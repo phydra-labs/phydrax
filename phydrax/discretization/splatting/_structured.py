@@ -772,7 +772,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         *,
         target_size: int | None = None,
     ) -> SplatBalanceEvidence:
-        active = self.particles.active_mask
+        active = state.source_active_mask
         active_mask = active.reshape(active.shape + (1,) * (source.ndim - 1))
         fractions = state.captured_fractions.reshape(
             state.captured_fractions.shape + (1,) * (source.ndim - 1)

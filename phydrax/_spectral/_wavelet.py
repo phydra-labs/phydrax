@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._model import register_artifact_value
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._multiresolution import MultiresolutionCoefficients
@@ -277,6 +278,16 @@ class DiscreteWaveletTransform(StrictModule, NonTrainableState):
 
     def __call__(self, values: ArrayLike, /) -> MultiresolutionCoefficients:
         return self.analysis(values)
+
+
+register_artifact_value(
+    "phydrax.spectral:WaveletFilterBank",
+    WaveletFilterBank,
+)
+register_artifact_value(
+    "phydrax.spectral:DiscreteWaveletTransform",
+    DiscreteWaveletTransform,
+)
 
 
 __all__ = [

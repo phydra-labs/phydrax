@@ -89,6 +89,32 @@ def test_compiler_matches_finite_lqr_and_preserves_exact_primal_policy():
     )
 
 
+def test_control_qp_decoder_rejects_foreign_numeric_binding():
+    first_specification = phx.control.LinearQuadraticControlProblem(
+        jnp.ones((1, 1, 1)),
+        jnp.ones((1, 1, 1)),
+        jnp.asarray([0.0]),
+        jnp.ones((1, 1, 1)),
+        jnp.ones((1, 1, 1)),
+        jnp.ones((1, 1)),
+        problem_id="binding-a",
+    )
+    second_specification = phx.control.LinearQuadraticControlProblem(
+        jnp.ones((1, 1, 1)),
+        jnp.ones((1, 1, 1)),
+        jnp.asarray([2.0]),
+        jnp.ones((1, 1, 1)),
+        jnp.ones((1, 1, 1)),
+        jnp.ones((1, 1)),
+        problem_id="binding-b",
+    )
+    prepared = phx.control.prepare_linear_quadratic_control(first_specification)
+    foreign = phx.control.solve_linear_quadratic_control(second_specification)
+
+    with pytest.raises(ValueError, match="provenance does not match"):
+        phx.control.decode_linear_control_solution(prepared, foreign.qp_result)
+
+
 def test_decision_and_constraint_layouts_identify_every_compiled_block():
     dynamics = jnp.array(
         [

@@ -186,3 +186,27 @@ def test_repair_reflects_arbitrary_overshoot_into_unit_box():
     )
     assert np.all(np.asarray(repaired) >= 0.0)
     assert np.all(np.asarray(repaired) <= 1.0)
+
+
+def test_pareto_search_never_uses_scalar_spread_convergence():
+    space = phx.optim.DifferentialEvolutionSpace(
+        phx.optim.DifferentialEvolutionContinuous(
+            jnp.asarray([-1.0]),
+            jnp.asarray([1.0]),
+        )
+    )
+    search = phx.optim.DifferentialEvolutionSearch(
+        4,
+        0,
+        selection="pareto",
+        objective_count=2,
+    )
+    result = phx.optim.search_differential_evolution(
+        lambda value: jnp.asarray([0.0, value[0] ** 2]),
+        space,
+        search,
+        key=jr.key(7),
+    )
+
+    assert not result.converged
+    assert result.termination_reason == "max_generations"

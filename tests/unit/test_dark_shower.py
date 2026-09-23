@@ -83,7 +83,7 @@ def _units_and_frame():
     return units, frame
 
 
-def _runtime(frontier_capacity=8):
+def _runtime(species_revision_id, frontier_capacity=8):
     return DarkSectorEpochPlan(
         packet_capacity=1,
         event_capacity=4,
@@ -97,7 +97,7 @@ def _runtime(frontier_capacity=8):
         radiation_width=1,
         work_width=8,
         frontier_width=8,
-        species_revision_id="1" * 64,
+        species_revision_id=species_revision_id,
         topology_revision_id="2" * 64,
         precision_id="float64",
     )
@@ -128,7 +128,7 @@ def _shower_plan():
         envelope_coefficient=2.0,
     )
     return DarkShowerEpochPlan(
-        _runtime(),
+        _runtime(species.table_id),
         species,
         units,
         frame,
@@ -220,7 +220,10 @@ def test_splitting_preserves_ordering_recoil_charge_color_and_four_momentum():
     plan = _shower_plan()
     original = _event(plan)
     result = evolve_dark_shower_epoch(
-        plan, original, jnp.asarray([[[0.0, 0.7, 0.4, 0.0]]])
+        plan,
+        original,
+        jnp.asarray([[[0.0, 0.7, 0.4, 0.0]]]),
+        draw_id="shower-draw-0",
     )
     assert bool(result.accepted[0, 0])
     assert float(result.proposal_scales[0, 0]) < plan.maximum_scale
@@ -239,8 +242,22 @@ def test_splitting_preserves_ordering_recoil_charge_color_and_four_momentum():
     assert int(result.events.color_flow[0, 1, 0]) == int(
         result.events.color_flow[0, 2, 1]
     )
-    daughter_charge = plan.species.charges[0] + plan.species.charges[1]
-    assert jnp.isclose(daughter_charge, plan.species.charges[0])
+    daughter_ids = np.asarray(result.events.pdg_ids[0, child_slots])
+    daughter_charge = sum(
+        float(
+            plan.species.charges[
+                np.flatnonzero(np.asarray(plan.species.pdg_ids) == pdg)[0]
+            ]
+        )
+        for pdg in daughter_ids
+    )
+    parent_pdg = int(original.pdg_ids[0, 0])
+    parent_charge = float(
+        plan.species.charges[
+            np.flatnonzero(np.asarray(plan.species.pdg_ids) == parent_pdg)[0]
+        ]
+    )
+    assert np.isclose(daughter_charge, parent_charge)
     durable = stage_dark_shower_continuation(
         plan,
         result,
@@ -254,7 +271,10 @@ def test_split_capacity_is_atomic_and_reports_backpressure():
     plan = _shower_plan()
     original = _event(plan, particle_capacity=2)
     result = evolve_dark_shower_epoch(
-        plan, original, jnp.asarray([[[0.0, 0.7, 0.4, 0.0]]])
+        plan,
+        original,
+        jnp.asarray([[[0.0, 0.7, 0.4, 0.0]]]),
+        draw_id="shower-draw-backpressure",
     )
     assert bool(result.backpressured[0])
     assert not bool(result.accepted[0, 0])

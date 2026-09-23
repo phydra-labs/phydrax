@@ -541,7 +541,7 @@ def _metric_vector(
 class _NeuralGalerkinVectorField(StrictModule):
     problem: NeuralGalerkinProblem
     policy: NeuralTangentSolvePolicy
-    implicit_adjoint: bool = eqx.field(static=True, default=False)
+    adjoint_policy: NeuralGalerkinAdjointPolicy
 
     def _sampled_fields(self, parameters: Array, /) -> Array:
         functions = self.problem.ansatz(parameters)
@@ -655,6 +655,7 @@ class _NeuralGalerkinVectorField(StrictModule):
                 policy=linear_policy,
             )
         rate = jnp.asarray(result.value)
+        diagnostics = result.diagnostics
         defect = jnp.asarray(jacobian.mv(rate)) - target
         defect_norm = _norm(defect)
         target_norm = _norm(target)
@@ -665,10 +666,13 @@ class _NeuralGalerkinVectorField(StrictModule):
             & jnp.isfinite(relative_defect)
         )
         accepted = result.successful & finite
+        if self.adjoint_policy.mode == "certified_backsolve":
+            accepted = accepted & (
+                diagnostics.residual_norm <= self.adjoint_policy.maximum_primal_residual
+            )
         if self.policy.maximum_relative_defect is not None:
             accepted = accepted & (relative_defect <= self.policy.maximum_relative_defect)
         safe_rate = jnp.where(accepted, rate, jnp.full_like(rate, jnp.nan))
-        diagnostics = result.diagnostics
         return _TangentEvaluation(
             rate=safe_rate,
             status=result.status,
@@ -685,7 +689,7 @@ class _NeuralGalerkinVectorField(StrictModule):
 
     def __call__(self, time: Array, parameters: Array, args: Any) -> Array:
         del args
-        if self.implicit_adjoint:
+        if self.adjoint_policy.mode == "certified_backsolve":
             return _implicit_tangent_rate((time, parameters), self)
         return self.evaluate(time, parameters).rate
 
@@ -760,7 +764,11 @@ def _implicit_tangent_rate_bwd(
     )
     multiplier = eqx.error_if(
         adjoint_result.value,
-        ~adjoint_result.successful | (adjoint_result.diagnostics.residual_norm > 1.0e-6),
+        ~adjoint_result.successful
+        | (
+            adjoint_result.diagnostics.residual_norm
+            > field.adjoint_policy.maximum_adjoint_residual
+        ),
         "Neural Galerkin implicit adjoint solve failed its residual audit.",
     )
 
@@ -916,7 +924,7 @@ def solve_neural_galerkin(
     vector_field = _NeuralGalerkinVectorField(
         problem,
         selected_tangent,
-        selected_adjoint_policy.mode == "certified_backsolve",
+        selected_adjoint_policy,
     )
     initial = problem.parameter_subspace.pack()
     vector_field._target(time_grid.t0, initial)
@@ -1035,8 +1043,46 @@ def replay_neural_galerkin_epochs(
         or journal.replay_policy_id != policy.policy_id
     ):
         raise ValueError("Neural Galerkin replay journal identity does not match.")
-    replayed = solve_neural_galerkin_epochs(plan, **solve_options)
-    return replayed
+    boundary = jnp.asarray(journal.boundary_parameters)
+    parameter_shape = plan.epochs[0].problem.parameter_subspace.pack().shape
+    if boundary.shape != (len(plan.epochs), *parameter_shape) or not bool(
+        jax.device_get(jnp.all(jnp.isfinite(boundary)))
+    ):
+        raise ValueError("Neural Galerkin replay boundary parameters are invalid.")
+    segments: list[NeuralFieldEvolutionResult] = []
+    paths = plan.epochs[0].problem.parameter_subspace.leaf_paths
+    for index, epoch in enumerate(plan.epochs):
+        problem = epoch.problem
+        if index:
+            previous_problem = plan.epochs[index - 1].problem
+            functions = previous_problem.ansatz(boundary[index - 1])
+            problem = NeuralGalerkinProblem(
+                functions,
+                epoch.problem.rate,
+                epoch.problem.metrics,
+                parameter_subspace=ParameterSubspace.from_leaf_paths(functions, paths),
+                enforcement=epoch.problem.enforcement,
+                args=epoch.problem.args,
+                evaluation_key=epoch.problem.evaluation_key,
+                problem_id=epoch.problem.problem_id,
+            )
+        result = solve_neural_galerkin(
+            problem,
+            epoch.grid,
+            **solve_options,
+        )
+        reproduced = result.parameter_solution.states[-1]
+        if not bool(jax.device_get(jnp.array_equal(reproduced, boundary[index]))):
+            raise ValueError(
+                "Neural Galerkin replay did not reproduce a frozen boundary."
+            )
+        segments.append(result)
+    return NeuralGalerkinEpochResult(
+        tuple(segments),
+        expected,
+        plan.replay_id,
+        journal,
+    )
 
 
 __all__ = [

@@ -635,9 +635,9 @@ def svd(
             & jnp.all(isolation_gaps > uncertainty)
         )
         status = jnp.where(
-            differentiation_valid,
-            status,
+            (status == int(SVDSolveStatus.SUCCESS)) & ~differentiation_valid,
             int(SVDSolveStatus.DIFFERENTIATION_REJECTED),
+            status,
         ).astype(jnp.int32)
         values = jax.lax.cond(
             differentiation_valid,

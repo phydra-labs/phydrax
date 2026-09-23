@@ -318,6 +318,11 @@ def moment_recombine(
     )
     selected_mask = selected_mask & output_valid
     selected_weights = jnp.where(selected_mask, selected_weights, 0.0)
+    active_points = jnp.sum(selected_mask, dtype=jnp.int32)
+    minimum_weight = jnp.min(
+        jnp.where(selected_mask, selected_weights, jnp.inf),
+        initial=jnp.inf,
+    )
     diagnostics = MomentRecombinationDiagnostics(
         valid=output_valid,
         active_points=active_points,

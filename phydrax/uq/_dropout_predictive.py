@@ -397,7 +397,11 @@ def _finite_sample_quantile(scores: Array, coverage: float, /) -> Array:
     count = scores.shape[0]
     if count <= 0:
         raise ValueError("Conformal calibration requires at least one score.")
-    rank = min(count, int(math.ceil((count + 1) * coverage)))
+    rank = int(math.ceil((count + 1) * coverage))
+    if rank > count:
+        raise ValueError(
+            "Requested conformal coverage is unattainable with the calibration size."
+        )
     return jnp.sort(scores)[rank - 1]
 
 

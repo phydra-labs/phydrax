@@ -138,7 +138,10 @@ def main() -> None:
     if arguments.parts is None:
         part_counts = tuple(value for value in (1, 2, 4, 8, 16, 32) if value <= available)
     else:
-        part_counts = tuple(arguments.parts.split(","))
+        try:
+            part_counts = tuple(int(value) for value in arguments.parts.split(","))
+        except ValueError as error:
+            raise ValueError("parts must be comma-separated integers") from error
     if (
         not part_counts
         or any(value < 1 or value > available for value in part_counts)

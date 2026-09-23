@@ -19,6 +19,8 @@ import phydrax.ein as ein
 from phydrax.domain import DomainFunction
 
 from .._frozendict import frozendict
+from .._probability import _event_axes, _leading_shape
+from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule
 from ._bsde import (
     _event_finite,
@@ -35,18 +37,40 @@ FeynmanKacControlTargetMode: TypeAlias = Literal["none", "martingale", "malliavi
 FeynmanKacRefreshMode: TypeAlias = Literal["fixed", "resample"]
 FeynmanKacTimeWeighting: TypeAlias = Literal["uniform", "trapezoid"]
 Predictor: TypeAlias = Callable | DomainFunction
+
+
+_PATH_ADDRESS = SampleAddress(
+    "feynman-kac",
+    "continuation-path",
+    target="wiener-increment",
+    role="sample",
+)
+_SOURCE_VALUE_ADDRESS = SampleAddress(
+    "feynman-kac",
+    "source-value",
+    target="predictor",
+    role="evaluation",
+)
+_SOURCE_CONTROL_ADDRESS = SampleAddress(
+    "feynman-kac",
+    "source-control",
+    target="predictor",
+    role="evaluation",
+)
+_AUTODIFF_CONTROL_ADDRESS = SampleAddress(
+    "feynman-kac",
+    "autodiff-control",
+    target="predictor",
+    role="evaluation",
+)
 MalliavinWeight: TypeAlias = Callable[[Array, Array, Array, Array, Any], Array]
 
 
 def _positive_shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
     shape = tuple(value)
-    if not shape or any(size <= 0 for size in shape):
-        raise ValueError(f"{owner} must contain positive dimensions.")
+    if any(size <= 0 for size in shape):
+        raise ValueError(f"{owner} dimensions must be positive.")
     return shape
-
-
-def _event_axes(ndim: int, event_shape: tuple[int, ...], /) -> tuple[int, ...]:
-    return tuple(range(ndim - len(event_shape), ndim))
 
 
 def _plan_id(parts: tuple[Any, ...], /) -> str:
@@ -458,6 +482,36 @@ def feynman_kac_label_diagnostics(
     )
 
 
+def _query_point_keys(
+    key: Key[Array, ""],
+    address: SampleAddress,
+    leading_shape: tuple[int, int, int],
+    path_offset: int,
+    /,
+) -> Array:
+    query_count, path_count, time_count = leading_shape
+    query_indices = jnp.arange(query_count, dtype=jnp.uint32)
+    path_indices = jnp.arange(
+        path_offset,
+        path_offset + path_count,
+        dtype=jnp.uint32,
+    )
+    time_indices = jnp.arange(time_count, dtype=jnp.uint32)
+    return jax.vmap(
+        lambda query_index: jax.vmap(
+            lambda path_index: jax.vmap(
+                lambda time_index: derive_key(
+                    key,
+                    address,
+                    query_index,
+                    path_index,
+                    time_index,
+                )
+            )(time_indices)
+        )(path_indices)
+    )(query_indices)
+
+
 def _point_values(
     predictor: Predictor,
     times: Array,
@@ -467,11 +521,20 @@ def _point_values(
     *,
     key: Key[Array, ""],
     output_shape: tuple[int, ...],
+    point_keys: Array | None = None,
 ) -> Array:
-    leading_shape = states.shape[: -len(problem.state_shape)]
+    leading_shape = _leading_shape(
+        states.shape,
+        problem.state_shape,
+        owner="Feynman-Kac predictor states",
+    )
     flat_states = states.reshape((-1,) + problem.state_shape)
     flat_times = jnp.broadcast_to(times, leading_shape).reshape((-1,))
-    keys = jr.split(key, flat_states.shape[0])
+    keys = (
+        jr.split(key, flat_states.shape[0])
+        if point_keys is None
+        else point_keys.reshape((-1,) + tuple(key.shape))
+    )
     values = jax.vmap(
         lambda time, state, point_key: _predictor_value(
             predictor,
@@ -497,11 +560,20 @@ def _point_controls(
     /,
     *,
     key: Key[Array, ""],
+    point_keys: Array | None = None,
 ) -> Array:
-    leading_shape = states.shape[: -len(problem.state_shape)]
+    leading_shape = _leading_shape(
+        states.shape,
+        problem.state_shape,
+        owner="Feynman-Kac autodiff-control states",
+    )
     flat_states = states.reshape((-1,) + problem.state_shape)
     flat_times = jnp.broadcast_to(times, leading_shape).reshape((-1,))
-    keys = jr.split(key, flat_states.shape[0])
+    keys = (
+        jr.split(key, flat_states.shape[0])
+        if point_keys is None
+        else point_keys.reshape((-1,) + tuple(key.shape))
+    )
     controls = jax.vmap(
         lambda time, state, point_key: autodiff_bsde_control(
             value_predictor,
@@ -523,9 +595,47 @@ def _source_generator_nodes(
     source_value: Predictor | None,
     source_control: Predictor | None,
     key: Key[Array, ""],
+    path_offset: int | None = None,
 ) -> Array:
-    value_key, control_key = jr.split(key)
-    leading_shape = states.shape[: -len(problem.state_shape)]
+    leading_shape = _leading_shape(
+        states.shape,
+        problem.state_shape,
+        owner="Feynman-Kac generator states",
+    )
+    if path_offset is None:
+        value_key, control_key = jr.split(key)
+        value_point_keys = None
+        control_point_keys = None
+        autodiff_point_keys = None
+    else:
+        if len(leading_shape) != 3:
+            raise ValueError(
+                "Chunk-addressed Feynman-Kac sources require query/path/time axes."
+            )
+        semantic_shape = (
+            leading_shape[0],
+            leading_shape[1],
+            leading_shape[2],
+        )
+        value_key = control_key = key
+        value_point_keys = _query_point_keys(
+            key,
+            _SOURCE_VALUE_ADDRESS,
+            semantic_shape,
+            path_offset,
+        )
+        control_point_keys = _query_point_keys(
+            key,
+            _SOURCE_CONTROL_ADDRESS,
+            semantic_shape,
+            path_offset,
+        )
+        autodiff_point_keys = _query_point_keys(
+            key,
+            _AUTODIFF_CONTROL_ADDRESS,
+            semantic_shape,
+            path_offset,
+        )
     if source_value is None:
         values = jnp.zeros(leading_shape + problem.output_shape, dtype=states.dtype)
     else:
@@ -536,6 +646,7 @@ def _source_generator_nodes(
             problem,
             key=value_key,
             output_shape=problem.output_shape,
+            point_keys=value_point_keys,
         )
     if source_control is not None:
         controls = _point_values(
@@ -545,6 +656,7 @@ def _source_generator_nodes(
             problem,
             key=control_key,
             output_shape=problem.output_shape + problem.noise_shape,
+            point_keys=control_point_keys,
         )
     elif source_value is not None:
         controls = _point_controls(
@@ -553,6 +665,7 @@ def _source_generator_nodes(
             states,
             problem,
             key=control_key,
+            point_keys=autodiff_point_keys,
         )
     else:
         controls = jnp.zeros(
@@ -579,7 +692,11 @@ def _source_generator_nodes(
 
 
 def _terminal_values(problem: BSDEProblem, states: Array, /) -> Array:
-    leading_shape = states.shape[: -len(problem.state_shape)]
+    leading_shape = _leading_shape(
+        states.shape,
+        problem.state_shape,
+        owner="Feynman-Kac terminal states",
+    )
     values = jax.vmap(lambda state: jnp.asarray(problem.terminal(state, problem.args)))(
         states.reshape((-1,) + problem.state_shape)
     )
@@ -817,9 +934,11 @@ def _resolve_queries(
     states = jnp.asarray(query_states)
     if states.ndim < len(problem.state_shape) + 1:
         raise ValueError("query_states require at least one query axis.")
-    if states.shape[-len(problem.state_shape) :] != problem.state_shape:
-        raise ValueError("query_states trailing dimensions must equal state_shape.")
-    query_shape = states.shape[: -len(problem.state_shape)]
+    query_shape = _leading_shape(
+        states.shape,
+        problem.state_shape,
+        owner="Feynman-Kac query states",
+    )
     times = jnp.asarray(query_times, dtype=jnp.float64)
     if times.shape != query_shape:
         raise ValueError("query_times must match the query-state leading shape.")
@@ -847,21 +966,40 @@ def _normal_draws(
     /,
     *,
     antithetic: bool,
+    path_offset: int,
 ) -> tuple[Array, Array]:
     query_count, path_count, steps, *noise_shape = shape
+    query_indices = jnp.arange(query_count, dtype=jnp.uint32)
     if antithetic:
         half = path_count // 2
-        base = jr.normal(key, (query_count, half, steps, *noise_shape))
-        draws = jnp.concatenate((base, -base), axis=1)
-        ids = jnp.concatenate(
-            (
-                jnp.arange(half, dtype=jnp.int32),
-                jnp.arange(half, dtype=jnp.int32),
-            )
+        pair_offset = path_offset // 2
+        path_indices = jnp.arange(
+            pair_offset,
+            pair_offset + half,
+            dtype=jnp.uint32,
         )
     else:
-        draws = jr.normal(key, shape)
-        ids = jnp.arange(path_count, dtype=jnp.int32)
+        path_indices = jnp.arange(
+            path_offset,
+            path_offset + path_count,
+            dtype=jnp.uint32,
+        )
+
+    def one_query(query_index):
+        return jax.vmap(
+            lambda path_index: jr.normal(
+                derive_key(key, _PATH_ADDRESS, query_index, path_index),
+                (steps, *noise_shape),
+            )
+        )(path_indices)
+
+    base = jax.vmap(one_query)(query_indices)
+    if antithetic:
+        draws = jnp.concatenate((base, -base), axis=1)
+        ids = jnp.concatenate((path_indices, path_indices))
+    else:
+        draws = base
+        ids = path_indices
     return draws, jnp.broadcast_to(ids, (query_count, path_count))
 
 
@@ -875,6 +1013,7 @@ def sample_feynman_kac_paths(
     key: Key[Array, ""] = jr.key(0),
     query_weights: ArrayLike | None = None,
     num_paths: int | None = None,
+    _path_offset: int = 0,
 ) -> FeynmanKacPathBatch:
     """Simulate Euler--Maruyama continuations on one normalized grid per query."""
     if not isinstance(problem, BSDEProblem) or not isinstance(
@@ -899,6 +1038,9 @@ def sample_feynman_kac_paths(
         raise ValueError("num_paths must be positive.")
     if plan.antithetic and path_count % 2:
         raise ValueError("Antithetic path batches require an even path count.")
+    path_offset = int(_path_offset)
+    if path_offset < 0 or (plan.antithetic and path_offset % 2):
+        raise ValueError("_path_offset must be nonnegative and antithetic-pair aligned.")
     query_count = q_times.shape[0]
     steps = plan.num_time_steps
     normalized = jnp.linspace(0.0, 1.0, steps + 1)
@@ -909,6 +1051,7 @@ def sample_feynman_kac_paths(
         jr.fold_in(key, 1),
         (query_count, path_count, steps) + problem.noise_shape,
         antithetic=plan.antithetic,
+        path_offset=path_offset,
     )
     sqrt_dt_shape = (query_count, 1, steps) + (1,) * len(problem.noise_shape)
     increments = draws * jnp.sqrt(dt).reshape(sqrt_dt_shape)
@@ -1026,6 +1169,7 @@ def _query_path_targets(
     source_value: Predictor | None,
     source_control: Predictor | None,
     key: Key[Array, ""],
+    path_offset: int,
 ) -> tuple[Array, Array, Array]:
     generator = _source_generator_nodes(
         problem,
@@ -1034,6 +1178,7 @@ def _query_path_targets(
         source_value=source_value,
         source_control=source_control,
         key=jr.fold_in(key, 0),
+        path_offset=path_offset,
     )
     terminal = _terminal_values(problem, paths.states[:, :, -1])
     targets = _reverse_targets(
@@ -1047,39 +1192,21 @@ def _query_path_targets(
     return targets, valid, paths.wiener_increments
 
 
-def query_feynman_kac_labels(
+def _query_chunk_samples(
     problem: BSDEProblem,
     plan: FeynmanKacSamplingPlan,
+    q_times: Array,
+    q_states: Array,
+    q_weights: Array,
     /,
     *,
-    query_times: ArrayLike | None = None,
-    query_states: ArrayLike | None = None,
-    query_weights: ArrayLike | None = None,
-    query_sampler: Callable[[Key[Array, ""]], Any] | None = None,
-    source_value: Predictor | None = None,
-    source_control: Predictor | None = None,
-    malliavin_weight: MalliavinWeight | None = None,
-    key: Key[Array, ""] = jr.key(0),
-    return_paths: bool = False,
-) -> FeynmanKacLabelBatch | tuple[FeynmanKacLabelBatch, FeynmanKacPathBatch]:
-    """Estimate conditional Feynman--Kac value/control targets at explicit queries."""
-    if not isinstance(problem, BSDEProblem) or not isinstance(
-        plan, FeynmanKacSamplingPlan
-    ):
-        raise TypeError(
-            "problem and plan must be BSDEProblem and FeynmanKacSamplingPlan."
-        )
-    if plan.sampling_mode != "queries":
-        raise ValueError("query_feynman_kac_labels requires queries mode.")
-    q_times, q_states, q_weights = _resolve_queries(
-        problem,
-        plan,
-        key=jr.fold_in(key, 0),
-        query_times=query_times,
-        query_states=query_states,
-        query_weights=query_weights,
-        query_sampler=query_sampler,
-    )
+    source_value: Predictor | None,
+    source_control: Predictor | None,
+    malliavin_weight: MalliavinWeight | None,
+    key: Key[Array, ""],
+    path_count: int,
+    path_offset: int,
+) -> tuple[FeynmanKacPathBatch, Array, Array, Array | None, Array | None]:
     paths = sample_feynman_kac_paths(
         problem,
         q_times,
@@ -1087,6 +1214,8 @@ def query_feynman_kac_labels(
         plan,
         key=jr.fold_in(key, 1),
         query_weights=q_weights,
+        num_paths=path_count,
+        _path_offset=path_offset,
     )
     targets, continuation_valid, increments = _query_path_targets(
         problem,
@@ -1094,22 +1223,18 @@ def query_feynman_kac_labels(
         plan,
         source_value=source_value,
         source_control=source_control,
-        key=jr.fold_in(key, 2),
+        key=key,
+        path_offset=path_offset,
     )
     value_samples = targets[:, :, 0]
     path_valid = continuation_valid[:, :, 0] & _event_finite(
-        value_samples, problem.output_shape
-    )
-    value_targets, value_errors, valid, cluster_count = _aggregate_samples(
         value_samples,
-        path_valid,
-        antithetic=plan.antithetic,
+        problem.output_shape,
     )
-    control_targets = None
-    control_errors = None
-    control_valid = jnp.zeros_like(valid)
     duration = plan.terminal_time - q_times
     nonterminal = duration > 0.0
+    control_samples = None
+    control_path_valid = None
     if plan.control_target_mode == "martingale":
         output_size = prod(problem.output_shape)
         noise_size = prod(problem.noise_shape)
@@ -1121,29 +1246,17 @@ def query_feynman_kac_labels(
         )
         dt0 = paths.times[:, 1] - paths.times[:, 0]
         safe_dt = jnp.where(nonterminal, dt0, 1.0)
-        samples = ein.contract(
+        control_samples = ein.contract(
             "qpo,qpn->qpon",
             next_values,
             first_increment,
         ) / safe_dt.reshape((-1, 1, 1, 1))
-        samples = samples.reshape(
+        control_samples = control_samples.reshape(
             (q_times.shape[0], paths.num_paths)
             + problem.output_shape
             + problem.noise_shape
         )
         control_path_valid = continuation_valid[:, :, 1] & nonterminal[:, None]
-        control_targets, control_errors, control_valid, _ = _aggregate_samples(
-            samples,
-            control_path_valid,
-            antithetic=plan.antithetic,
-        )
-        control_targets = jnp.where(
-            nonterminal.reshape(
-                (-1,) + (1,) * (len(problem.output_shape) + len(problem.noise_shape))
-            ),
-            control_targets,
-            0.0,
-        )
     elif plan.control_target_mode == "malliavin":
         if malliavin_weight is None:
             raise ValueError("Malliavin control targets require malliavin_weight.")
@@ -1167,7 +1280,7 @@ def query_feynman_kac_labels(
             )
         baseline = _terminal_values(problem, q_states)
         centered = value_samples - baseline[:, None]
-        samples = ein.contract(
+        control_samples = ein.contract(
             "qpo,qpn->qpon",
             centered.reshape((q_times.shape[0], paths.num_paths, -1)),
             flat_weights.reshape((q_times.shape[0], paths.num_paths, -1)),
@@ -1176,11 +1289,201 @@ def query_feynman_kac_labels(
             + problem.output_shape
             + problem.noise_shape
         )
-        control_targets, control_errors, control_valid, _ = _aggregate_samples(
-            samples,
-            path_valid & nonterminal[:, None],
+        control_path_valid = path_valid & nonterminal[:, None]
+    return paths, value_samples, path_valid, control_samples, control_path_valid
+
+
+def _concatenate_path_chunks(
+    chunks: Sequence[FeynmanKacPathBatch],
+    /,
+) -> FeynmanKacPathBatch:
+    first = chunks[0]
+
+    def concatenate(values: Sequence[Array]) -> Array:
+        if not first.antithetic:
+            return jnp.concatenate(tuple(values), axis=1)
+        positive = tuple(value[:, : value.shape[1] // 2] for value in values)
+        negative = tuple(value[:, value.shape[1] // 2 :] for value in values)
+        return jnp.concatenate(positive + negative, axis=1)
+
+    return FeynmanKacPathBatch(
+        first.query_times,
+        first.query_states,
+        first.times,
+        concatenate(tuple(chunk.states for chunk in chunks)),
+        concatenate(tuple(chunk.wiener_increments for chunk in chunks)),
+        state_shape=first.state_shape,
+        noise_shape=first.noise_shape,
+        path_id=first.path_id,
+        process_id=first.process_id,
+        valid=concatenate(tuple(chunk.valid for chunk in chunks)),
+        query_weights=first.query_weights,
+        dependence_ids=concatenate(tuple(chunk.dependence_ids for chunk in chunks)),
+        antithetic=first.antithetic,
+    )
+
+
+def query_feynman_kac_labels(
+    problem: BSDEProblem,
+    plan: FeynmanKacSamplingPlan,
+    /,
+    *,
+    query_times: ArrayLike | None = None,
+    query_states: ArrayLike | None = None,
+    query_weights: ArrayLike | None = None,
+    query_sampler: Callable[[Key[Array, ""]], Any] | None = None,
+    source_value: Predictor | None = None,
+    source_control: Predictor | None = None,
+    malliavin_weight: MalliavinWeight | None = None,
+    key: Key[Array, ""] = jr.key(0),
+    return_paths: bool = False,
+) -> FeynmanKacLabelBatch | tuple[FeynmanKacLabelBatch, FeynmanKacPathBatch]:
+    """Estimate conditional Feynman--Kac labels in bounded path chunks."""
+    if not isinstance(problem, BSDEProblem) or not isinstance(
+        plan, FeynmanKacSamplingPlan
+    ):
+        raise TypeError(
+            "problem and plan must be BSDEProblem and FeynmanKacSamplingPlan."
+        )
+    if plan.sampling_mode != "queries":
+        raise ValueError("query_feynman_kac_labels requires queries mode.")
+    q_times, q_states, q_weights = _resolve_queries(
+        problem,
+        plan,
+        key=jr.fold_in(key, 0),
+        query_times=query_times,
+        query_states=query_states,
+        query_weights=query_weights,
+        query_sampler=query_sampler,
+    )
+    path_chunk_size = plan.path_chunk_size or plan.num_paths_per_query
+    path_chunks: list[FeynmanKacPathBatch] = []
+    value_chunks: list[Array] = []
+    valid_chunks: list[Array] = []
+    control_chunks: list[Array] = []
+    control_valid_chunks: list[Array] = []
+    for path_offset in range(0, plan.num_paths_per_query, path_chunk_size):
+        path_count = min(
+            path_chunk_size,
+            plan.num_paths_per_query - path_offset,
+        )
+        (
+            paths,
+            value_samples,
+            path_valid,
+            control_samples,
+            control_path_valid,
+        ) = _query_chunk_samples(
+            problem,
+            plan,
+            q_times,
+            q_states,
+            q_weights,
+            source_value=source_value,
+            source_control=source_control,
+            malliavin_weight=malliavin_weight,
+            key=key,
+            path_count=path_count,
+            path_offset=path_offset,
+        )
+        if return_paths:
+            path_chunks.append(paths)
+        if plan.antithetic:
+            half = path_count // 2
+            value_chunks.append(value_samples[:, :half])
+            valid_chunks.append(path_valid[:, :half])
+            value_chunks.append(value_samples[:, half:])
+            valid_chunks.append(path_valid[:, half:])
+            if control_samples is not None and control_path_valid is not None:
+                control_chunks.append(control_samples[:, :half])
+                control_valid_chunks.append(control_path_valid[:, :half])
+                control_chunks.append(control_samples[:, half:])
+                control_valid_chunks.append(control_path_valid[:, half:])
+        else:
+            value_chunks.append(value_samples)
+            valid_chunks.append(path_valid)
+            if control_samples is not None and control_path_valid is not None:
+                control_chunks.append(control_samples)
+                control_valid_chunks.append(control_path_valid)
+
+    if plan.antithetic:
+        chunk_count = len(value_chunks) // 2
+        positive_values = tuple(value_chunks[2 * index] for index in range(chunk_count))
+        negative_values = tuple(
+            value_chunks[2 * index + 1] for index in range(chunk_count)
+        )
+        positive_valid = tuple(valid_chunks[2 * index] for index in range(chunk_count))
+        negative_valid = tuple(
+            valid_chunks[2 * index + 1] for index in range(chunk_count)
+        )
+        value_samples = jnp.concatenate(positive_values + negative_values, axis=1)
+        path_valid = jnp.concatenate(positive_valid + negative_valid, axis=1)
+        if control_chunks:
+            positive_controls = tuple(
+                control_chunks[2 * index] for index in range(chunk_count)
+            )
+            negative_controls = tuple(
+                control_chunks[2 * index + 1] for index in range(chunk_count)
+            )
+            positive_control_valid = tuple(
+                control_valid_chunks[2 * index] for index in range(chunk_count)
+            )
+            negative_control_valid = tuple(
+                control_valid_chunks[2 * index + 1] for index in range(chunk_count)
+            )
+            control_samples = jnp.concatenate(
+                positive_controls + negative_controls,
+                axis=1,
+            )
+            control_path_valid = jnp.concatenate(
+                positive_control_valid + negative_control_valid,
+                axis=1,
+            )
+        else:
+            control_samples = None
+            control_path_valid = None
+    else:
+        value_samples = jnp.concatenate(tuple(value_chunks), axis=1)
+        path_valid = jnp.concatenate(tuple(valid_chunks), axis=1)
+        control_samples = (
+            jnp.concatenate(tuple(control_chunks), axis=1) if control_chunks else None
+        )
+        control_path_valid = (
+            jnp.concatenate(tuple(control_valid_chunks), axis=1)
+            if control_valid_chunks
+            else None
+        )
+
+    value_targets, value_errors, valid, cluster_count = _aggregate_samples(
+        value_samples,
+        path_valid,
+        antithetic=plan.antithetic,
+    )
+    control_targets = None
+    control_errors = None
+    control_valid = jnp.zeros_like(valid)
+    if control_samples is not None and control_path_valid is not None:
+        (
+            control_targets,
+            control_errors,
+            control_valid,
+            _,
+        ) = _aggregate_samples(
+            control_samples,
+            control_path_valid,
             antithetic=plan.antithetic,
         )
+        if plan.control_target_mode == "martingale":
+            nonterminal = (plan.terminal_time - q_times) > 0.0
+            control_targets = jnp.where(
+                nonterminal.reshape(
+                    (-1,) + (1,) * (len(problem.output_shape) + len(problem.noise_shape))
+                ),
+                control_targets,
+                0.0,
+            )
+
+    path_id = f"feynman-kac:{problem.process_id}:{plan.plan_id}"
     labels = FeynmanKacLabelBatch(
         q_times,
         q_states,
@@ -1203,11 +1506,12 @@ def query_feynman_kac_labels(
             "sampling_mode": "queries",
             "quadrature": plan.quadrature,
             "antithetic": plan.antithetic,
-            "path_id": paths.path_id,
+            "path_id": path_id,
+            "path_chunk_size": path_chunk_size,
         },
     )
     if return_paths:
-        return labels, paths
+        return labels, _concatenate_path_chunks(tuple(path_chunks))
     return labels
 
 

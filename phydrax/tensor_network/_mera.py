@@ -12,7 +12,7 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract, get_symbol
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import precision_itemsize
 from .._strict import StrictModule
 from ..metrix import ComplexStiefelManifold, StiefelManifold
@@ -105,9 +105,8 @@ class BinaryMERA(StrictModule):
         self.mera_id = canonical_fingerprint(
             {
                 "kind": "finite-binary-mera",
-                "isometry_shapes": tuple(value.shape for value in isometries_),
-                "disentangler_shapes": tuple(value.shape for value in disentanglers_),
-                "dtype": dtype,
+                "isometries": array_tree_fingerprint(isometries_),
+                "disentanglers": array_tree_fingerprint(disentanglers_),
             }
         )
 

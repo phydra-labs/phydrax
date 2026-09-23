@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
 import jax.numpy as jnp
 import numpy as np
@@ -49,6 +50,17 @@ class VibroacousticSystem:
         *,
         tolerance: float = 1e-10,
     ) -> VibroacousticSystem:
+        raw_values = (
+            structural_mass,
+            structural_damping,
+            structural_stiffness,
+            acoustic_mass,
+            acoustic_damping,
+            acoustic_stiffness,
+            reciprocal_coupling,
+        )
+        if any(np.iscomplexobj(value) for value in raw_values):
+            raise TypeError("Vibroacoustic systems require real-valued operators.")
         structural = tuple(
             np.asarray(value, dtype=np.float64)
             for value in (structural_mass, structural_damping, structural_stiffness)
@@ -68,11 +80,31 @@ class VibroacousticSystem:
             raise ValueError("Vibroacoustic acoustic matrices must align.")
         if coupling.shape != (structural[0].shape[0], acoustic[0].shape[0]):
             raise ValueError("Vibroacoustic reciprocal coupling has incompatible shape.")
+        if not all(
+            np.all(np.isfinite(value)) for value in (*structural, *acoustic, coupling)
+        ):
+            raise ValueError("Vibroacoustic operators must be finite.")
         if any(
             not np.allclose(value, value.T, atol=tolerance, rtol=0)
             for value in (*structural, *acoustic)
         ):
             raise ValueError("Vibroacoustic diagonal operators must be symmetric.")
+        if (
+            np.min(np.linalg.eigvalsh(structural[0])) <= tolerance
+            or np.min(np.linalg.eigvalsh(acoustic[0])) <= tolerance
+            or any(
+                np.min(np.linalg.eigvalsh(value)) < -tolerance
+                for value in (
+                    structural[1],
+                    structural[2],
+                    acoustic[1],
+                    acoustic[2],
+                )
+            )
+        ):
+            raise ValueError(
+                "Vibroacoustic mass must be positive definite and damping/stiffness positive semidefinite."
+            )
         return cls(
             *(jnp.asarray(value) for value in structural),
             *(jnp.asarray(value) for value in acoustic),
@@ -86,14 +118,18 @@ class VibroacousticSystem:
         acoustic_source: ArrayLike,
         /,
     ) -> VibroacousticResult:
-        if angular_frequency_rad_s < 0:
-            raise ValueError("Vibroacoustic frequency must be non-negative.")
+        if not isfinite(angular_frequency_rad_s) or angular_frequency_rad_s < 0:
+            raise ValueError("Vibroacoustic frequency must be finite and non-negative.")
         force = jnp.asarray(structural_force_n)
         source = jnp.asarray(acoustic_source)
         structural_size = self.structural_mass.shape[0]
         acoustic_size = self.acoustic_mass.shape[0]
         if force.shape != (structural_size,) or source.shape != (acoustic_size,):
             raise ValueError("Vibroacoustic loads have incompatible shapes.")
+        if not bool(jnp.all(jnp.isfinite(force))) or not bool(
+            jnp.all(jnp.isfinite(source))
+        ):
+            raise ValueError("Vibroacoustic loads must be finite.")
         omega = float(angular_frequency_rad_s)
         structural_dynamic = (
             self.structural_stiffness.astype("complex128")

@@ -19,6 +19,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..units import TIME, UnitDefinition
 from ._quantity import canonical_quantity_text
 from ._time import SampleTimeAxis
 
@@ -127,15 +128,15 @@ class PointSampleSupport:
     sample_ids: tuple[str, ...]
     coordinate_contract: SpatialCoordinateContract
     sample_times: np.ndarray | None = None
-    time_unit_id: str | None = None
+    time_unit: UnitDefinition | None = None
     active_mask: np.ndarray | None = None
     sample_shape: tuple[int, ...] = field(init=False)
     support_id: str = field(init=False)
 
     def __post_init__(self) -> None:
         points = _real(self.points, "points")
-        if points.ndim != 2 or points.shape[0] < 1 or points.shape[1] < 1:
-            raise ValueError("points must have shape (sample_count, spatial_dimension).")
+        if points.ndim != 2 or points.shape[0] < 1 or points.shape[1] != 3:
+            raise ValueError("points must have shape (sample_count, 3).")
         if not isinstance(self.coordinate_contract, SpatialCoordinateContract):
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         identifiers = tuple(
@@ -156,22 +157,26 @@ class PointSampleSupport:
         if not np.all(np.where(active[:, None], np.isfinite(points), True)):
             raise ValueError("Active points must be finite.")
         times = None
-        time_unit_id = self.time_unit_id
+        time_unit = self.time_unit
         if self.sample_times is not None:
             times = _real(self.sample_times, "sample_times")
             if times.shape != (points.shape[0],):
                 raise ValueError("sample_times must have shape (sample_count,).")
-            if time_unit_id is None:
-                raise ValueError("sample_times require time_unit_id.")
-            time_unit_id = canonical_quantity_text(time_unit_id, "time_unit_id")
-        elif time_unit_id is not None:
-            raise ValueError("time_unit_id requires sample_times.")
+            if not isinstance(time_unit, UnitDefinition) or time_unit.dimension != TIME:
+                raise ValueError("sample_times require a time UnitDefinition.")
+            if np.any(active & ~np.isfinite(times)):
+                raise ValueError("Active sample_times must be finite.")
+            active_times = times[active]
+            if active_times.size > 1 and np.any(np.diff(active_times) < 0.0):
+                raise ValueError("Active sample_times must be monotonically increasing.")
+        elif time_unit is not None:
+            raise ValueError("time_unit requires sample_times.")
         active.setflags(write=False)
         object.__setattr__(self, "points", points)
         object.__setattr__(self, "sample_ids", identifiers)
         object.__setattr__(self, "active_mask", active)
         object.__setattr__(self, "sample_times", times)
-        object.__setattr__(self, "time_unit_id", time_unit_id)
+        object.__setattr__(self, "time_unit", time_unit)
         object.__setattr__(self, "sample_shape", (points.shape[0],))
         object.__setattr__(
             self,
@@ -183,7 +188,7 @@ class PointSampleSupport:
                     "sample_ids": list(identifiers),
                     "coordinate_contract": self.coordinate_contract.spatial_id,
                     "times": None if times is None else array_tree_fingerprint(times),
-                    "time_unit": time_unit_id,
+                    "time_unit": None if time_unit is None else time_unit.unit_id,
                     "active": array_tree_fingerprint(active),
                 }
             ),
@@ -199,7 +204,7 @@ class RaySampleSupport:
     sample_ids: tuple[str, ...]
     coordinate_contract: SpatialCoordinateContract
     sample_times: np.ndarray | None = None
-    time_unit_id: str | None = None
+    time_unit: UnitDefinition | None = None
     active_mask: np.ndarray | None = None
     near: np.ndarray | None = None
     far: np.ndarray | None = None
@@ -209,10 +214,13 @@ class RaySampleSupport:
     def __post_init__(self) -> None:
         origins = _real(self.origins, "origins")
         directions = _real(self.directions, "directions")
-        if origins.ndim != 2 or origins.shape != directions.shape or origins.shape[0] < 1:
-            raise ValueError(
-                "origins and directions must share shape (sample_count, dimension)."
-            )
+        if (
+            origins.ndim != 2
+            or origins.shape != directions.shape
+            or origins.shape[0] < 1
+            or origins.shape[1] != 3
+        ):
+            raise ValueError("origins and directions must share shape (sample_count, 3).")
         if not isinstance(self.coordinate_contract, SpatialCoordinateContract):
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         identifiers = tuple(
@@ -242,16 +250,20 @@ class RaySampleSupport:
         safe = norms > 0.0
         normalized[safe] = directions[safe] / norms[safe, None]
         times = None
-        time_unit_id = self.time_unit_id
+        time_unit = self.time_unit
         if self.sample_times is not None:
             times = _real(self.sample_times, "sample_times")
             if times.shape != (origins.shape[0],):
                 raise ValueError("sample_times must have shape (sample_count,).")
-            if time_unit_id is None:
-                raise ValueError("sample_times require time_unit_id.")
-            time_unit_id = canonical_quantity_text(time_unit_id, "time_unit_id")
-        elif time_unit_id is not None:
-            raise ValueError("time_unit_id requires sample_times.")
+            if not isinstance(time_unit, UnitDefinition) or time_unit.dimension != TIME:
+                raise ValueError("sample_times require a time UnitDefinition.")
+            if np.any(active & ~np.isfinite(times)):
+                raise ValueError("Active sample_times must be finite.")
+            active_times = times[active]
+            if active_times.size > 1 and np.any(np.diff(active_times) < 0.0):
+                raise ValueError("Active sample_times must be monotonically increasing.")
+        elif time_unit is not None:
+            raise ValueError("time_unit requires sample_times.")
         near = (
             np.zeros((origins.shape[0],), dtype=origins.dtype)
             if self.near is None
@@ -264,8 +276,10 @@ class RaySampleSupport:
         )
         if near.shape != active.shape or far.shape != active.shape:
             raise ValueError("near and far must have shape (sample_count,).")
-        if np.any(active & ((near < 0.0) | (far <= near))):
-            raise ValueError("Active ray bounds require 0 <= near < far.")
+        if np.any(
+            active & (~np.isfinite(near) | np.isnan(far) | (near < 0.0) | (far <= near))
+        ):
+            raise ValueError("Active ray bounds require non-NaN 0 <= near < far.")
         for array in (active, normalized, near, far):
             array.setflags(write=False)
         object.__setattr__(self, "origins", origins)
@@ -273,7 +287,7 @@ class RaySampleSupport:
         object.__setattr__(self, "sample_ids", identifiers)
         object.__setattr__(self, "active_mask", active)
         object.__setattr__(self, "sample_times", times)
-        object.__setattr__(self, "time_unit_id", time_unit_id)
+        object.__setattr__(self, "time_unit", time_unit)
         object.__setattr__(self, "near", near)
         object.__setattr__(self, "far", far)
         object.__setattr__(self, "sample_shape", (origins.shape[0],))
@@ -288,7 +302,7 @@ class RaySampleSupport:
                     "sample_ids": list(identifiers),
                     "coordinate_contract": self.coordinate_contract.spatial_id,
                     "times": None if times is None else array_tree_fingerprint(times),
-                    "time_unit": time_unit_id,
+                    "time_unit": None if time_unit is None else time_unit.unit_id,
                     "active": array_tree_fingerprint(active),
                     "near": array_tree_fingerprint(near),
                     "far": array_tree_fingerprint(far),
@@ -324,7 +338,7 @@ def prepare_point_support(support: PointSampleSupport, /) -> PreparedPointSample
         None if support.sample_times is None else jnp.asarray(support.sample_times),
         jnp.asarray(support.active_mask),
         support.support_id,
-        support.time_unit_id,
+        None if support.time_unit is None else support.time_unit.unit_id,
     )
 
 
@@ -339,7 +353,7 @@ def prepare_ray_support(support: RaySampleSupport, /) -> PreparedRaySampleSuppor
         jnp.asarray(support.near),
         jnp.asarray(support.far),
         support.support_id,
-        support.time_unit_id,
+        None if support.time_unit is None else support.time_unit.unit_id,
     )
 
 

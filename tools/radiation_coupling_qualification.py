@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def main() -> None:
+def main() -> int:
     grid = phx.equations.SpectralFrequencyGrid(
         jnp.asarray((1.0e12, 2.0e12, 3.0e12)),
         jnp.asarray((0.5e12, 1.0e12, 0.5e12)),
@@ -32,17 +32,18 @@ def main() -> None:
         provenance="synthetic qualification coefficient",
     ).evaluate(jnp.asarray(500.0), jnp.asarray(1.0e5))
     means = phx.equations.radiation_means(jnp.asarray(500.0), absorption, transport, grid)
-    print(
-        json.dumps(
-            {
-                "planck_absorption": float(means.planck_absorption),
-                "rosseland_transport": float(means.rosseland_transport),
-                "successful": bool(means.successful),
-            },
-            indent=2,
-        )
-    )
+    report = {
+        "planck_absorption": float(means.planck_absorption),
+        "rosseland_transport": float(means.rosseland_transport),
+        "successful": bool(
+            means.successful
+            and jnp.isfinite(means.planck_absorption)
+            and jnp.isfinite(means.rosseland_transport)
+        ),
+    }
+    print(json.dumps(report, indent=2, allow_nan=False))
+    return 0 if report["successful"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

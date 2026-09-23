@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -152,14 +153,19 @@ class UnsteadyVortexLatticePlan(StrictModule, NonTrainableState):
             & jnp.isfinite(dt)
             & (dt > 0.0)
         )
-        next_state = UVLMState(
+        candidate_state = UVLMState(
             convected,
             bound_result.circulation,
             state.time + dt,
             state.step_index + 1,
         )
+        next_state = jax.tree.map(
+            lambda candidate, accepted: jnp.where(successful, candidate, accepted),
+            candidate_state,
+            state,
+        )
         remaining = self.wake.segment_capacity - jnp.sum(
-            convected.active, dtype=jnp.int32
+            next_state.wake.active, dtype=jnp.int32
         )
         return UVLMStepResult(
             next_state,

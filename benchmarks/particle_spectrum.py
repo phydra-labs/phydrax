@@ -9,7 +9,12 @@ import json
 
 import jax.numpy as jnp
 
-from benchmarks._runtime import capture_environment, logical_array_bytes, measure_host
+from benchmarks._runtime import (
+    capture_environment,
+    logical_array_bytes,
+    measure_host,
+    measure_synchronized,
+)
 from phydrax.interchange.hep import parse_slha, spectrum_observables_from_slha
 from phydrax.particle_physics import ScaleBVPPlan, solve_scale_bvp
 
@@ -33,7 +38,7 @@ def benchmark_case(integration_steps: int):
         residual_tolerance=1e-11,
         source_ids=("analytic-beta-control",),
     )
-    result, solve_seconds = measure_host(
+    result, solve_seconds = measure_synchronized(
         lambda: solve_scale_bvp(plan, jnp.asarray((1.0,)))
     )
     return {
@@ -70,16 +75,21 @@ def main() -> None:
     arguments = parser.parse_args()
     if any(value < 1 for value in arguments.integration_steps):
         raise ValueError("integration steps must be positive.")
+    cases = [benchmark_case(value) for value in arguments.integration_steps]
     payload = {
         "environment": capture_environment().to_dict(),
-        "cases": [benchmark_case(value) for value in arguments.integration_steps],
+        "cases": cases,
+        "passed": all(case["successful"] for case in cases),
     }
-    encoded = json.dumps(payload, indent=2, sort_keys=True)
+    encoded = json.dumps(payload, allow_nan=False, indent=2, sort_keys=True)
     if arguments.output:
-        with open(arguments.output, "w", encoding="utf-8") as stream:
-            stream.write(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
     else:
         print(encoded)
+    if not payload["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

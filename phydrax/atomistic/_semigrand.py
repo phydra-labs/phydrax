@@ -107,6 +107,13 @@ def variance_constrained_semigrand_step(
     capacity = potential.system.capacity
     if current.shape != (capacity,):
         raise ValueError("species must match the atomistic capacity.")
+    active_mask = potential.system.active_mask
+    species_count = plan.chemical_potentials.size
+    current = eqx.error_if(
+        current,
+        jnp.any(active_mask & ((current < 0) | (current >= species_count))),
+        "Active species indices must lie within the chemical-potential table.",
+    )
     key = jr.wrap_key_data(jnp.asarray(key_data, dtype=jnp.uint32))
     key = jr.fold_in(key, jnp.asarray(plan.realization_id, dtype=jnp.uint32))
     key = jr.fold_in(key, jnp.asarray(step_index, dtype=jnp.uint32))
@@ -127,8 +134,10 @@ def variance_constrained_semigrand_step(
     current_energy = potential.energy(positions, neighborhood, species=current)[0]
     proposed_energy = potential.energy(positions, neighborhood, species=proposed)[0]
     energy_delta = proposed_energy - current_energy
-    counts = jnp.bincount(current, length=species_count).astype(
-        jnp.asarray(positions).dtype
+    counts = jnp.bincount(
+        jnp.where(active_mask, current, 0),
+        weights=active_mask.astype(jnp.asarray(positions).dtype),
+        length=species_count,
     )
     proposed_counts = counts.at[previous_species].add(-1.0).at[proposed_species].add(1.0)
     fraction = counts / active_count

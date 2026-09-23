@@ -253,6 +253,8 @@ class FractionalPowerSpectralFunction(AbstractSpectralFunction):
 
     def derivative(self, eigenvalue: ArrayLike, /) -> Array:
         x = jnp.asarray(eigenvalue)
+        if self.power == 0.0:
+            return jnp.zeros_like(x)
         return self.power * x ** (self.power - 1)
 
     def validate_domain(
@@ -380,7 +382,7 @@ class SelfAdjointSpectralOperator(StrictModule):
 
     def apply_coordinates(self, vector: ArrayLike, /) -> Array:
         value = jnp.asarray(vector)
-        if value.shape != (self.operator.shape[1],):
+        if value.shape != (self.operator.shape[-1],):
             raise ValueError("vector must match the spectral operator dimension.")
         return self.operator @ value
 
@@ -427,33 +429,25 @@ def self_adjoint_spectral_operator(
     )
     derivative_valid = status == int(SelfAdjointSpectralOperatorStatus.SUCCESS)
     if selected_policy.differentiation == "frechet":
-        operator = jax.lax.cond(
-            jnp.all(derivative_valid),
-            lambda value: _attach_spectral_operator_derivative(
-                spectrum.problem,
-                function,
-                value,
-                spectrum.eigenvalues,
-                spectrum.eigenvectors,
-                spectrum.inverse_basis,
-            ),
-            jax.lax.stop_gradient,
-            operator,
+        operator = _attach_spectral_operator_derivative(
+            spectrum.problem,
+            function,
+            jax.lax.stop_gradient(operator),
+            spectrum.eigenvalues,
+            spectrum.eigenvectors,
+            spectrum.inverse_basis,
+            derivative_valid,
         )
-        density = jax.lax.cond(
-            jnp.all(derivative_valid),
-            lambda value: _attach_spectral_density_derivative(
-                spectrum.problem,
-                function,
-                value,
-                jax.lax.stop_gradient(operator),
-                spectrum.paired_metric,
-                spectrum.eigenvalues,
-                spectrum.eigenvectors,
-                spectrum.inverse_basis,
-            ),
-            jax.lax.stop_gradient,
-            density,
+        density = _attach_spectral_density_derivative(
+            spectrum.problem,
+            function,
+            jax.lax.stop_gradient(density),
+            jax.lax.stop_gradient(operator),
+            spectrum.paired_metric,
+            spectrum.eigenvalues,
+            spectrum.eigenvectors,
+            spectrum.inverse_basis,
+            derivative_valid,
         )
     else:
         operator = jax.lax.stop_gradient(operator)
@@ -489,15 +483,31 @@ def _attach_spectral_operator_derivative(
     eigenvalues,
     eigenvectors,
     inverse_basis,
+    derivative_valid,
 ):
-    del problem, function, eigenvalues, eigenvectors, inverse_basis
+    del (
+        problem,
+        function,
+        eigenvalues,
+        eigenvectors,
+        inverse_basis,
+        derivative_valid,
+    )
     return operator
 
 
 @_attach_spectral_operator_derivative.def_jvp
 def _spectral_operator_jvp(primals, tangents):
-    problem, function, operator, eigenvalues, eigenvectors, inverse_basis = primals
-    problem_tangent, function_tangent, _, _, _, _ = tangents
+    (
+        problem,
+        function,
+        operator,
+        eigenvalues,
+        eigenvectors,
+        inverse_basis,
+        derivative_valid,
+    ) = primals
+    problem_tangent, function_tangent, _, _, _, _, _ = tangents
     derivative, _, _ = _spectral_operator_tangent(
         problem,
         problem_tangent,
@@ -507,6 +517,7 @@ def _spectral_operator_jvp(primals, tangents):
         eigenvectors,
         inverse_basis,
     )
+    derivative = jnp.where(derivative_valid[..., None, None], derivative, 0)
     return operator, derivative
 
 
@@ -520,6 +531,7 @@ def _attach_spectral_density_derivative(
     eigenvalues,
     eigenvectors,
     inverse_basis,
+    derivative_valid,
 ):
     del (
         problem,
@@ -529,6 +541,7 @@ def _attach_spectral_density_derivative(
         eigenvalues,
         eigenvectors,
         inverse_basis,
+        derivative_valid,
     )
     return density
 
@@ -544,8 +557,9 @@ def _spectral_density_jvp(primals, tangents):
         eigenvalues,
         eigenvectors,
         inverse_basis,
+        derivative_valid,
     ) = primals
-    problem_tangent, function_tangent, _, _, _, _, _, _ = tangents
+    problem_tangent, function_tangent, _, _, _, _, _, _, _ = tangents
     operator_derivative, paired_metric_tangent, _ = _spectral_operator_tangent(
         problem,
         problem_tangent,
@@ -564,6 +578,7 @@ def _spectral_density_jvp(primals, tangents):
         -1,
         -2,
     )
+    derivative = jnp.where(derivative_valid[..., None, None], derivative, 0)
     return density, derivative
 
 

@@ -74,3 +74,13 @@ def test_external_mpc_warm_start_requires_policy_and_matching_solution():
     )
     with pytest.raises(ValueError, match="requires an explicit MPCWarmStartPolicy"):
         controller.solve(warm_start=seed)
+
+    guarded_controller = phx.control.RecedingHorizonMPC(
+        problem,
+        prediction_horizon=2,
+        terminal_policy="none",
+        warm_start_policy=phx.control.MPCWarmStartPolicy(),
+    )
+    foreign_seed = phx.control.solve_linear_quadratic_control(_problem(initial=3.0))
+    with pytest.raises(ValueError, match="specification does not match"):
+        guarded_controller.solve(warm_start=foreign_seed)

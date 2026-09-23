@@ -429,6 +429,11 @@ class HighOrderSurfaceRealization(StrictModule, NonTrainableState):
             raise HighOrderResourceLimitError(
                 "Evaluation exceeds maximum_evaluation_points."
             )
+        indices = eqx.error_if(
+            indices,
+            jnp.any((indices < 0) | (indices >= self.mapping.num_charts)),
+            "chart_indices must identify existing high-order charts.",
+        )
         return indices, coordinates
 
     def evaluate(

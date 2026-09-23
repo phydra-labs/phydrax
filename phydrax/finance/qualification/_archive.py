@@ -87,6 +87,7 @@ def _manifest_record(manifest: ResultManifest, /) -> dict[str, object]:
         "payloads": [list(item) for item in manifest.payloads],
         "evidence_ids": list(manifest.evidence_ids),
         "diagnostic_ids": list(manifest.diagnostic_ids),
+        "sampled_semantics": [list(item) for item in manifest.sampled_semantics],
         "manifest_id": manifest.manifest_id,
     }
 
@@ -100,6 +101,7 @@ def _manifest_from_record(record: Mapping[str, object], /) -> ResultManifest:
         "payloads",
         "evidence_ids",
         "diagnostic_ids",
+        "sampled_semantics",
         "manifest_id",
     }
     if set(record) != expected or record["kind"] != "result-manifest":
@@ -108,7 +110,14 @@ def _manifest_from_record(record: Mapping[str, object], /) -> ResultManifest:
     payloads_record = record["payloads"]
     evidence_record = record["evidence_ids"]
     diagnostics_record = record["diagnostic_ids"]
-    sequences = (fields_record, payloads_record, evidence_record, diagnostics_record)
+    semantics_record = record["sampled_semantics"]
+    sequences = (
+        fields_record,
+        payloads_record,
+        evidence_record,
+        diagnostics_record,
+        semantics_record,
+    )
     if any(
         not isinstance(value, Sequence) or isinstance(value, str) for value in sequences
     ):
@@ -123,6 +132,11 @@ def _manifest_from_record(record: Mapping[str, object], /) -> ResultManifest:
         if not isinstance(item, Sequence) or isinstance(item, str) or len(item) != 2:
             raise TypeError("Archived result payloads must be two-string records.")
         payloads.append((str(item[0]), str(item[1])))
+    semantics: list[tuple[str, str]] = []
+    for item in semantics_record:
+        if not isinstance(item, Sequence) or isinstance(item, str) or len(item) != 2:
+            raise TypeError("Archived sampled semantics must be two-string records.")
+        semantics.append((str(item[0]), str(item[1])))
     value = ResultManifest(
         str(record["result_id"]),
         str(record["run_id"]),
@@ -130,6 +144,7 @@ def _manifest_from_record(record: Mapping[str, object], /) -> ResultManifest:
         payloads,
         evidence_ids=tuple(str(item) for item in evidence_record),
         diagnostic_ids=tuple(str(item) for item in diagnostics_record),
+        sampled_semantics=semantics,
     )
     if value.manifest_id != record["manifest_id"]:
         raise ValueError("Archived finance result manifest identity is invalid.")
@@ -140,11 +155,10 @@ def _verify_arrays(manifest: ResultManifest, arrays: Mapping[str, Any], /) -> No
     values = _named_arrays(arrays)
     names = {name for name, _ in values}
     payloads = dict(manifest.payloads)
-    fields = {field for field, _, _ in manifest.fields}
     field_payloads = {payload for _, payload, _ in manifest.fields}
-    if names != set(payloads) or names != fields or names != field_payloads:
+    if names != set(payloads) or field_payloads != names:
         raise ValueError(
-            "Finance result fields, payloads, physical arrays, and units must align exactly."
+            "Finance result payloads and physical arrays must align exactly."
         )
     for name, value in values:
         if payload_digest(value) != payloads[name]:

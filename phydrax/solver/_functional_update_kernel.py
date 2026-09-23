@@ -58,7 +58,14 @@ def _functional_update(
         parameters,
     )
     candidate = optax.apply_updates(parameters, updates)
-    finite = jnp.isfinite(loss) & _tree_finite(candidate)
+    candidate_loss = loss_fn(candidate)
+    finite = (
+        jnp.isfinite(loss)
+        & _tree_finite(gradient)
+        & _tree_finite(candidate)
+        & _tree_finite(candidate_optimizer_state)
+        & jnp.isfinite(candidate_loss)
+    )
     accepted_parameters = jax.tree_util.tree_map(
         lambda new, old: jnp.where(finite, new, old) if eqx.is_array(new) else old,
         candidate,
@@ -69,7 +76,8 @@ def _functional_update(
         candidate_optimizer_state,
         optimizer_state,
     )
-    return accepted_parameters, accepted_state, loss, finite
+    accepted_loss = jnp.where(finite, candidate_loss, loss)
+    return accepted_parameters, accepted_state, accepted_loss, finite
 
 
 _compiled_functional_update = eqx.filter_jit(_functional_update)

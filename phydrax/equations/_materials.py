@@ -121,7 +121,12 @@ class IdealGasMaterial(AbstractThermodynamicMaterial):
         )
 
     def admissible(self, density: Array, pressure: Array, /) -> Array:
-        return (density >= self.density_floor) & (pressure >= self.pressure_floor)
+        return (
+            jnp.isfinite(density)
+            & jnp.isfinite(pressure)
+            & (density >= self.density_floor)
+            & (pressure >= self.pressure_floor)
+        )
 
 
 class StiffenedGasMaterial(AbstractThermodynamicMaterial):
@@ -207,7 +212,12 @@ class StiffenedGasMaterial(AbstractThermodynamicMaterial):
         return jnp.full_like(density, self.gamma * self.heat_capacity)
 
     def admissible(self, density: Array, pressure: Array, /) -> Array:
-        return (density >= self.density_floor) & (pressure + self.pressure_offset > 0.0)
+        return (
+            jnp.isfinite(density)
+            & jnp.isfinite(pressure)
+            & (density >= self.density_floor)
+            & (pressure + self.pressure_offset > 0.0)
+        )
 
 
 @eqx.filter_jit

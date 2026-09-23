@@ -252,6 +252,13 @@ def transform_frozen_vegas(
     unit = jnp.asarray(unit_points)
     if unit.ndim != 2 or unit.shape[1] != grid.dimension:
         raise ValueError("unit_points must have shape (samples, grid.dimension).")
+    if jnp.issubdtype(unit.dtype, jnp.complexfloating):
+        raise TypeError("unit_points must use real coordinates.")
+    unit = eqx.error_if(
+        unit,
+        jnp.any(~jnp.isfinite(unit)) | jnp.any((unit < 0.0) | (unit > 1.0)),
+        "unit_points must contain finite coordinates in [0, 1].",
+    )
     return _transform_vegas_edges(grid.edges, unit, grid.grid_id)
 
 

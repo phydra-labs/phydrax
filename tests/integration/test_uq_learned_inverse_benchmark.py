@@ -1181,15 +1181,10 @@ def _misspecification_retention_summary(trials):
     reason="set PHYDRAX_RUN_UQ_MISSPEC_BENCHMARKS=1 to run model-form UQ fits",
 )
 def test_model_misspecification_retention_benchmark(record_property):
-    replay_path = os.environ.get("PHYDRAX_UQ_MISSPEC_REPLAY")
-    if replay_path:
-        replay = json.loads(Path(replay_path).read_text(encoding="utf-8"))
-        trials = replay["trials"]
-    else:
-        trials = [
-            _evaluate_misspecification_trial(trial_index)
-            for trial_index in range(_MISSPECIFICATION_TRIAL_COUNT)
-        ]
+    trials = [
+        _evaluate_misspecification_trial(trial_index)
+        for trial_index in range(_MISSPECIFICATION_TRIAL_COUNT)
+    ]
     summary = _misspecification_retention_summary(trials)
     report = json.dumps(summary, sort_keys=True)
     record_property("misspecification_summary_json", report)

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from math import isfinite
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._tree_math import tree_where
 from ...discretization.vortex._interfaces import AbstractPreparedVortexVelocity
 from ...discretization.vortex._source import VortexSourceState, VortexTargetState
 
@@ -37,6 +40,7 @@ class RandomVortexStepEvidence(StrictModule):
     weak_moment_residual: Array
     antithetic: bool = eqx.field(static=True)
     finite: Array
+    backend_successful: Array
 
 
 class RandomVortexStepResult(StrictModule):
@@ -70,6 +74,7 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
     ):
         if (
             not isinstance(velocity, AbstractPreparedVortexVelocity)
+            or not isfinite(viscosity)
             or float(viscosity) <= 0.0
             or int(ensemble_size) <= 0
         ):
@@ -88,6 +93,8 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
                 or upper_ is None
                 or lower_.shape != (velocity.dimension,)
                 or upper_.shape != lower_.shape
+                or jnp.any(~jnp.isfinite(lower_))
+                or jnp.any(~jnp.isfinite(upper_))
                 or jnp.any(upper_ <= lower_)
             ):
                 raise ValueError(
@@ -111,6 +118,8 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
                 "viscosity": self.viscosity,
                 "ensemble_size": self.ensemble_size,
                 "boundary": boundary,
+                "lower": lower_,
+                "upper": upper_,
                 "antithetic": self.antithetic,
             }
         )
@@ -195,10 +204,10 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
             )
             result = self.velocity.evaluate(source, target)
             if result.velocity is None:
-                raise ValueError("Random-vortex backend returned no velocity.")
-            return result.velocity
+                return jnp.zeros_like(position), jnp.asarray(False)
+            return result.velocity, result.successful
 
-        drift = jax.vmap(velocity_one)(
+        drift, backend_successful = jax.vmap(velocity_one)(
             state.positions,
             state.strength,
             state.core_radius,
@@ -223,10 +232,16 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
             width = self.upper - self.lower
             candidate = self.lower + jnp.mod(candidate - self.lower, width)
         elif self.boundary == "reflect":
-            below, above = candidate < self.lower, candidate > self.upper
-            reflected = jnp.any(below | above, axis=-1)
-            candidate = jnp.where(below, 2.0 * self.lower - candidate, candidate)
-            candidate = jnp.where(above, 2.0 * self.upper - candidate, candidate)
+            width = self.upper - self.lower
+            folded = jnp.mod(candidate - self.lower, 2.0 * width)
+            reflected = jnp.any(
+                (candidate < self.lower) | (candidate > self.upper), axis=-1
+            )
+            candidate = self.lower + jnp.where(
+                folded <= width,
+                folded,
+                2.0 * width - folded,
+            )
         elif self.boundary == "absorb":
             absorbed = jnp.any(
                 (candidate < self.lower) | (candidate > self.upper), axis=-1
@@ -247,7 +262,8 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
             & jnp.isfinite(dt)
             & (dt > 0.0)
         )
-        next_state = RandomVortexEnsembleState(
+        successful = finite & jnp.all(backend_successful)
+        candidate_state = RandomVortexEnsembleState(
             candidate,
             state.strength,
             state.core_radius,
@@ -257,6 +273,7 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
             state.realization_ids,
             state.time + dt,
         )
+        next_state = tree_where(successful, candidate_state, state)
         evidence = RandomVortexStepEvidence(
             jnp.mean(displacement, axis=(0, 1)),
             jnp.var(displacement, axis=(0, 1)),
@@ -267,8 +284,9 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
             jnp.linalg.norm(jnp.mean(noise, axis=0)),
             self.antithetic,
             finite,
+            backend_successful,
         )
-        return RandomVortexStepResult(next_state, evidence, finite, self.solver_id)
+        return RandomVortexStepResult(next_state, evidence, successful, self.solver_id)
 
 
 __all__ = [

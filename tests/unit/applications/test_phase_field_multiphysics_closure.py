@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax
 
 
@@ -306,6 +307,22 @@ def test_nucleation_clock_is_prefix_stable_and_transactional():
     np.testing.assert_array_equal(proposal.event_times, repeated.event_times)
     np.testing.assert_array_equal(candidate.integrated_hazard, replay.integrated_hazard)
     assert transaction.candidate.accepted_events > 0
+    other_candidate, other_proposal = plan.propose(
+        state,
+        0.0,
+        0.5,
+        jnp.asarray((0.5, 0.5)),
+        jnp.asarray((1.0, 1.0)),
+    )
+    del other_candidate
+    with pytest.raises(eqx.EquinoxRuntimeError, match="source/candidate"):
+        plan.transact(
+            state,
+            candidate,
+            other_proposal,
+            available_component=10.0,
+            available_energy=10.0,
+        )
 
 
 def test_mechanical_flow_and_electrostatic_exchange_contracts():

@@ -54,15 +54,15 @@ def probe_modules(
                 dependency_version=None,
                 reason=f"required module {missing!r} is not installed for adapter {adapter!r}",
             )
-        except ImportError as error:
+        except (ImportError, OSError, RuntimeError) as error:
             return Availability(
                 available=False,
                 capability=capability,
                 dependency=dependency,
                 dependency_version=None,
                 reason=(
-                    f"required module {module_name!r} could not be imported for adapter "
-                    f"{adapter!r}: {type(error).__name__}: {error}"
+                    f"required module {module_name!r} could not be initialized for "
+                    f"adapter {adapter!r}: {type(error).__name__}: {error}"
                 ),
             )
     try:

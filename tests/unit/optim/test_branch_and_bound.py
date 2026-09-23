@@ -188,3 +188,44 @@ def test_only_certified_infeasible_root_reports_infeasible():
     assert result.incumbent is None
     assert result.search_complete
     assert not result.successful
+
+
+class _CountedBinaryTree(phx.optim.AbstractBranchAndBoundProblem):
+    problem_id = "counted-binary-tree"
+    evaluated: list[str]
+
+    def __init__(self):
+        self.evaluated = []
+
+    def root(self):
+        return "root"
+
+    def node_id(self, node):
+        return node
+
+    def evaluate(self, node):
+        self.evaluated.append(node)
+        return phx.optim.BranchNodeEvaluation(
+            lower_bound=phx.optim.BranchBoundEvidence(
+                0.0,
+                certified=True,
+                certificate_id=f"{node}:bound",
+            ),
+            terminal=node != "root",
+        )
+
+    def branch(self, node, evaluation):
+        del node, evaluation
+        return ("left", "right")
+
+
+def test_node_budget_prevents_eager_child_evaluations():
+    problem = _CountedBinaryTree()
+    result = phx.optim.branch_and_bound(
+        problem,
+        policy=phx.optim.BranchAndBoundPolicy(maximum_nodes=1),
+    )
+
+    assert problem.evaluated == ["root"]
+    assert int(result.explored_nodes) == 1
+    assert result.status == phx.optim.BranchAndBoundStatus.WORK_LIMIT

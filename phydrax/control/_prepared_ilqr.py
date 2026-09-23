@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..dynamics._system import DiscreteTransitionEvidence
@@ -155,6 +155,14 @@ def prepare_ilqr(
             "discretization": discretization_id,
             "backend": backend_id,
             "dtype": np.dtype(controls.dtype).str,
+            "numeric": array_tree_fingerprint(
+                {
+                    "initial_state": problem.initial_state,
+                    "initial_controls": controls,
+                    "times": problem.time_grid.times,
+                    "args": problem.args,
+                }
+            ),
         }
     )
     return PreparedILQR(
@@ -859,7 +867,9 @@ def solve_prepared_ilqr(
         evaluations_history,
     ) = reshaped
     del objective, active
-    policy_name = f"ilqr-policy:{problem.problem_id}" if policy_id is None else policy_id
+    policy_name = (
+        f"ilqr-policy:{prepared.prepared_id}" if policy_id is None else policy_id
+    )
     policy = ILQRPolicy(
         problem.time_grid,
         states,
@@ -903,7 +913,9 @@ def solve_prepared_ilqr(
         parameters=controls,
         sampled_loss=sampled_loss,
         feasibility=feasibility,
-        result_id=f"ilqr-result:{problem.problem_id}" if result_id is None else result_id,
+        result_namespace=(
+            f"ilqr-result:{prepared.prepared_id}" if result_id is None else result_id
+        ),
         method_id=trajectory.method_id,
     )
     diagnostics = ILQRDiagnostics(

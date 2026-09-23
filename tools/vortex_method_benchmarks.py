@@ -26,7 +26,7 @@ class VortexBenchmarkCase:
     compile_and_first_ms: float
     steady_ms: float
     interactions_per_second: float
-    scientific_defect: float
+    scientific_defect: float | None
     successful: bool
 
 
@@ -42,8 +42,16 @@ class VortexBenchmarkReport:
     def passed(self):
         return bool(
             self.cases
-            and all(case.successful for case in self.cases)
-            and max(case.scientific_defect for case in self.cases) < 1.0e-7
+            and all(
+                case.successful and case.scientific_defect is not None
+                for case in self.cases
+            )
+            and max(
+                case.scientific_defect
+                for case in self.cases
+                if case.scientific_defect is not None
+            )
+            < 1.0e-7
         )
 
 
@@ -101,13 +109,7 @@ def _direct_case(dimension, count):
         apply,
         (position, strength, core),
     )
-    defect = (
-        float(jnp.max(jnp.abs(jnp.sum(value, axis=0))))
-        if dimension == 2
-        else float(jnp.max(jnp.abs(jnp.sum(value, axis=0))))
-    )
-    # Net velocity is not an invariant for unequal strengths; use finite/scale evidence.
-    defect = 0.0 if bool(jnp.all(jnp.isfinite(value))) else float("inf")
+    defect = None
     return VortexBenchmarkCase(
         f"direct-{dimension}d",
         dimension,

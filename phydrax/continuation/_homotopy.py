@@ -216,6 +216,26 @@ def linear_homotopy(
     if not identifier:
         raise ValueError("homotopy_id must be non-empty.")
 
+    def endpoint_space(start_space, target_space, name):
+        if (
+            start_space is not None
+            and target_space is not None
+            and not start_space.compatible(target_space)
+        ):
+            raise ValueError(f"Homotopy endpoint {name} spaces must be compatible.")
+        return start_space if start_space is not None else target_space
+
+    state_space = endpoint_space(
+        start_problem.state_space,
+        target_problem.state_space,
+        "state",
+    )
+    residual_space = endpoint_space(
+        start_problem.residual_space,
+        target_problem.residual_space,
+        "residual",
+    )
+
     def residual(state, homotopy_parameter, args):
         start = start_problem.residual(state, args)
         target = target_problem.residual(state, args)
@@ -230,7 +250,12 @@ def linear_homotopy(
             target,
         )
 
-    return HomotopyProblem(residual, homotopy_id=identifier)
+    return HomotopyProblem(
+        residual,
+        homotopy_id=identifier,
+        state_space=state_space,
+        residual_space=residual_space,
+    )
 
 
 def parameter_homotopy(

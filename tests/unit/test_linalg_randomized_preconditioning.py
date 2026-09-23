@@ -97,11 +97,23 @@ def test_randomized_nystrom_preconditions_native_pcg_without_changing_solution()
             differentiation=la.DifferentiationPolicy("mathematical"),
         ),
     )
+    unpreconditioned = la.solve(
+        la.LinearSystem(shifted),
+        rhs,
+        policy=la.LinearSolvePolicy(
+            la.PCG(),
+            differentiation=la.DifferentiationPolicy("mathematical"),
+        ),
+    )
 
     assert bool(result.successful)
     assert jnp.allclose(result.value, rhs / (diagonal + 0.25), rtol=1e-6, atol=1e-7)
     assert result.provenance.preconditioner_id is not None
     assert result.provenance.preconditioner_setup_matvec_count == 4
+    assert bool(unpreconditioned.successful)
+    assert result.diagnostics.iterations < unpreconditioned.diagnostics.iterations
+    assert result.provenance.preconditioner_plan_id is not None
+    assert result.provenance.preconditioner_apply_workspace_bytes_per_rhs > 0
 
 
 def test_numeric_refresh_reuses_or_redraws_probes_without_shape_changes():

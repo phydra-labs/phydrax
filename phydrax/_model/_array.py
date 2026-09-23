@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, ClassVar, Literal
+from typing import Any, Callable, ClassVar, Literal
 
 import equinox as eqx
 from jaxtyping import Array
@@ -26,7 +26,9 @@ class AbstractArrayModel(StrictModule, ModelEvaluator):
     in_size: eqx.AbstractVar[int | tuple[int, ...] | Literal["scalar"]]
     out_size: eqx.AbstractVar[int | tuple[int, ...] | Literal["scalar"]]
 
-    _input_binding: ClassVar[ModelBinding] = ModelBinding.pointwise()
+    _input_binding: ClassVar[
+        ModelBinding | Callable[["AbstractArrayModel"], ModelBinding]
+    ] = ModelBinding.pointwise()
 
     @abstractmethod
     def __call__(
@@ -40,7 +42,8 @@ class AbstractArrayModel(StrictModule, ModelEvaluator):
 
     def input_binding(self) -> ModelBinding:
         """Return the model's domain input packing and batch execution contract."""
-        return self._input_binding
+        binding = self._input_binding
+        return binding if isinstance(binding, ModelBinding) else binding(self)
 
 
 __all__ = ["AbstractArrayModel"]

@@ -419,13 +419,26 @@ class StochasticHeatGaussianBenchmarkResult:
     diagonal_covariance_error: float
     low_rank_covariance_error: float
     location_rmse: float
+    maximum_location_rmse: float
     fine_grid_finite: bool
 
     @property
     def passed(self) -> bool:
+        values = jnp.asarray(
+            (
+                self.diagonal_energy_distance,
+                self.low_rank_energy_distance,
+                self.diagonal_covariance_error,
+                self.low_rank_covariance_error,
+                self.location_rmse,
+                self.maximum_location_rmse,
+            )
+        )
         return (
-            self.low_rank_energy_distance < self.diagonal_energy_distance
+            bool(jnp.all(jnp.isfinite(values)))
+            and self.low_rank_energy_distance < self.diagonal_energy_distance
             and self.low_rank_covariance_error < self.diagonal_covariance_error
+            and self.location_rmse <= self.maximum_location_rmse
             and self.fine_grid_finite
         )
 
@@ -448,8 +461,19 @@ def run_stochastic_heat_gaussian_benchmark(
     data: phx.stochastic.StochasticTransitionView | None = None,
     evaluation_samples: int = 256,
     jitter: float = 1e-4,
+    maximum_location_rmse: float = 0.1,
 ) -> StochasticHeatGaussianBenchmarkResult:
     """Compare diagonal and coherent low-rank Gaussian transition baselines."""
+    if (
+        int(evaluation_samples) <= 0
+        or not jnp.isfinite(jitter)
+        or float(jitter) <= 0.0
+        or not jnp.isfinite(maximum_location_rmse)
+        or float(maximum_location_rmse) < 0.0
+    ):
+        raise ValueError(
+            "evaluation_samples, jitter, and maximum_location_rmse must be valid."
+        )
     dataset = (
         stochastic_heat_transition_data(jr.fold_in(key, 0)) if data is None else data
     )
@@ -540,6 +564,7 @@ def run_stochastic_heat_gaussian_benchmark(
         float(diagonal_error),
         float(low_rank_error),
         float(location_rmse),
+        float(maximum_location_rmse),
         fine_finite,
     )
 
@@ -713,6 +738,8 @@ class AllenCahnFlowBenchmarkResult:
 
     @property
     def passed(self) -> bool:
+        if not self.trials:
+            return False
         required = ceil(2.0 * len(self.trials) / 3.0)
         return sum(trial.won for trial in self.trials) >= required
 
@@ -880,6 +907,22 @@ def run_allen_cahn_flow_benchmark(
     resolved_seeds = tuple(seeds)
     if not resolved_seeds:
         raise ValueError("At least one benchmark seed is required.")
+    if (
+        int(steps) <= 0
+        or int(batch_size) <= 0
+        or int(evaluation_samples) <= 0
+        or dataset.num_cases < 2
+    ):
+        raise ValueError(
+            "steps, batch_size, and evaluation_samples must be positive and data "
+            "must contain at least two cases."
+        )
+    if any(
+        isinstance(seed, bool) or not isinstance(seed, int) for seed in resolved_seeds
+    ):
+        raise TypeError("Benchmark seeds must be integers.")
+    if len(set(resolved_seeds)) != len(resolved_seeds):
+        raise ValueError("Benchmark seeds must be unique.")
     trials = tuple(
         _fit_allen_cahn_trial(
             dataset,

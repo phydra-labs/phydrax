@@ -448,11 +448,24 @@ class MACAdaptiveRolloutPlan(StrictModule, NonTrainableState):
             raise ValueError("MAC runtime continuation identities do not match the plan.")
         target = float(np.asarray(final_time))
         requested = float(np.asarray(runtime_state.requested_next_step))
+        capacity_left = self.policy.maximum_steps - int(
+            np.asarray(runtime_state.accepted_step_count)
+        )
+        if capacity_left <= 0:
+            raise ValueError("MAC adaptive accepted-grid capacity is exhausted.")
+        segment_policy = MACAdaptivePolicy(
+            capacity_left,
+            maximum_retries=self.policy.maximum_retries,
+            reduction_factor=self.policy.reduction_factor,
+            growth_factor=self.policy.growth_factor,
+            minimum_step_size=self.policy.minimum_step_size,
+            maximum_step_size=self.policy.maximum_step_size,
+        )
         segment_plan = MACAdaptiveRolloutPlan(
             self.dynamics,
             self.method,
             self.controller,
-            self.policy,
+            segment_policy,
             final_time=target,
             initial_step_size=requested,
         )
@@ -460,8 +473,7 @@ class MACAdaptiveRolloutPlan(StrictModule, NonTrainableState):
             runtime_state.time, runtime_state.state, args
         )
         segment_count = result.grid.accepted_step_count
-        capacity_left = self.policy.maximum_steps - runtime_state.accepted_step_count
-        count = jnp.minimum(segment_count, capacity_left)
+        count = segment_count
 
         def merge(index, buffers):
             times, steps, valid = buffers
@@ -489,7 +501,7 @@ class MACAdaptiveRolloutPlan(StrictModule, NonTrainableState):
 
         times, steps, valid = jax.lax.fori_loop(
             0,
-            self.policy.maximum_steps,
+            capacity_left,
             merge,
             (
                 runtime_state.grid_times,

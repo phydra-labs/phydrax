@@ -133,8 +133,9 @@ def evaluate_sampled_cost(
         raise TypeError("problem must be a ControlProblem.")
     if not isinstance(trajectory, ControlTrajectory):
         raise TypeError("trajectory must be a ControlTrajectory.")
-    if trajectory.problem_id != problem.problem_id:
-        raise ValueError("trajectory problem_id does not match the ControlProblem.")
+    from ._problem import _validate_trajectory_problem
+
+    trajectory = _validate_trajectory_problem(problem, trajectory)
     cases = problem.case_shape
     count = prod(cases) if cases else 1
     states = trajectory.states.reshape(

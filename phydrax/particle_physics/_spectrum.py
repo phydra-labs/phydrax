@@ -195,6 +195,8 @@ class SpectrumDiagnostics(StrictModule):
         pole = jnp.asarray(pole_tachyons, dtype=jnp.bool_).reshape(())
         warning = jnp.asarray(approximation_warning, dtype=jnp.bool_).reshape(())
         residual = jnp.asarray(residual_norm).reshape(())
+        residual_finite = jnp.isfinite(residual) & (residual >= 0.0)
+        finite_value = finite_value & residual_finite
         physical = (
             provider
             & finite_value
@@ -263,6 +265,30 @@ class SpectrumCalculationResult(StrictModule):
             raise ValueError("Running scales and parameter trajectory must align.")
         if parameters.ndim != 2:
             raise ValueError("running_parameters must have shape (scales, parameters).")
+        arrays_finite = (
+            jnp.all(jnp.isfinite(observables.values))
+            & jnp.all(jnp.isfinite(scales))
+            & jnp.all(jnp.isfinite(parameters))
+        )
+        corrected_finite = diagnostics.finite & arrays_finite
+        corrected_status = jnp.where(
+            corrected_finite,
+            diagnostics.numerical_status,
+            jnp.asarray(int(SpectrumStatus.NONFINITE_OUTPUT), dtype=jnp.int32),
+        )
+        diagnostics = eqx.tree_at(
+            lambda value: (
+                value.numerical_status,
+                value.finite,
+                value.physical_admissible,
+            ),
+            diagnostics,
+            (
+                corrected_status,
+                corrected_finite,
+                diagnostics.physical_admissible & corrected_finite,
+            ),
+        )
         identities = tuple(
             str(value).strip()
             for value in (provider_id, input_artifact_id, output_artifact_id)
@@ -288,7 +314,9 @@ class SpectrumCalculationResult(StrictModule):
                 "warnings": diagnostics.warning_ids,
             }
         )
-        self.claim = "finite-spectrum-result-with-explicit-approximation-provider-and-physical-status"
+        self.claim = (
+            "spectrum-result-with-explicit-approximation-provider-and-physical-status"
+        )
 
 
 __all__ = [

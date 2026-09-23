@@ -123,6 +123,7 @@ def _spectral_result(
     function_id: str,
     tolerance: float,
     positive: bool,
+    nonnegative: bool = False,
     precision: HermitianPrecisionPolicy | None = None,
 ) -> HermitianFunctionResult:
     spectrum = HermitianSpectrum(
@@ -137,6 +138,8 @@ def _spectral_result(
     valid = spectrum.valid & jnp.all(jnp.isfinite(transformed), axis=-1)
     if positive:
         valid = valid & (spectrum.minimum_eigenvalue > tolerance)
+    if nonnegative:
+        valid = valid & (spectrum.minimum_eigenvalue >= -tolerance)
     return HermitianFunctionResult(
         spectrum.precision.output(0.5 * (value + _adjoint(value))),
         spectrum,
@@ -158,6 +161,7 @@ def hermitian_sqrt(
         function_id="hermitian-sqrt",
         tolerance=tolerance,
         positive=False,
+        nonnegative=True,
         precision=precision,
     )
 

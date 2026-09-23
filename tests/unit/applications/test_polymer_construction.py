@@ -1,8 +1,16 @@
+import hashlib
+import json
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax._artifact_security import (
+    admit_external_artifact,
+    ExternalArtifactPolicy,
+)
 from phydrax.applications import polymer_construction as pc
+from phydrax.artifacts import ArtifactManifest
 
 
 def _source():
@@ -58,6 +66,37 @@ def test_recipe_adapter_and_lowering_preserve_explicit_material_semantics():
     assert (
         pc.polymer_recipe_to_mapping(adapted.recipe)["material_id"] == "two-chain-network"
     )
+
+
+def test_admitted_recipe_requires_the_exact_trusted_manifest(tmp_path):
+    payload = json.dumps(_source()).encode()
+    (tmp_path / "recipe.json").write_bytes(payload)
+    manifest = ArtifactManifest(
+        artifact_id="polymer-recipe",
+        producer="independent-test",
+        version="1",
+        sha256=hashlib.sha256(payload).hexdigest(),
+        byte_size=len(payload),
+        source_uri="https://example.invalid/polymer-recipe",
+        license_id="CC-BY-4.0",
+        model="polymer-recipe-json",
+        coverage="unit-test",
+    )
+    policy = ExternalArtifactPolicy(
+        tmp_path,
+        maximum_bytes=4096,
+        allowed_license_ids=("CC-BY-4.0",),
+        allowed_suffixes=(".json",),
+    )
+    admitted = admit_external_artifact("recipe.json", manifest, policy=policy)
+    result = pc.polymer_recipe_from_admitted_json(
+        admitted,
+        manifest,
+        phx.atomistic.AtomisticUnitSystem.reduced(),
+        policy=policy,
+    )
+
+    assert result.recipe.material_id == "two-chain-network"
 
 
 def test_nonperiodic_reaction_epoch_is_atomic_and_network_observable():

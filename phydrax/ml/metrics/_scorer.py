@@ -6,11 +6,16 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 
 from ..._strict import StrictModule
+
+
+ScorerResponse: TypeAlias = Literal[
+    "call", "predict", "predict_proba", "decision_function"
+]
 
 
 def _is_immutable_config(value: Any, /) -> bool:
@@ -32,7 +37,7 @@ class AbstractScorer(StrictModule):
 
     name: eqx.AbstractVar[str]
     greater_is_better: eqx.AbstractVar[bool]
-    requires_probabilities: eqx.AbstractVar[bool]
+    response_method: eqx.AbstractVar[ScorerResponse]
 
     @abstractmethod
     def score(
@@ -69,7 +74,7 @@ class FunctionScorer(AbstractScorer):
     metric: Callable[..., Any] = eqx.field(static=True)
     name: str = eqx.field(static=True)
     greater_is_better: bool = eqx.field(static=True)
-    requires_probabilities: bool = eqx.field(static=True)
+    response_method: ScorerResponse = eqx.field(static=True)
     metric_kwargs: tuple[tuple[str, Any], ...] = eqx.field(static=True)
 
     def __init__(
@@ -79,11 +84,21 @@ class FunctionScorer(AbstractScorer):
         *,
         name: str | None = None,
         greater_is_better: bool,
-        requires_probabilities: bool = False,
+        response_method: ScorerResponse = "call",
         metric_kwargs: Mapping[str, Any] | None = None,
     ):
         if not callable(metric):
             raise TypeError("metric must be callable.")
+        if response_method not in (
+            "call",
+            "predict",
+            "predict_proba",
+            "decision_function",
+        ):
+            raise ValueError(
+                "response_method must be 'call', 'predict', 'predict_proba', or "
+                "'decision_function'."
+            )
         options = () if metric_kwargs is None else tuple(sorted(metric_kwargs.items()))
         for key, value in options:
             if not isinstance(key, str):
@@ -95,7 +110,7 @@ class FunctionScorer(AbstractScorer):
         self.metric = metric
         self.name = type(metric).__name__ if name is None else str(name)
         self.greater_is_better = bool(greater_is_better)
-        self.requires_probabilities = bool(requires_probabilities)
+        self.response_method = response_method
         self.metric_kwargs = options
 
     def score(
@@ -116,4 +131,4 @@ class FunctionScorer(AbstractScorer):
         )
 
 
-__all__ = ["AbstractScorer", "FunctionScorer"]
+__all__ = ["AbstractScorer", "FunctionScorer", "ScorerResponse"]

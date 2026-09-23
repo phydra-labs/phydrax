@@ -312,13 +312,20 @@ def main() -> None:
     payload = {
         "environment": capture_environment().to_dict(),
         "cases": cases,
-        "all_valid": all(case["certificate"]["valid"] for case in cases),
+        "all_valid": all(
+            case["certificate"]["valid"]
+            and case["certificate"]["convexity_certified"]
+            and case["certificate"]["monotone"]
+            for case in cases
+        ),
         "all_residuals_finite": all(math.isfinite(value) for value in residuals),
     }
     if arguments.output is None:
         print(json.dumps(payload, indent=2))
     else:
         write_json_atomic(arguments.output, payload)
+    if not payload["all_valid"] or not payload["all_residuals_finite"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

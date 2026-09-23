@@ -165,7 +165,6 @@ def main() -> None:
 
         result = results[-1]
         execution_mean = float(np.mean(executions))
-        compilation_seconds = max(first_total - execution_mean, 0.0)
         restart = DarkMatterRestartSnapshot(
             result.state.accepted_state,
             time=result.state.time,
@@ -215,7 +214,9 @@ def main() -> None:
     checkpoint_bytes = int(max(sizes))
     mean_write = float(np.mean(write_seconds))
     mean_read = float(np.mean(read_seconds))
-    production_success = all(bool(value.successful) for value in results)
+    production_success = bool(first_result.successful) and all(
+        bool(value.successful) for value in results
+    )
     output_success = (
         all(count == 1 for count in output_counts) and len(first_outputs) == 1
     )
@@ -236,10 +237,10 @@ def main() -> None:
             "checkpoint_contract": contract.contract_id,
             "checkpoint": checkpoint.envelope.checkpoint_id,
         },
-        "compilation": {
+        "cold_execution": {
             "runtime_preparation_seconds": first_preparation,
-            "first_compile_and_execution_seconds": first_total,
-            "estimated_compilation_seconds": compilation_seconds,
+            "first_execution_seconds": first_total,
+            "phase_scope": "runtime execution including any provider compilation",
         },
         "execution": {
             "production_seconds_mean": execution_mean,
@@ -285,12 +286,13 @@ def main() -> None:
         },
         "successful": successful,
     }
-    encoded = json.dumps(payload, indent=2, sort_keys=True)
+    encoded = json.dumps(payload, allow_nan=False, indent=2, sort_keys=True)
     if arguments.output is None:
         print(encoded)
     else:
-        arguments.output.parent.mkdir(parents=True, exist_ok=True)
-        arguments.output.write_text(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
     if not successful:
         raise SystemExit(1)
 

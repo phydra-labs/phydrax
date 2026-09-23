@@ -75,7 +75,10 @@ def _canonical_triangle_arrays(
         ) - (triangles[:, 1, 1] - triangles[:, 0, 1]) * (
             triangles[:, 2, 0] - triangles[:, 0, 0]
         )
-        scale = max(float(np.max(np.abs(vertices_))), 1.0)
+        scale = max(
+            float(np.max(np.ptp(vertices_, axis=0))),
+            np.sqrt(np.finfo(np.float64).tiny),
+        )
         if np.any(np.abs(doubled_area) <= 128.0 * np.finfo(np.float64).eps * scale**2):
             raise ValueError("Mesh input contains a zero-area triangle.")
     else:
@@ -83,7 +86,10 @@ def _canonical_triangle_arrays(
             triangles[:, 1, :3] - triangles[:, 0, :3],
             triangles[:, 2, :3] - triangles[:, 0, :3],
         )
-        scale = max(float(np.max(np.abs(vertices_[:, :3]))), 1.0)
+        scale = max(
+            float(np.max(np.ptp(vertices_[:, :3], axis=0))),
+            np.sqrt(np.finfo(np.float64).tiny),
+        )
         if np.any(
             np.sum(cross * cross, axis=1)
             <= (128.0 * np.finfo(np.float64).eps * scale**2) ** 2

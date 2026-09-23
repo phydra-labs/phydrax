@@ -78,7 +78,13 @@ class LocalEliminationPlan(StrictModule, NonTrainableState):
         interior_operator, failed_operator = solve_local_blocks(factorization, a_ir)
         interior_load, failed_load = solve_local_blocks(factorization, f_i)
         schur = a_rr - jnp.matmul(a_ri, interior_operator)
-        reduced_rhs = f_r - jnp.matmul(a_ri, interior_load[..., None])[..., 0]
+        interior_columns = interior_load.reshape((rhs.shape[0], eliminated.size, -1))
+        reduced_columns = f_r.reshape((rhs.shape[0], retained.size, -1)) - jnp.matmul(
+            a_ri, interior_columns
+        )
+        reduced_rhs = reduced_columns.reshape(
+            (rhs.shape[0], retained.size, *rhs.shape[2:])
+        )
         return LocalEliminationResult(
             schur=schur,
             right_hand_side=reduced_rhs,
@@ -96,16 +102,33 @@ class LocalEliminationPlan(StrictModule, NonTrainableState):
         if not isinstance(result, LocalEliminationResult):
             raise TypeError("result must be LocalEliminationResult.")
         retained = jnp.asarray(retained_solution)
-        if retained.shape[:2] != (
-            result.interior_solution_operator.shape[0],
-            self.retained_dofs.size,
+        if (
+            retained.shape[:2]
+            != (
+                result.interior_solution_operator.shape[0],
+                self.retained_dofs.size,
+            )
+            or retained.shape[2:] != result.right_hand_side.shape[2:]
         ):
             raise ValueError("retained_solution shape is incompatible with the plan.")
-        interior = (
-            result.interior_load
-            - jnp.matmul(result.interior_solution_operator, retained[..., None])[..., 0]
+        retained_columns = retained.reshape(
+            (retained.shape[0], self.retained_dofs.size, -1)
         )
-        full = jnp.zeros((retained.shape[0], self.local_size), dtype=retained.dtype)
+        load_columns = result.interior_load.reshape(
+            (retained.shape[0], self.eliminated_dofs.size, -1)
+        )
+        interior_columns = load_columns - jnp.matmul(
+            result.interior_solution_operator, retained_columns
+        )
+        interior = interior_columns.reshape(
+            (
+                retained.shape[0],
+                self.eliminated_dofs.size,
+                *retained.shape[2:],
+            )
+        )
+        output_shape = (retained.shape[0], self.local_size, *retained.shape[2:])
+        full = jnp.zeros(output_shape, dtype=jnp.result_type(retained, interior))
         full = full.at[:, self.retained_dofs].set(retained)
         return full.at[:, self.eliminated_dofs].set(interior)
 

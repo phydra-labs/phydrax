@@ -5,6 +5,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from enum import IntEnum
+from math import isfinite
+from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -12,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract, get_symbol
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import precision_itemsize
 from .._strict import StrictModule
 
@@ -93,12 +96,23 @@ class FactorGraphNetwork(StrictModule):
                 "kind": "factor-graph-network",
                 "variables": tuple(zip(names, cardinalities, strict=True)),
                 "factors": tuple(
-                    (factor.factor_id, factor.variables, factor.values.shape)
+                    (
+                        factor.factor_id,
+                        factor.variables,
+                        array_tree_fingerprint(factor.values),
+                    )
                     for factor in factors_
                 ),
                 "dtype": dtype,
             }
         )
+
+
+class NetworkBPStatus(IntEnum):
+    SUCCESS = 0
+    NONFINITE = 1
+    NONPHYSICAL_FACTOR = 2
+    ITERATION_LIMIT = 3
 
 
 class NetworkBPPolicy(StrictModule):
@@ -121,13 +135,29 @@ class NetworkBPPolicy(StrictModule):
         maximum_factor_elements: int = 100_000_000,
         maximum_workspace_bytes: int = 2**31,
     ):
+        if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for value in (
+                maximum_iterations,
+                maximum_message_elements,
+                maximum_factor_elements,
+                maximum_workspace_bytes,
+            )
+        ):
+            raise TypeError("BP iterations and resource budgets must be integers.")
         iterations = int(maximum_iterations)
         tolerance_ = float(tolerance)
         damping_ = float(damping)
         message_limit = int(maximum_message_elements)
         factor_limit = int(maximum_factor_elements)
         workspace = int(maximum_workspace_bytes)
-        if iterations < 1 or tolerance_ <= 0.0 or not 0.0 <= damping_ < 1.0:
+        if (
+            iterations < 1
+            or not isfinite(tolerance_)
+            or tolerance_ <= 0.0
+            or not isfinite(damping_)
+            or not 0.0 <= damping_ < 1.0
+        ):
             raise ValueError("BP iteration, tolerance, and damping values are invalid.")
         if message_limit < 1 or factor_limit < 1 or workspace < 1:
             raise ValueError("BP resource limits must be positive.")
@@ -161,6 +191,7 @@ class NetworkBPEvidence(StrictModule):
     nonnegative: Array
     finite: Array
     accepted: Array
+    status: Array
     exact: Array
     claim: str = eqx.field(static=True)
     global_error_bound_claimed: bool = eqx.field(static=True)
@@ -227,8 +258,11 @@ def run_network_belief_propagation(
     )
     message_elements = sum(cardinality[variable] for _, _, variable in incidences) * 2
     factor_elements = sum(factor.values.size for factor in network.factors)
+    maximum_factor = max(factor.values.size for factor in network.factors)
     itemsize = precision_itemsize(str(network.factors[0].values.dtype))
-    workspace_bytes = (message_elements * 3 + factor_elements) * itemsize
+    workspace_bytes = (
+        message_elements * 3 + factor_elements + 2 * maximum_factor
+    ) * itemsize
     if message_elements > policy.maximum_message_elements:
         raise MemoryError(
             "BP messages exceed maximum_message_elements before allocation."
@@ -261,7 +295,16 @@ def run_network_belief_propagation(
                 )
             )
         )
-        accepted = finite & nonnegative
+        status = jnp.where(
+            ~finite,
+            int(NetworkBPStatus.NONFINITE),
+            jnp.where(
+                ~nonnegative,
+                int(NetworkBPStatus.NONPHYSICAL_FACTOR),
+                int(NetworkBPStatus.SUCCESS),
+            ),
+        ).astype(jnp.int32)
+        accepted = status == int(NetworkBPStatus.SUCCESS)
         replay_id = canonical_fingerprint(
             {
                 "kind": "network-bp-replay",
@@ -280,6 +323,7 @@ def run_network_belief_propagation(
             nonnegative,
             finite,
             accepted,
+            status,
             accepted,
             "exact disconnected scalar-factor evaluation",
             False,
@@ -398,7 +442,20 @@ def run_network_belief_propagation(
             )
         )
     )
-    accepted = finite & nonnegative & converged
+    status = jnp.where(
+        ~finite,
+        int(NetworkBPStatus.NONFINITE),
+        jnp.where(
+            ~nonnegative,
+            int(NetworkBPStatus.NONPHYSICAL_FACTOR),
+            jnp.where(
+                ~converged,
+                int(NetworkBPStatus.ITERATION_LIMIT),
+                int(NetworkBPStatus.SUCCESS),
+            ),
+        ),
+    ).astype(jnp.int32)
+    accepted = status == int(NetworkBPStatus.SUCCESS)
     exact = accepted & jnp.asarray(network.is_forest)
     replay_id = canonical_fingerprint(
         {
@@ -418,6 +475,7 @@ def run_network_belief_propagation(
         nonnegative,
         finite,
         accepted,
+        status,
         exact,
         "exact sum-product on a converged factor forest; otherwise loopy Bethe "
         "approximation with no global error bound",
@@ -440,5 +498,6 @@ __all__ = [
     "NetworkBPEvidence",
     "NetworkBPPolicy",
     "NetworkBPResult",
+    "NetworkBPStatus",
     "run_network_belief_propagation",
 ]

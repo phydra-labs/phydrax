@@ -110,6 +110,38 @@ _Result = TypeVar("_Result", bound=StrictModule)
 _Component = Any
 
 
+def _component_lineage(value, /) -> tuple | None:
+    if isinstance(value, FreeEnergyStateResult):
+        return (
+            value.dataset_id,
+            value.analysis_id,
+            value.qualification_id,
+            value.sampling_exact,
+            value.sampling_bias_bound,
+            value.unit_system_id,
+            value.measure_id,
+            None,
+            None,
+        )
+    if isinstance(value, FreeEnergyProtocolLegResult):
+        return (
+            value.dataset_id,
+            value.analysis_id,
+            value.qualification_id,
+            value.sampling_exact,
+            value.sampling_bias_bound,
+            value.unit_system_id,
+            (value.source_measure_id, value.destination_measure_id),
+            value.mapping_id,
+            value.orientation,
+        )
+    if isinstance(value, MappedRelativeTransformationResult):
+        return _component_lineage(value.leg)
+    if isinstance(value, FreeEnergyCorrectionResult):
+        return None
+    raise TypeError(f"Unsupported free-energy protocol component {type(value).__name__}.")
+
+
 def _combine(
     result_type: type[_Result],
     plan_id: str,
@@ -125,6 +157,13 @@ def _combine(
     factors = np.asarray(weights, dtype=np.float64)
     matrix = np.asarray(covariance, dtype=np.float64)
     count = len(values_)
+    lineages = tuple(
+        lineage for value in values_ if (lineage := _component_lineage(value)) is not None
+    )
+    if lineages and any(value != lineages[0] for value in lineages[1:]):
+        raise ValueError(
+            "Free-energy protocol components must share dataset, analysis, qualification, sampling, unit, measure, mapping, and orientation lineage."
+        )
     if len(names) != count or factors.shape != (count,):
         raise ValueError("Protocol component names and weights must align.")
     if matrix.shape != (count, count):

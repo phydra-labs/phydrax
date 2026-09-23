@@ -34,6 +34,21 @@ def test_affine_scaler_defaults_and_roundtrip():
     assert jnp.allclose(custom.inverse_transform(transformed), x)
 
 
+@pytest.mark.parametrize(
+    "kwargs",
+    (
+        {"reference_value": jnp.nan},
+        {"scale_value": jnp.inf},
+        {"scale_value": 0.0},
+        {"alpha": 0.0},
+        {"beta": -jnp.inf},
+    ),
+)
+def test_affine_scaler_rejects_nonfinite_or_noninvertible_parameters(kwargs):
+    with pytest.raises(ValueError):
+        AffineScaler(**kwargs)
+
+
 def test_minmax_scaler_default_custom_and_axis_scaling():
     x = jnp.asarray([1.0, 2.0, 3.0, 4.0, 5.0])
 

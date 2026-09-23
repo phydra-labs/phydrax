@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import HybridEventSensitivityResult
@@ -50,24 +50,34 @@ class VariationalPropagationPlan(StrictModule, NonTrainableState):
             raise TypeError("dynamics must be callable.")
         times_host = np.asarray(times, dtype=np.float64)
         noise = np.asarray(process_noise, dtype=np.float64)
+        if isinstance(parameter_dimension, bool) or not isinstance(
+            parameter_dimension, int
+        ):
+            raise TypeError("parameter_dimension must be an integer.")
+        identifier = str(dynamics_id).strip()
         if (
             times_host.ndim != 1
             or times_host.size < 2
+            or np.any(~np.isfinite(times_host))
             or np.any(np.diff(times_host) <= 0.0)
             or noise.ndim != 2
             or noise.shape[0] != noise.shape[1]
+            or np.any(~np.isfinite(noise))
+            or parameter_dimension < 0
+            or not identifier
         ):
-            raise ValueError("Variational time/noise arrays are invalid.")
+            raise ValueError("Variational time/noise arrays and identities are invalid.")
         self.dynamics = dynamics
         self.times = jnp.asarray(times_host)
         self.process_noise = jnp.asarray(noise)
-        self.parameter_dimension = int(parameter_dimension)
+        self.parameter_dimension = parameter_dimension
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "variational-propagation",
-                "dynamics": str(dynamics_id),
-                "times": times_host.size,
-                "parameters": int(parameter_dimension),
+                "dynamics": identifier,
+                "times": array_tree_fingerprint(times_host),
+                "process_noise": array_tree_fingerprint(noise),
+                "parameters": parameter_dimension,
             }
         )
 

@@ -1209,12 +1209,20 @@ def _solve_consensus(
             break
         if (
             termination.maximum_evaluations is not None
-            and objective_evaluations >= termination.maximum_evaluations
+            and objective_evaluations + 1 >= termination.maximum_evaluations
         ):
             status = OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
             break
         updated_parameters = []
         for index in range(batch.size):
+            remaining_evaluations = (
+                None
+                if termination.maximum_evaluations is None
+                else termination.maximum_evaluations - objective_evaluations - 1
+            )
+            if remaining_evaluations is not None and remaining_evaluations <= 0:
+                status = OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
+                break
             scenario = batch.scenario(index)
             dual_value = jax.tree.map(lambda value: value[index], duals)
 
@@ -1263,6 +1271,7 @@ def _solve_consensus(
                     absolute_step=termination.absolute_step,
                     relative_step=termination.relative_step,
                     maximum_steps=method.inner_maximum_steps,
+                    maximum_evaluations=remaining_evaluations,
                 ),
                 args=args,
             )
@@ -1291,13 +1300,15 @@ def _solve_consensus(
                 int(diagnostics.globalization_evaluations), 0
             )
             direction_fallbacks += max(int(diagnostics.direction_fallbacks), 0)
-            if int(inner_result.status) in (
-                int(OptimizationStatus.NONFINITE_INPUT),
-                int(OptimizationStatus.NONFINITE_EVALUATION),
-                int(OptimizationStatus.BACKEND_FAILED),
-                int(OptimizationStatus.DIVERGENCE),
-            ):
-                status = OptimizationStatus.BACKEND_FAILED
+            if not bool(inner_result.successful):
+                status = (
+                    OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
+                    if (
+                        termination.maximum_evaluations is not None
+                        and objective_evaluations >= termination.maximum_evaluations
+                    )
+                    else OptimizationStatus.BACKEND_FAILED
+                )
                 rejected_steps += 1
                 break
             updated_parameters.append(inner_result.parameters)
@@ -1330,15 +1341,26 @@ def _solve_consensus(
             break
         if (
             termination.maximum_evaluations is not None
-            and objective_evaluations >= termination.maximum_evaluations
+            and objective_evaluations + 1 >= termination.maximum_evaluations
         ):
             status = OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
             break
     else:
         status = OptimizationStatus.MAXIMUM_STEPS_REACHED
 
-    objective = problem.value(consensus, batch, args)
-    objective_evaluations += 1
+    if (
+        termination.maximum_evaluations is not None
+        and objective_evaluations >= termination.maximum_evaluations
+    ):
+        objective = jnp.asarray(
+            jnp.nan,
+            dtype=jax.tree.leaves(consensus)[0].dtype,
+        )
+        if status == OptimizationStatus.SUCCESS:
+            status = OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
+    else:
+        objective = problem.value(consensus, batch, args)
+        objective_evaluations += 1
     diagnostics = OptimizationDiagnostics(
         iterations=iterations,
         accepted_steps=accepted_steps,

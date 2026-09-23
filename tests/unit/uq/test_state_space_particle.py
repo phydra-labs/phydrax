@@ -38,6 +38,48 @@ def _problem():
     )
 
 
+def _zero_duration_problem():
+    observations = phx.stochastic.ObservationSequence(
+        jnp.asarray([0.0, 0.5]),
+        jnp.asarray([[0.0], [0.5]]),
+        case_ids=("only",),
+        sequence_id="zero-duration-sequence",
+    )
+    prior = phx.stochastic.GaussianStatePrior(
+        jnp.asarray([0.0]),
+        jnp.asarray([[1.0]]),
+        state_shape=(1,),
+        prior_id="zero-duration-prior",
+    )
+    transition = phx.stochastic.CallableTransitionKernel(
+        lambda key, state, t0, t1, context: jnp.where(
+            t1 > t0,
+            state + 0.1 * jr.normal(key, state.shape),
+            jnp.full_like(state, jnp.nan),
+        ),
+        state_shape=(1,),
+        process_id="zero-duration-sensitive-transition",
+        approximation_id="test",
+    )
+    observation = phx.stochastic.LinearGaussianObservationModel(
+        jnp.asarray([[1.0]]),
+        jnp.asarray([[0.2]]),
+        state_shape=(1,),
+        observation_shape=(1,),
+    )
+    return phx.stochastic.StateSpaceProblem(
+        phx.stochastic.StateSpaceModel(
+            prior,
+            transition,
+            observation,
+            model_id="zero-duration-model",
+        ),
+        observations,
+        initial_time=0.0,
+        problem_id="zero-duration-problem",
+    )
+
+
 def _three_step_problem():
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0, 1.5]),
@@ -112,6 +154,36 @@ def test_bootstrap_filter_matches_linear_gaussian_marginals():
         atol=0.2,
     )
     assert phx.uq.particle_filter_diagnostics(particles).passed
+
+
+def test_particle_and_ensemble_filters_skip_zero_duration_transition():
+    problem = _zero_duration_problem()
+    particle = phx.uq.bootstrap_particle_filter(
+        jr.key(11),
+        problem,
+        num_particles=32,
+        resampling_policy="never",
+    )
+    initial_ensemble = phx.uq.initialize_ensemble_filter(
+        jr.key(12),
+        problem,
+        ensemble_size=32,
+    )
+    ensemble = phx.uq.ensemble_transform_kalman_filter(
+        jr.key(12),
+        problem,
+        ensemble_size=32,
+    )
+
+    assert jnp.all(particle.transition_valid[0])
+    assert jnp.array_equal(
+        particle.predicted_particles[0],
+        particle.initial_particles,
+    )
+    assert jnp.array_equal(
+        ensemble.forecast_ensembles[0],
+        initial_ensemble.ensemble,
+    )
 
 
 def test_bootstrap_filter_propagates_sampled_inputs_without_changing_noise_stream():

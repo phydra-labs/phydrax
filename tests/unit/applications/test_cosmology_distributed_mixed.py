@@ -541,6 +541,8 @@ def test_checkpoint_restore_changes_particle_and_field_sharding(
         "distributed-mixed-reshard",
         source.checkpoint_execution_id,
         source.checkpoint_tree(source_state),
+        analysis_plan_id=source.checkpoint_schema_id,
+        numeric_revision_id=source.checkpoint_numeric_id,
         writer_id="distributed-mixed-reshard-writer",
     )
     manifest = assemble_distributed_checkpoint_from_repository(

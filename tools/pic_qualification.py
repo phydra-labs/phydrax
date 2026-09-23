@@ -67,18 +67,22 @@ def run_pic_qualification(*, smoke=False):
         1.0e-3,
     )
     speed_defect = jnp.abs(jnp.sum(pushed.proper_velocity**2) - jnp.sum(proper**2))
+    continuity_defect = step.diagnostics.continuity_defect
     successful = bool(
         step.successful
         and pushed.successful
+        and jnp.isfinite(continuity_defect)
         and step.diagnostics.poisson_residual < 1.0e-8
         and step.diagnostics.charge_balance_defect < 1.0e-10
+        and jnp.abs(step.diagnostics.energy.defect) < 1.0e-8
+        and continuity_defect < 1.0e-10
         and speed_defect < 1.0e-10
     )
     return PICQualificationReport(
         float(step.diagnostics.poisson_residual),
         float(step.diagnostics.charge_balance_defect),
         float(step.diagnostics.energy.defect),
-        0.0,
+        float(continuity_defect),
         float(speed_defect),
         successful,
     )
@@ -90,7 +94,7 @@ def main():
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     report = run_pic_qualification(smoke=args.smoke)
-    payload = json.dumps(asdict(report), indent=2)
+    payload = json.dumps(asdict(report), indent=2, allow_nan=False)
     print(payload)
     if args.output is not None:
         args.output.write_text(payload + "\n", encoding="utf-8")

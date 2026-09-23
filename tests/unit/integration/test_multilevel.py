@@ -251,3 +251,82 @@ def test_mlmc_precision_ledger_and_archive_preserve_numerical_contract(tmp_path)
         estimate.precision_evidence.evidence_id
     )
     assert archive.array("ledger/roundoff_error").dtype == np.float64
+
+
+def test_mlmc_invalid_sample_exhaustion_returns_status_instead_of_raising():
+    hierarchy = _hierarchy()
+
+    def sampler(level_index, sample_indices, key):
+        del key
+        fine = jnp.zeros(sample_indices.shape)
+        coarse = None if level_index == 0 else jnp.zeros(sample_indices.shape)
+        invalid = jnp.zeros(sample_indices.shape, dtype=jnp.bool_)
+        return phx.integration.MultilevelSampleBatch(
+            fine,
+            coarse,
+            sample_indices,
+            jnp.ones(sample_indices.shape),
+            level_index=level_index,
+            fine_valid=invalid,
+            coarse_valid=invalid,
+            pair_ids=sample_indices,
+            provenance="all-invalid-sampler",
+        )
+
+    target = phx.integration.multilevel(
+        hierarchy,
+        sampler,
+        sampler_id="all-invalid-sampler",
+    )
+    plan = phx.integration.MultilevelMonteCarloPlan(
+        samples_per_level=(2, 2, 2),
+        max_samples_per_level=(2, 2, 2),
+        batch_size=2,
+        max_rounds=1,
+        estimand="limit",
+    )
+
+    estimate = phx.integration.integrate(
+        lambda samples, level: samples,
+        target,
+        plan,
+        key=jr.key(30),
+    )
+
+    assert estimate.status == int(phx.integration.IntegrationStatus.NO_VALID_SAMPLES)
+    assert not estimate.successful
+    assert jnp.isnan(estimate.value)
+    assert jnp.array_equal(estimate.diagnostics.sample_counts, jnp.zeros(3))
+
+
+def test_mlmc_resume_at_max_rounds_performs_no_extra_sampling():
+    plan = phx.integration.MultilevelMonteCarloPlan(
+        samples_per_level=(8, 8, 8),
+        batch_size=2,
+        max_rounds=1,
+        estimand="limit",
+    )
+    realization = phx.integration.materialize(
+        _target(),
+        plan,
+        key=jr.key(31),
+    ).batch
+    observable = lambda samples, level: samples
+    partial = phx.integration.advance_multilevel(
+        observable,
+        realization,
+        num_rounds=1,
+    )
+
+    estimate = phx.integration.integrate_multilevel(
+        observable,
+        realization,
+        state=partial,
+    )
+
+    assert estimate.status == int(
+        phx.integration.IntegrationStatus.MAXIMUM_ROUNDS_REACHED
+    )
+    assert jnp.array_equal(
+        estimate.diagnostics.attempted_counts, partial.attempted_counts
+    )

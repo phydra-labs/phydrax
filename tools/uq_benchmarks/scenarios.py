@@ -911,7 +911,6 @@ def flow_assisted_multimodal(
         history_capacity_per_chain=configuration.flow_history_capacity,
         history_thinning=1,
         flow_layers=3,
-        num_knots=8,
         nn_width=32,
         nn_depth=2,
         learning_rate=1e-3,

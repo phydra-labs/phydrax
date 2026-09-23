@@ -46,10 +46,14 @@ class ManufacturingRuntimeState:
 @dataclass(frozen=True, slots=True)
 class ManufacturingStepResult:
     state: ManufacturingRuntimeState
+    candidate_state: ManufacturingRuntimeState
     commanded_mass_kg: Array
+    applied_mass_kg: Array
     commanded_energy_j: Array
     mass_balance_residual_kg: Array
     energy_balance_residual_j: Array
+
+    successful: Array
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,12 +76,26 @@ class ManufacturingRuntime:
     ) -> ManufacturingRuntime:
         coordinates = np.asarray(coordinates_m, dtype=np.float64)
         volumes = np.asarray(control_volumes_m3, dtype=np.float64)
-        if coordinates.ndim != 2 or coordinates.shape[0] == 0:
-            raise ValueError("Manufacturing coordinates require shape (cell, dimension).")
-        if volumes.shape != (coordinates.shape[0],) or np.any(volumes <= 0):
-            raise ValueError("Manufacturing control volumes must align and be positive.")
+        if (
+            coordinates.ndim != 2
+            or coordinates.shape[0] == 0
+            or not np.all(np.isfinite(coordinates))
+        ):
+            raise ValueError(
+                "Manufacturing coordinates require finite shape (cell, dimension)."
+            )
+        if (
+            volumes.shape != (coordinates.shape[0],)
+            or not np.all(np.isfinite(volumes))
+            or np.any(volumes <= 0)
+        ):
+            raise ValueError(
+                "Manufacturing control volumes must align and be finite/positive."
+            )
         if not np.isfinite(interaction_radius_m) or interaction_radius_m <= 0:
-            raise ValueError("Manufacturing interaction radius must be positive.")
+            raise ValueError(
+                "Manufacturing interaction radius must be finite and positive."
+            )
         if any(len(event.start) != coordinates.shape[1] for event in schedule.events):
             raise ValueError(
                 "Schedule and manufacturing coordinates use different dimensions."
@@ -113,15 +131,35 @@ class ManufacturingRuntime:
         end_time_s: float,
         /,
     ) -> ManufacturingStepResult:
-        if state.deposited_mass_kg.shape != self.control_volumes_m3.shape:
+        expected_shape = self.control_volumes_m3.shape
+        if (
+            state.deposited_mass_kg.shape != expected_shape
+            or state.supplied_energy_j.shape != expected_shape
+            or state.activation.active.shape != expected_shape
+            or state.activation.activation_time_s.shape != expected_shape
+        ):
             raise ValueError("Manufacturing state does not match runtime discretization.")
         if end_time_s <= state.time_s or not np.isfinite(end_time_s):
             raise ValueError("Manufacturing runtime requires an increasing finite time.")
-
-        mass = state.deposited_mass_kg
-        energy = state.supplied_energy_j
+        mass = jnp.asarray(state.deposited_mass_kg)
+        energy = jnp.asarray(state.supplied_energy_j)
+        if (
+            not bool(jnp.all(jnp.isfinite(mass)))
+            or not bool(jnp.all(jnp.isfinite(energy)))
+            or bool(jnp.any(mass < 0))
+            or bool(jnp.any(energy < 0))
+            or bool(
+                jnp.any(
+                    state.activation.active
+                    & ~jnp.isfinite(state.activation.activation_time_s)
+                )
+            )
+        ):
+            raise ValueError("Manufacturing runtime state is nonfinite or nonphysical.")
         activation = state.activation
         commanded_mass = jnp.asarray(0.0)
+        applied_mass = jnp.asarray(0.0)
+        successful = jnp.asarray(True)
         commanded_energy = jnp.asarray(0.0)
         initial_mass = jnp.sum(mass)
         initial_energy = jnp.sum(energy)
@@ -140,25 +178,49 @@ class ManufacturingRuntime:
             event_mass = jnp.asarray(event.mass_rate_kg_s * duration)
             if event.kind == "remove":
                 requested = event_mass * distribution
+                removal_supported = jnp.all(requested <= mass + 1e-12)
                 removed = jnp.minimum(mass, requested)
                 mass = mass - removed
-                commanded_mass = commanded_mass - jnp.sum(removed)
+                commanded_mass = commanded_mass - event_mass
+                applied_mass = applied_mass - jnp.sum(removed)
+                successful = successful & removal_supported
                 activation = activation.remove((removed > 0) & (mass <= 0))
             elif event.kind == "deposit":
                 increment = event_mass * distribution
                 mass = mass + increment
                 commanded_mass = commanded_mass + event_mass
+                applied_mass = applied_mass + jnp.sum(increment)
                 activation = activation.activate(increment > 0, upper)
 
-        next_state = ManufacturingRuntimeState(
+        candidate_state = ManufacturingRuntimeState(
             float(end_time_s), mass, energy, activation
         )
+        mass_residual = jnp.sum(mass) - initial_mass - commanded_mass
+        energy_residual = jnp.sum(energy) - initial_energy - commanded_energy
+        successful = (
+            successful
+            & jnp.all(jnp.isfinite(mass))
+            & jnp.all(jnp.isfinite(energy))
+            & jnp.all(mass >= 0)
+            & jnp.all(energy >= 0)
+            & jnp.isfinite(mass_residual)
+            & (jnp.abs(mass_residual) <= 1e-10)
+            & jnp.isfinite(energy_residual)
+            & (jnp.abs(energy_residual) <= 1e-10)
+        )
+        if bool(successful):
+            accepted_state = candidate_state
+        else:
+            accepted_state = state
         return ManufacturingStepResult(
-            next_state,
+            accepted_state,
+            candidate_state,
             commanded_mass,
+            applied_mass,
             commanded_energy,
-            jnp.sum(mass) - initial_mass - commanded_mass,
-            jnp.sum(energy) - initial_energy - commanded_energy,
+            mass_residual,
+            energy_residual,
+            successful,
         )
 
 

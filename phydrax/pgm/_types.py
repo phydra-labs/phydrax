@@ -83,6 +83,7 @@ class ExactFactorGraphResult(StrictModule):
     log_normalizer: Array
     variable_probabilities: VariableStateValues
     factor_probabilities: tuple[Array, ...]
+    factor_tables: tuple[Array, ...]
     map_assignment: Array
     map_log_score: Array
     feasible_configurations: Array

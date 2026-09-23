@@ -1,6 +1,8 @@
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import pytest
 
 from phydrax.atomistic import (
     AtomicStructure,
@@ -184,3 +186,26 @@ def test_spin_checkpoint_roundtrip_preserves_runtime_identity(tmp_path):
     assert restored.checkpoint_id == plan.checkpoint_id
     assert jnp.array_equal(restored.state.directions, state.directions)
     assert restored.state.prepared_dynamics_id == dynamics.prepared_id
+
+
+def test_failed_spin_state_is_not_restartable_or_checkpointable(tmp_path):
+    _, hamiltonian_plan = _dimer()
+    hamiltonian = prepare_classical_spin_hamiltonian(
+        hamiltonian_plan, exchange=[1.0], moments=[1.0, 1.0]
+    )
+    dynamics = prepare_llg_dynamics(
+        LandauLifshitzGilbertPlan(
+            hamiltonian,
+            [1.0, 1.0],
+            [0.0, 0.0],
+            step_size=0.01,
+            maximum_steps=2,
+        )
+    )
+    state = initial_spin_dynamics_state(dynamics, [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]])
+    failed = eqx.tree_at(lambda value: value.successful, state, jnp.asarray(False))
+    plan = AtomisticSpinCheckpointPlan(dynamics, scope_id="failed-spin")
+    with pytest.raises(ValueError, match="unsuccessful"):
+        write_atomistic_spin_checkpoint(tmp_path / "failed-spin.npz", plan, failed)
+    with pytest.raises(ValueError, match="unsuccessful"):
+        solve_llg_dynamics(dynamics, failed, jnp.asarray([0.0, 0.01]))

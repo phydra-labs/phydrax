@@ -363,16 +363,19 @@ def _parser():
     return parser
 
 
-def main():
+def main() -> int:
     arguments = _parser().parse_args()
     sizes = (64, 128, 256) if arguments.quick else (128, 256, 512, 1024, 2048)
     report = run_state_space_gp_benchmarks(sizes=sizes, repeats=arguments.repeats)
-    serialized = json.dumps(report, indent=2, sort_keys=True)
+    serialized = json.dumps(report, indent=2, sort_keys=True, allow_nan=False)
     if arguments.output is not None:
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
-        arguments.output.write_text(serialized + "\n")
+        temporary = arguments.output.with_name(f".{arguments.output.name}.tmp")
+        temporary.write_text(serialized + "\n")
+        temporary.replace(arguments.output)
     print(serialized)
+    return 0 if report["gate"]["passed"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

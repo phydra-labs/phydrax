@@ -29,6 +29,8 @@ class PlanarXRayDetectorResult(StrictModule, NonTrainableState):
     energy_residual: Array
     finite: Array
     successful: Array
+    transport_history_ids: Array
+    transport_plan_id: str = eqx.field(static=True)
     detector_id: str = eqx.field(static=True)
 
 
@@ -181,6 +183,8 @@ class PlanarXRayDetectorPlan(StrictModule, NonTrainableState):
             residual,
             finite,
             successful,
+            transport.history_ids,
+            transport.plan_id,
             self.detector_id,
         )
 
@@ -192,9 +196,21 @@ class PlanarXRayDetectorPlan(StrictModule, NonTrainableState):
         *,
         conditions_id: str,
     ) -> SensitiveHitBank:
-        if result.detector_id != self.detector_id:
-            raise ValueError("Detector result belongs to another plan.")
-        count = transport.history_ids.size
+        if (
+            result.detector_id != self.detector_id
+            or result.transport_plan_id != transport.plan_id
+        ):
+            raise ValueError(
+                "Detector result belongs to another detector or transport plan."
+            )
+        if result.transport_history_ids.shape != transport.history_ids.shape:
+            raise ValueError("Detector result and transport history shapes differ.")
+        history_ids = eqx.error_if(
+            transport.history_ids,
+            jnp.any(result.transport_history_ids != transport.history_ids),
+            "Detector result belongs to different transport histories.",
+        )
+        count = history_ids.size
         flat_pixel = (
             result.pixel_index[:, 0] * self.pixel_shape[1] + result.pixel_index[:, 1]
         )
@@ -202,7 +218,7 @@ class PlanarXRayDetectorPlan(StrictModule, NonTrainableState):
             result.hit_position - transport.terminal_position, axis=-1
         )
         return SensitiveHitBank(
-            event_ids=transport.history_ids,
+            event_ids=history_ids,
             hit_ids=jnp.zeros((count, 1), dtype=jnp.int32),
             detector_element_ids=flat_pixel[:, None],
             channel_ids=flat_pixel[:, None],

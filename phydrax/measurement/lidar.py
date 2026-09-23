@@ -167,7 +167,7 @@ def cartesianize_lidar_scan(scan: LidarScan, /) -> LidarPointProduct:
         support.sample_ids,
         support.coordinate_contract,
         sample_times=support.sample_times,
-        time_unit_id=support.time_unit_id,
+        time_unit=support.time_unit,
         active_mask=valid,
     )
     source_assets = tuple(

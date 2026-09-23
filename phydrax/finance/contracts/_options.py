@@ -24,7 +24,12 @@ from ..core._identifiers import FinancialIdentifier
 from ..core._time import FinanceDate
 from ._base import AbstractContract, AbstractPayoff
 from ._cashflows import CashflowBatch
-from ._exercise import ExerciseSchedule, ExerciseStyle, SettlementTerms
+from ._exercise import (
+    ExerciseSchedule,
+    ExerciseStyle,
+    SettlementTerms,
+    SettlementType,
+)
 from ._resolution import (
     ContractResolutionContext,
     ContractResolutionStatus,
@@ -133,6 +138,8 @@ def _resolve(
         status |= ContractResolutionStatus.INVALID_REFERENCE
     if settlement.calendar_id not in {value.calendar_id for value in context.calendars}:
         status |= ContractResolutionStatus.CALENDAR_MISMATCH
+    if settlement.settlement_type is SettlementType.PHYSICAL:
+        status |= ContractResolutionStatus.INCOMPATIBLE_SETTLEMENT
     cashflows = CashflowBatch(
         (),
         jnp.zeros((0,), dtype=jnp.float64),

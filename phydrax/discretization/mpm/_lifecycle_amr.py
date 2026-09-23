@@ -137,14 +137,36 @@ class MPMParticleLifecyclePlan(StrictModule, NonTrainableState):
         slots_ = jnp.asarray(slots, dtype=jnp.int32)
         identifiers = jnp.asarray(particle_ids, dtype=jnp.int64)
         masses_ = jnp.asarray(masses, dtype=lifecycle.masses.dtype)
-        if slots_.shape != identifiers.shape or slots_.shape != masses_.shape:
+        if (
+            slots_.ndim != 1
+            or slots_.shape != identifiers.shape
+            or slots_.shape != masses_.shape
+        ):
             raise ValueError("Activation slot/ID/mass arrays must share shape.")
-        available = jnp.all(~lifecycle.active[slots_]) & jnp.all(masses_ > 0.0)
+        in_bounds = (slots_ >= 0) & (slots_ < self.capacity)
+        safe_slots = jnp.clip(slots_, 0, self.capacity - 1)
+        distinct = ~jnp.any(
+            (slots_[:, None] == slots_[None, :]) & ~jnp.eye(slots_.size, dtype=jnp.bool_)
+        )
+        available = (
+            jnp.all(in_bounds)
+            & distinct
+            & jnp.all(~lifecycle.active[safe_slots])
+            & jnp.all(jnp.isfinite(masses_) & (masses_ > 0.0))
+        )
         next_state = MPMLifecycleState(
-            lifecycle.particle_ids.at[slots_].set(identifiers),
-            lifecycle.masses.at[slots_].set(masses_),
-            lifecycle.active.at[slots_].set(True),
-            lifecycle.parent_ids.at[slots_].set(-1),
+            lifecycle.particle_ids.at[safe_slots].set(
+                jnp.where(available, identifiers, lifecycle.particle_ids[safe_slots])
+            ),
+            lifecycle.masses.at[safe_slots].set(
+                jnp.where(available, masses_, lifecycle.masses[safe_slots])
+            ),
+            lifecycle.active.at[safe_slots].set(
+                jnp.where(available, True, lifecycle.active[safe_slots])
+            ),
+            lifecycle.parent_ids.at[safe_slots].set(
+                jnp.where(available, -1, lifecycle.parent_ids[safe_slots])
+            ),
             lifecycle.generation + available.astype(jnp.int32),
         )
         evidence = self._evidence(lifecycle, next_state, particles, particles)

@@ -572,7 +572,9 @@ def _root_line_search(
                 skipped_evaluations + (~trial_valid).astype(jnp.int32),
             )
 
-        can_attempt = (~accepted) & (evaluations < maximum_evaluations)
+        can_attempt = (~accepted) & (
+            (evaluations - skipped_evaluations) < maximum_evaluations
+        )
         return jax.lax.cond(can_attempt, attempt, lambda _: carry, operand=None)
 
     (
@@ -776,7 +778,9 @@ def _root_trust_region(
                 skipped_evaluations + (~trial_valid).astype(jnp.int32),
             )
 
-        can_attempt = (~accepted) & (evaluations < maximum_evaluations)
+        can_attempt = (~accepted) & (
+            (evaluations - skipped_evaluations) < maximum_evaluations
+        )
         return jax.lax.cond(can_attempt, attempt, lambda _: carry, operand=None)
 
     (
@@ -1104,7 +1108,11 @@ def _linear_control(
     )
 
 
-def _condition(termination: NonlinearTermination):
+def _condition(
+    termination: NonlinearTermination,
+    iteration_limit: Array | None = None,
+    /,
+):
     def condition(carry):
         state = carry[1]
         within_evaluations = (
@@ -1117,9 +1125,14 @@ def _condition(termination: NonlinearTermination):
             if termination.maximum_linear_iterations is None
             else state.linear_iterations < termination.maximum_linear_iterations
         )
+        within_iterations = (
+            state.iteration < termination.maximum_steps
+            if iteration_limit is None
+            else state.iteration < iteration_limit
+        )
         return (
             (state.status == int(NonlinearStatus.ITERATING))
-            & (state.iteration < termination.maximum_steps)
+            & within_iterations
             & within_evaluations
             & within_linear
         )
@@ -1603,6 +1616,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
         iteration: IterationPlan | None = None,
         _prepared_start: tuple[NonlinearSystemProblem, PyTree[Array], _RootState, Any]
         | None = None,
+        _iteration_limit: Array | None = None,
         _return_internal: bool = False,
     ) -> Any:
         if not isinstance(problem, NonlinearSystemProblem):
@@ -1958,7 +1972,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
 
         state, dynamic_run, dynamic_jacobian, iteration_state = _run_root_iteration_loop(
             body,
-            _condition(termination),
+            _condition(termination, _iteration_limit),
             (state, dynamic_run, dynamic_jacobian),
             static_run,
             iteration,
@@ -2062,6 +2076,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
         iteration: IterationPlan | None = None,
         _prepared_start: tuple[NonlinearSystemProblem, PyTree[Array], _RootState, Any]
         | None = None,
+        _iteration_limit: Array | None = None,
         _return_internal: bool = False,
     ) -> Any:
         if not isinstance(problem, NonlinearSystemProblem):
@@ -2442,7 +2457,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
 
         state, dynamic_run, dynamic_jacobian, iteration_state = _run_root_iteration_loop(
             body,
-            _condition(termination),
+            _condition(termination, _iteration_limit),
             (state, dynamic_run, dynamic_jacobian),
             static_run,
             iteration,

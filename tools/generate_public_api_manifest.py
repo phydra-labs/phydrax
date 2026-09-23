@@ -80,15 +80,12 @@ def public_api_record() -> dict[str, object]:
         for name in names:
             qualified_name = f"{public_path}.{name}"
             _validate_public_path(qualified_name)
-            try:
-                value = getattr(module, name)
-            except ImportError:
-                qualified.append(qualified_name)
-                continue
-            except AttributeError as error:
-                raise AttributeError(
-                    f"{qualified_name} is exported but missing."
-                ) from error
+            if name in module.__dict__:
+                value = module.__dict__[name]
+            elif "__getattr__" in module.__dict__:
+                value = None
+            else:
+                raise AttributeError(f"{qualified_name} is exported but missing.")
             qualified.append(qualified_name)
             if isinstance(value, ModuleType) and value.__name__.startswith("phydrax."):
                 queue.append((qualified_name, value))

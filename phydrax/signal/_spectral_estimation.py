@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from numbers import Integral
 from typing import Literal
 
 import equinox as eqx
@@ -14,8 +15,18 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._axis import _normalize_axis, _positive_int
 from ._framing import frame
 from ._windows import hann_window, tukey_window
+
+
+def _nonnegative_int(value: int, name: str, /) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError(f"{name} must be an integer.")
+    resolved = int(value)
+    if resolved < 0:
+        raise ValueError(f"{name} must be nonnegative.")
+    return resolved
 
 
 class WelchSpectrumResult(StrictModule):
@@ -56,8 +67,10 @@ class WelchSpectrumPlan(StrictModule, NonTrainableState):
         tukey_alpha: float = 0.5,
     ):
         interval = float(sample_interval)
-        length = int(segment_length)
-        overlap_ = length // 2 if overlap is None else int(overlap)
+        length = _positive_int(segment_length, "segment_length")
+        overlap_ = (
+            length // 2 if overlap is None else _nonnegative_int(overlap, "overlap")
+        )
         alpha = float(tukey_alpha)
         if (
             not np.isfinite(interval)
@@ -103,7 +116,7 @@ class WelchSpectrumPlan(StrictModule, NonTrainableState):
             raise TypeError("Welch spectrum requires a real inexact signal.")
         if signal.ndim == 0:
             raise ValueError("Welch spectrum requires at least one signal axis.")
-        resolved_axis = int(axis) % signal.ndim
+        resolved_axis = _normalize_axis(axis, signal.ndim)
         canonical = jnp.moveaxis(signal, resolved_axis, -1)
         framed = frame(
             canonical,

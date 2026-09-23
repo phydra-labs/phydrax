@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._model import register_artifact_value
 from .._strict import StrictModule
 from ._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
 
@@ -535,6 +536,28 @@ def _chebyshev_basis(value, count):
     for _ in range(2, count):
         terms.append(2.0 * value * terms[-1] - terms[-2])
     return jnp.stack(terms, axis=-1)
+
+
+for _artifact_value in (
+    ChemicalRateKind,
+    ChemicalRateRuntime,
+    ArrheniusRatePlan,
+    ThirdBodyRatePlan,
+    LindemannRatePlan,
+    TroeRatePlan,
+    PLogRatePlan,
+    ChebyshevRatePlan,
+    PhotolysisRatePlan,
+    SurfaceCoverageRatePlan,
+    StickingRatePlan,
+    ButlerVolmerRatePlan,
+):
+    register_artifact_value(
+        f"phydrax.chemistry.rate:{_artifact_value.__name__}",
+        _artifact_value,
+    )
+
+del _artifact_value
 
 
 __all__ = [

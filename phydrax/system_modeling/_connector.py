@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 from dataclasses import dataclass
+from math import isfinite
 from typing import Literal, TypeAlias
 
 
@@ -42,6 +43,14 @@ class Connector:
     connector_id: str
     connector_type: ConnectorType
     orientation: float = 1.0
+
+    def __post_init__(self):
+        if not isinstance(self.connector_id, str) or not self.connector_id:
+            raise ValueError("Connector identifier must be a non-empty string.")
+        if not isinstance(self.connector_type, ConnectorType):
+            raise TypeError("connector_type must be ConnectorType.")
+        if not isfinite(self.orientation) or self.orientation not in (-1.0, 1.0):
+            raise ValueError("Connector orientation must be exactly -1 or +1.")
 
 
 __all__ = ["Connector", "ConnectorType", "ConnectorVariable", "VariableKind"]

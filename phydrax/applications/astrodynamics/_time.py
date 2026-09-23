@@ -250,8 +250,13 @@ class PreparedTimeRoute(StrictModule, NonTrainableState):
             result = transform.apply(value)
             value = result.relative_seconds
             total_offset = total_offset + result.offset_seconds
-            valid = valid & result.valid
-            status = jnp.where(valid, result.status, status)
+            valid_before = valid
+            valid = valid_before & result.valid
+            status = jnp.where(
+                valid_before & ~result.valid,
+                result.status,
+                status,
+            )
         return TimeScaleTransformResult(value, total_offset, valid, status, self.route_id)
 
 

@@ -55,14 +55,22 @@ class VascularDeviceNetwork:
         quadratic = np.asarray(device_quadratic_loss_pa_s2_m6, dtype=np.float64)
         if graph.ndim != 2 or graph.shape[0] == 0 or graph.shape[1] == 0:
             raise ValueError("Vascular incidence must have node-by-edge shape.")
-        if not np.all(np.isin(graph, (-1.0, 0.0, 1.0))) or np.any(
-            np.count_nonzero(graph, axis=0) != 2
+        if (
+            not np.all(np.isin(graph, (-1.0, 0.0, 1.0)))
+            or np.any(np.count_nonzero(graph, axis=0) != 2)
+            or np.any(np.sum(graph, axis=0) != 0)
         ):
             raise ValueError(
                 "Every vascular edge must connect exactly two oriented nodes."
             )
-        if compliance.shape != (graph.shape[0],) or np.any(compliance <= 0):
-            raise ValueError("Vascular node compliance must be positive and aligned.")
+        if (
+            compliance.shape != (graph.shape[0],)
+            or not np.all(np.isfinite(compliance))
+            or np.any(compliance <= 0)
+        ):
+            raise ValueError(
+                "Vascular node compliance must be finite, positive and aligned."
+            )
         if any(
             value.shape != (graph.shape[1],)
             for value in (inertance, resistance, quadratic)
@@ -70,6 +78,10 @@ class VascularDeviceNetwork:
             raise ValueError(
                 "Vascular edge properties must align with incidence columns."
             )
+        if not all(
+            np.all(np.isfinite(value)) for value in (inertance, resistance, quadratic)
+        ):
+            raise ValueError("Vascular edge properties must be finite.")
         if np.any(inertance <= 0) or np.any(resistance < 0) or np.any(quadratic < 0):
             raise ValueError(
                 "Vascular inertance must be positive and losses non-negative."

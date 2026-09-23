@@ -572,9 +572,12 @@ def _propagate_particles(
                 return values, sample_valid
 
             return jax.lax.cond(
-                case_active,
+                case_active & (ends[case_index] != starts[case_index]),
                 propagate,
-                lambda _: (previous_particle, jnp.asarray(True)),
+                lambda _: (
+                    previous_particle,
+                    jnp.where(case_active, context.input_valid, True),
+                ),
                 operand=None,
             )
 
@@ -878,19 +881,23 @@ def bootstrap_particle_filter(
         time_major_records,
     )
     result = ParticleFilterResult(
-        initial_particles=initial_state.particles,
-        initial_log_weights=initial_state.log_weights,
+        initial_particles=state.precision.output(initial_state.particles),
+        initial_log_weights=state.precision.output(initial_state.log_weights),
         initial_valid=initial_state.valid,
-        predicted_particles=records.predicted_particles,
-        posterior_log_weights=records.posterior_log_weights,
-        particles=records.particles,
-        log_weights=records.log_weights,
+        predicted_particles=state.precision.output(records.predicted_particles),
+        posterior_log_weights=state.precision.output(records.posterior_log_weights),
+        particles=state.precision.output(records.particles),
+        log_weights=state.precision.output(records.log_weights),
         ancestor_indices=records.ancestor_indices,
         transition_valid=records.transition_valid,
-        effective_sample_sizes=records.effective_sample_size,
+        effective_sample_sizes=state.precision.output(records.effective_sample_size),
         resampled=records.resampled,
-        incremental_log_likelihood=records.incremental_log_likelihood,
-        cumulative_log_likelihood=records.cumulative_log_likelihood,
+        incremental_log_likelihood=state.precision.output(
+            records.incremental_log_likelihood
+        ),
+        cumulative_log_likelihood=state.precision.output(
+            records.cumulative_log_likelihood
+        ),
         step_valid=problem.observations.step_valid,
         valid=records.valid,
         status=records.status,
@@ -1703,7 +1710,11 @@ def sample_particle_ancestry_paths(
         (case_count, num_steps, result.num_particles)
     )
     active = result.step_valid.reshape((case_count, num_steps))
-    paths = np.zeros((sample_count, case_count, num_steps, state_size))
+    particle_dtype = np.dtype(particles.dtype)
+    paths = np.zeros(
+        (sample_count, case_count, num_steps, state_size),
+        dtype=particle_dtype,
+    )
     for sample_index in range(sample_count):
         for case_index, case_id in enumerate(result.case_ids):
             valid_count = int(np.sum(np.asarray(active[case_index])))
@@ -1720,7 +1731,7 @@ def sample_particle_ancestry_paths(
             particle_index = _sample_terminal_index(
                 terminal_key, weights[case_index, terminal]
             )
-            path = np.zeros((num_steps, state_size))
+            path = np.zeros((num_steps, state_size), dtype=particle_dtype)
             path[terminal] = np.asarray(particles[case_index, terminal, particle_index])
             for step in range(terminal, 0, -1):
                 particle_index = int(ancestors[case_index, step, particle_index])
@@ -1776,7 +1787,11 @@ def particle_filter_predictive(
         (case_count, num_steps, result.num_particles)
     )
     active = result.step_valid.reshape((case_count, num_steps))
-    converted = np.full((case_count, num_steps, result.num_particles, state_size), np.nan)
+    converted = np.full(
+        (case_count, num_steps, result.num_particles, state_size),
+        np.nan,
+        dtype=np.dtype(source_particles.dtype),
+    )
     for case_index, case_id in enumerate(result.case_ids):
         for step in range(num_steps):
             if bool(active[case_index, step]) and bool(
@@ -1910,7 +1925,10 @@ def write_particle_filter_checkpoint(
         path,
         kind="particle-filter-state",
         compatibility=compatibility,
-        state={"step_index": int(state.step_index)},
+        state={
+            "step_index": int(state.step_index),
+            "root_key_impl": str(jr.key_impl(state.root_key)),
+        },
         arrays={
             "particles": state.particles,
             "log_weights": state.log_weights,
@@ -1959,9 +1977,12 @@ def read_particle_filter_checkpoint(
         kind="particle-filter-state",
         compatibility=compatibility,
     )
-    if set(state_data) != {"step_index"}:
+    if set(state_data) != {"step_index", "root_key_impl"}:
         raise ValueError("Particle-filter checkpoint state manifest is invalid.")
     step_index = int(state_data["step_index"])
+    key_impl = state_data["root_key_impl"]
+    if not isinstance(key_impl, str) or not key_impl:
+        raise ValueError("Particle-filter checkpoint PRNG implementation is invalid.")
     if not 0 <= step_index <= problem.observations.num_steps:
         raise ValueError("Particle-filter checkpoint step_index is outside the schedule.")
     expected_shapes = {
@@ -1973,7 +1994,7 @@ def read_particle_filter_checkpoint(
         "log_likelihood": problem.observations.case_shape,
         "valid": problem.observations.case_shape,
         "status": problem.observations.case_shape,
-        "root_key_data": jr.key_data(jr.key(0)).shape,
+        "root_key_data": jr.key_data(jr.key(0, impl=key_impl)).shape,
     }
     if set(arrays) != set(expected_shapes):
         raise ValueError("Particle-filter checkpoint array inventory is invalid.")
@@ -2004,7 +2025,10 @@ def read_particle_filter_checkpoint(
         log_likelihood=arrays["log_likelihood"],
         valid=arrays["valid"].astype("bool"),
         status=arrays["status"].astype(jnp.int32),
-        root_key=jr.wrap_key_data(arrays["root_key_data"].astype(jnp.uint32)),
+        root_key=jr.wrap_key_data(
+            arrays["root_key_data"].astype(jnp.uint32),
+            impl=key_impl,
+        ),
         step_index=step_index,
         num_particles=count,
         problem_id=problem.problem_id,

@@ -338,7 +338,7 @@ class PrimalDualInteriorPoint(AbstractStructuredNonlinearMethod):
             exact_sparse_jacobian=sparse,
             exact_sparse_hessian=sparse,
             limited_memory_hessian=False,
-            portable_warm_start=True,
+            portable_warm_start=sparse,
             numeric_refresh=True,
             jit=transformed,
             ordinary_batch=transformed,
@@ -399,6 +399,11 @@ class PrimalDualInteriorPoint(AbstractStructuredNonlinearMethod):
     ) -> StructuredNonlinearResult:
         if not isinstance(prepared, PreparedStructuredNonlinearProgram):
             raise TypeError("prepared must be a PreparedStructuredNonlinearProgram.")
+        if self.mode != "sparse-augmented" and warm_start is not None:
+            raise ValueError(
+                f"{self.mode} does not support structured dual warm starts; "
+                "use sparse-augmented mode or omit warm_start."
+            )
         if self.mode == "sparse-augmented":
             return solve_sparse_structured_ipm(
                 prepared,
@@ -511,6 +516,7 @@ class PrimalDualInteriorPoint(AbstractStructuredNonlinearMethod):
             structured_warm_start,
             _structured_work(underlying, self.mode),
             numeric_version=prepared.numeric_version,
+            numeric_binding_id=prepared.numeric_binding_id,
             structure_id=prepared.structure_id,
             method_id=self.method_id,
         )

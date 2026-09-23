@@ -192,6 +192,7 @@ def _mode_identity(
     mode_schema_id: str,
     role: PlantModeRole,
     binding: dict[str, str],
+    identity_values: tuple[Array, ...],
     /,
 ) -> str:
     return canonical_fingerprint(
@@ -200,6 +201,7 @@ def _mode_identity(
             "paths": list(paths),
             "mode_schema": mode_schema_id,
             "role": role,
+            "values": array_tree_fingerprint(identity_values),
             **binding,
         }
     )
@@ -218,7 +220,7 @@ class PlantModeSidecar(StrictModule):
     schema_id: str = eqx.field(static=True)
     executable_signature_id: str = eqx.field(static=True)
     codec_id: str = eqx.field(static=True)
-    mode_id: str = eqx.field(static=True)
+    mode_binding_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -268,7 +270,31 @@ class PlantModeSidecar(StrictModule):
         self.schema_id = binding["schema_id"]
         self.executable_signature_id = binding["executable_signature_id"]
         self.codec_id = binding["codec_id"]
-        self.mode_id = _mode_identity(paths_, self.mode_schema_id, role, binding)
+        self.mode_binding_id = canonical_fingerprint(
+            {
+                "kind": "plant-dynamic-mode-binding",
+                "paths": list(paths_),
+                "mode_schema": self.mode_schema_id,
+                "role": role,
+                **binding,
+            }
+        )
+
+    @property
+    def mode_id(self) -> str:
+        return _mode_identity(
+            self.paths,
+            self.mode_schema_id,
+            self.role,
+            {
+                "semantic_id": self.semantic_id,
+                "numeric_revision_id": self.numeric_revision_id,
+                "schema_id": self.schema_id,
+                "executable_signature_id": self.executable_signature_id,
+                "codec_id": self.codec_id,
+            },
+            self.identity_values,
+        )
 
 
 def _empty_mode_sidecar(
@@ -698,14 +724,6 @@ class PlantStateVectorCodec(StrictModule):
             raise ValueError(
                 f"{owner} dynamic mode sidecar provenance, schema, paths, or role does not match this codec operation."
             )
-        expected_mode_id = _mode_identity(
-            self.dynamic_mode_paths,
-            self.dynamic_mode_schema_id,
-            role,
-            binding,
-        )
-        if mode.mode_id != expected_mode_id:
-            raise ValueError(f"{owner} dynamic mode sidecar identity is stale.")
         if len(mode.values) != len(self.dynamic_mode_leaf_indices) or len(
             mode.identity_values
         ) != len(self.dynamic_mode_leaf_indices):

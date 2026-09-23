@@ -3,6 +3,8 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
+from phydrax.solver._hybrid_event import empty_hybrid_event_tape, HybridReplayPolicy
+from phydrax.solver._jump import _record_deterministic_event
 
 
 def _counting_process(*, rate=2.0, process_id="counting"):
@@ -13,6 +15,32 @@ def _counting_process(*, rate=2.0, process_id="counting"):
         num_channels=1,
         process_id=process_id,
     )
+
+
+def test_deterministic_jump_record_preserves_invalid_saltation_evidence():
+    policy = HybridReplayPolicy(1)
+    tape = empty_hybrid_event_tape(policy, jnp.asarray([0.0]), "grazing")
+
+    recorded = _record_deterministic_event(
+        tape,
+        policy,
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0.5),
+        jnp.asarray([0.5]),
+        jnp.asarray([1.0]),
+        jnp.asarray(0.0),
+        jnp.asarray(0.0),
+        jnp.asarray(False),
+        jnp.asarray(1.0),
+        jnp.asarray(0.0),
+        jnp.asarray(False),
+        jnp.asarray(True),
+        jnp.asarray(False),
+    )
+
+    assert recorded.active[0]
+    assert not recorded.saltation_valid[0]
+    assert recorded.event_count == 1
 
 
 def test_poisson_clock_growth_preserves_every_existing_path_event_prefix():

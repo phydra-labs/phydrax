@@ -294,3 +294,62 @@ def test_normalized_density_retains_positive_mass_contract():
     assert estimate.successful
     assert jnp.allclose(estimate.value.data, 1.0, atol=1e-11)
     assert estimate.error_kind == "ratio-embedded-cubature-indicator"
+
+
+def test_adaptive_cubature_normalizes_component_means_on_nonunit_domains():
+    x = phx.domain.ScalarInterval(0.0, 2.0, label="x")
+    y = phx.domain.ScalarInterval(0.0, 3.0, label="y")
+    domain = phx.domain.ProductDomain(x, y)
+    target = phx.integration.mean_over(domain.component())
+    plan = phx.integration.AdaptiveCubaturePlan(
+        phx.integration.GenzMalikRule(2, 9),
+        absolute_tolerance=1e-10,
+        max_cells=8,
+        throw=False,
+    )
+
+    estimate = phx.integration.integrate(1.0, target, plan)
+
+    assert estimate.successful
+    assert jnp.allclose(estimate.value.data, 1.0, atol=1e-12)
+    assert estimate.error_kind == "ratio-embedded-cubature-indicator"
+
+
+def test_adaptive_cubature_rejects_partial_coupled_axes():
+    x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
+    y = phx.domain.ScalarInterval(0.0, 1.0, label="y")
+    domain = phx.domain.ProductDomain(x, y)
+    target = phx.integration.over(domain.component(), axes="x")
+    plan = phx.integration.AdaptiveCubaturePlan(
+        phx.integration.GenzMalikRule(2, 9),
+        throw=False,
+    )
+
+    with pytest.raises(ValueError, match="partial-axis"):
+        phx.integration.integrate(1.0, target, plan)
+
+
+def test_adaptive_cubature_ratio_recertifies_error_and_diagnostics():
+    x = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
+    y = phx.domain.ScalarInterval(-1.0, 1.0, label="y")
+    domain = phx.domain.ProductDomain(x, y)
+    base = phx.integration.over(domain.component())
+    target = phx.integration.normalized_density(
+        base,
+        domain.Function("x", "y")(lambda x, y: -30.0 + 0.0 * (x + y)),
+    )
+    function = domain.Function("x")(jnp.abs)
+    plan = phx.integration.AdaptiveCubaturePlan(
+        phx.integration.GenzMalikRule(2, 9),
+        absolute_tolerance=1e-6,
+        relative_tolerance=0.0,
+        max_cells=1,
+        throw=False,
+    )
+
+    estimate = phx.integration.integrate(function, target, plan)
+
+    assert estimate.status == int(phx.integration.IntegrationStatus.REFINEMENT_STAGNATION)
+    assert estimate.diagnostics.status == estimate.status
+    assert estimate.diagnostics.num_evaluations == estimate.num_evaluations
+    assert estimate.diagnostics.estimated_error == estimate.error_estimate

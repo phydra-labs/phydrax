@@ -533,12 +533,26 @@ class MarkerFlowTrajectoryAdapter(StrictModule, NonTrainableState):
             )
             time = jnp.where(accepted, time + steps[index], time)
             observation = self.observe(time, state)
-            finite = finite & jnp.all(
-                jnp.stack(
-                    tuple(
-                        jnp.all(jnp.isfinite(value))
-                        for value in jax.tree.leaves(observation)
-                    )
+            observation_finite = tuple(
+                jnp.all(jnp.isfinite(value)) for value in jax.tree.leaves(observation)
+            )
+            state_finite = tuple(
+                jnp.all(jnp.isfinite(value))
+                for value in jax.tree.leaves(state)
+                if eqx.is_array(value)
+            )
+            finite = (
+                finite
+                & jnp.isfinite(time)
+                & (
+                    jnp.all(jnp.stack(observation_finite))
+                    if observation_finite
+                    else jnp.asarray(True)
+                )
+                & (
+                    jnp.all(jnp.stack(state_finite))
+                    if state_finite
+                    else jnp.asarray(True)
                 )
             )
             observations.append(observation)

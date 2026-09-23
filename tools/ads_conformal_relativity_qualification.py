@@ -142,16 +142,18 @@ def run_qualification() -> dict[str, object]:
     }
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
-    encoded = json.dumps(run_qualification(), indent=2, sort_keys=True)
+    report = run_qualification()
+    encoded = json.dumps(report, indent=2, sort_keys=True, allow_nan=False)
     if arguments.output is None:
         print(encoded)
     else:
         arguments.output.write_text(encoded + "\n", encoding="utf-8")
+    return 0 if report["successful"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

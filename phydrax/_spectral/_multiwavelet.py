@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._model import register_artifact_value
 from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -217,6 +218,12 @@ class AlpertMultiwaveletTransform(StrictModule, NonTrainableState):
 
     def __call__(self, values: ArrayLike, /) -> MultiresolutionCoefficients:
         return self.analysis(values)
+
+
+register_artifact_value(
+    "phydrax.spectral:AlpertMultiwaveletTransform",
+    AlpertMultiwaveletTransform,
+)
 
 
 __all__ = ["AlpertMultiwaveletTransform"]

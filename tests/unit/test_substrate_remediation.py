@@ -52,10 +52,18 @@ def test_transaction_balance_runtime_and_affine_evolution():
     )
     assert bool(balance.successful)
 
-    identity = phx.qualification.QualificationRuntimeIdentity(
-        "build", "environment", "jax", "single-device", "float64"
-    )
-    assert identity.compatible(identity)
+    fields = ("build", "environment", "jax", "single-device", "float64")
+    identity = phx.qualification.QualificationRuntimeIdentity(*fields)
+    assert identity.compatible(phx.qualification.QualificationRuntimeIdentity(*fields))
+    for index in range(len(fields)):
+        changed = (
+            *fields[:index],
+            fields[index] + "-changed",
+            *fields[index + 1 :],
+        )
+        other = phx.qualification.QualificationRuntimeIdentity(*changed)
+        assert not identity.compatible(other)
+        assert not other.compatible(identity)
 
     evolution = phx.dynamics.PreparedAffineLinearEvolution(
         jnp.zeros((1, 1)),

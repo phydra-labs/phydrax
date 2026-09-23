@@ -7,8 +7,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from enum import StrEnum
 from math import isfinite
+from numbers import Integral
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -18,7 +20,21 @@ from phydrax._spectral._fourier import fourier_resample as _fourier_resample
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 
+from ._axis import _normalize_axis, _positive_int
 from ._windows import blackman_window, hamming_window, hann_window, tukey_window
+
+
+def _nonnegative_int(value: int, name: str, /) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError(f"{name} must be an integer.")
+    resolved = int(value)
+    if resolved < 0:
+        raise ValueError(f"{name} must be nonnegative.")
+    return resolved
+
+
+def _is_traced(*values: Array) -> bool:
+    return any(isinstance(value, jax.core.Tracer) for value in values)
 
 
 def fourier_resample(
@@ -35,9 +51,9 @@ def fourier_resample(
     transformed. Unselected axes are independent payload or batch axes.
     """
     array = jnp.asarray(values)
-    shape = tuple(output_shape)
-    if not shape or any(size <= 0 for size in shape):
-        raise ValueError("output_shape must contain positive signal sizes.")
+    shape = tuple(_positive_int(size, "output_shape size") for size in output_shape)
+    if not shape:
+        raise ValueError("output_shape must contain at least one signal size.")
     if axes is None:
         if array.ndim < len(shape):
             raise ValueError(
@@ -45,7 +61,12 @@ def fourier_resample(
             )
         resolved_axes = tuple(range(array.ndim - len(shape), array.ndim))
     else:
-        resolved_axes = tuple(axes)
+        supplied_axes = tuple(axes)
+        if len(supplied_axes) != len(shape):
+            raise ValueError("axes must provide one array axis per output size.")
+        resolved_axes = tuple(_normalize_axis(axis, array.ndim) for axis in supplied_axes)
+        if len(set(resolved_axes)) != len(resolved_axes):
+            raise ValueError("Fourier resampling axes must be unique.")
     return _fourier_resample(
         array,
         shape,
@@ -73,7 +94,7 @@ class FourierSpectrumResult(StrictModule, NonTrainableState):
     parseval_residual: Array
     successful: Array
     plan_id: str = eqx.field(static=True)
-    result_id: str = eqx.field(static=True)
+    result_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -97,19 +118,23 @@ class FourierSpectrumResult(StrictModule, NonTrainableState):
         self.parseval_residual = residual
         self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.plan_id = str(plan_id)
-        self.result_id = canonical_fingerprint(
-            {
-                "kind": "fourier-spectrum-result",
-                "plan": self.plan_id,
-                "successful": bool(self.successful),
-                "arrays": array_tree_fingerprint(
-                    {
-                        "frequencies": np.asarray(frequency),
-                        "spectrum": np.asarray(transformed),
-                        "parseval_residual": np.asarray(residual),
-                    }
-                ),
-            }
+        self.result_id = (
+            None
+            if _is_traced(frequency, transformed, residual, self.successful)
+            else canonical_fingerprint(
+                {
+                    "kind": "fourier-spectrum-result",
+                    "plan": self.plan_id,
+                    "successful": bool(self.successful),
+                    "arrays": array_tree_fingerprint(
+                        {
+                            "frequencies": np.asarray(frequency),
+                            "spectrum": np.asarray(transformed),
+                            "parseval_residual": np.asarray(residual),
+                        }
+                    ),
+                }
+            )
         )
 
 
@@ -145,9 +170,9 @@ class FourierSpectrumPlan(StrictModule, NonTrainableState):
         tukey_alpha: float = 0.5,
         parseval_tolerance: float = 1.0e-10,
     ):
-        count = int(sample_count)
+        count = _positive_int(sample_count, "sample_count")
         interval = float(sample_interval)
-        padding = int(padding_count)
+        padding = _nonnegative_int(padding_count, "padding_count")
         alpha = float(tukey_alpha)
         tolerance = float(parseval_tolerance)
         if (

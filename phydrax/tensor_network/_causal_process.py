@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -89,10 +90,17 @@ class QuantumInstrument(StrictModule):
         return self.kraus.shape[-1]
 
 
+class CausalProcessStatus(IntEnum):
+    SUCCESS = 0
+    ZERO_PROBABILITY = 1
+    NONFINITE = 2
+
+
 class CausalProcessResult(StrictModule):
     final_system_state: Array
     probability: Array
     valid: Array
+    status: Array
     process_id: str = eqx.field(static=True)
 
     def __init__(
@@ -100,6 +108,7 @@ class CausalProcessResult(StrictModule):
         final_system_state: ArrayLike,
         probability: ArrayLike,
         valid: ArrayLike,
+        status: ArrayLike,
         /,
         *,
         process_id: str,
@@ -107,6 +116,7 @@ class CausalProcessResult(StrictModule):
         self.final_system_state = jnp.asarray(final_system_state)
         self.probability = jnp.asarray(probability)
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.status = jnp.asarray(status, dtype=jnp.int32)
         self.process_id = str(process_id)
 
 
@@ -205,15 +215,35 @@ class CausalProcessTensor(StrictModule):
         probability = jnp.real(jnp.trace(state))
         tensor = state.reshape((system, memory, system, memory))
         reduced = jnp.trace(tensor, axis1=1, axis2=3)
-        normalized = jnp.where(probability > 0.0, reduced / probability, reduced)
-        valid = valid & (probability >= 0.0)
+        positive_probability = jnp.isfinite(probability) & (probability > 0.0)
+        normalized = jnp.where(
+            positive_probability,
+            reduced / jnp.where(positive_probability, probability, 1.0),
+            jnp.zeros_like(reduced),
+        )
+        finite = jnp.all(jnp.isfinite(reduced)) & jnp.all(jnp.isfinite(normalized))
+        valid = valid & finite & positive_probability
+        status = jnp.where(
+            ~finite,
+            int(CausalProcessStatus.NONFINITE),
+            jnp.where(
+                ~positive_probability,
+                int(CausalProcessStatus.ZERO_PROBABILITY),
+                int(CausalProcessStatus.SUCCESS),
+            ),
+        )
         return CausalProcessResult(
-            normalized, probability, valid, process_id=self.process_id
+            normalized,
+            probability,
+            valid,
+            status,
+            process_id=self.process_id,
         )
 
 
 __all__ = [
     "CausalProcessResult",
+    "CausalProcessStatus",
     "CausalProcessTensor",
     "CombLegSpec",
     "QuantumInstrument",

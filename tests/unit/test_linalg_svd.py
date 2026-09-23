@@ -13,6 +13,54 @@ la = phx.linalg
 svd = la.svd
 
 
+class _DensePairing(la.AbstractPairing):
+    matrix: jax.Array
+
+    def __init__(self, matrix):
+        self.matrix = jnp.asarray(matrix)
+        self.pairing_id = "svd-eligibility-dense-pairing"
+
+    def inner(self, left, right, /):
+        return jnp.vdot(left, self.matrix @ right)
+
+    def riesz(self, vector, /):
+        return self.matrix @ vector
+
+    def inverse_riesz(self, covector, /):
+        return jnp.linalg.solve(self.matrix, covector)
+
+
+def test_dense_linear_svd_planning_requires_every_materialized_metric():
+    source = la.ArraySpace(
+        (2,),
+        dtype=jnp.float64,
+        pairing=_DensePairing(jnp.asarray([[2.0, 0.25], [0.25, 1.5]])),
+    )
+    least_squares = la.LeastSquaresProblem(
+        la.DenseLinearOperator(
+            jnp.asarray([[1.0, 0.0], [0.0, 1.0], [1.0, -1.0]]),
+            source=source,
+        )
+    )
+    target = la.ArraySpace(
+        (2,),
+        dtype=jnp.float64,
+        pairing=_DensePairing(jnp.asarray([[3.0, 0.5], [0.5, 2.0]])),
+    )
+    minimum_norm = la.MinimumNormProblem(
+        la.DenseLinearOperator(
+            jnp.asarray([[1.0, 0.0, 1.0], [0.0, 1.0, -1.0]]),
+            target=target,
+        )
+    )
+    policy = la.LinearSolvePolicy(la.DenseSVD())
+
+    with pytest.raises(ValueError, match="metric pairings"):
+        la.plan(least_squares, policy)
+    with pytest.raises(ValueError, match="metric pairings"):
+        la.plan(minimum_norm, policy)
+
+
 def test_dense_svd_is_jittable_refreshable_and_reports_rank():
     matrix = jnp.asarray([[3.0, 1.0], [0.0, 2.0], [1.0, 0.0]])
     operator = la.DenseLinearOperator(matrix, operator_id="refreshable-svd")
@@ -164,6 +212,7 @@ def test_singular_value_derivatives_require_nonzero_isolated_values():
         policy=svd.SVDSolvePolicy(
             count=2,
             rank=la.RankPolicy(require_full_rank=True),
+            differentiation="singular-values",
         ),
     )
     assert rank_deficient.status == int(svd.SVDSolveStatus.RANK_DEFICIENT)

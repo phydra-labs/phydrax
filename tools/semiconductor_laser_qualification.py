@@ -295,7 +295,7 @@ def qualify() -> dict[str, object]:
     }
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--output",
@@ -305,9 +305,14 @@ def main() -> None:
     arguments = parser.parse_args()
     payload = qualify()
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    print(json.dumps(payload, indent=2, sort_keys=True))
+    temporary = arguments.output.with_name(f".{arguments.output.name}.tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    )
+    temporary.replace(arguments.output)
+    print(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False))
+    return 0 if payload["accepted"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

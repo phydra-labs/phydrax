@@ -212,10 +212,12 @@ class PreparedMomentumVertexGridFlow(StrictModule, NonTrainableState):
             shifted_propagator,
             1.0,
         )
-        integrand = (
+        integrand = jnp.where(
+            self.support_mask,
             vertex_q[None, :, None]
             * shifted_vertex
-            / (safe_q[None, :, None] ** 2 * safe_shifted)
+            / (safe_q[None, :, None] ** 2 * safe_shifted),
+            0.0,
         )
         angular_average = contract("pqa,a->pq", integrand, self.plan.angular_weights)
         loops = self.plan.volume_factor * contract(
@@ -234,6 +236,7 @@ class PreparedMomentumVertexGridFlow(StrictModule, NonTrainableState):
             self.plan.dimension - 4.0 + 2.0 * eta
         ) * state.four_point_vertex - 3.0 * loops
         support_fraction = jnp.mean(self.support_mask)
+        support_complete = jnp.all(self.support_mask)
         finite = (
             jnp.all(jnp.isfinite(state.inverse_propagator))
             & jnp.all(jnp.isfinite(state.four_point_vertex))
@@ -243,14 +246,18 @@ class PreparedMomentumVertexGridFlow(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(beta_inverse))
             & jnp.all(jnp.isfinite(beta_vertex))
         )
-        admissible = finite & jnp.all(state.inverse_propagator > 0.0)
+        admissible = finite & support_complete & jnp.all(state.inverse_propagator > 0.0)
         status = jnp.where(
-            admissible,
-            int(FunctionalRGStatus.SUCCESS),
+            ~finite,
+            int(FunctionalRGStatus.NONFINITE),
             jnp.where(
-                finite,
-                int(FunctionalRGStatus.POLE_ENCOUNTERED),
-                int(FunctionalRGStatus.NONFINITE),
+                ~support_complete,
+                int(FunctionalRGStatus.CAPACITY_EXCEEDED),
+                jnp.where(
+                    admissible,
+                    int(FunctionalRGStatus.SUCCESS),
+                    int(FunctionalRGStatus.POLE_ENCOUNTERED),
+                ),
             ),
         ).astype(jnp.int32)
         return MomentumVertexFlowEvaluation(

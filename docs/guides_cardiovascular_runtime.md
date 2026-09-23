@@ -195,6 +195,7 @@ from phydrax.applications.cardiovascular import (
 )
 
 codec = CardiovascularLifecycleCheckpointCodec(execution)
+parent = codec.read("checkpoints/accepted-0041.phx")
 record = codec.write(
     "checkpoints/accepted-0042.phx",
     {
@@ -203,23 +204,25 @@ record = codec.write(
         "runtime/accepted_step": accepted_step,
     },
     checkpoint_id="checkpoint:0042",
-    parent_checkpoint_id="checkpoint:0041",
+    parent=parent,
     committed=True,
     layout_ids={
         "state/voltage_mV": ("layout:myocardial-nodes",),
         "state/pressure_kPa": ("layout:cavity-pressure",),
     },
 )
-restored = codec.read("checkpoints/accepted-0042.phx")
+restored = codec.read("checkpoints/accepted-0042.phx", parent=parent)
 ```
 
-The underlying archive writes atomically and validates its canonical ZIP
-structure, manifest identity, payload inventory, SHA-256 checksums, shapes,
-dtypes, and byte counts. Restart additionally checks the cardiovascular
-analysis, numerical revision, and execution identities. Arrays are finite,
-numeric or boolean, and read-only after opening. An uncommitted state or a
-payload above the execution capacity is refused before a destination is
-published.
+The writer reopens and validates the typed parent record, then binds both its
+checkpoint and manifest identities into the child. Reading that child requires the
+same exact validated parent record. A bare parent checkpoint ID is not sufficient
+lineage evidence. The underlying archive writes atomically and validates
+its canonical ZIP structure, manifest identity, payload inventory, SHA-256 checksums,
+shapes, dtypes, and byte counts. Restart additionally checks the cardiovascular
+analysis, numerical revision, and execution identities. Arrays are finite, numeric or
+boolean, and read-only after opening. An uncommitted state or a payload above the
+execution capacity is refused before a destination is published.
 
 Distributed solver restart uses
 `write_cardiovascular_distributed_solver_checkpoint` and
@@ -359,16 +362,3 @@ It verifies:
 - real single-device `shard_map` collective, halo, and transpose semantics; and
 - qualified multi-device execution when hardware exists, otherwise explicit
   support-tuple blocking without fallback.
-
-The performance harness is:
-
-```text
-python benchmarks/cardiovascular_runtime.py --output runtime.json
-```
-
-It reports the captured runtime environment, cohort cases per second,
-multirate scheduled steps per second, replay time, lifecycle checkpoint
-read/write throughput, and synchronized one-device collective execution with
-serial, halo, and transpose residuals. Benchmark results are evidence for a
-specific capacity, software environment, and device; they are not portable
-performance promises.

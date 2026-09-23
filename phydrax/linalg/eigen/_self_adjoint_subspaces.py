@@ -146,7 +146,7 @@ class SelfAdjointSpectralSubspace(StrictModule):
 
     def project_coordinates(self, vector: ArrayLike, /) -> Array:
         value = jnp.asarray(vector)
-        if value.shape != (self.projector.shape[1],):
+        if value.shape != (self.projector.shape[-1],):
             raise ValueError("vector must match the projector coordinate dimension.")
         return self.projector @ value
 
@@ -254,33 +254,25 @@ def self_adjoint_spectral_subspace(
         projector,
     )
     if selected_policy.differentiation == "projector":
-        projector = jax.lax.cond(
-            jnp.all(differentiation_valid),
-            lambda value: attach_projector_derivative(
-                spectrum.problem,
-                value,
-                ordered_values,
-                ordered_vectors,
-                ordered_inverse,
-                selected_mask,
-            ),
-            jax.lax.stop_gradient,
-            projector,
+        projector = attach_projector_derivative(
+            spectrum.problem,
+            jax.lax.stop_gradient(projector),
+            ordered_values,
+            ordered_vectors,
+            ordered_inverse,
+            selected_mask,
+            differentiation_valid,
         )
-        density = jax.lax.cond(
-            jnp.all(differentiation_valid),
-            lambda value: attach_density_derivative(
-                spectrum.problem,
-                value,
-                jax.lax.stop_gradient(projector),
-                spectrum.paired_metric,
-                ordered_values,
-                ordered_vectors,
-                ordered_inverse,
-                selected_mask,
-            ),
-            jax.lax.stop_gradient,
-            density,
+        density = attach_density_derivative(
+            spectrum.problem,
+            jax.lax.stop_gradient(density),
+            jax.lax.stop_gradient(projector),
+            spectrum.paired_metric,
+            ordered_values,
+            ordered_vectors,
+            ordered_inverse,
+            selected_mask,
+            differentiation_valid,
         )
     else:
         projector = jax.lax.stop_gradient(projector)

@@ -14,6 +14,7 @@ from jaxtyping import Array
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
+from .._model import register_artifact_value
 from .._strict import StrictModule
 from ..operators.quantum._observables import LocalObservable
 from ..operators.quantum._register import HilbertRegisterLayout
@@ -341,6 +342,20 @@ def evaluate_dense_quantum_observables(
         plan.plan_id,
         plan.prepared_id,
     )
+
+
+register_artifact_value(
+    "phydrax.quantum:DenseQuantumObservablePolicy",
+    DenseQuantumObservablePolicy,
+)
+register_artifact_value(
+    "phydrax.quantum:DenseQuantumObservableCostEstimate",
+    DenseQuantumObservableCostEstimate,
+)
+register_artifact_value(
+    "phydrax.quantum:DenseQuantumObservablePlan",
+    DenseQuantumObservablePlan,
+)
 
 
 __all__ = [

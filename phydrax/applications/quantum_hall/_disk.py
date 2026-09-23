@@ -100,7 +100,7 @@ def prepare_hall_disk(plan: HallDiskPlan, /) -> PreparedHallDisk:
     if not isinstance(plan, HallDiskPlan):
         raise TypeError("plan must be HallDiskPlan.")
     one_body = tuple(
-        ProjectedOrbitalTerm((index,), (index,), value, f"disk-confinement:{index}")
+        ProjectedOrbitalTerm((index,), (index,), value)
         for index, value in enumerate(plan.confinement)
         if value != 0.0
     )

@@ -22,6 +22,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._canonical import canonicalize_patch_hierarchy, CanonicalPatchHierarchy
 from ._core import BlockHierarchyTopology
+from ._geometry import _validated_revision
 from ._variable import VariablePatchHierarchyTopology
 
 
@@ -594,9 +595,9 @@ class CanonicalMappedGeometryPlan(StrictModule, NonTrainableState):
         revision: ArrayLike = 0,
     ) -> CanonicalMappedGeometryState:
         time_ = jnp.asarray(time)
-        revision_ = jnp.asarray(revision)
-        if time_.shape != () or revision_.shape != () or revision_.dtype.kind not in "iu":
-            raise ValueError("Mapped geometry time/revision must be scalar.")
+        revision_ = _validated_revision(revision)
+        if time_.shape != ():
+            raise ValueError("Mapped geometry time must be scalar.")
         lower_bounds = np.asarray(self.reference_lower_bounds, dtype=np.float64)
         level_volumes = []
         level_centers = []
@@ -711,7 +712,7 @@ class CanonicalMappedGeometryPlan(StrictModule, NonTrainableState):
         )
         return CanonicalMappedGeometryState(
             time=time_,
-            revision=revision_.astype(jnp.int32),
+            revision=revision_,
             cell_volumes=tuple(level_volumes),
             cell_centers=tuple(level_centers),
             mesh_volume_rates=tuple(level_rates),

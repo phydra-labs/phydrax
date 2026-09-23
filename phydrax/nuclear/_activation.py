@@ -198,13 +198,21 @@ class NuclideInventory(StrictModule):
     ):
         amounts = jnp.asarray(amounts_mol, dtype=jnp.float64)
         time = jnp.asarray(time_s, dtype=amounts.dtype)
+        identifiers = tuple(_text(value, "nuclide_id") for value in nuclide_ids)
         if amounts.ndim != 1 or time.shape != ():
             raise ValueError("Inventory amounts must be rank one and time scalar.")
-        if amounts.shape != (len(nuclide_ids),):
+        if amounts.shape != (len(identifiers),):
             raise ValueError("Inventory amount axis and nuclide identities disagree.")
+        if len(set(identifiers)) != len(identifiers):
+            raise ValueError("Inventory nuclide identities must be unique.")
+        time = eqx.error_if(
+            time,
+            ~jnp.isfinite(time) | (time < 0.0),
+            "Inventory time must be finite and nonnegative.",
+        )
         self.amounts_mol = amounts
         self.time_s = time
-        self.nuclide_ids = tuple(nuclide_ids)
+        self.nuclide_ids = identifiers
         self.network_id = _text(network_id, "network_id")
 
 
@@ -404,6 +412,8 @@ class PreparedActivationNetwork(StrictModule, NonTrainableState):
             raise TypeError("inventory must be NuclideInventory.")
         if inventory.network_id != self.network_id:
             raise ValueError("Inventory and activation network identities disagree.")
+        if inventory.nuclide_ids != self.nuclide_ids:
+            raise ValueError("Inventory and activation nuclide axes disagree.")
         dt = jnp.asarray(dt_s, dtype=inventory.amounts_mol.dtype)
         if dt.shape != ():
             raise ValueError("dt_s must be scalar.")
@@ -417,6 +427,7 @@ class PreparedActivationNetwork(StrictModule, NonTrainableState):
         flux = jnp.asarray(scalar_flux_m2_s, dtype=inventory.amounts_mol.dtype)
         finite_inputs = (
             jnp.all(jnp.isfinite(inventory.amounts_mol))
+            & jnp.isfinite(inventory.time_s)
             & jnp.isfinite(dt)
             & jnp.all(jnp.isfinite(flux))
             & jnp.all(jnp.isfinite(source))

@@ -32,6 +32,50 @@ def test_shared_scalar_root_event_and_semantic_replay():
     assert jnp.array_equal(first.events.times, second.events.times)
 
 
+def test_closed_quantum_jump_ensemble_supports_zero_collapse_channels():
+    hamiltonian = phx.solver.StateVectorOperator.from_matrix(
+        jnp.zeros((2, 2), dtype=jnp.complex128),
+        operator_id="closed-zero",
+    )
+    problem = phx.solver.QuantumJumpProblem(
+        hamiltonian,
+        (),
+        jnp.asarray([1.0 + 0.0j, 0.0j]),
+        problem_id="closed-zero-jump",
+    )
+    result = phx.solver.solve_quantum_jump_ensemble(
+        problem,
+        jax.random.PRNGKey(3),
+        step_size=0.05,
+        steps=3,
+        trajectory_count=2,
+    )
+    assert bool(result.valid)
+    assert jnp.all(result.jump_channels == -1)
+    assert not jnp.any(result.jump_mask)
+
+
+def test_event_quantum_jump_refuses_root_work_beyond_budget():
+    problem = phx.solver.amplitude_damping_trajectory_problem(
+        20.0, jnp.asarray([0.0j, 1.0 + 0.0j])
+    )
+    plan = phx.solver.QuantumTrajectoryPlan(
+        maximum_events=8,
+        root_method="bisection",
+        work_budget=phx.nonlinear.NonlinearWorkBudget(residual_evaluations=0),
+    )
+    result = phx.solver.solve_event_driven_quantum_jump(
+        problem,
+        jax.random.PRNGKey(1),
+        step_size=0.1,
+        steps=2,
+        trajectory_plan=plan,
+    )
+    assert not bool(result.successful)
+    assert result.status == phx.solver.QuantumTrajectoryStatus.TRUNCATION_BUDGET_EXCEEDED
+    assert result.work.residual_evaluations == 0
+
+
 def test_environment_mps_and_nonnormalizing_tebd():
     state = phx.tensor_network.product_mps(
         jnp.asarray([[2.0, 0.0], [0.0, 1.0]], dtype="complex128")
@@ -75,6 +119,19 @@ def test_lpdo_raw_trace_canonicalization_and_xxz_strang():
     )
     assert bool(result.valid)
     assert jnp.all(jnp.isfinite(result.raw_trace_history))
+
+
+def test_xxz_qualification_retains_every_step_diagnostic():
+    result = phx.solver.qualify_boundary_driven_xxz(
+        phx.solver.boundary_driven_xxz_problem(2, half_step=0.005, boundary_rate=0.2),
+        step_size=0.01,
+        steps=3,
+        maximum_bond_dimension=4,
+        maximum_purification_dimension=8,
+        steady_window=2,
+    )
+    assert result.final_result.raw_trace_history.shape == (6,)
+    assert result.final_result.canonical_residual_history.shape == (3,)
 
 
 def test_bath_decomposition_scaled_and_implicit_heom():

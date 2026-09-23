@@ -122,19 +122,15 @@ def main():
     parser.add_argument("--shape", default="6,4,3")
     parser.add_argument("--dt", type=float, default=0.01)
     arguments = parser.parse_args()
-    shape = tuple(arguments.shape.split(","))
+    shape = tuple(int(value.strip()) for value in arguments.shape.split(","))
     if len(shape) != 3 or any(value < 3 for value in shape):
         raise ValueError("Hydrostatic qualification shape needs three counts >= 3.")
     if arguments.dt <= 0.0:
         raise ValueError("Hydrostatic qualification dt must be positive.")
-    print(
-        json.dumps(
-            run_case(arguments.case, shape, arguments.dt),
-            indent=2,
-            sort_keys=True,
-        )
-    )
+    report = run_case(arguments.case, shape, arguments.dt)
+    print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
+    return 0 if report["passed"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

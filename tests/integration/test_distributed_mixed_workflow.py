@@ -239,6 +239,8 @@ def test_distributed_checkpoint_has_exact_coverage_and_restores_into_destination
         "distributed-mixed-checkpoint",
         execution.checkpoint_execution_id,
         execution.checkpoint_tree(distributed),
+        analysis_plan_id=execution.checkpoint_schema_id,
+        numeric_revision_id=execution.checkpoint_numeric_id,
         writer_id="distributed-mixed-writer",
         topology_epoch=execution.plan.execution.topology_epoch,
     )
@@ -278,6 +280,8 @@ def test_checkpoint_restore_rejects_incomplete_and_identity_substitution(tmp_pat
         "distributed-mixed-rejection",
         execution.checkpoint_execution_id,
         execution.checkpoint_tree(distributed),
+        analysis_plan_id=execution.checkpoint_schema_id,
+        numeric_revision_id=execution.checkpoint_numeric_id,
         writer_id="distributed-mixed-rejection-writer",
     )
     manifest = assemble_distributed_checkpoint_from_repository(

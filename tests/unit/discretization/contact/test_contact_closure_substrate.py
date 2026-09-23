@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax.discretization.contact._surface import (
@@ -90,6 +91,46 @@ def test_cached_contact_search_reuses_then_rebuilds_inside_skin():
     assert int(reused.candidate.reuse_count) == 1
     assert not bool(rebuilt.reused)
     assert int(rebuilt.candidate.rebuild_count) == 2
+    permissive = phx.discretization.CachedContactSearchPlan(
+        search,
+        skin=0.2,
+        rebuild_fraction=0.9,
+    )
+    permissive_state = permissive.initialize(scene, initial_positions)
+    unsafe = scene.positions(jnp.broadcast_to(jnp.asarray((0.0, -0.11)), source.shape))
+    assert not bool(permissive.update(scene, permissive_state, unsafe).reused)
+
+    foreign_scene = phx.discretization.PreparedCollisionScene(
+        tuple(reversed(scene.surfaces))
+    )
+    with pytest.raises(ValueError, match="scene"):
+        cache.update(foreign_scene, state, initial_positions)
+
+
+def test_contact_guarantees_kinematics_and_compiled_shapes_fail_closed():
+    with pytest.raises(ValueError):
+        phx.discretization.ContactGuaranteeEvidence(999, backend_id="invalid")
+
+    source, scene, search = _two_segment_scene()
+    positions = scene.positions(jnp.broadcast_to(jnp.asarray((0.0, -0.45)), source.shape))
+    epoch = search.build(scene, positions)
+    kinematics = phx.discretization.evaluate_contact_kinematics(
+        scene,
+        epoch,
+        positions,
+        jnp.zeros_like(positions),
+        jnp.nan,
+    )
+    assert not bool(kinematics.evidence.successful)
+    compiled = phx.discretization.CompiledContactSearchPlan(
+        scene,
+        edge_vertex_capacity=16,
+        edge_edge_capacity=0,
+        face_vertex_capacity=0,
+        activation_distance=0.1,
+    )
+    with pytest.raises(ValueError, match="must have shape"):
+        compiled.evaluate(positions[:-1])
 
 
 def test_independent_participants_search_and_force_duality():
@@ -397,6 +438,15 @@ def test_triangle_patch_and_hydroelastic_equal_pressure_extraction():
     assert bool(pressure_patch.evidence.successful)
     assert pressure_patch.evidence.triangle_count == 1
     assert pressure_patch.patch.pressure[0] > 0.0
+    separated = phx.discretization.build_triangle_mortar_interface(
+        triangle,
+        faces,
+        triangle + jnp.asarray((0.0, 0.0, 1.0)),
+        faces,
+        capacity=4,
+    )
+    assert int(separated.evidence.quadrature_count) == 0
+    assert separated.evidence.total_measure == 0.0
 
 
 def test_closed_surface_certificate_and_halo_exchange_are_explicit():
@@ -445,3 +495,24 @@ def test_closed_surface_certificate_and_halo_exchange_are_explicit():
     assert bool(certificate.successful)
     assert bool(payload.successful)
     assert bool(reduction.evidence.successful)
+    overflowing_plan = phx.discretization.ContactHaloExchangePlan.from_distributed_epoch(
+        distributed,
+        rank_count=2,
+        halo_capacity=0,
+    )
+    overflowing_payload = phx.discretization.pack_contact_halo(
+        overflowing_plan,
+        values,
+    )
+    assert bool(jnp.any(overflowing_plan.overflow))
+    assert not bool(overflowing_payload.successful)
+
+    invalid_route = phx.discretization.reduce_contact_halo(
+        halo_plan,
+        jnp.zeros_like(values),
+        jnp.ones((1, 2)),
+        jnp.asarray((halo_plan.route_count,), dtype=jnp.int32),
+        jnp.asarray((True,)),
+    )
+    assert not bool(invalid_route.evidence.successful)
+    np.testing.assert_array_equal(invalid_route.value, jnp.zeros_like(values))

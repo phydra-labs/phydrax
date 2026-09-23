@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import PolygonalConnectivity
@@ -46,6 +47,7 @@ class SurfaceImagePlan(StrictModule, NonTrainableState):
     realization: SurfaceRealization
     support: ImagePlaneSupport
     camera: CameraModel
+    camera_coordinate_contract: SpatialCoordinateContract = eqx.field(static=True)
     quantity: QuantitySpec = eqx.field(static=True)
     layout: ValueLayout = eqx.field(static=True)
     sampling: SamplingSemantics = eqx.field(static=True)
@@ -59,6 +61,7 @@ class SurfaceImagePlan(StrictModule, NonTrainableState):
         realization: SurfaceRealization,
         support: ImagePlaneSupport,
         camera: CameraModel,
+        camera_coordinate_contract: SpatialCoordinateContract,
         quantity: QuantitySpec,
         layout: ValueLayout,
         sampling: SamplingSemantics,
@@ -74,6 +77,17 @@ class SurfaceImagePlan(StrictModule, NonTrainableState):
             raise TypeError("support must be ImagePlaneSupport.")
         if not isinstance(camera, CameraModel):
             raise TypeError("camera must be CameraModel.")
+        if not isinstance(camera_coordinate_contract, SpatialCoordinateContract):
+            raise TypeError(
+                "camera_coordinate_contract must be SpatialCoordinateContract."
+            )
+        if (
+            camera_coordinate_contract.spatial_id
+            != realization.model.metadata.coordinate_contract.spatial_id
+        ):
+            raise ValueError(
+                "Camera rays and surface geometry must share one spatial coordinate contract."
+            )
         if not isinstance(quantity, QuantitySpec) or not isinstance(layout, ValueLayout):
             raise TypeError("quantity and layout must be measurement contracts.")
         if not isinstance(sampling, SamplingSemantics):
@@ -91,6 +105,7 @@ class SurfaceImagePlan(StrictModule, NonTrainableState):
         self.realization = realization
         self.support = support
         self.camera = camera
+        self.camera_coordinate_contract = camera_coordinate_contract
         self.quantity = quantity
         self.layout = layout
         self.sampling = sampling
@@ -101,6 +116,7 @@ class SurfaceImagePlan(StrictModule, NonTrainableState):
             {
                 "kind": "surface-image-plan",
                 "surface": realization.realization_id,
+                "camera_coordinates": camera_coordinate_contract.spatial_id,
                 "support": support.support_id,
                 "quantity": quantity.quantity_id,
                 "layout": layout.layout_id,

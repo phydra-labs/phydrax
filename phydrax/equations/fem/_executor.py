@@ -2115,16 +2115,19 @@ def _prepared_facet_side(
     neighbor: bool,
 ):
     block_names = tuple(block.name for block in discretization.mesh.blocks)
-    block_index = block_names.index(workset.signature.block_name)
+    block_name = (
+        workset.signature.neighbor_block_name
+        if neighbor
+        else workset.signature.block_name
+    )
+    if block_name is None:
+        raise ValueError("Prepared neighbor facet is missing its mesh block identity.")
+    block_index = block_names.index(block_name)
     offsets = np.cumsum(
         (0,) + tuple(block.cell_count for block in discretization.mesh.blocks)
     )
     local_cells = cells - int(offsets[block_index])
-    reference = (
-        workset.neighbor_reference
-        if neighbor and workset.neighbor_reference is not None
-        else workset.reference
-    )
+    reference = workset.neighbor_reference if neighbor else workset.reference
     if reference is None:
         raise ValueError("Prepared facet execution requires a prepared reference.")
     facet = reference.facets[int(local_facet)]
@@ -2200,17 +2203,38 @@ def _prepared_tensor_facet_residual(
     reference = workset.reference
     if reference is None:
         raise ValueError("Prepared tensor facet execution requires a reference.")
+    block_names = tuple(block.name for block in discretization.mesh.blocks)
+    owner_block_index = block_names.index(workset.signature.block_name)
+    neighbor_block_index = (
+        None
+        if workset.signature.neighbor_block_name is None
+        else block_names.index(workset.signature.neighbor_block_name)
+    )
+    if isinstance(action, InteriorFacetAction) and neighbor_block_index is None:
+        raise ValueError("Prepared interior facet is missing its neighbor block.")
     output_index = discretization._field_index(output_field)
     output_state = state_by_field[output_field]
-    output_element = discretization.elements[output_index][0]
+    output_owner_element = discretization.elements[output_index][owner_block_index]
+    output_neighbor_element = (
+        None
+        if neighbor_block_index is None
+        else discretization.elements[output_index][neighbor_block_index]
+    )
     for input_field in action.input_field_names:
         input_index = discretization._field_index(input_field)
-        if (
-            discretization.elements[input_index][0].element_id
-            != output_element.element_id
+        input_owner_element = discretization.elements[input_index][owner_block_index]
+        input_neighbor_element = (
+            None
+            if neighbor_block_index is None
+            else discretization.elements[input_index][neighbor_block_index]
+        )
+        if input_owner_element.element_id != output_owner_element.element_id or (
+            output_neighbor_element is not None
+            and input_neighbor_element is not None
+            and input_neighbor_element.element_id != output_neighbor_element.element_id
         ):
             raise ValueError(
-                "Prepared cross-field facets require one shared reference element."
+                "Prepared cross-field facets require shared side-specific reference elements."
             )
     owners = jnp.asarray(workset.owner_cells, dtype=jnp.int32)
     neighbors = jnp.maximum(jnp.asarray(workset.neighbor_cells, dtype=jnp.int32), 0)

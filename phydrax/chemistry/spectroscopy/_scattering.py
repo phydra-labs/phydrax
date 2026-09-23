@@ -435,6 +435,8 @@ class DynamicStructureFactorPlan(StrictModule, NonTrainableState):
             or q_count * states * states > self.transition_capacity
         ):
             raise ValueError("Exact dynamic structure input exceeds a planned capacity.")
+        if q_count <= 0:
+            raise ValueError("Dynamic structure factor requires at least one q operator.")
         if (
             energy.shape != (states,)
             or probability.shape != (states,)

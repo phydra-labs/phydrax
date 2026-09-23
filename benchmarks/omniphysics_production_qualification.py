@@ -14,10 +14,13 @@ def main():
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     record = run()
-    content = json.dumps(record, indent=2, sort_keys=True) + "\n"
     if args.output is not None:
-        args.output.write_text(content, encoding="utf-8")
-    print(json.dumps(record, sort_keys=True))
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(args.output, record)
+    print(json.dumps(record, allow_nan=False, sort_keys=True))
+    if not record["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

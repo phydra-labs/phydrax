@@ -323,7 +323,10 @@ def write_ensemble_filter_checkpoint(
         path,
         kind="ensemble-filter-state",
         compatibility=compatibility,
-        state={"step_index": state.step_index},
+        state={
+            "step_index": state.step_index,
+            "root_key_impl": str(jr.key_impl(state.root_key)),
+        },
         arrays={
             "ensemble": state.ensemble,
             "time": state.time,
@@ -368,9 +371,12 @@ def read_ensemble_filter_checkpoint(
         kind="ensemble-filter-state",
         compatibility=compatibility,
     )
-    if set(state_data) != {"step_index"}:
+    if set(state_data) != {"step_index", "root_key_impl"}:
         raise ValueError("Ensemble-filter checkpoint state manifest is invalid.")
     step_index = _validate_step_index(state_data["step_index"], problem)
+    key_impl = state_data["root_key_impl"]
+    if not isinstance(key_impl, str) or not key_impl:
+        raise ValueError("Ensemble-filter checkpoint PRNG implementation is invalid.")
     case_shape = problem.observations.case_shape
     _validate_arrays(
         arrays,
@@ -380,7 +386,7 @@ def read_ensemble_filter_checkpoint(
             "log_likelihood": case_shape,
             "valid": case_shape,
             "status": case_shape,
-            "root_key_data": jr.key_data(jr.key(0)).shape,
+            "root_key_data": jr.key_data(jr.key(0, impl=key_impl)).shape,
         },
         owner="Ensemble-filter",
     )
@@ -390,7 +396,10 @@ def read_ensemble_filter_checkpoint(
         log_likelihood=arrays["log_likelihood"],
         valid=arrays["valid"].astype("bool"),
         status=arrays["status"].astype(jnp.int32),
-        root_key=jr.wrap_key_data(arrays["root_key_data"].astype(jnp.uint32)),
+        root_key=jr.wrap_key_data(
+            arrays["root_key_data"].astype(jnp.uint32),
+            impl=key_impl,
+        ),
         step_index=step_index,
         ensemble_size=count,
         problem_id=problem.problem_id,

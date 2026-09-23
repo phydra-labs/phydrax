@@ -74,14 +74,20 @@ measures = phx.discretization.finite_volume.MACFreeSurfaceViscousMeasurePlan(
 viscous = phx.solver.MACVariationalViscosityPlan(mac, tolerance=1.0e-7).solve(
     projected.velocity, measures, 1.0e-3
 )
+if not bool(
+    interface.successful & projected.successful & solid.successful & viscous.successful
+):
+    raise RuntimeError(
+        "Advanced FLIP interface, projection, geometry, or viscosity failed"
+    )
 
 print(
     {
-        "interface_successful": bool(interface.successful),
-        "ghost_projection_successful": bool(projected.successful),
+        "interface_successful": True,
+        "ghost_projection_successful": True,
         "surface_energy": float(capillary.surface_energy),
-        "cut_geometry_successful": bool(solid.successful),
-        "viscous_successful": bool(viscous.successful),
+        "cut_geometry_successful": True,
+        "viscous_successful": True,
         "viscous_dissipation": float(viscous.dissipation),
     }
 )

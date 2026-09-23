@@ -265,3 +265,95 @@ def test_collection_tombstones_only_proven_unreachable_records(tmp_path):
         now=4,
     )
     assert report.tombstoned_artifact_ids == (f"dark-sector.entity.{orphan.entity_id}",)
+
+
+def test_causal_only_references_remain_reachable_during_collection(tmp_path):
+    repository = _repository(tmp_path / "causal-gc")
+    entities, events, edge, parent_work = _graph(repository)
+    child_work = GlobalWorkItem(
+        "reduce",
+        (entities[-1].entity_id,),
+        _digest("model"),
+        partition_key="shard-1",
+        parent_work_id=parent_work.work_id,
+    )
+    repository.put_work(child_work, "writer-a", committed_at=1)
+    checkpoint = b"causal-closure"
+    manifest = EventGraphEpochManifest(
+        "run-a",
+        0,
+        None,
+        _digest("plan"),
+        _digest("compile"),
+        _digest("capacity"),
+        _digest("species"),
+        _digest("topology"),
+        edge_ids=(edge.edge_id,),
+        work_ids=(child_work.work_id,),
+        deferred_work_ids=(child_work.work_id,),
+        matrix_element_revision_id=_digest("matrix-element"),
+        checkpoint_id=checkpoint_content_id(checkpoint),
+        commit_owner_id="writer-a",
+        conservation_status="conserved",
+    )
+    repository.append_epoch(manifest, checkpoint, writer_id="writer-a", committed_at=2)
+
+    report = repository.collect_unreachable(
+        ("run-a",),
+        entity_ids=tuple(value.entity_id for value in entities),
+        event_ids=tuple(value.event_id for value in events),
+        edge_ids=(edge.edge_id,),
+        work_ids=(parent_work.work_id, child_work.work_id),
+        reason="causal-reachability",
+        now=3,
+    )
+
+    assert report.tombstoned_artifact_ids == ()
+
+
+def test_deep_causal_lineage_uses_iterative_bounded_traversal(tmp_path):
+    repository = _repository(tmp_path / "deep-lineage")
+    entity = GlobalEntity(
+        "particle",
+        "deep-state",
+        _digest("deep-state"),
+        frame_id=_digest("frame"),
+        frame_realization_id=_digest("frame-realization"),
+        unit_contract_id=_digest("units"),
+        rights_id="native",
+    )
+    repository.put_entity(entity, "writer-a", committed_at=1)
+    parent = None
+    for index in range(1_200):
+        event = GlobalEvent(
+            "advance",
+            _digest("model"),
+            (entity.entity_id,),
+            (),
+            epoch_sequence=0,
+            parent_event_ids=() if parent is None else (parent.event_id,),
+            evidence_ids=(f"step-{index}",),
+        )
+        repository.put_event(event, "writer-a", committed_at=1)
+        parent = event
+    assert parent is not None
+    checkpoint = b"deep"
+    manifest = EventGraphEpochManifest(
+        "run-deep",
+        0,
+        None,
+        _digest("plan"),
+        _digest("compile"),
+        _digest("capacity"),
+        _digest("species"),
+        _digest("topology"),
+        event_ids=(parent.event_id,),
+        matrix_element_revision_id=_digest("matrix-element"),
+        checkpoint_id=checkpoint_content_id(checkpoint),
+        commit_owner_id="writer-a",
+        conservation_status="conserved",
+    )
+    receipt = repository.append_epoch(
+        manifest, checkpoint, writer_id="writer-a", committed_at=2
+    )
+    assert receipt.manifest.epoch_manifest_id == manifest.epoch_manifest_id

@@ -111,16 +111,17 @@ class MessagePassing(StrictModule):
         if self.flow == "source_to_target":
             row = edge_index[0].astype(jnp.int32)
             col = edge_index[1].astype(jnp.int32)
-            dim_size = int(size[1])
+            dim_size = size[1]
             x_base = x_dst
+            x_j = jnp.take(x_src, row, axis=0)
+            x_i = jnp.take(x_dst, col, axis=0)
         else:
             row = edge_index[1].astype(jnp.int32)
             col = edge_index[0].astype(jnp.int32)
-            dim_size = int(size[0])
+            dim_size = size[0]
             x_base = x_src
-
-        x_j = jnp.take(x_src, row, axis=0)
-        x_i = jnp.take(x_dst, col, axis=0)
+            x_j = jnp.take(x_dst, row, axis=0)
+            x_i = jnp.take(x_src, col, axis=0)
 
         messages = self.message_fn(x_j, x_i, edge_attr)
         aggr_out = self.aggregate(messages, col, dim_size)

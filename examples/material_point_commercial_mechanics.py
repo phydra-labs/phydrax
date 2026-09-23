@@ -41,20 +41,26 @@ def run():
     contact_result = contact.solve(
         mass, velocity, contact.build_graph(mass, gradient), 0.01
     )
+    if not bool(
+        plane_response.successful[0]
+        & dp_response.successful[0]
+        & contact_result.successful
+    ):
+        raise RuntimeError("Commercial MPM constitutive or contact evaluation failed")
     return {
         "plane_stress": {
-            "successful": bool(plane_response.successful[0]),
+            "successful": True,
             "traction_residual": float(
                 jnp.linalg.norm(plane_response.diagnostics["plane_stress_residual"][0])
             ),
         },
         "drucker_prager": {
-            "successful": bool(dp_response.successful[0]),
+            "successful": True,
             "yield_residual": float(dp_response.diagnostics["yield_residual"][0]),
             "dissipation": float(dp_response.dissipation_increment[0]),
         },
         "contact": {
-            "successful": bool(contact_result.successful),
+            "successful": True,
             "complementarity": float(contact_result.complementarity_residual),
             "action_reaction": float(contact_result.action_reaction_defect),
         },

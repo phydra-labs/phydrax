@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -110,7 +111,7 @@ def test_derivative_validity_guard_preserves_primal_and_poisons_both_orientation
 
 def test_derivative_validity_guard_error_mode_rejects_transformed_use():
     value = jnp.asarray((1.0, -2.0))
-    with pytest.raises(Exception, match="invalid test derivative"):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="invalid test derivative"):
         _, tangent = jax.jvp(
             lambda argument: guard_derivative_validity(
                 argument,

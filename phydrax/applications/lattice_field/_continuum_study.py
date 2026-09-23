@@ -634,11 +634,6 @@ def run_continuum_study(
             (variation.variation_id, "insufficient-distinct-lattice-spacings")
             for variation in plan.variations
         )
-    elif requires_volume and not volume_sufficient:
-        rejected.extend(
-            (variation.variation_id, "insufficient-distinct-spatial-volumes")
-            for variation in plan.variations
-        )
     elif not covariance_usable:
         rejected.extend(
             (variation.variation_id, "renormalized-covariance-not-positive-definite")
@@ -764,7 +759,7 @@ def run_continuum_study(
         reasons.append("scale-setting-signal-insufficient")
     if not resolution_sufficient:
         reasons.append("insufficient-distinct-lattice-spacings")
-    if requires_volume and not volume_sufficient:
+    if not accepted and requires_volume and not volume_sufficient:
         reasons.append("insufficient-distinct-spatial-volumes")
     if not covariance_usable:
         reasons.append("renormalized-covariance-not-positive-definite")

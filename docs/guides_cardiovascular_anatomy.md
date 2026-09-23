@@ -213,11 +213,3 @@ python tools/cardiovascular_geometry_qualification.py --subdivisions 2
 ```
 
 The first case is a tetrahedral affine LV-wall slab. It proves linear harmonic reproduction, exact cell gradients, the analytic helix frame, physical fiber-tensor sign invariance, and rejection of parallel-gradient degeneracy. The second case is a closed tetrahedral LV cavity. It proves closure, outward orientation, analytic volume, agreement of the supplied derivative with automatic differentiation, rigid-translation invariance, and rejection of reflection.
-
-Geometry preparation and evaluation costs can be measured independently with:
-
-```text
-python benchmarks/cardiovascular_geometry.py --subdivisions 2 4 --repeats 5
-```
-
-The benchmark reports role qualification, FEM preparation, coordinate solve, microstructure construction, and chamber volume-plus-derivative timings without weakening any evidence checks.

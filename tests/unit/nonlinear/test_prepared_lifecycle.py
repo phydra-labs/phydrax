@@ -206,3 +206,28 @@ def test_prepared_nonlinear_rejects_unsupported_methods_and_is_public():
             ),
             termination=_termination(),
         )
+
+
+@pytest.mark.parametrize("method", (nl.NewtonKrylov(), nl.NewtonTrustRegion()))
+def test_prepared_step_limit_is_relative_to_retained_iteration(method):
+    problem = nl.NonlinearSystemProblem(
+        lambda state, target: state**2 - target,
+        problem_id=f"prepared-relative-step-{method.method_id}",
+    )
+    prepared = nl.prepare_nonlinear(
+        problem,
+        jnp.asarray([8.0]),
+        method=method,
+        termination=_termination(maximum_steps=20),
+        args=jnp.asarray([2.0]),
+    )
+
+    first, after_first = nl.step_prepared_nonlinear(prepared)
+    second, after_second = nl.step_prepared_nonlinear(after_first)
+
+    assert int(after_first.run.iteration) == 1
+    assert int(after_second.run.iteration) == 2
+    assert not jnp.array_equal(first.state, second.state)
+    assert float(second.diagnostics.final_residual_norm) < float(
+        first.diagnostics.final_residual_norm
+    )

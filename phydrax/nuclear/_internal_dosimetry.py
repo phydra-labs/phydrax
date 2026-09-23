@@ -301,6 +301,21 @@ class RegionalDoseResult:
             raise ValueError("Regional dose uncertainty must not be fabricated.")
         if self.asset.field.values.shape != (len(targets),):
             raise ValueError("Regional dose values do not match target_region_ids.")
+        metadata = self.asset.metadata
+        if (
+            table != self.evidence.kernel_id
+            or self.evidence.mode != "regional-s-value"
+            or self.evidence.source_id not in self.asset.derivation.parent_ids
+            or self.evidence.target_id != self.asset.field.support.support_id
+            or metadata.get("s_value_table_id") != table
+            or metadata.get("target_region_ids") != targets
+            or metadata.get("radionuclide_id") != self.evidence.radionuclide_id
+            or metadata.get("transition_id") != self.evidence.transition_id
+            or metadata.get("kernel_data_id") != self.evidence.kernel_data_id
+        ):
+            raise ValueError(
+                "Regional dose asset, table, and dosimetry evidence identities disagree."
+            )
         object.__setattr__(self, "target_region_ids", targets)
         object.__setattr__(self, "table_id", table)
 
@@ -617,6 +632,22 @@ class SpatialDoseResult:
             raise ValueError("Spatial dose results are research-only.")
         if self.asset.field.uncertainty is not None:
             raise ValueError("Spatial dose uncertainty must not be fabricated.")
+        metadata = self.asset.metadata
+        if (
+            kernel != self.evidence.kernel_id
+            or self.evidence.mode != "spatial-s-value"
+            or self.evidence.source_id not in self.asset.derivation.parent_ids
+            or self.evidence.target_id != self.asset.field.support.support_id
+            or metadata.get("s_value_kernel_id") != kernel
+            or metadata.get("target_support_id") != self.evidence.target_id
+            or metadata.get("radionuclide_id") != self.evidence.radionuclide_id
+            or metadata.get("transition_id") != self.evidence.transition_id
+            or metadata.get("kernel_data_id") != self.evidence.kernel_data_id
+            or metadata.get("boundary_policy") != self.evidence.boundary_policy
+        ):
+            raise ValueError(
+                "Spatial dose asset, kernel, and dosimetry evidence identities disagree."
+            )
         object.__setattr__(self, "kernel_id", kernel)
 
     @property

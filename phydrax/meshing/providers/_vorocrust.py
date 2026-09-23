@@ -3,11 +3,13 @@
 #
 from __future__ import annotations
 
+import os
 import shutil
+import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, TemporaryFile
 from time import monotonic
 
 import numpy as np
@@ -45,6 +47,7 @@ class VoroCrustOptions:
     feature_angle_degrees: float = 60.0
     relative_volume_tolerance: float = 1e-6
     relative_merge_tolerance: float = 1e-12
+    require_native_output_preallocation: bool = False
 
     def __post_init__(self):
         if not np.isfinite(self.maximum_radius) or self.maximum_radius <= 0:
@@ -69,6 +72,8 @@ class VoroCrustOptions:
             or not 0 <= self.relative_merge_tolerance <= 1e-8
         ):
             raise ValueError("relative_merge_tolerance must lie in [0, 1e-8].")
+        if type(self.require_native_output_preallocation) is not bool:
+            raise TypeError("require_native_output_preallocation must be a Boolean.")
 
 
 def _executable(value: str | Path) -> str:
@@ -152,6 +157,192 @@ def _run(command: list[str], directory: Path, deadline: float) -> None:
         provider="vorocrust",
         return_code=result.returncode,
     )
+
+
+def _extractor_identity(extractor: str, /) -> tuple[MeshingProviderInfo, dict[str, str]]:
+    maximum_bytes = 16 * 1024
+    deadline = monotonic() + 10.0
+    with TemporaryFile(mode="w+b") as output:
+        try:
+            process = subprocess.Popen(
+                [extractor, "--version"],
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                start_new_session=os.name == "posix",
+            )
+        except OSError as error:
+            raise MeshingFailure(
+                MeshingFailureCategory.PROVIDER_UNAVAILABLE,
+                "VoroCrust extractor version probe could not be launched.",
+            ) from error
+
+        def terminate() -> None:
+            try:
+                if os.name == "posix":
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    process.kill()
+            except ProcessLookupError:
+                pass
+            process.wait()
+
+        overflow = False
+        while True:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                terminate()
+                raise MeshingFailure(
+                    MeshingFailureCategory.TIMED_OUT,
+                    "VoroCrust extractor version probe timed out.",
+                )
+            try:
+                process.wait(timeout=min(remaining, 0.05))
+                break
+            except subprocess.TimeoutExpired:
+                if os.fstat(output.fileno()).st_size > maximum_bytes:
+                    overflow = True
+                    terminate()
+                    break
+        size = os.fstat(output.fileno()).st_size
+        if overflow or size > maximum_bytes:
+            raise MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "VoroCrust extractor version output exceeds its byte bound.",
+            )
+        if process.returncode:
+            raise MeshingFailure(
+                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                f"VoroCrust extractor version probe exited with code {process.returncode}.",
+            )
+        output.seek(0)
+        try:
+            version_output = output.read(maximum_bytes + 1).decode(
+                "utf-8", errors="strict"
+            )
+        except UnicodeDecodeError as error:
+            raise MeshingFailure(
+                MeshingFailureCategory.PROVIDER_UNAVAILABLE,
+                "VoroCrust extractor version output is not UTF-8.",
+            ) from error
+    fields = version_output.strip().split()
+    prefixes = (
+        "phydrax-vorocrust/1",
+        "vorocrust/",
+        "source-sha256/",
+        "config-sha256/",
+        "library-sha256/",
+    )
+    if (
+        len(fields) != len(prefixes)
+        or fields[0] != prefixes[0]
+        or any(
+            not field.startswith(prefix) or len(field) == len(prefix)
+            for field, prefix in zip(fields[1:], prefixes[1:], strict=True)
+        )
+    ):
+        raise MeshingFailure(
+            MeshingFailureCategory.PROVIDER_UNAVAILABLE,
+            "Unsupported phydrax-vorocrust bridge protocol/version.",
+        )
+    identity = {
+        "revision": fields[1][len(prefixes[1]) :],
+        "source_sha256": fields[2][len(prefixes[2]) :],
+        "config_sha256": fields[3][len(prefixes[3]) :],
+        "library_sha256": fields[4][len(prefixes[4]) :],
+    }
+    if any(
+        len(identity[name]) != 64
+        or any(character not in "0123456789abcdef" for character in identity[name])
+        for name in ("source_sha256", "config_sha256", "library_sha256")
+    ):
+        raise MeshingFailure(
+            MeshingFailureCategory.PROVIDER_UNAVAILABLE,
+            "VoroCrust extractor returned invalid source/build/library identities.",
+        )
+    return (
+        MeshingProviderInfo(
+            "vorocrust",
+            identity["revision"],
+            "BSD-3-Clause",
+            operations=(MeshingOperation.MESH_VOLUME,),
+            source_kinds=(MeshingSourceKind.SURFACE,),
+            capabilities=(MeshingCapability.POLYHEDRAL,),
+            cell_kinds=("polyhedron",),
+            dimensions=(3,),
+            execution_modes=(MeshingExecutionMode.SUBPROCESS,),
+        ),
+        identity,
+    )
+
+
+def _seed_count(path: Path, limits: MeshingLimits, /) -> int:
+    if path.stat().st_size > limits.maximum_data_bytes:
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "VoroCrust seeds exceed transfer budget.",
+        )
+    maximum = min(2 * limits.maximum_cells, 40_000_000)
+    with path.open(encoding="utf-8", newline="") as stream:
+        if stream.readline().rstrip("\r\n") != "x1coord, x2coord, x3coord, radius":
+            raise MeshingFailure(
+                MeshingFailureCategory.CONVERSION_FAILED,
+                "Unexpected VoroCrust seed CSV header.",
+            )
+        count = 0
+        for line in stream:
+            count += 1
+            if count > maximum:
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "VoroCrust seed count exceeds its bound.",
+                )
+            if len(line.rstrip("\r\n").split(",")) != 5:
+                raise MeshingFailure(
+                    MeshingFailureCategory.CONVERSION_FAILED,
+                    "VoroCrust seed rows require five columns.",
+                )
+    if count == 0:
+        raise MeshingFailure(
+            MeshingFailureCategory.CONVERSION_FAILED,
+            "VoroCrust produced no seeds.",
+        )
+    return count
+
+
+def _bounded_combination(count: int, choose: int, maximum: int, /) -> int:
+    if count < choose:
+        return 0
+    result = 1
+    for factor in range(1, choose + 1):
+        result = result * (count - choose + factor) // factor
+        if result > maximum:
+            return maximum + 1
+    return result
+
+
+def _preflight_native_output(seed_count: int, limits: MeshingLimits, /) -> None:
+    vertex_bound = _bounded_combination(
+        seed_count,
+        4,
+        limits.maximum_vertices,
+    )
+    face_bound = _bounded_combination(
+        seed_count,
+        2,
+        limits.maximum_faces,
+    )
+    face_width = max(seed_count - 2, 3)
+    connectivity_exceeded = face_bound > limits.maximum_connectivity_entries // face_width
+    if (
+        seed_count > limits.maximum_cells
+        or vertex_bound > limits.maximum_vertices
+        or face_bound > limits.maximum_faces
+        or connectivity_exceeded
+    ):
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "Conservative VoroCrust output bounds exceed configured limits before native extraction.",
+        )
 
 
 def _vertex_aliases(points: np.ndarray, relative_tolerance: float) -> np.ndarray:
@@ -315,24 +506,7 @@ class VoroCrustProvider:
         self.extractor = _executable(extractor)
 
     def info(self) -> MeshingProviderInfo:
-        completed = subprocess.run(
-            [self.extractor, "--version"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
-        return MeshingProviderInfo(
-            "vorocrust",
-            completed.stdout.strip(),
-            "BSD-3-Clause",
-            operations=(MeshingOperation.MESH_VOLUME,),
-            source_kinds=(MeshingSourceKind.SURFACE,),
-            capabilities=(MeshingCapability.POLYHEDRAL,),
-            cell_kinds=("polyhedron",),
-            dimensions=(3,),
-            execution_modes=(MeshingExecutionMode.SUBPROCESS,),
-        )
+        return _extractor_identity(self.extractor)[0]
 
     def execute(
         self,
@@ -354,6 +528,35 @@ class VoroCrustProvider:
         limits = MeshingLimits() if limits is None else limits
         if not isinstance(limits, MeshingLimits):
             raise TypeError("limits must be MeshingLimits.")
+        if options.require_native_output_preallocation:
+            raise MeshingFailure(
+                MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
+                "VoroCrust exposes no bounded native output allocator or callback.",
+            )
+        if (
+            limits.maximum_vertices > 10_000_000
+            or limits.maximum_faces > 50_000_000
+            or limits.maximum_connectivity_entries > 500_000_000
+            or limits.maximum_data_bytes > 4_000_000_000
+            or 2 * limits.maximum_cells > 40_000_000
+        ):
+            raise ValueError("limits exceed the VoroCrust bridge hard bounds.")
+        point_count = surface.mesh.coordinates.shape[0]
+        face_count = sum(block.cell_count for block in surface.mesh.blocks)
+        connectivity_count = sum(block.vertices.size for block in surface.mesh.blocks)
+        estimated_input_bytes = (
+            point_count * 80 + face_count * 24 + connectivity_count * 12 + 4_096
+        )
+        if (
+            point_count > limits.maximum_vertices
+            or face_count > limits.maximum_faces
+            or connectivity_count > limits.maximum_connectivity_entries
+            or estimated_input_bytes > limits.maximum_data_bytes
+        ):
+            raise MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "VoroCrust source exceeds configured entity or byte limits.",
+            )
         faces = np.concatenate(
             [np.asarray(block.vertices) for block in surface.mesh.blocks]
         )
@@ -381,6 +584,7 @@ class VoroCrustProvider:
                 MeshingFailureCategory.INVALID_SOURCE,
                 "VoroCrust requires outward-oriented positive-volume input.",
             )
+        provider, extractor_identity = _extractor_identity(self.extractor)
         deadline = monotonic() + limits.maximum_wall_seconds
         with TemporaryDirectory(prefix="phydrax-vorocrust-") as temporary:
             directory = Path(temporary)
@@ -407,12 +611,22 @@ class VoroCrustProvider:
                     MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                     "VoroCrust produced no seeds.",
                 )
-            if seeds.stat().st_size > limits.maximum_data_bytes:
-                raise MeshingFailure(
-                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                    "VoroCrust seeds exceed transfer budget.",
-                )
-            _run([self.extractor, "seeds.csv", "mesh.raw"], directory, deadline)
+            maximum_seed_count = _seed_count(seeds, limits)
+            _preflight_native_output(maximum_seed_count, limits)
+            _run(
+                [
+                    self.extractor,
+                    "seeds.csv",
+                    "mesh.raw",
+                    str(maximum_seed_count),
+                    str(limits.maximum_vertices),
+                    str(limits.maximum_faces),
+                    str(limits.maximum_connectivity_entries),
+                    str(limits.maximum_data_bytes),
+                ],
+                directory,
+                deadline,
+            )
             mesh, merged_vertices, collapsed_faces = _read_polyhedra(
                 directory / "mesh.raw", limits, options.relative_merge_tolerance
             )
@@ -424,17 +638,22 @@ class VoroCrustProvider:
                 MeshingFailureCategory.COMPLIANCE_FAILED,
                 "VoroCrust output does not preserve source enclosed volume.",
             )
-        provider = self.info()
         provenance = SemanticProvenance(
             {
                 "kind": "vorocrust-volume",
                 "source": surface.mesh.mesh_id,
+                "extractor_identity": (
+                    extractor_identity["source_sha256"],
+                    extractor_identity["config_sha256"],
+                    extractor_identity["library_sha256"],
+                ),
                 "options": (
                     options.maximum_radius,
                     options.lipschitz_constant,
                     options.feature_angle_degrees,
                     options.relative_volume_tolerance,
                     options.relative_merge_tolerance,
+                    options.require_native_output_preallocation,
                 ),
             }
         )
@@ -471,8 +690,18 @@ class VoroCrustProvider:
                 provider.version,
                 MeshingExecutionMode.SUBPROCESS,
                 deterministic=False,
-                enforced_limits=("wall_time", "output_entities", "output_bytes"),
-                unenforced_limits=("provider_workspace",),
+                enforced_limits=(
+                    "wall_seconds",
+                    "input_entities",
+                    "seed_rows",
+                    "input_bytes",
+                    "serialized_output_bytes",
+                ),
+                unenforced_limits=(
+                    "provider_internal_workspace",
+                    "native_output_entities_preallocation",
+                    "native_output_connectivity_preallocation",
+                ),
             ),
             MeshingDerivativeMode.NONDIFFERENTIABLE,
             provenance,

@@ -67,12 +67,13 @@ def test_exact_exponential_memory_and_certified_tail_evidence():
 
 
 def test_archived_primal_backsolve_reports_advanced_coverage():
-    times = jnp.linspace(0.0, 1.0, 5)
+    times = jnp.linspace(-0.25, 1.0, 6)
     states = jnp.exp(times)[:, None]
     tape = DelayPrimalTape(
         times,
         states,
-        jnp.ones((5,), dtype="bool"),
+        jnp.ones((6,), dtype="bool"),
+        solve_start_time=0.0,
         problem_id="linear-retarded",
     )
     gradient, _, evidence = backsolve_delay_adjoint(
@@ -88,12 +89,13 @@ def test_archived_primal_backsolve_reports_advanced_coverage():
 
 
 def test_padded_primal_backsolve_matches_compact_active_prefix():
-    times = jnp.linspace(0.0, 1.0, 5)
+    times = jnp.linspace(-0.25, 1.0, 6)
     states = jnp.exp(times)[:, None]
     compact = DelayPrimalTape(
         times,
         states,
-        jnp.ones((5,), dtype="bool"),
+        jnp.ones((6,), dtype="bool"),
+        solve_start_time=0.0,
         problem_id="padded-linear-retarded",
     )
     padded = DelayPrimalTape(
@@ -104,7 +106,8 @@ def test_padded_primal_backsolve_matches_compact_active_prefix():
                 jnp.asarray([[jnp.inf], [-jnp.inf], [jnp.nan]]),
             )
         ),
-        jnp.asarray([True, True, True, True, True, False, False, False]),
+        jnp.asarray([True, True, True, True, True, True, False, False, False]),
+        solve_start_time=0.0,
         problem_id="padded-linear-retarded",
     )
     policy = BacksolveDelayAdjoint(4, 2)
@@ -136,10 +139,10 @@ def test_padded_primal_backsolve_matches_compact_active_prefix():
     assert padded_evidence.backward_steps == compact_evidence.backward_steps == 4
     assert jnp.array_equal(
         padded_evidence.backward_active,
-        jnp.asarray([True, True, True, True, False, False, False]),
+        jnp.asarray([False, True, True, True, True, False, False, False]),
     )
-    assert jnp.all(padded_evidence.residual_norms[4:] == 0)
-    assert jnp.all(~padded_evidence.advanced_query_covered[4:])
+    assert jnp.all(padded_evidence.residual_norms[5:] == 0)
+    assert jnp.all(~padded_evidence.advanced_query_covered[5:])
 
 
 def test_primal_tape_identity_binds_active_primals_discontinuities_and_dtypes():
@@ -149,6 +152,7 @@ def test_primal_tape_identity_binds_active_primals_discontinuities_and_dtypes():
         jnp.asarray([[2.0], [3.0], [jnp.inf]], dtype=jnp.float32),
         active,
         jnp.asarray([0.5], dtype=jnp.float32),
+        solve_start_time=0.0,
         problem_id="identity",
     )
     differently_padded = DelayPrimalTape(
@@ -156,6 +160,7 @@ def test_primal_tape_identity_binds_active_primals_discontinuities_and_dtypes():
         jnp.asarray([[2.0], [3.0], [jnp.nan], [-jnp.inf]], dtype=jnp.float32),
         jnp.asarray([True, True, False, False]),
         jnp.asarray([0.5], dtype=jnp.float32),
+        solve_start_time=0.0,
         problem_id="identity",
     )
     changed_time = DelayPrimalTape(
@@ -163,6 +168,7 @@ def test_primal_tape_identity_binds_active_primals_discontinuities_and_dtypes():
         reference.states,
         active,
         reference.discontinuities,
+        solve_start_time=0.0,
         problem_id="identity",
     )
     changed_state = DelayPrimalTape(
@@ -170,6 +176,7 @@ def test_primal_tape_identity_binds_active_primals_discontinuities_and_dtypes():
         jnp.asarray([[2.0], [4.0], [jnp.inf]], dtype=jnp.float32),
         active,
         reference.discontinuities,
+        solve_start_time=0.0,
         problem_id="identity",
     )
     changed_discontinuity = DelayPrimalTape(
@@ -177,6 +184,7 @@ def test_primal_tape_identity_binds_active_primals_discontinuities_and_dtypes():
         reference.states,
         active,
         jnp.asarray([0.75], dtype=jnp.float32),
+        solve_start_time=0.0,
         problem_id="identity",
     )
     changed_dtype = DelayPrimalTape(
@@ -185,6 +193,15 @@ def test_primal_tape_identity_binds_active_primals_discontinuities_and_dtypes():
         active,
         reference.discontinuities,
         problem_id="identity",
+        solve_start_time=0.0,
+    )
+    changed_boundary = DelayPrimalTape(
+        reference.times,
+        reference.states,
+        active,
+        reference.discontinuities,
+        solve_start_time=1.0,
+        problem_id="identity",
     )
 
     assert differently_padded.tape_id == reference.tape_id
@@ -192,6 +209,7 @@ def test_primal_tape_identity_binds_active_primals_discontinuities_and_dtypes():
     assert changed_state.tape_id != reference.tape_id
     assert changed_discontinuity.tape_id != reference.tape_id
     assert changed_dtype.tape_id != reference.tape_id
+    assert changed_boundary.tape_id != reference.tape_id
 
 
 def test_primal_backsolve_rejects_nonfinite_active_data_and_masks_parameter_adjoint():
@@ -202,12 +220,14 @@ def test_primal_backsolve_rejects_nonfinite_active_data_and_masks_parameter_adjo
             jnp.asarray([0.0, jnp.nan, jnp.inf]),
             jnp.asarray([[1.0], [2.0], [jnp.nan]]),
             active,
+            solve_start_time=0.0,
             problem_id="nonfinite-active-time",
         ),
         DelayPrimalTape(
             jnp.asarray([0.0, 1.0, jnp.nan]),
             jnp.asarray([[1.0], [jnp.inf], [jnp.nan]]),
             active,
+            solve_start_time=0.0,
             problem_id="nonfinite-active-state",
         ),
     )
@@ -234,6 +254,28 @@ def test_primal_backsolve_rejects_nonfinite_active_data_and_masks_parameter_adjo
         assert all(jnp.all(jnp.isnan(leaf)) for leaf in jax.tree.leaves(args_gradient))
 
 
+def test_primal_backsolve_rejects_uncovered_prehistory_queries():
+    times = jnp.linspace(0.0, 1.0, 5)
+    tape = DelayPrimalTape(
+        times,
+        jnp.exp(times)[:, None],
+        jnp.ones((5,), dtype="bool"),
+        solve_start_time=0.0,
+        problem_id="missing-prehistory",
+    )
+
+    gradient, _, evidence = backsolve_delay_adjoint(
+        BacksolveDelayAdjoint(4, 2),
+        tape,
+        lambda time, state, delayed, args: state + delayed[0],
+        (0.25,),
+        jnp.asarray([1.0]),
+    )
+
+    assert not evidence.valid
+    assert jnp.all(jnp.isnan(gradient))
+
+
 def test_primal_backsolve_rejects_invalid_active_prefix_with_evidence():
     invalid_masks = (
         jnp.zeros((0,), dtype="bool"),
@@ -248,6 +290,7 @@ def test_primal_backsolve_rejects_invalid_active_prefix_with_evidence():
             jnp.arange(active.size, dtype="float64"),
             jnp.zeros((active.size, 1)),
             active,
+            solve_start_time=0.0,
             problem_id="invalid-active-prefix",
         )
         gradient, args_gradient, evidence = backsolve_delay_adjoint(

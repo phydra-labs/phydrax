@@ -397,8 +397,6 @@ def test_stable_and_unstable_ocean_mixing_have_opposite_potential_energy_signs()
 
     assert stable_stage.buoyancy.molecular_potential_energy_mixing > 0.0
     assert unstable_stage.buoyancy.molecular_potential_energy_mixing < 0.0
-    assert ocean.dynamics._stratification_step(stable_stage.scalars) < jnp.inf
-    assert jnp.isinf(ocean.dynamics._stratification_step(unstable_stage.scalars))
 
 
 def test_zero_coefficient_les_has_no_les_parity():

@@ -71,6 +71,41 @@ def test_trajectory_dataset_measure_modes():
     assert jnp.allclose(summed.component().mass.value, jnp.sum(summed.durations))
 
 
+@pytest.mark.parametrize(
+    ("measure", "expected"),
+    (
+        ("time_integral_average", 0.5),
+        ("time_integral_sum", 1.5),
+    ),
+)
+def test_observation_uniform_quadrature_uses_inverse_proposal_weights(
+    measure,
+    expected,
+):
+    domain = TrajectoryDatasetDomain(
+        jnp.zeros((3, 1)),
+        jnp.asarray([2, 4, 3]),
+        dt=0.25,
+        measure=measure,
+        sampling="observation_uniform",
+    )
+    component = domain.component()
+    batch = domain.points_from_case_time(
+        domain.flat_case_indices,
+        domain.observation_times(
+            domain.flat_case_indices,
+            domain.flat_time_indices,
+        ),
+        structure=SampleLayout((("data", "t"),)),
+        time_indices=domain.flat_time_indices,
+    )
+    realization = from_samples(over(component), batch)
+
+    out = integral(1.0, realization)
+
+    assert jnp.allclose(jnp.asarray(out.data), expected)
+
+
 def test_trajectory_dataset_fixed_end_is_row_specific():
     inputs = jnp.arange(3.0).reshape((3, 1))
     domain = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)

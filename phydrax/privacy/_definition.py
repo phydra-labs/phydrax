@@ -33,6 +33,12 @@ def _require_record(
         )
 
 
+def _exact_bool(value: object, name: str, /) -> bool:
+    if type(value) is not bool:
+        raise TypeError(f"{name} must be a boolean.")
+    return value
+
+
 class NeighboringRelation(StrEnum):
     """Dataset relation protected by a differential-privacy mechanism."""
 
@@ -112,6 +118,7 @@ class PrivacyDefinition:
             raise TypeError("neighboring_relation must be a NeighboringRelation.")
         if not isinstance(self.trust_model, TrustModel):
             raise TypeError("trust_model must be a TrustModel.")
+        _exact_bool(self.population_size_public, "population_size_public")
         object.__setattr__(
             self, "definition_id", canonical_fingerprint(self._content_record())
         )
@@ -150,7 +157,7 @@ class PrivacyDefinition:
             PrivacyUnit.from_record(unit),
             NeighboringRelation(str(record["neighboring_relation"])),
             TrustModel(str(record["trust_model"])),
-            bool(record["population_size_public"]),
+            _exact_bool(record["population_size_public"], "population_size_public"),
         )
         recorded_id = record.get("definition_id")
         if recorded_id is not None and str(recorded_id) != value.definition_id:

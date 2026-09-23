@@ -43,6 +43,8 @@ def test_metric_uses_inclusive_finite_release_gates():
         Metric(float("nan"), "accuracy")
     with pytest.raises(ValueError, match="exceed"):
         Metric(0.5, "accuracy", minimum=1.0, maximum=0.0)
+    with pytest.raises(ValueError, match="at least one metric"):
+        ScenarioResult("empty", "no evidence", 0)
 
 
 def test_report_serialization_is_strict_atomic_and_category_aggregated(tmp_path):
@@ -81,6 +83,11 @@ def test_report_serialization_is_strict_atomic_and_category_aggregated(tmp_path)
         "units": [],
     }
     assert not (destination.parent / f".{destination.name}.tmp").exists()
+    round_trip = BenchmarkReport.read_json(destination)
+    assert round_trip == report
+    payload["passed"] = True
+    with pytest.raises(ValueError, match="derived status"):
+        BenchmarkReport.from_dict(payload)
 
 
 def test_runner_keeps_registry_order_and_seed_when_selecting_subsets(monkeypatch):
@@ -101,6 +108,8 @@ def test_runner_keeps_registry_order_and_seed_when_selecting_subsets(monkeypatch
     assert tuple(result.name for result in subset.scenarios) == ("first", "third")
     assert full.scenarios[0].seed == subset.scenarios[0].seed == 10_011
     assert full.scenarios[2].seed == subset.scenarios[1].seed == 30_011
+    assert not subset.passed
+    assert not subset.configuration["matrix_complete"]
 
 
 def test_runner_records_scenario_exceptions_without_losing_the_report(monkeypatch):

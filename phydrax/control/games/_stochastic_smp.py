@@ -792,6 +792,16 @@ def evaluate_open_loop_stochastic_game_smp(
         ~path_causal,
         OpenLoopStochasticGameSMPStatus.NONCAUSAL_INFORMATION,
     )
+    player_has_valid_path = jnp.any(
+        status == int(OpenLoopStochasticGameSMPStatus.SUCCESS),
+        axis=-1,
+        keepdims=True,
+    )
+    status = jnp.where(
+        player_has_valid_path,
+        status,
+        int(OpenLoopStochasticGameSMPStatus.NO_VALID_PATHS),
+    ).astype(jnp.int32)
     valid = status == int(OpenLoopStochasticGameSMPStatus.SUCCESS)
 
     forward_norm = _path_rms(forward_residual)

@@ -146,6 +146,35 @@ def test_release_bundle_requires_g0_g7_and_independent_review():
     )
     assert assessment.releasable
     assert not assessment.reasons
+    missing_evidence = {value.gate: value for value in gates}
+    missing_evidence.pop(profile.required_gates[0])
+    incomplete = phx.discretization.assess_release(
+        profile,
+        claim,
+        intended,
+        missing_evidence,
+        review,
+    )
+    assert not incomplete.releasable
+    assert any(reason.startswith("missing-gates:") for reason in incomplete.reasons)
+
+    code_profile = phx.discretization.MPMCommercialProfile(
+        "code-solution-verified",
+        phx.discretization.MPMCommercialProfileKind.CODE_SOLUTION_VERIFIED,
+        matrix,
+        standards,
+    )
+    required_evidence = {
+        value.gate: value for value in gates if value.gate in code_profile.required_gates
+    }
+    code_assessment = phx.discretization.assess_release(
+        code_profile,
+        claim,
+        intended,
+        required_evidence,
+        review,
+    )
+    assert code_assessment.releasable
 
 
 def test_derivative_results_distinguish_branch_event_surrogate_and_nondifferentiable():

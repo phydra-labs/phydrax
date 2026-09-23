@@ -73,7 +73,11 @@ def qualify() -> dict[str, object]:
     )
     support = tomography.ProjectionSupport(rays, (1,), ("view-0",))
     transform = tomography.VoxelXRayTransformPlan(
-        support, (2, 1, 1), (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)
+        support,
+        (2, 1, 1),
+        (0.0, 0.0, 0.0),
+        (1.0, 1.0, 1.0),
+        contract,
     )
     projector = tomography.MaterialBasisProjectionPlan(
         transform, coefficients.material_ids
@@ -136,16 +140,18 @@ def qualify() -> dict[str, object]:
     }
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
-    payload = json.dumps(qualify(), indent=2, sort_keys=True, allow_nan=False)
+    report = qualify()
+    payload = json.dumps(report, indent=2, sort_keys=True, allow_nan=False)
     if arguments.output is None:
         print(payload)
     else:
         arguments.output.write_text(payload + "\n", encoding="utf-8")
+    return 0 if report["accepted"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

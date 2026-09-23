@@ -114,12 +114,12 @@ def main() -> None:
     )
     start = time.perf_counter()
     first = action(positions)
-    jax.block_until_ready(first.total_optical_depth)
+    jax.block_until_ready(first)
     compile_and_first_s = time.perf_counter() - start
     start = time.perf_counter()
     for _ in range(arguments.repetitions):
         result = action(positions)
-    jax.block_until_ready(result.total_optical_depth)
+    jax.block_until_ready(result)
     execution_s = (time.perf_counter() - start) / arguments.repetitions
 
     thresholds = jr.exponential(jr.key(7), (arguments.paths,))

@@ -14,6 +14,7 @@ from jaxtyping import Array, Key
 
 import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
+from phydrax._model import register_artifact_value
 from phydrax._strict import StrictModule
 from phydrax.discretization import (
     SphericalHarmonicPlan,
@@ -318,6 +319,16 @@ class SFNO(AbstractOperatorModel):
         if not isinstance(x, OperatorBatch):
             raise TypeError("SFNO requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
+
+
+register_artifact_value(
+    "phydrax.operator.internal:SphericalSpectralConv",
+    SphericalSpectralConv,
+)
+register_artifact_value(
+    "phydrax.operator.internal:SFNOBlock",
+    _SFNOBlock,
+)
 
 
 __all__ = ["SFNO", "SphericalSpectralConv"]

@@ -15,12 +15,15 @@ A `FunctionalDynamicsKernel` has an explicit `DynamicsKernelCapabilities` value.
 `DeterministicPathAction` represents a singular deterministic path law. `NormalizedStochasticPathAction` combines a normalized initial density with normalized transition densities. `SurrogatePathAction` is intentionally marked unnormalized.
 
 The reweighting boundary is explicit: only `NormalizedStochasticPathAction` can
-construct `ReducedPathPotential`. `cross_evaluate_path_potentials` requires ordered
-state IDs, a phase-space measure ID, run identity, and chain/draw/repeat/dependence
-lineage. It returns a `PathCrossEvaluation` containing an authenticated
-`uq.ReducedPotentialDataset`; `path_fep_work` returns an oriented
-`uq.ReducedWorkDataset`, not an unlabeled work array. Deterministic and surrogate
-actions fail closed, as does nonfinite or incomplete active cross evaluation.
+construct `ReducedPathPotential`. Construction requires the finite positive
+`inverse_temperature` that defines that reduced path law; it is part of potential
+identity. `cross_evaluate_path_potentials` requires ordered state IDs, a phase-space
+measure ID, run identity, and chain/draw/repeat/dependence lineage. It returns a
+`PathCrossEvaluation` containing an authenticated `uq.ReducedPotentialDataset`;
+`path_fep_work` returns an oriented `uq.ReducedWorkDataset` carrying the source
+potential's authenticated inverse temperature, not an unlabeled work array.
+Deterministic and surrogate actions fail closed, as does nonfinite or incomplete
+active cross evaluation.
 
 ## Moves and detailed balance evidence
 

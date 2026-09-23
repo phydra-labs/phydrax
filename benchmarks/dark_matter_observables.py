@@ -52,12 +52,12 @@ def _case(size: int, particle_count: int, repetitions: int):
         )
     )
     first = spectrum(fields)
-    jax.block_until_ready(first.direct_total_power)
+    jax.block_until_ready(first)
     started = time.perf_counter()
     result = first
     for _ in range(repetitions):
         result = spectrum(fields)
-    jax.block_until_ready(result.direct_total_power)
+    jax.block_until_ready(result)
     spectrum_seconds = (time.perf_counter() - started) / repetitions
 
     index = jnp.arange(particle_count, dtype="float64")
@@ -73,12 +73,12 @@ def _case(size: int, particle_count: int, repetitions: int):
     active = jnp.ones((particle_count,), dtype="bool")
     statistics = jax.jit(weighted_particle_statistics)
     first_statistics = statistics(values, weights, active)
-    jax.block_until_ready(first_statistics.covariance)
+    jax.block_until_ready(first_statistics)
     started = time.perf_counter()
     final_statistics = first_statistics
     for _ in range(repetitions):
         final_statistics = statistics(values, weights, active)
-    jax.block_until_ready(final_statistics.covariance)
+    jax.block_until_ready(final_statistics)
     statistics_seconds = (time.perf_counter() - started) / repetitions
 
     cell_count = size**3

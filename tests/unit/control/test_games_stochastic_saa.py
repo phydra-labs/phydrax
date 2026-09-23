@@ -19,6 +19,7 @@ from phydrax.control.games._stochastic_saa import (
     StochasticPolicyGameStatus,
 )
 from phydrax.control.stochastic import PreparedControlledNoise
+from phydrax.dynamics import TimeGrid
 from phydrax.nonlinear import NonlinearStatus, NonlinearTermination
 
 
@@ -36,6 +37,7 @@ def _noise(values, prefix, *, labels=None, coupling_id=None, valid=None):
         coupling_id=prefix if coupling_id is None else coupling_id,
         independence_labels=labels,
         noise_shape=(1,),
+        time_grid=TimeGrid(jnp.asarray([0.0, 1.0]), time_id="stochastic-saa:grid"),
     )
 
 
@@ -200,6 +202,7 @@ def test_training_and_holdout_realization_identity_must_be_disjoint():
         coupling_id="different-coupling",
         independence_labels=jnp.asarray([0, 1]),
         noise_shape=(1,),
+        time_grid=training.time_grid,
     )
 
     with pytest.raises(ValueError, match="must be disjoint"):
@@ -250,7 +253,7 @@ def test_refresh_requires_same_topology_and_entirely_new_realization_ids():
 
     assert isinstance(refreshed, PreparedStochasticPolicyGame)
     assert int(refreshed.numeric_version) == 1
-    assert refreshed.prepared_id == prepared.prepared_id
+    assert refreshed.prepared_id != prepared.prepared_id
     assert refreshed.training_realization_ids == new_training.realization_ids
     assert refreshed.holdout_realization_ids == new_holdout.realization_ids
     with pytest.raises(ValueError, match="new realization_ids"):

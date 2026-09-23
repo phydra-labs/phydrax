@@ -145,8 +145,7 @@ class FinancialScenarioSet(StrictModule):
     weights: Array
     times: Array
     valid: Array
-    law_id: str = eqx.field(static=True)
-    factor_layout_id: str = eqx.field(static=True)
+    law: FinancialLaw = eqx.field(static=True)
     semantic_id: str = eqx.field(static=True)
     numeric_id: str = eqx.field(static=True)
     scenario_capacity: int = eqx.field(static=True)
@@ -159,8 +158,7 @@ class FinancialScenarioSet(StrictModule):
         weights: ArrayLike,
         times: ArrayLike,
         valid: ArrayLike,
-        law_id: str,
-        factor_layout_id: str,
+        law: FinancialLaw,
         semantic_id: str,
         numeric_id: str,
         /,
@@ -232,14 +230,12 @@ class FinancialScenarioSet(StrictModule):
         self.weights = weights_
         self.times = times_
         self.valid = mask
-        law_id_ = _token(law_id, "scenario law_id")
-        factor_layout_id_ = _token(factor_layout_id, "factor_layout_id")
+        law_ = _law(law, "scenario law")
         semantic_id_ = _token(semantic_id, "scenario semantic_id")
         numeric_id_ = _token(numeric_id, "scenario numeric_id")
         if semantic_id_ == numeric_id_:
             raise ValueError("scenario semantic_id and numeric_id must be distinct.")
-        self.law_id = law_id_
-        self.factor_layout_id = factor_layout_id_
+        self.law = law_
         self.semantic_id = semantic_id_
         self.numeric_id = numeric_id_
         self.scenario_capacity = scenario_capacity
@@ -264,10 +260,7 @@ def scenario_set_compatible(
     if not isinstance(scenarios, FinancialScenarioSet):
         raise TypeError("scenarios must be a FinancialScenarioSet.")
     law_ = _law(law, "law")
-    return (
-        scenarios.law_id == law_.law_id
-        and scenarios.factor_layout_id == law_.factor_layout_id
-    )
+    return laws_compatible(scenarios.law, law_)
 
 
 __all__ = [

@@ -22,6 +22,7 @@ from ..linalg._gaussian_chain import (
     associative_gaussian_filter,
     associative_gaussian_smoother,
 )
+from ..stochastic._linear_gaussian import LinearGaussianParameters
 from ..stochastic._state_space import (
     GaussianStatePrior,
     LinearGaussianObservationModel,
@@ -86,21 +87,35 @@ def _transition_parameters(
     ends: Array,
     step_indices: Array,
     /,
-) -> tuple[Array, Array, Array]:
-    _, kernel, _ = _linear_problem(problem)
-    _, _, case_count, _ = _sizes(problem)
+) -> LinearGaussianParameters:
+    prior, kernel, _ = _linear_problem(problem)
+    state_size, _, case_count, _ = _sizes(problem)
     flat_start = starts.reshape((-1,))
     flat_end = ends.reshape((-1,))
     flat_steps = jnp.broadcast_to(step_indices, starts.shape).reshape((-1,))
     repetitions = flat_start.shape[0] // case_count
     case_indices = jnp.tile(jnp.arange(case_count, dtype=jnp.int32), repetitions)
-    return jax.vmap(
-        lambda start, end, case_index, step_index: kernel.parameters(
-            start,
-            end,
-            problem.step_context(case_index, step_index),
+    dtype = jnp.asarray(prior.location).dtype
+
+    def parameters(start, end, case_index, step_index):
+        context = problem.step_context(case_index, step_index)
+        return jax.lax.cond(
+            end == start,
+            lambda _: LinearGaussianParameters(
+                jnp.eye(state_size, dtype=dtype),
+                jnp.zeros((state_size,), dtype=dtype),
+                jnp.zeros((state_size, state_size), dtype=dtype),
+            ),
+            lambda _: kernel.parameters(start, end, context),
+            operand=None,
         )
-    )(flat_start, flat_end, case_indices, flat_steps)
+
+    return jax.vmap(parameters)(
+        flat_start,
+        flat_end,
+        case_indices,
+        flat_steps,
+    )
 
 
 def _observation_parameters(
@@ -365,7 +380,7 @@ def kalman_filter_step(
     )
     next_time = jnp.where(active, target_time, state.time)
     next_valid = state.valid & jnp.where(active, step_valid.reshape(case_shape), True)
-    status = jnp.where(
+    step_status = jnp.where(
         ~active_flat,
         KALMAN_SUCCESS,
         jnp.where(
@@ -373,6 +388,11 @@ def kalman_filter_step(
             KALMAN_INNOVATION_COVARIANCE_FAILURE,
             jnp.where(~finite, KALMAN_NONFINITE, KALMAN_SUCCESS),
         ),
+    ).astype(jnp.int32)
+    status = jnp.where(
+        state.valid.reshape((case_count,)),
+        step_status,
+        state.status.reshape((case_count,)),
     ).astype(jnp.int32)
     accepted_log_likelihood = jnp.where(accepted, log_likelihood, 0.0)
     cumulative = state.log_likelihood.reshape((case_count,)) + accepted_log_likelihood
@@ -737,7 +757,7 @@ def _parallel_kalman_filter(
     )
     increments = jnp.where(accepted, log_likelihood, 0.0)
     cumulative = jnp.cumsum(increments, axis=0)
-    status = jnp.where(
+    step_status = jnp.where(
         ~active_time_major,
         KALMAN_SUCCESS,
         jnp.where(
@@ -746,6 +766,11 @@ def _parallel_kalman_filter(
             jnp.where(~finite, KALMAN_NONFINITE, KALMAN_SUCCESS),
         ),
     ).astype(jnp.int32)
+    status = jax.lax.associative_scan(
+        lambda prior, current: jnp.where(prior != KALMAN_SUCCESS, prior, current),
+        step_status,
+        axis=0,
+    )
 
     def restore(values: Array, trailing_shape: tuple[int, ...] = ()) -> Array:
         return jnp.swapaxes(values, 0, 1).reshape(

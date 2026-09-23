@@ -203,6 +203,41 @@ def test_degree_one_rational_tensor_has_complete_nonuniform_weight_hessian():
     )
 
 
+def test_rational_tensor_plan_topologically_orders_custom_derivative_jet():
+    knots = jnp.asarray([0.0, 0.0, 1.0, 1.0])
+    stencils = tuple(
+        bspline_jet_stencil(
+            knots,
+            0.4,
+            degree=1,
+            maximum_order=1,
+        )
+        for _ in range(2)
+    )
+    requested = ((0, 0), (1, 1), (1, 0), (0, 1))
+    plan = TensorBSplineJetPlan(stencils, multi_indices=requested)
+    rational = RationalSplineJet(plan, jnp.asarray([[1.0, 1.5], [2.0, 2.5]]))
+
+    assert plan.multi_indices == ((0, 0), (1, 0), (0, 1), (1, 1))
+    assert rational.derivative((1, 1)).shape == (4,)
+
+
+def test_tensor_derivative_multi_indices_require_exact_integers():
+    knots = jnp.asarray([0.0, 0.0, 1.0, 1.0])
+    stencil = bspline_jet_stencil(
+        knots,
+        0.4,
+        degree=1,
+        maximum_order=1,
+    )
+
+    with pytest.raises(TypeError, match="components must be integers"):
+        TensorBSplineJetPlan(
+            (stencil,),
+            multi_indices=((0,), (0.5,)),
+        )
+
+
 def test_bspline_repeated_and_unclamped_knots_match_scipy():
     cases = (
         (

@@ -84,9 +84,12 @@ class TrajectoryEventLayout(StrictModule):
         identifier = layout_id or canonical_fingerprint(
             {
                 "kind": "trajectory-event-layout",
-                "times": grid.tolist(),
+                "times": grid,
                 "state_shape": list(shape),
-                "rank": matrix.shape[1],
+                "origin": center,
+                "basis": matrix,
+                "valid_time": mask,
+                "quadrature_weights": weights,
             }
         )
         self.times = grid

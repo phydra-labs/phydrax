@@ -7,21 +7,26 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import struct
 import zipfile
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+import phydrax._host_io as host_io
+import phydrax._resource_archive as resource_archive
 from phydrax._external_resource import (
     bounded_resource_from_bytes,
     open_bounded_resource,
+    read_bounded_resource,
     ResourceLimits,
     ResourceReadError,
 )
 from phydrax._publication import publish_bytes, publish_resource_set
 from phydrax._resource_archive import admit_zip_resource, ArchiveLimits, read_zip_members
 from phydrax._resource_set import (
+    open_bounded_resource_set,
     read_bounded_resource_set,
     ResourceSetLimits,
     ResourceSetReadError,
@@ -77,6 +82,75 @@ def test_opened_resource_is_seekable_and_content_identified(tmp_path: Path):
     assert manifest_id
 
 
+def test_opened_resource_preserves_consumer_errors(tmp_path: Path):
+    class ConsumerError(ValueError):
+        pass
+
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"payload")
+
+    with pytest.raises(ConsumerError, match="consumer failure"):
+        with open_bounded_resource(
+            source.name,
+            trusted_root=tmp_path,
+            limits=_resource_limits(),
+        ):
+            raise ConsumerError("consumer failure")
+
+
+def test_trusted_root_walk_rejects_symlink_ancestors(tmp_path: Path):
+    actual = tmp_path / "actual"
+    root = actual / "root"
+    root.mkdir(parents=True)
+    (root / "resource.bin").write_bytes(b"outside")
+    alias = tmp_path / "alias"
+    alias.symlink_to(actual, target_is_directory=True)
+
+    with pytest.raises(ResourceReadError) as caught:
+        read_bounded_resource(
+            "resource.bin",
+            trusted_root=alias / "root",
+            limits=_resource_limits(),
+        )
+
+    assert caught.value.reason == "policy"
+
+
+def test_trusted_root_walk_stays_on_held_ancestor_during_replacement(
+    monkeypatch,
+    tmp_path: Path,
+):
+    parent = tmp_path / "parent"
+    trusted = parent / "trusted"
+    trusted.mkdir(parents=True)
+    (trusted / "resource.bin").write_bytes(b"original")
+    replacement_parent = tmp_path / "replacement-parent"
+    replacement_trusted = replacement_parent / "trusted"
+    replacement_trusted.mkdir(parents=True)
+    (replacement_trusted / "resource.bin").write_bytes(b"replacement")
+    detached = tmp_path / "detached"
+    original_open = host_io.os.open
+    replaced = False
+
+    def replace_ancestor(path, flags, *args, **kwargs):
+        nonlocal replaced
+        if path == "trusted" and kwargs.get("dir_fd") is not None and not replaced:
+            replaced = True
+            parent.rename(detached)
+            replacement_parent.rename(parent)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(host_io.os, "open", replace_ancestor)
+    resource = read_bounded_resource(
+        "resource.bin",
+        trusted_root=trusted,
+        limits=_resource_limits(),
+    )
+
+    assert replaced
+    assert resource.data == b"original"
+
+
 def test_resource_set_accounts_exact_members_and_rejects_links(tmp_path: Path):
     root = tmp_path / "root"
     dataset = root / "dataset"
@@ -97,11 +171,49 @@ def test_resource_set_accounts_exact_members_and_rejects_links(tmp_path: Path):
         "nested/values.bin",
     )
     assert admitted.manifest.total_size_bytes == 6
+    assert admitted.manifest.total_entry_count == 3
 
     (dataset / "unsafe").symlink_to(tmp_path / "outside")
     with pytest.raises(ResourceSetReadError) as caught:
         read_bounded_resource_set("dataset", trusted_root=root, limits=limits)
     assert caught.value.reason == "policy"
+
+
+def test_resource_set_counts_directories_against_total_entry_limit(tmp_path: Path):
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    for index in range(4):
+        (dataset / f"empty-{index}").mkdir()
+
+    with pytest.raises(ResourceSetReadError) as caught:
+        read_bounded_resource_set(
+            dataset.name,
+            trusted_root=tmp_path,
+            limits=ResourceSetLimits(1024, 512, 3, 4),
+        )
+
+    assert caught.value.reason == "limit"
+
+
+def test_opened_resource_set_reads_from_admitted_directory_generation(tmp_path: Path):
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "module.bin").write_bytes(b"admitted")
+
+    with open_bounded_resource_set(
+        dataset.name,
+        trusted_root=tmp_path,
+        limits=ResourceSetLimits(1024, 512, 1, 4),
+    ) as opened:
+        with pytest.raises(ResourceSetReadError) as caught:
+            opened.read_member("module.bin", maximum_bytes=1)
+        assert caught.value.reason == "limit"
+        dataset.rename(tmp_path / "admitted-generation")
+        dataset.mkdir()
+        (dataset / "module.bin").write_bytes(b"replacement")
+        payload = opened.read_member("module.bin")
+
+    assert payload == b"admitted"
 
 
 def test_external_archive_preflights_paths_and_reads_exact_members():
@@ -116,6 +228,7 @@ def test_external_archive_preflights_paths_and_reads_exact_members():
 
     admitted = admit_zip_resource(resource, limits=_archive_limits())
     values = read_zip_members(admitted, ("manifest.json", "arrays/value.npy"))
+    assert admitted.directory_entry_count == 2
 
     assert values == {"manifest.json": b"{}", "arrays/value.npy": b"payload"}
 
@@ -131,6 +244,75 @@ def test_external_archive_preflights_paths_and_reads_exact_members():
             limits=_archive_limits(),
         )
     assert caught.value.reason == "policy"
+
+
+def test_external_archive_counts_directory_entries_before_member_decode():
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, mode="w") as archive:
+        archive.mkdir("one/")
+        archive.mkdir("two/")
+        archive.writestr("payload.bin", b"payload")
+    limits = ArchiveLimits(
+        1_000_000,
+        2,
+        1_000_000,
+        1_000_000,
+        1024,
+        8,
+        100,
+    )
+
+    with pytest.raises(ResourceReadError) as caught:
+        admit_zip_resource(
+            bounded_resource_from_bytes(
+                output.getvalue(),
+                limits=_resource_limits(),
+            ),
+            limits=limits,
+        )
+
+    assert caught.value.reason == "limit"
+
+
+def test_external_archive_counts_headers_before_zipinfo_materialization(monkeypatch):
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, mode="w") as archive:
+        archive.writestr("one.bin", b"1")
+        archive.writestr("two.bin", b"2")
+        archive.writestr("three.bin", b"3")
+    payload = bytearray(output.getvalue())
+    end_offset = payload.rfind(b"PK\x05\x06")
+    struct.pack_into("<HH", payload, end_offset + 8, 1, 1)
+
+    def unexpected_zipfile(*_args, **_kwargs):
+        pytest.fail("ZipFile materialized entries before central-directory preflight")
+
+    monkeypatch.setattr(resource_archive.zipfile, "ZipFile", unexpected_zipfile)
+    with pytest.raises(ResourceReadError) as caught:
+        admit_zip_resource(
+            bounded_resource_from_bytes(
+                bytes(payload),
+                limits=_resource_limits(),
+            ),
+            limits=_archive_limits(),
+        )
+
+    assert caught.value.reason == "malformed"
+
+
+def test_resource_publication_preflights_parent_directories_as_entries(
+    tmp_path: Path,
+):
+    destination = tmp_path / "bundle"
+
+    with pytest.raises(ValueError, match="total entry limit"):
+        publish_resource_set(
+            destination,
+            {"nested/value.bin": b"value"},
+            limits=ResourceSetLimits(1024, 512, 1, 4),
+        )
+
+    assert not destination.exists()
 
 
 def test_publication_exposes_only_complete_file_and_resource_set(tmp_path: Path):

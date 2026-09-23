@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import ceil
+from numbers import Integral
 
 import equinox as eqx
 import jax
@@ -40,6 +41,16 @@ class PlacementResourcePolicy(StrictModule):
         maximum_local_bytes: int = 2**31,
         maximum_transfer_bytes: int = 2**34,
     ):
+        raw_values = (
+            maximum_devices,
+            maximum_local_bytes,
+            maximum_transfer_bytes,
+        )
+        if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for value in raw_values
+        ):
+            raise TypeError("Placement resource limits must be integers.")
         values = (
             int(maximum_devices),
             int(maximum_local_bytes),
@@ -155,6 +166,8 @@ def create_tensor_network_mesh(
 ) -> TensorNetworkMesh:
     devices_ = tuple(jax.devices() if devices is None else devices)
     if maximum_devices is not None:
+        if not isinstance(maximum_devices, Integral) or isinstance(maximum_devices, bool):
+            raise TypeError("maximum_devices must be an integer.")
         maximum = int(maximum_devices)
         if maximum < 1:
             raise ValueError("maximum_devices must be positive.")
@@ -180,14 +193,24 @@ def plan_slice_placement(
         raise MemoryError("Placement exceeds maximum_devices.")
     per_device = ceil(slice_plan.slice_count / mesh.device_count)
     padded = per_device * mesh.device_count
-    itemsize = precision_itemsize(slice_plan.original.dtype)
+    storage_itemsize = precision_itemsize(slice_plan.original.dtype)
+    output_probe = slice_plan.original.precision.output(
+        slice_plan.original.precision.contraction(
+            jnp.empty((), dtype=slice_plan.original.dtype)
+        )
+    )
+    output_itemsize = precision_itemsize(str(output_probe.dtype))
     output_elements = slice_plan.original.structure.output_elements
+    operand_bytes = slice_plan.original.cost.operand_elements * storage_itemsize
+    assignment_local_bytes = per_device * len(slice_plan.labels) * 4
     local_peak = (
-        slice_plan.residual.schedule.peak_live_bytes
-        + per_device * output_elements * itemsize
+        operand_bytes
+        + per_device * slice_plan.residual.cost.peak_live_bytes
+        + per_device * output_elements * output_itemsize
+        + assignment_local_bytes
     )
     assignment_bytes = padded * len(slice_plan.labels) * 4
-    result_bytes = padded * output_elements * itemsize
+    result_bytes = padded * output_elements * output_itemsize
     transfer_bytes = assignment_bytes + result_bytes
     if local_peak > resources_.maximum_local_bytes:
         raise MemoryError("Placement exceeds maximum_local_bytes.")
@@ -199,7 +222,7 @@ def plan_slice_placement(
         start = ordinal * per_device
         stop = min(start + per_device, slice_plan.slice_count)
         assignment_transfer = max(0, stop - start) * len(slice_plan.labels) * 4
-        result_transfer = max(0, stop - start) * output_elements * itemsize
+        result_transfer = max(0, stop - start) * output_elements * output_itemsize
         step_id = canonical_fingerprint(
             {
                 "kind": "distributed-slice-replay-step",
@@ -250,6 +273,7 @@ def plan_slice_placement(
 
 
 def _failure_result(
+    prepared: PreparedContraction,
     placement: SlicePlacementPlan,
     failure: str,
     completed_bytes: int,
@@ -268,6 +292,9 @@ def _failure_result(
             {
                 "kind": "failed-distributed-replay",
                 "placement": placement.plan_id,
+                "prepared": prepared.prepared_id,
+                "operands": prepared.operand_id,
+                "numeric_version": int(prepared.numeric_version),
                 "failure": failure,
             }
         ),
@@ -327,19 +354,30 @@ def execute_distributed_slices(
         completed_bytes += host_results.nbytes
     except (RuntimeError, ValueError) as error:
         return _failure_result(
-            placement, f"distributed-io:{type(error).__name__}", completed_bytes
+            prepared,
+            placement,
+            f"distributed-io:{type(error).__name__}",
+            completed_bytes,
         )
 
     host_results = host_results[: plan.slice_count]
     if not np.all(np.isfinite(host_results)):
-        return _failure_result(placement, "non-finite-slice-result", completed_bytes)
+        return _failure_result(
+            prepared,
+            placement,
+            "non-finite-slice-result",
+            completed_bytes,
+        )
     aggregate = jnp.zeros(host_results.shape[1:], dtype=sharded_results.dtype)
     for ordinal in range(plan.slice_count):
         aggregate = aggregate + jnp.asarray(host_results[ordinal])
     finite = jnp.all(jnp.isfinite(aggregate))
     if not bool(np.asarray(finite)):
         return _failure_result(
-            placement, "non-finite-deterministic-reduction", completed_bytes
+            prepared,
+            placement,
+            "non-finite-deterministic-reduction",
+            completed_bytes,
         )
     transfer = TransferEvidence(
         placement.transfer_bytes,
@@ -351,6 +389,9 @@ def execute_distributed_slices(
     replay_id = canonical_fingerprint(
         {
             "kind": "distributed-slice-replay",
+            "prepared": prepared.prepared_id,
+            "operands": prepared.operand_id,
+            "numeric_version": int(prepared.numeric_version),
             "placement": placement.plan_id,
             "schedule": placement.replay.schedule_id,
         }

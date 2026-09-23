@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..optim import (
     ConicProgram,
@@ -413,12 +414,30 @@ def solve_linear_conic_control(
     result = solve_conic_program(compilation.conic_program, policy=policy)
     states, controls = compilation.decode(result.primal)
     finite_nodes = jnp.all(jnp.isfinite(states), axis=-1)
-    trajectory_valid = result.valid[..., None] & finite_nodes
+    finite_controls = jnp.all(jnp.isfinite(controls), axis=-1)
+    trajectory_valid = (
+        jnp.concatenate(
+            (
+                result.valid[..., None] & finite_controls,
+                result.valid[..., None],
+            ),
+            axis=-1,
+        )
+        & finite_nodes
+    )
+    decoded_valid = (
+        result.valid & jnp.all(finite_nodes, axis=-1) & jnp.all(finite_controls, axis=-1)
+    )
+    decoded_status = jnp.where(
+        (result.status == int(ConvexProgramStatus.OPTIMAL)) & ~decoded_valid,
+        int(ConvexProgramStatus.NONFINITE_OUTPUT),
+        result.status,
+    ).astype(jnp.int32)
     control_status = jnp.where(
-        result.status == int(ConvexProgramStatus.OPTIMAL),
+        decoded_valid,
         CONTROL_SUCCESS,
         jnp.where(
-            result.status == int(ConvexProgramStatus.PRIMAL_INFEASIBLE),
+            decoded_status == int(ConvexProgramStatus.PRIMAL_INFEASIBLE),
             CONTROL_INFEASIBLE,
             CONTROL_DYNAMICS_FAILED,
         ),
@@ -435,7 +454,7 @@ def solve_linear_conic_control(
         controls=controls,
         valid=trajectory_valid,
         status=control_status,
-        backend_status=result.status,
+        backend_status=decoded_status,
         case_shape=problem.case_shape,
         state_shape=(problem.state_size,),
         control_shape=(problem.control_size,),
@@ -448,7 +467,22 @@ def solve_linear_conic_control(
         approximation_id=control_policy.approximation_id,
     )
     identifier = (
-        f"{problem.problem_id}:conic-solution"
+        "control-conic-solution:"
+        + canonical_fingerprint(
+            {
+                "specification": problem.specification_id,
+                "numeric_binding": result.provenance.numeric_binding_id,
+                "method": result.provenance.method_id,
+                "result": array_tree_fingerprint(
+                    {
+                        "primal": result.primal,
+                        "objective": result.objective,
+                        "status": decoded_status,
+                        "valid": decoded_valid,
+                    }
+                ),
+            }
+        )
         if solution_id is None
         else _identifier(solution_id, "solution_id")
     )
@@ -459,8 +493,8 @@ def solve_linear_conic_control(
         policy=control_policy,
         parameters=controls,
         objective=result.objective + compilation.quadratic_compilation.objective_constant,
-        valid=result.valid,
-        status=result.status,
+        valid=decoded_valid,
+        status=decoded_status,
         solution_id=identifier,
         method_id=f"control:conic:{result.method}",
     )

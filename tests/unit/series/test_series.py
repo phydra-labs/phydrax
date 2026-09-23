@@ -253,3 +253,22 @@ def test_reconstruction_rejects_disconnected_support():
             interpolation="linear",
         )
         jax.block_until_ready(reconstruction.series.support.coordinates)
+
+
+def test_reconstruction_rejects_nonfinite_snap_tolerance():
+    support = phx.series.SeriesSupport(
+        jnp.asarray([0.0, 1.0]),
+        coordinate_name="time",
+        coordinate_id="snap-time",
+    )
+    series = phx.series.SampledSeries(
+        support,
+        jnp.asarray([0.0, 1.0]),
+        series_id="snap-values",
+    )
+    for tolerance in (jnp.nan, jnp.inf):
+        with pytest.raises(ValueError, match="finite and non-negative"):
+            phx.series.SampledSeriesReconstruction(
+                series,
+                snap_tolerance=tolerance,
+            )

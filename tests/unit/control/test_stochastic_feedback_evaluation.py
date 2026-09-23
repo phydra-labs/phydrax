@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -32,6 +33,10 @@ def _noise(
 ):
     values = jnp.asarray(increments, dtype="float64")
     path_count = values.shape[0]
+    time_grid = TimeGrid(
+        jnp.arange(values.shape[1] + 1, dtype="float64"),
+        time_id=f"feedback:{values.shape[1]}:time",
+    )
     return PreparedControlledNoise(
         values,
         valid=(jnp.ones((path_count,), dtype="bool") if validity is None else validity),
@@ -47,6 +52,7 @@ def _noise(
             else independence_labels
         ),
         noise_shape=(1,),
+        time_grid=time_grid,
     )
 
 
@@ -118,6 +124,34 @@ def test_policy_cannot_observe_current_noise():
     np.testing.assert_allclose(paths.states[:, 1], [[5.0], [0.0]])
 
 
+def test_prepared_noise_is_bound_to_exact_physical_grid():
+    problem = _problem(num_steps=1)
+    wrong_grid = TimeGrid(
+        jnp.asarray([0.0, 2.0]),
+        time_id=problem.time_grid.time_id,
+    )
+    prepared = PreparedControlledNoise(
+        jnp.zeros((1, 1, 1)),
+        valid=jnp.asarray([True]),
+        realization_ids=("wrong-grid-path",),
+        coupling_id="wrong-grid-coupling",
+        independence_labels=jnp.asarray([0], dtype=jnp.int32),
+        noise_shape=(1,),
+        time_grid=wrong_grid,
+    )
+
+    with pytest.raises(
+        eqx.EquinoxRuntimeError,
+        match="time grid does not match",
+    ):
+        rollout_feedback(
+            problem,
+            lambda context, state, args: jnp.zeros((1,)),
+            prepared,
+            policy_id="wrong-grid-policy",
+        )
+
+
 def test_realization_replay_ids_and_antithetic_cluster_labels():
     grid = TimeGrid(jnp.asarray([0.0, 0.5, 1.0]), time_id="wiener-grid")
     realization = WienerRealization.antithetic(
@@ -133,6 +167,7 @@ def test_realization_replay_ids_and_antithetic_cluster_labels():
         realization,
         valid=jnp.ones((4,), dtype="bool"),
         noise_shape=(1,),
+        time_grid=grid,
     )
     problem = _problem(num_steps=2)
     paths = rollout_feedback(

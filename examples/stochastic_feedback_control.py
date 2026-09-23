@@ -30,6 +30,7 @@ def prepared_noise(prefix, coupling_id, increments, labels):
     path_count = increments.shape[0]
     return phx.control.stochastic.PreparedControlledNoise(
         increments,
+        time_grid=time_grid,
         valid=jnp.ones((path_count,), dtype="bool"),
         realization_ids=tuple(f"{prefix}:{index}" for index in range(path_count)),
         coupling_id=coupling_id,

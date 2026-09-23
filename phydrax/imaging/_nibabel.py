@@ -1,11 +1,12 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Lazy NIfTI/MGZ interchange with exact spatial and rights contracts."""
+"""Lazy NIfTI import/export and MGZ import with exact spatial and rights contracts."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from hashlib import new as new_digest
 from importlib import import_module, util
 from pathlib import Path
@@ -109,6 +110,14 @@ def _verify_reference(
         raise ValueError("Image source checksum does not match its reference manifest.")
 
 
+@dataclass(frozen=True, slots=True)
+class NiftiExportResult:
+    """Published NIfTI path and every governed semantic not represented by NIfTI."""
+
+    path: Path
+    lost_semantics: tuple[str, ...]
+
+
 class NibabelImageProvider:
     """Read normalized medical-image assets without importing nibabel at package import."""
 
@@ -141,51 +150,54 @@ class NibabelImageProvider:
         )
         _verify_reference(resource.data, reference)
         backend = _backend()
-        temporary_context = TemporaryDirectory(prefix="phydrax-image-read-")
-        temporary = temporary_context.__enter__()
-        staged_source = Path(temporary) / source.name
-        staged_source.write_bytes(resource.data)
-        image = backend.load(str(staged_source))
-        spatial_unit, temporal_unit = image.header.get_xyzt_units()
-        if spatial_unit not in _LENGTH_UNITS:
-            raise ValueError(f"Unsupported image spatial unit {spatial_unit!r}.")
-        unit = _LENGTH_UNITS[spatial_unit]
-        contract = SpatialCoordinateContract(
-            unit,
-            coordinate_system="cartesian-ras",
-            reference_frame=reference_frame,
-        )
-        qform = _form(image.header.get_qform(coded=True), "qform")
-        sform = _form(image.header.get_sform(coded=True), "sform")
-        if qform is None and sform is None:
-            fallback = np.asarray(image.affine, dtype=np.float64)
-            if fallback.shape != (4, 4) or not np.all(np.isfinite(fallback)):
-                raise ValueError("Image has no valid qform, sform, or fallback affine.")
-            qform = fallback
-        affine = ImageIndexAffine.from_qform_sform(
-            qform=qform,
-            sform=sform,
-            source_frame_id=f"{asset_id}:voxel-index",
-            coordinate_contract=contract,
-            axis_convention=ImageAxisConvention.RAS,
-            voxel_reference=VoxelReference.CENTER,
-            conflict_tolerance=conflict_tolerance,
-        )
-        values = np.asanyarray(image.dataobj)
-        if time_axis is not None and time_axis.sample_count > 1:
-            if temporal_unit not in _TIME_UNITS:
-                raise ValueError(f"Unsupported image temporal unit {temporal_unit!r}.")
-            header_time_unit = _TIME_UNITS[temporal_unit]
-            interval = time_axis.interval_in(header_time_unit)
-            zooms = image.header.get_zooms()
-            if (
-                interval is None
-                or len(zooms) < 4
-                or not np.isclose(zooms[3], interval, rtol=1.0e-8, atol=0.0)
-            ):
-                raise ValueError(
-                    "Image header timing and supplied SampleTimeAxis disagree."
-                )
+        with TemporaryDirectory(prefix="phydrax-image-read-") as temporary:
+            staged_source = Path(temporary) / source.name
+            staged_source.write_bytes(resource.data)
+            image = backend.load(str(staged_source))
+            spatial_unit, temporal_unit = image.header.get_xyzt_units()
+            if spatial_unit not in _LENGTH_UNITS:
+                raise ValueError(f"Unsupported image spatial unit {spatial_unit!r}.")
+            unit = _LENGTH_UNITS[spatial_unit]
+            contract = SpatialCoordinateContract(
+                unit,
+                coordinate_system="cartesian-ras",
+                reference_frame=reference_frame,
+            )
+            qform = _form(image.header.get_qform(coded=True), "qform")
+            sform = _form(image.header.get_sform(coded=True), "sform")
+            if qform is None and sform is None:
+                fallback = np.asarray(image.affine, dtype=np.float64)
+                if fallback.shape != (4, 4) or not np.all(np.isfinite(fallback)):
+                    raise ValueError(
+                        "Image has no valid qform, sform, or fallback affine."
+                    )
+                qform = fallback
+            affine = ImageIndexAffine.from_qform_sform(
+                qform=qform,
+                sform=sform,
+                source_frame_id=f"{asset_id}:voxel-index",
+                coordinate_contract=contract,
+                axis_convention=ImageAxisConvention.RAS,
+                voxel_reference=VoxelReference.CENTER,
+                conflict_tolerance=conflict_tolerance,
+            )
+            values = np.array(image.dataobj, copy=True)
+            if time_axis is not None and time_axis.sample_count > 1:
+                if temporal_unit not in _TIME_UNITS:
+                    raise ValueError(
+                        f"Unsupported image temporal unit {temporal_unit!r}."
+                    )
+                header_time_unit = _TIME_UNITS[temporal_unit]
+                interval = time_axis.interval_in(header_time_unit)
+                zooms = image.header.get_zooms()
+                if (
+                    interval is None
+                    or len(zooms) < 4
+                    or not np.isclose(zooms[3], interval, rtol=1.0e-8, atol=0.0)
+                ):
+                    raise ValueError(
+                        "Image header timing and supplied SampleTimeAxis disagree."
+                    )
         asset = MedicalImageAsset(
             asset_id,
             modality,
@@ -201,7 +213,6 @@ class NibabelImageProvider:
             metadata={"provider": "nibabel"},
             intended_use=intended_use,
         )
-        temporary_context.__exit__(None, None, None)
         return asset
 
     def write(
@@ -211,11 +222,31 @@ class NibabelImageProvider:
         /,
         *,
         maximum_file_bytes: int = 4 * 1024 * 1024 * 1024,
-    ) -> Path:
+        allow_semantic_loss: bool = False,
+    ) -> NiftiExportResult:
         if not isinstance(asset, MedicalImageAsset):
             raise TypeError("asset must be MedicalImageAsset.")
         for reference in asset.references:
             reference.require_rights(export=True)
+        losses = ["references", "derivation", "deidentification"]
+        if not np.all(asset.valid_mask):
+            losses.append("valid_mask")
+        if asset.uncertainty is not None:
+            losses.append("uncertainty")
+        if asset.quality_flags:
+            losses.append("quality_flags")
+        if asset.acquisition is not None:
+            losses.append("acquisition")
+        if asset.metadata:
+            losses.append("metadata")
+        lost_semantics = tuple(losses)
+        if not isinstance(allow_semantic_loss, bool):
+            raise TypeError("allow_semantic_loss must be boolean.")
+        if lost_semantics and not allow_semantic_loss:
+            raise ValueError(
+                "NIfTI cannot represent governed image semantics; "
+                "set allow_semantic_loss=True and retain the returned loss report."
+            )
         target = Path(path).resolve()
         if target.suffix not in (".nii", ".gz") or (
             target.suffix == ".gz" and not target.name.endswith(".nii.gz")
@@ -272,7 +303,7 @@ class NibabelImageProvider:
             maximum_bytes=maximum_file_bytes,
             mode="atomic_replace",
         )
-        return target
+        return NiftiExportResult(target, lost_semantics)
 
 
-__all__ = ["NibabelImageProvider"]
+__all__ = ["NibabelImageProvider", "NiftiExportResult"]

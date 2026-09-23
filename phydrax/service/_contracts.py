@@ -392,8 +392,15 @@ class JobSubmission:
             or not execution_plan_id
         ):
             raise ValueError("Lifecycle plan identifiers must be nonempty strings.")
-        if not self.numeric_revision_id or not self.profile_id:
-            raise ValueError("Revision and profile identifiers must be nonempty.")
+        if (
+            not isinstance(self.numeric_revision_id, str)
+            or not isinstance(self.profile_id, str)
+            or not self.numeric_revision_id
+            or not self.profile_id
+        ):
+            raise ValueError("Revision and profile identifiers must be nonempty strings.")
+        if type(self.retention_seconds) is not int:
+            raise TypeError("retention_seconds must be an integer.")
         if self.retention_seconds <= 0:
             raise ValueError("retention_seconds must be positive.")
         handles = tuple(self.secret_handles)
@@ -411,7 +418,9 @@ class JobSubmission:
         request_id = self.request_id.strip()
         digest_payload = {
             "analysis_plan_id": analysis_plan_id,
+            "analysis_plan_fingerprint": self.analysis_plan.plan_fingerprint,
             "execution_plan_id": execution_plan_id,
+            "execution_plan_fingerprint": self.execution_plan.plan_fingerprint,
             "numeric_revision_id": self.numeric_revision_id,
             "profile_id": self.profile_id,
             "parameters": dict(parameters),
@@ -474,8 +483,16 @@ class FailureEvidence:
     def __post_init__(self) -> None:
         if not self.code or not self.exception_type or not self.message:
             raise ValueError("Failure evidence values must be nonempty.")
-        if self.attempt <= 0:
-            raise ValueError("Failure evidence attempt must be positive.")
+        if type(self.retryable) is not bool:
+            raise TypeError("Failure retryable must be a boolean.")
+        if type(self.attempt) is not int or self.attempt <= 0:
+            raise ValueError("Failure evidence attempt must be a positive integer.")
+        diagnostics = tuple(self.diagnostic_ids)
+        if len(set(diagnostics)) != len(diagnostics) or any(
+            not isinstance(value, str) or not value for value in diagnostics
+        ):
+            raise ValueError("Failure diagnostic identifiers must be unique strings.")
+        object.__setattr__(self, "diagnostic_ids", diagnostics)
 
 
 @dataclass(frozen=True, slots=True)

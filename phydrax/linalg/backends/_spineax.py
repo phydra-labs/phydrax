@@ -53,6 +53,8 @@ def _storage(problem: Any, /) -> SparseStorage:
     if not isinstance(operator, AbstractSparseLinearOperator):
         raise TypeError("Spineax preparation requires an AbstractSparseLinearOperator.")
     storage = operator.sparse_storage()
+    if jnp.issubdtype(storage.values.dtype, jnp.complexfloating):
+        raise ValueError("Spineax requires real-valued CSR storage.")
     if not storage.canonical or not storage.sorted_indices:
         raise ValueError("Spineax requires sorted canonical CSR storage.")
     if storage.shape[0] != storage.shape[1]:

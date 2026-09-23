@@ -50,3 +50,7 @@ def test_window_validation_rejects_invalid_configuration():
         hann_window(4, dtype=jnp.int32)
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="beta"):
         kaiser_window(4, -1.0)
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="alpha"):
+        tukey_window(4, -0.1)
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="alpha"):
+        tukey_window(4, 1.1)

@@ -181,9 +181,16 @@ class MaxwellEigenmodeNormalizationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Mode normalization tolerances must be finite and non-negative."
             )
-        mode_limit = int(maximum_modes)
-        dof_limit = int(maximum_dofs)
-        workspace_limit = int(maximum_workspace_bytes)
+        for name, value in (
+            ("maximum_modes", maximum_modes),
+            ("maximum_dofs", maximum_dofs),
+            ("maximum_workspace_bytes", maximum_workspace_bytes),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an integer.")
+        mode_limit = maximum_modes
+        dof_limit = maximum_dofs
+        workspace_limit = maximum_workspace_bytes
         if mode_limit < 1 or dof_limit < 1 or workspace_limit < 1:
             raise ValueError("Mode normalization resources must be positive.")
         if frequencies.size > mode_limit:
@@ -215,6 +222,9 @@ class MaxwellEigenmodeNormalizationPlan(StrictModule, NonTrainableState):
                 "phasor_convention": "peak-complex-cycle-average-quarter",
                 "equipartition_tolerance": equipartition,
                 "normalization_tolerance": normalization,
+                "maximum_modes": mode_limit,
+                "maximum_dofs": dof_limit,
+                "maximum_workspace_bytes": workspace_limit,
             }
         )
         self.plan_id = plan_id

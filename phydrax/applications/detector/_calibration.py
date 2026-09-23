@@ -123,6 +123,10 @@ def apply_detector_calibration(
         digits, DigitBank
     ):
         raise TypeError("payload and digits must use detector calibration types.")
+    if payload.conditions_snapshot_id != digits.conditions_id:
+        raise ValueError(
+            "Calibration payload and digit conditions snapshot do not match."
+        )
     matches = digits.channel_ids[..., None] == payload.channel_ids
     match_count = jnp.sum(matches, axis=-1)
     index = jnp.argmax(matches, axis=-1)

@@ -571,11 +571,16 @@ def _rollout_and_costs_single(
                 for player, callback in enumerate(problem.stage_costs)
             )
         )
-        next_state = problem.dynamics.system.evaluate(
+        transition = problem.dynamics.system.evaluate_result(
             context,
             state,
             problem.args,
             inputs=control,
+        )
+        next_state = jnp.where(
+            transition.successful,
+            transition.accepted_state,
+            jnp.full_like(transition.accepted_state, jnp.nan),
         )
         if next_state.shape != (problem.state_size,):
             raise ValueError("dynamics must return the declared rank-one state shape.")

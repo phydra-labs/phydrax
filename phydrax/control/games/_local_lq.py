@@ -145,6 +145,7 @@ class LocalAffineGamePolicy(AbstractInputPolicy):
     case_shape: tuple[int, ...] = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
     control_shape: tuple[int, ...] = eqx.field(static=True)
+    dynamics_id: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -159,6 +160,7 @@ class LocalAffineGamePolicy(AbstractInputPolicy):
         time_grid: TimeGrid,
         input_layout: InputLayout,
         partition: PlayerControlPartition,
+        dynamics_id: str,
         case_shape: tuple[int, ...] = (),
         policy_id: str,
     ):
@@ -170,6 +172,8 @@ class LocalAffineGamePolicy(AbstractInputPolicy):
             raise TypeError("partition must be a PlayerControlPartition.")
         if not isinstance(policy_id, str) or not policy_id:
             raise ValueError("policy_id must be a non-empty string.")
+        if not isinstance(dynamics_id, str) or not dynamics_id:
+            raise ValueError("dynamics_id must be a non-empty string.")
         cases = tuple(case_shape)
         if any(size <= 0 for size in cases):
             raise ValueError("Local policy case dimensions must be positive.")
@@ -231,6 +235,7 @@ class LocalAffineGamePolicy(AbstractInputPolicy):
         self.case_shape = cases
         self.state_shape = (state_size,)
         self.control_shape = (control_size,)
+        self.dynamics_id = dynamics_id
         self.policy_id = policy_id
 
     @property
@@ -265,6 +270,7 @@ class LocalAffineGamePolicy(AbstractInputPolicy):
             time_grid=self.time_grid,
             input_layout=self.input_layout,
             partition=self.partition,
+            dynamics_id=self.dynamics_id,
             case_shape=self.case_shape,
             policy_id=policy_id,
         )
@@ -451,11 +457,16 @@ def suggest_local_affine_game_policy(
         )
 
         def transition(current_state, joint_control):
-            return problem.dynamics.system.evaluate(
+            result = problem.dynamics.system.evaluate_result(
                 context,
                 current_state,
                 problem.args,
                 inputs=joint_control,
+            )
+            return jnp.where(
+                result.successful,
+                result.accepted_state,
+                jnp.full_like(result.accepted_state, jnp.nan),
             )
 
         def player_costs(current_state, joint_control):
@@ -630,6 +641,7 @@ def suggest_local_affine_game_policy(
         time_grid=problem.time_grid,
         input_layout=system_input_layout,
         partition=problem.partition,
+        dynamics_id=problem.dynamics.dynamics_id,
         case_shape=cases,
         policy_id=f"{suggestion_id}:physical-local-affine-policy",
     )

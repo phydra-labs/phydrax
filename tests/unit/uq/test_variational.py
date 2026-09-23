@@ -14,6 +14,7 @@ def _gaussian_problem():
     return phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(jnp.asarray(0.0), priors=prior),
         lambda value: likelihood.log_prob(value),
+        sample_observation=lambda key, value: value + jax.random.normal(key),
     )
 
 
@@ -60,6 +61,11 @@ def test_mean_field_vi_recovers_analytic_gaussian_posterior():
     assert jnp.all(result.diagnostics.finite)
     assert result.num_draws == 1000
     assert result.approximation_id == "reverse-kl/mean-field-gaussian"
+    observations = result.sample_observations(
+        jax.random.key(20),
+        num_observation_samples=2,
+    )
+    assert observations.samples.data.shape == (1000, 2)
 
 
 def test_variational_checkpoint_resume_matches_uninterrupted_training(tmp_path):

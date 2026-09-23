@@ -344,6 +344,7 @@ def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
             "distributed-wave-amr-successor-checkpoint",
             migrated_successor,
             writer_id="wave-amr-successor-writer",
+            parent_manifest=manifest,
         )
     )
     successor_manifest = assemble_distributed_checkpoint_from_repository(
@@ -353,17 +354,21 @@ def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
         successor.physics.plan_id,
         successor_repartition.execution.execution_id,
         expected_process_count=jax.process_count(),
+        parent_manifest=manifest,
         diagnostic_ids=(
             successor_checkpoint.evidence_id,
             transitioned.evidence.transition_id,
         ),
     )
     assert successor_publication.shards and successor_manifest.complete
+    assert successor_manifest.parent_checkpoint_id == manifest.checkpoint_id
+    assert successor_manifest.parent_manifest_id == manifest.manifest_id
     restored_successor, successor_restart = (
         successor_distribution.execution.restore_checkpoint(
             repository,
             successor_manifest,
             successor_repartition.execution,
+            parent_manifest=manifest,
         )
     )
     assert successor_restart.changed_partition

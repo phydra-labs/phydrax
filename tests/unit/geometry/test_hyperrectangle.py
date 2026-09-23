@@ -79,6 +79,25 @@ def test_hyperrectangle_sampling_shapes_and_membership():
     assert np.allclose(np.asarray(jnp.linalg.norm(normals, axis=-1)), 1.0)
 
 
+def test_hyperrectangle_rejects_hammersley_with_rejection_filters():
+    geom = phx.domain.HyperRectangle(
+        lower=jnp.asarray([0.0, 0.0]),
+        upper=jnp.asarray([1.0, 1.0]),
+    )
+
+    unfiltered = geom.sample_interior(4, sampler="hammersley", key=jr.key(2))
+    assert unfiltered.shape == (4, 2)
+
+    for sample in (geom.sample_interior, geom.sample_boundary):
+        with pytest.raises(ValueError, match="prefix-stable or randomized"):
+            sample(
+                4,
+                where=lambda point: point[0] < 0.5,
+                sampler="hammersley",
+                key=jr.key(3),
+            )
+
+
 def test_hyperrectangle_reflects_large_adaptive_moves_under_jit():
     geom = phx.domain.HyperRectangle(
         lower=jnp.array([-1.0, 0.0]),

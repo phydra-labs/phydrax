@@ -145,6 +145,12 @@ class NucleationProposal(StrictModule):
     capacity_overflow: Array
     finite: Array
     successful: Array
+    source_integrated_hazard: Array
+    source_event_counts: Array
+    source_accepted_events: Array
+    candidate_integrated_hazard: Array
+    candidate_event_counts: Array
+    candidate_accepted_events: Array
     proposal_id: str = eqx.field(static=True)
 
 
@@ -320,6 +326,12 @@ class NucleationEventPlan(StrictModule, NonTrainableState):
             overflow,
             finite,
             successful,
+            state.integrated_hazard,
+            state.event_counts,
+            state.accepted_events,
+            candidate_state.integrated_hazard,
+            candidate_state.event_counts,
+            candidate_state.accepted_events,
             self.plan_id,
         )
         return candidate_state, proposal
@@ -334,10 +346,46 @@ class NucleationEventPlan(StrictModule, NonTrainableState):
         available_component: ArrayLike,
         available_energy: ArrayLike,
     ) -> NucleationTransaction:
+        if not isinstance(state, NucleationClockState) or not isinstance(
+            candidate_state, NucleationClockState
+        ):
+            raise TypeError(
+                "state and candidate_state must be NucleationClockState values."
+            )
+        if not isinstance(proposal, NucleationProposal):
+            raise TypeError("proposal must be a NucleationProposal.")
+        if (
+            state.state_id != self.plan_id
+            or candidate_state.state_id != self.plan_id
+            or proposal.proposal_id != self.plan_id
+        ):
+            raise ValueError("Nucleation state/proposal belongs to another plan.")
         component = jnp.asarray(available_component)
         energy = jnp.asarray(available_energy, dtype=component.dtype)
         if component.shape != () or energy.shape != ():
             raise ValueError("Nucleation inventories must be scalar.")
+        lineage_matches = (
+            jnp.array_equal(state.integrated_hazard, proposal.source_integrated_hazard)
+            & jnp.array_equal(state.event_counts, proposal.source_event_counts)
+            & jnp.array_equal(state.accepted_events, proposal.source_accepted_events)
+            & jnp.array_equal(
+                candidate_state.integrated_hazard,
+                proposal.candidate_integrated_hazard,
+            )
+            & jnp.array_equal(
+                candidate_state.event_counts,
+                proposal.candidate_event_counts,
+            )
+            & jnp.array_equal(
+                candidate_state.accepted_events,
+                proposal.candidate_accepted_events,
+            )
+        )
+        component = eqx.error_if(
+            component,
+            ~lineage_matches,
+            "Nucleation proposal does not belong to the supplied source/candidate state.",
+        )
         sort_time = jnp.where(proposal.valid, proposal.event_times, jnp.inf)
         order = jnp.lexsort(
             (
@@ -364,6 +412,9 @@ class NucleationEventPlan(StrictModule, NonTrainableState):
             & jnp.isfinite(component_used)
             & jnp.isfinite(energy_used)
         )
+        accepted = accepted & successful
+        component_used = jnp.where(successful, component_used, 0.0)
+        energy_used = jnp.where(successful, energy_used, 0.0)
         committed = NucleationClockState(
             candidate_state.integrated_hazard,
             candidate_state.event_counts,

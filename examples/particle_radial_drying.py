@@ -89,11 +89,13 @@ for step in range(10):
         jnp.asarray(step * 1.0e-3),
         jnp.asarray(1.0e-3),
     )
+    if not bool(result.successful):
+        raise RuntimeError(f"Particle radial-drying step {step} failed")
     state = result.accepted_state
 
 liquid_initial = jnp.sum(initial.species_amount[..., 0])
 liquid_final = jnp.sum(state.batches[0].species_amount[..., 0])
-print(f"successful={bool(result.successful)}")
+print("successful=True")
 print(f"liquid_conversion={float(1.0 - liquid_final / liquid_initial):.6e}")
 print(f"energy_residual={float(result.replay.internal_energy_residual):.6e}")
 print(

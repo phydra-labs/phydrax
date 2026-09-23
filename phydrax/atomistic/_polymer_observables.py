@@ -50,6 +50,9 @@ class PolymerChainLayoutPlan(StrictModule, NonTrainableState):
             or np.any(np.sum(mask, axis=1) == 0)
         ):
             raise ValueError("Polymer chain layout and frame capacity are invalid.")
+        active_indices = indices[mask]
+        if np.unique(active_indices).size != active_indices.size:
+            raise ValueError("Active polymer particle slots must be unique.")
         normalized = np.where(mask, indices, 0)
         first = np.argmax(mask, axis=1)
         last = mask.shape[1] - 1 - np.argmax(mask[:, ::-1], axis=1)
@@ -237,7 +240,12 @@ def polymer_contour_statistics(
     populated = counts > 0
     distances = jnp.where(populated[None, :, :], distances, jnp.nan)
     contacts = jnp.where(populated[None, :, :], contacts, jnp.nan)
-    successful = jnp.all(jnp.isfinite(values)) & jnp.any(populated)
+    successful = (
+        jnp.all(jnp.isfinite(values))
+        & jnp.all(populated)
+        & jnp.all(jnp.isfinite(distances))
+        & jnp.all(jnp.isfinite(contacts))
+    )
     return PolymerContourStatisticsResult(
         jnp.arange(1, plan.maximum_separation + 1, dtype=jnp.int32),
         distances,

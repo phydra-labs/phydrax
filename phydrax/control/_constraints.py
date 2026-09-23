@@ -141,8 +141,9 @@ def evaluate_sampled_feasibility(
         raise TypeError("problem must be a ControlProblem.")
     if not isinstance(trajectory, ControlTrajectory):
         raise TypeError("trajectory must be a ControlTrajectory.")
-    if trajectory.problem_id != problem.problem_id:
-        raise ValueError("trajectory problem_id does not match the ControlProblem.")
+    from ._problem import _validate_trajectory_problem
+
+    trajectory = _validate_trajectory_problem(problem, trajectory)
     tolerance_ = float(tolerance)
     if not isfinite(tolerance_) or tolerance_ < 0.0:
         raise ValueError("feasibility tolerance must be finite and nonnegative.")

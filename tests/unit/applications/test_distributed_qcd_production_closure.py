@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 
 import jax
@@ -13,13 +14,17 @@ import pytest
 
 jax.config.update("jax_enable_x64", True)
 
-from phydrax._array_archive import ArrayArchiveCorruptionError
+from phydrax._array_archive import (
+    ArrayArchiveCorruptionError,
+    DEFAULT_ARRAY_ARCHIVE_LIMITS,
+)
 from phydrax.applications.lattice_field._distributed_qcd import (
     DistributedGaugeTheoryPlan,
 )
 from phydrax.applications.lattice_field._qcd_io import (
     gauge_field_from_owned_shards,
     GaugeFieldRecord,
+    GaugeIOPlan,
     read_gauge_interchange,
     read_native_gauge_archive,
     write_gauge_interchange,
@@ -187,6 +192,14 @@ def test_native_archive_is_rank_independent_and_checksum_bound(tmp_path: Path):
     restored = read_native_gauge_archive(second_path)
     assert restored.field.field_id == first.field_id
     np.testing.assert_array_equal(restored.field.links, links)
+    strict = GaugeIOPlan(
+        archive_limits=replace(
+            DEFAULT_ARRAY_ARCHIVE_LIMITS,
+            max_total_array_elements=links.size - 1,
+        )
+    )
+    with pytest.raises(ValueError, match="aggregate element limit"):
+        write_native_gauge_archive(tmp_path / "strict-limit.pxg", first, policy=strict)
 
     corrupt_native = tmp_path / "corrupt-native.pxg"
     with zipfile.ZipFile(second_path, "r") as source:

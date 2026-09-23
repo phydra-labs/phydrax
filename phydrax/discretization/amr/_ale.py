@@ -14,7 +14,11 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._geometry import VariablePatchGeometryPlan, VariablePatchGeometryState
+from ._geometry import (
+    _validated_revision,
+    VariablePatchGeometryPlan,
+    VariablePatchGeometryState,
+)
 
 
 class VariablePatchALEStepEvidence(StrictModule, NonTrainableState):
@@ -103,20 +107,26 @@ class VariablePatchALEPlan(StrictModule, NonTrainableState):
         dt = jnp.asarray(step_size, dtype=source.time.dtype)
         if dt.shape != ():
             raise ValueError("ALE step_size must be scalar.")
+        revision = _validated_revision(source.revision)
+        next_revision = eqx.error_if(
+            revision,
+            revision == jnp.iinfo(jnp.int32).max,
+            "ALE geometry revision cannot advance beyond int32 capacity.",
+        ) + jnp.asarray(1, dtype=jnp.int32)
         initial = self.geometry.state(
             source.time,
             args,
-            revision=source.revision,
+            revision=revision,
         )
         endpoint = self.geometry.state(
             source.time + dt,
             args,
-            revision=source.revision + 1,
+            revision=next_revision,
         )
         midpoint = self.geometry.state(
             source.time + 0.5 * dt,
             args,
-            revision=source.revision + 1,
+            revision=next_revision,
         )
         gcl_terms = tuple(
             jnp.max(defect)

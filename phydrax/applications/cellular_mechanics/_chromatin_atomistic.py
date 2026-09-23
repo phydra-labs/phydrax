@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import (
@@ -242,29 +242,77 @@ class PreparedChromatinAtomisticCoupling(StrictModule, NonTrainableState):
         )
         return ChromatinAtomisticStepResult(candidate, accepted, evidence, successful)
 
-    def checkpoint(
-        self, state: ChromatinAtomisticState, /
-    ) -> ChromatinAtomisticCheckpoint:
-        if state.prepared_id != self.prepared_id:
+    def _validate_state(self, state: ChromatinAtomisticState, /) -> None:
+        if not isinstance(state, ChromatinAtomisticState):
+            raise TypeError("state must be ChromatinAtomisticState.")
+        if (
+            state.prepared_id != self.prepared_id
+            or state.atomistic.prepared_dynamics_id != self.atomistic.prepared_id
+            or state.atomistic.force.program_id != self.atomistic.potential.prepared_id
+        ):
             raise ValueError("Coupled state belongs to another prepared runtime.")
-        identifier = canonical_fingerprint(
+        template = self.chromatin.initialize()
+        if jax.tree.structure(state.chromatin) != jax.tree.structure(template):
+            raise ValueError(
+                "Chromatin state structure does not match the prepared runtime."
+            )
+        supplied = jax.tree.leaves(state.chromatin)
+        expected = jax.tree.leaves(template)
+        if any(
+            np.asarray(value).shape != np.asarray(reference).shape
+            for value, reference in zip(supplied, expected, strict=True)
+        ):
+            raise ValueError("Chromatin state shapes do not match the prepared runtime.")
+        arrays = []
+        for leaf in jax.tree.leaves(state):
+            try:
+                arrays.append(np.asarray(leaf))
+            except (TypeError, ValueError):
+                if leaf is not state.atomistic.random_key:
+                    raise
+        if any(
+            np.issubdtype(value.dtype, np.inexact) and np.any(~np.isfinite(value))
+            for value in arrays
+        ):
+            raise ValueError("Coupled checkpoint state contains nonfinite values.")
+        if (
+            int(np.asarray(state.atomistic.step_index)) < 0
+            or int(np.asarray(state.chromatin.step_index)) < 0
+            or float(np.asarray(state.chromatin.time)) < 0.0
+        ):
+            raise ValueError("Coupled checkpoint clocks must be nonnegative.")
+
+    def _checkpoint_id(self, state: ChromatinAtomisticState, /) -> str:
+        return canonical_fingerprint(
             {
                 "kind": "chromatin-atomistic-checkpoint",
                 "prepared": self.prepared_id,
-                "atomistic_step": int(state.atomistic.step_index),
-                "chromatin_step": int(state.chromatin.step_index),
+                "thermodynamic_table": state.atomistic.thermodynamic_table_id,
+                "force_program": state.atomistic.force.program_id,
+                "random_key": array_tree_fingerprint(
+                    jax.random.key_data(state.atomistic.random_key)
+                ),
+                "state": array_tree_fingerprint(state),
             }
         )
+
+    def checkpoint(
+        self, state: ChromatinAtomisticState, /
+    ) -> ChromatinAtomisticCheckpoint:
+        self._validate_state(state)
+        identifier = self._checkpoint_id(state)
         return ChromatinAtomisticCheckpoint(state, identifier, self.prepared_id)
 
     def restore(
         self, checkpoint: ChromatinAtomisticCheckpoint, /
     ) -> ChromatinAtomisticState:
-        if (
-            not isinstance(checkpoint, ChromatinAtomisticCheckpoint)
-            or checkpoint.prepared_id != self.prepared_id
-        ):
+        if not isinstance(checkpoint, ChromatinAtomisticCheckpoint):
+            raise TypeError("checkpoint must be a ChromatinAtomisticCheckpoint.")
+        if checkpoint.prepared_id != self.prepared_id:
             raise ValueError("Checkpoint belongs to another coupling runtime.")
+        self._validate_state(checkpoint.state)
+        if checkpoint.checkpoint_id != self._checkpoint_id(checkpoint.state):
+            raise ValueError("Checkpoint content identity does not match its state.")
         return checkpoint.state
 
 

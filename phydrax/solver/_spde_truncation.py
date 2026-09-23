@@ -11,8 +11,9 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..dynamics import TimeGrid
 from ..stochastic._path_ensemble import (
     prepare_stochastic_path_ensemble,
     PreparedStochasticPathEnsemble,
@@ -46,6 +47,8 @@ class SPDEApproximationLevel(StrictModule):
     ):
         if not isinstance(spde, SemidiscreteSPDE):
             raise TypeError("spde must be a SemidiscreteSPDE.")
+        if not isinstance(temporal_mesh, TimeGrid):
+            raise TypeError("temporal_mesh must be a TimeGrid.")
         if not callable(transfer_to_reference):
             raise TypeError("transfer_to_reference must be callable.")
         resolved = tuple(resolution)
@@ -156,18 +159,37 @@ def prepare_spde_approximation(
         raise TypeError("ensemble_plan must be a StochasticPathEnsemblePlan.")
     ensembles = []
     for level in family.levels:
+        mesh_id = canonical_fingerprint(
+            {
+                "kind": "spde-level-ensemble-plan",
+                "base_configuration": ensemble_plan.configuration_id,
+                "time_grid": {
+                    "identity": level.temporal_mesh.time_id,
+                    "content": array_tree_fingerprint(level.temporal_mesh.times),
+                },
+            }
+        )
+        level_plan = eqx.tree_at(
+            lambda value: (
+                value.time_grid,
+                value.configuration_id,
+                value.plan_id,
+            ),
+            ensemble_plan,
+            (level.temporal_mesh, mesh_id, mesh_id),
+        )
         realization = level.spde.wiener_realization(
             key,
-            sample_shape=(ensemble_plan.path_count,),
-            tolerance=ensemble_plan.wiener_tolerance,
-            levy_area=ensemble_plan.levy_area,
+            sample_shape=(level_plan.path_count,),
+            tolerance=level_plan.wiener_tolerance,
+            levy_area=level_plan.levy_area,
             label=f"spde-level:{level.level_id}",
             coupling_id=family.coupling_id,
         )
         ensembles.append(
             prepare_stochastic_path_ensemble(
                 level.spde.problem,
-                ensemble_plan,
+                level_plan,
                 realization=realization,
             )
         )
@@ -175,7 +197,7 @@ def prepare_spde_approximation(
         {
             "kind": "prepared-finite-spde-family",
             "family": family.family_id,
-            "ensemble_plan": ensemble_plan.plan_id,
+            "ensemble_plans": tuple(item.plan.plan_id for item in ensembles),
             "realizations": tuple(item.realization.realization_id for item in ensembles),
         }
     )

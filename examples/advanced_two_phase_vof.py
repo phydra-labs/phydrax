@@ -51,8 +51,10 @@ def run():
         step_size=jnp.asarray(0.001),
         result_id="advanced-two-phase-vof-step",
     )
+    if not bool(result.successful):
+        raise RuntimeError("Two-phase VOF step failed")
     return {
-        "successful": bool(result.successful),
+        "successful": True,
         "liquid_volume": float(view.liquid_volume),
         "interface_measure": float(view.interface_measure),
         "topology_events": int(view.topology_event_count),

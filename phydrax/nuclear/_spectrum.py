@@ -175,12 +175,25 @@ def group_reaction_rate(
 ):
     """Return per-target reaction rate from matched group-integrated quantities."""
 
-    cross_section = jnp.asarray(microscopic_cross_section_m2)
-    flux = jnp.asarray(scalar_flux_m2_s)
-    if cross_section.shape != flux.shape:
+    cross_section_host = np.asarray(microscopic_cross_section_m2)
+    flux_host = np.asarray(scalar_flux_m2_s)
+    if cross_section_host.shape != flux_host.shape:
         raise ValueError("Cross section and scalar flux must have identical shapes.")
-    if cross_section.ndim < 1:
+    if cross_section_host.ndim < 1:
         raise ValueError("Grouped reaction data require a trailing group axis.")
+    if (
+        cross_section_host.dtype.kind not in "fiu"
+        or flux_host.dtype.kind not in "fiu"
+        or np.any(~np.isfinite(cross_section_host))
+        or np.any(cross_section_host < 0.0)
+        or np.any(~np.isfinite(flux_host))
+        or np.any(flux_host < 0.0)
+    ):
+        raise ValueError(
+            "Cross section and scalar flux must be finite nonnegative real arrays."
+        )
+    cross_section = jnp.asarray(cross_section_host)
+    flux = jnp.asarray(flux_host)
     return jnp.sum(cross_section * flux, axis=-1)
 
 

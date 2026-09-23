@@ -143,7 +143,7 @@ def main():
     parser.add_argument("--cfl", type=float, default=0.35)
     parser.add_argument("--sod-steps", type=int, default=40)
     arguments = parser.parse_args()
-    resolutions = tuple(arguments.resolutions.split(","))
+    resolutions = tuple(int(value.strip()) for value in arguments.resolutions.split(","))
     if any(value < 8 for value in resolutions) or arguments.sod_steps <= 0:
         raise ValueError("Qualification resolutions and step count are too small.")
     cases = {

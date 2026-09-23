@@ -61,7 +61,7 @@ def test_openmc_statepoint_import_preserves_mean_uncertainty_and_realizations():
         _resource(payload),
         _reference(payload, "statepoint"),
         phx.nuclear.interchange.OpenMCStatepointProfile(
-            7, (2, 2), ("region", "energy_group"), 10.0
+            7, (2, 2), ("region", "energy_group"), 10.0, phx.units.METER
         ),
         groups,
     )

@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -34,12 +37,22 @@ class SectionalPopulationState:
             raise ValueError(
                 "Sectional particle numbers must be a finite non-negative vector."
             )
-        if float(overflow_number) < 0 or float(overflow_first_moment) < 0:
-            raise ValueError("Population overflow reservoirs must be non-negative.")
+        overflow_number_ = float(overflow_number)
+        overflow_moment_ = float(overflow_first_moment)
+        if (
+            not np.isfinite(overflow_number_)
+            or not np.isfinite(overflow_moment_)
+            or overflow_number_ < 0
+            or overflow_moment_ < 0
+            or ((overflow_number_ == 0) != (overflow_moment_ == 0))
+        ):
+            raise ValueError(
+                "Population overflow reservoirs must be finite, nonnegative, and jointly empty/nonempty."
+            )
         return cls(
             jnp.asarray(number),
-            jnp.asarray(overflow_number),
-            jnp.asarray(overflow_first_moment),
+            jnp.asarray(overflow_number_),
+            jnp.asarray(overflow_moment_),
         )
 
 
@@ -57,6 +70,7 @@ class SectionalPopulationStep:
     internal_steps: int
     first_moment_residual: Array
     minimum_cell_number: Array
+    successful: Array
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +100,12 @@ class ConservativeSectionalSolver:
     ) -> ConservativeSectionalSolver:
         centers = np.asarray(pivots, dtype=np.float64)
         kernel = np.asarray(aggregation_kernel, dtype=np.float64)
+        if not isfinite(conservation_tolerance) or conservation_tolerance <= 0:
+            raise ValueError(
+                "Population conservation tolerance must be finite and positive."
+            )
+        if not np.all(np.isfinite(centers)) or not np.all(np.isfinite(kernel)):
+            raise ValueError("Population pivots and aggregation kernel must be finite.")
         if (
             centers.ndim != 1
             or centers.size < 2
@@ -107,10 +127,22 @@ class ConservativeSectionalSolver:
             if daughter_number is None
             else np.asarray(daughter_number, dtype=np.float64)
         )
-        if frequency.shape != centers.shape or np.any(frequency < 0):
-            raise ValueError("Breakage frequencies must be non-negative and aligned.")
-        if daughters.shape != kernel.shape or np.any(daughters < 0):
-            raise ValueError("Daughter-number matrix must be non-negative and square.")
+        if (
+            frequency.shape != centers.shape
+            or not np.all(np.isfinite(frequency))
+            or np.any(frequency < 0)
+        ):
+            raise ValueError(
+                "Breakage frequencies must be finite, non-negative and aligned."
+            )
+        if (
+            daughters.shape != kernel.shape
+            or not np.all(np.isfinite(daughters))
+            or np.any(daughters < 0)
+        ):
+            raise ValueError(
+                "Daughter-number matrix must be finite, non-negative and square."
+            )
         active_columns = frequency > 0
         daughter_moment = centers @ daughters
         if np.any(
@@ -145,30 +177,37 @@ class ConservativeSectionalSolver:
         birth = jnp.zeros_like(number)
         overflow_number_rate = jnp.asarray(0.0, dtype=number.dtype)
         overflow_moment_rate = jnp.asarray(0.0, dtype=number.dtype)
-        centers = np.asarray(self.pivots)
         for left in range(bins):
             for right in range(bins):
-                product = centers[left] + centers[right]
+                product = self.pivots[left] + self.pivots[right]
                 event_rate = (
                     0.5
                     * self.aggregation_kernel[left, right]
                     * number[left]
                     * number[right]
                 )
-                if product > centers[-1]:
-                    overflow_number_rate = overflow_number_rate + event_rate
-                    overflow_moment_rate = overflow_moment_rate + product * event_rate
-                    continue
-                upper = int(np.searchsorted(centers, product, side="left"))
-                if upper == 0 or centers[upper] == product:
-                    birth = birth.at[upper].add(event_rate)
-                    continue
-                lower = upper - 1
-                upper_weight = (product - centers[lower]) / (
-                    centers[upper] - centers[lower]
+                is_overflow = product > self.pivots[-1]
+                upper = jnp.clip(
+                    jnp.searchsorted(self.pivots, product, side="left"),
+                    1,
+                    bins - 1,
                 )
-                birth = birth.at[lower].add((1 - upper_weight) * event_rate)
-                birth = birth.at[upper].add(upper_weight * event_rate)
+                lower = upper - 1
+                denominator = self.pivots[upper] - self.pivots[lower]
+                upper_weight = jnp.clip(
+                    (product - self.pivots[lower]) / denominator,
+                    0.0,
+                    1.0,
+                )
+                bounded = jnp.where(is_overflow, 0.0, event_rate)
+                birth = birth.at[lower].add((1.0 - upper_weight) * bounded)
+                birth = birth.at[upper].add(upper_weight * bounded)
+                overflow_number_rate = overflow_number_rate + jnp.where(
+                    is_overflow, event_rate, 0.0
+                )
+                overflow_moment_rate = overflow_moment_rate + jnp.where(
+                    is_overflow, product * event_rate, 0.0
+                )
 
         breaking = self.breakage_frequency_s_inv * number
         breakage_rate = self.daughter_number @ breaking - breaking
@@ -190,47 +229,129 @@ class ConservativeSectionalSolver:
         maximum_fractional_depletion: float = 0.2,
         maximum_internal_steps: int = 10000,
     ) -> SectionalPopulationStep:
-        if step_size_s <= 0 or not 0 < maximum_fractional_depletion <= 1:
+        if (
+            not isfinite(step_size_s)
+            or step_size_s <= 0
+            or not isfinite(maximum_fractional_depletion)
+            or not 0 < maximum_fractional_depletion <= 1
+            or isinstance(maximum_internal_steps, bool)
+            or not isinstance(maximum_internal_steps, int)
+            or maximum_internal_steps <= 0
+        ):
             raise ValueError("Population time-integration controls are invalid.")
-        initial_first = self.moments(state, jnp.asarray((0, 1)))[1]
-        current = state
-        elapsed = 0.0
-        steps = 0
-        while elapsed < step_size_s and steps < maximum_internal_steps:
+        number = jnp.asarray(state.cell_number)
+        if number.shape != self.pivots.shape:
+            raise ValueError("Sectional state does not match population pivots.")
+        number = eqx.error_if(
+            number,
+            jnp.any(~jnp.isfinite(number) | (number < 0))
+            | ~jnp.isfinite(state.overflow_number)
+            | ~jnp.isfinite(state.overflow_first_moment)
+            | (state.overflow_number < 0)
+            | (state.overflow_first_moment < 0),
+            "Sectional population state must be finite and nonnegative.",
+        )
+        source = SectionalPopulationState(
+            number,
+            jnp.asarray(state.overflow_number),
+            jnp.asarray(state.overflow_first_moment),
+        )
+        initial_first = self.moments(source, jnp.asarray((0, 1)))[1]
+        dt = jnp.asarray(step_size_s, dtype=number.dtype)
+
+        def continue_loop(loop_state):
+            elapsed, steps, _, _, _, failed = loop_state
+            return (elapsed < dt) & (steps < maximum_internal_steps) & ~failed
+
+        def advance_loop(loop_state):
+            elapsed, steps, current_number, overflow_number, overflow_moment, failed = (
+                loop_state
+            )
+            current = SectionalPopulationState(
+                current_number, overflow_number, overflow_moment
+            )
             rate = self.rate(current)
-            number = current.cell_number
             fractional_loss = jnp.where(
-                (number > 0) & (rate.cell_number_rate < 0),
+                (current_number > 0) & (rate.cell_number_rate < 0),
                 -rate.cell_number_rate
-                / jnp.maximum(number, jnp.finfo(number.dtype).tiny),
+                / jnp.maximum(current_number, jnp.finfo(current_number.dtype).tiny),
                 0,
             )
-            largest_loss = float(np.asarray(jnp.max(fractional_loss)))
-            remaining = step_size_s - elapsed
-            internal_step = (
-                remaining
-                if largest_loss == 0
-                else min(remaining, maximum_fractional_depletion / largest_loss)
+            largest_loss = jnp.max(fractional_loss)
+            remaining = dt - elapsed
+            internal_step = jnp.where(
+                largest_loss > 0,
+                jnp.minimum(
+                    remaining,
+                    maximum_fractional_depletion / largest_loss,
+                ),
+                remaining,
             )
-            next_number = number + internal_step * rate.cell_number_rate
-            if bool(jnp.any(next_number < -1e-12)):
-                raise RuntimeError("Population positivity control failed.")
-            current = SectionalPopulationState(
-                jnp.maximum(next_number, 0),
-                current.overflow_number + internal_step * rate.overflow_number_rate,
-                current.overflow_first_moment
-                + internal_step * rate.overflow_first_moment_rate,
+            candidate_number = current_number + internal_step * rate.cell_number_rate
+            candidate_overflow_number = (
+                overflow_number + internal_step * rate.overflow_number_rate
             )
-            elapsed += internal_step
-            steps += 1
-        if elapsed < step_size_s:
-            raise RuntimeError("Population integration exceeded maximum internal steps.")
-        final_first = self.moments(current, jnp.asarray((0, 1)))[1]
+            candidate_overflow_moment = (
+                overflow_moment + internal_step * rate.overflow_first_moment_rate
+            )
+            valid = (
+                jnp.all(jnp.isfinite(candidate_number))
+                & jnp.all(candidate_number >= -1e-12)
+                & jnp.isfinite(candidate_overflow_number)
+                & (candidate_overflow_number >= 0)
+                & jnp.isfinite(candidate_overflow_moment)
+                & (candidate_overflow_moment >= 0)
+                & jnp.isfinite(internal_step)
+                & (internal_step > 0)
+            )
+            return (
+                jnp.where(valid, elapsed + internal_step, elapsed),
+                steps + 1,
+                jnp.where(valid, jnp.maximum(candidate_number, 0), current_number),
+                jnp.where(valid, candidate_overflow_number, overflow_number),
+                jnp.where(valid, candidate_overflow_moment, overflow_moment),
+                failed | ~valid,
+            )
+
+        (
+            elapsed,
+            steps,
+            final_number,
+            final_overflow_number,
+            final_overflow_moment,
+            failed,
+        ) = jax.lax.while_loop(
+            continue_loop,
+            advance_loop,
+            (
+                jnp.asarray(0.0, dtype=number.dtype),
+                jnp.asarray(0, dtype=jnp.int32),
+                source.cell_number,
+                source.overflow_number,
+                source.overflow_first_moment,
+                jnp.asarray(False),
+            ),
+        )
+        successful = ~failed & (elapsed >= dt)
+        candidate = SectionalPopulationState(
+            final_number, final_overflow_number, final_overflow_moment
+        )
+        accepted = SectionalPopulationState(
+            jnp.where(successful, candidate.cell_number, source.cell_number),
+            jnp.where(successful, candidate.overflow_number, source.overflow_number),
+            jnp.where(
+                successful,
+                candidate.overflow_first_moment,
+                source.overflow_first_moment,
+            ),
+        )
+        final_first = self.moments(accepted, jnp.asarray((0, 1)))[1]
         return SectionalPopulationStep(
-            current,
+            accepted,
             steps,
             final_first - initial_first,
-            jnp.min(current.cell_number),
+            jnp.min(accepted.cell_number),
+            successful,
         )
 
 

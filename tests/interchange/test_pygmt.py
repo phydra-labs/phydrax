@@ -5,7 +5,6 @@
 import hashlib
 import importlib
 import json
-import os
 
 import numpy as np
 import pytest
@@ -82,18 +81,14 @@ def test_rendering_boundary_rejects_remote_inputs_and_cartesian_map_reprojection
     tmp_path,
 ):
     grid = _asymmetric_grid()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="not a local or remote resource"):
         render_geospatial_grid(grid, tmp_path / "remote.png", cmap="@remote_palette")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="require a linear X/x display projection"):
         render_geospatial_grid(grid, tmp_path / "reprojected.png", projection="M12c")
     assert not (tmp_path / "remote.png").exists()
     assert not (tmp_path / "reprojected.png").exists()
 
 
-@pytest.mark.skipif(
-    os.environ.get("PHYDRAX_TEST_PYGMT") != "1",
-    reason="explicit real PyGMT/GMT/Ghostscript qualification is opt-in",
-)
 def test_real_gmt_observes_registration_orientation_and_rendered_resource(tmp_path):
     pygmt = pytest.importorskip("pygmt")
     for registration, expected_bounds, expected_registration in (

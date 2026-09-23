@@ -30,6 +30,11 @@ def test_population_allocation_deactivation_and_incarnation_are_transactional():
     assert allocated.successful
     assert allocated.allocated_count == 2
     assert jnp.sum(allocated.accepted_state.active) == 4
+    np.testing.assert_array_equal(allocated.slots, (3, 2))
+    np.testing.assert_allclose(
+        allocated.accepted_state.mass[allocated.slots],
+        (0.5, 0.25),
+    )
     removed = plan.deactivate(
         allocated.accepted_state,
         allocated.accepted_state.active & ~state.active,
@@ -62,4 +67,6 @@ def test_particle_splat_runtime_mask_excludes_inactive_payload():
     state = splat.build(position, active_mask=jnp.asarray([True, False, True]))
     result = splat.deposit_content(state, jnp.asarray([1.0, 1000.0, 2.0]))
     assert result.successful
+    assert bool(result.balance.closed_domain_conservation_valid)
+    assert result.balance.maximum_partition_defect == 0.0
     np.testing.assert_allclose(jnp.sum(result.content), 3.0)

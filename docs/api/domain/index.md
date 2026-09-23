@@ -5,7 +5,7 @@ owns one or more public labels, its support, reference-coordinate transport, and
 base measure. This distinction preserves intrinsically coupled coordinates—such
 as trajectory row and time—without treating every label as independent.
 
-```python
+```python executable
 import phydrax as phx
 
 space = phx.domain.GeometryDomain(

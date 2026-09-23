@@ -44,7 +44,7 @@ def test_exact_regression_and_classification_dense_chunked_jit_vmap_parity():
     assert jnp.allclose(cls_model(query), cls_model.predict_chunked(query, chunk_size=2))
     assert jax.jit(reg_model)(query).shape == (4,)
     assert jax.vmap(reg_model)(query).shape == (4,)
-    assert cls_model.probabilities(query).shape == (4, 2)
+    assert cls_model.predict_proba(query).shape == (4, 2)
     assert cls_model.predict(query).dtype == jnp.int32
     assert "neighbor_indices" in reg_result.gradient_contract.nondifferentiable_outputs
     assert "predict" in cls_result.gradient_contract.nondifferentiable_outputs
@@ -112,7 +112,7 @@ def test_soft_kernel_neighbors_are_smooth_and_distinct_from_hard_top_k():
     assert not jnp.allclose(soft_reg(query), hard_model(query))
     assert soft_reg.weights(query).shape == (2, features.shape[0])
     assert jnp.allclose(jnp.sum(soft_reg.weights(query), axis=-1), 1.0)
-    assert jnp.allclose(jnp.sum(soft_cls.probabilities(query), axis=-1), 1.0)
+    assert jnp.allclose(jnp.sum(soft_cls.predict_proba(query), axis=-1), 1.0)
     assert soft_reg_result.gradient_contract.fit_mode == "relaxed"
     assert soft_cls_result.gradient_contract.fit_mode == "relaxed"
     assert "predict" in soft_cls_result.gradient_contract.nondifferentiable_outputs
@@ -158,7 +158,7 @@ def test_radius_regression_and_classification_expose_empty_and_hard_semantics():
     far = jnp.array([[20.0, 20.0]])
 
     assert jnp.isnan(reg_model(far)[0])
-    assert jnp.all(cls_model.probabilities(far) == 0.0)
+    assert jnp.all(cls_model.predict_proba(far) == 0.0)
     assert cls_model.predict(far)[0] == -1
     assert "radius_membership" in reg_result.gradient_contract.nondifferentiable_outputs
     assert "radius_membership" in cls_result.gradient_contract.nondifferentiable_outputs

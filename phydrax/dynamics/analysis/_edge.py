@@ -93,10 +93,19 @@ def recurrence_seed_candidates(
         else jnp.max(jnp.abs(differences), axis=-1)
     )
     indices = jnp.arange(trajectory.capacity)
+    uninterrupted = jnp.ones((trajectory.capacity, trajectory.capacity), dtype=jnp.bool_)
+    for source in range(trajectory.capacity):
+        for target in range(source + 1, trajectory.capacity):
+            uninterrupted = uninterrupted.at[source, target].set(
+                jnp.all(trajectory.transition_valid[source:target])
+            )
+    positive_period = trajectory.coordinates[None, :] > trajectory.coordinates[:, None]
     admissible = (
         trajectory.sample_valid[:, None]
         & trajectory.sample_valid[None, :]
         & (indices[None, :] >= indices[:, None] + separation)
+        & uninterrupted
+        & positive_period
     )
     masked = jnp.where(admissible, distances, jnp.inf)
     flat_order = jnp.argsort(masked.reshape((-1,)))[:selected_count]

@@ -41,7 +41,9 @@ class ChargedPropagationPlan(StrictModule, NonTrainableState):
         if not isinstance(conditions, DetectorConditions):
             raise TypeError("conditions must be DetectorConditions.")
         step = float(step_size)
-        count = int(step_count)
+        if isinstance(step_count, bool) or not isinstance(step_count, int):
+            raise TypeError("step_count must be an integer.")
+        count = step_count
         loss = float(mean_energy_loss_per_length)
         if not math.isfinite(step) or step <= 0.0 or count < 1:
             raise ValueError("step_size and step_count must be positive.")
@@ -92,9 +94,11 @@ def propagate_charged_tracks(
     count = shape[0] * shape[1]
     positions = tracks.positions.reshape((count, 3))
     momenta = tracks.momenta.reshape((count, 3))
-    masses = tracks.rest_energies.reshape((count,))
+    rest_energies = tracks.rest_energies.reshape((count,))
     charges = tracks.charges.reshape((count,))
     active = tracks.active.reshape((count,)) & tracks.valid.reshape((count,))
+    light = plan.pusher.speed_of_light
+    masses = rest_energies / light**2
     proper = momenta / masses[:, None]
     specific_charge = charges / masses
     electric = jnp.broadcast_to(plan.conditions.electric_field, (count, 3))
@@ -116,9 +120,13 @@ def propagate_charged_tracks(
         momentum_magnitude = jnp.linalg.norm(
             pushed.proper_velocity * masses[:, None], axis=-1
         )
-        reduced_magnitude = jnp.maximum(
-            momentum_magnitude - plan.mean_energy_loss_per_length * distance,
-            0.0,
+        total_energy = jnp.sqrt((light * momentum_magnitude) ** 2 + rest_energies**2)
+        remaining_energy = jnp.maximum(
+            total_energy - plan.mean_energy_loss_per_length * distance,
+            rest_energies,
+        )
+        reduced_magnitude = (
+            jnp.sqrt(jnp.maximum(remaining_energy**2 - rest_energies**2, 0.0)) / light
         )
         direction = pushed.proper_velocity / jnp.maximum(
             jnp.linalg.norm(pushed.proper_velocity, axis=-1, keepdims=True),
@@ -130,9 +138,10 @@ def propagate_charged_tracks(
             & jnp.all(jnp.isfinite(candidate_proper), axis=-1)
             & pushed.accepted
         )
-        next_alive = alive & finite & (reduced_magnitude > 0.0)
-        next_position = jnp.where(next_alive[:, None], candidate_position, position)
-        next_proper = jnp.where(next_alive[:, None], candidate_proper, proper_velocity)
+        commit = alive & finite
+        next_alive = commit & (reduced_magnitude > 0.0)
+        next_position = jnp.where(commit[:, None], candidate_position, position)
+        next_proper = jnp.where(commit[:, None], candidate_proper, proper_velocity)
         return (next_position, next_proper, next_alive), (
             next_position,
             next_proper * masses[:, None],

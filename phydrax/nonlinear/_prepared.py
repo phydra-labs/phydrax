@@ -462,6 +462,7 @@ def step_prepared_nonlinear(
             prepared.run,
             prepared.jacobian,
         ),
+        _iteration_limit=prepared.run.iteration + jnp.asarray(1, dtype=jnp.int32),
         _return_internal=True,
     )
     next_prepared = PreparedNonlinearSolve(

@@ -46,6 +46,7 @@ def _paths(states, actions, noise, *, clusters=None):
             else jnp.asarray(clusters, dtype=jnp.int32)
         ),
         noise_shape=noise.shape[2:],
+        time_grid=grid,
     )
     return ControlledPathBatch(
         problem=controlled,

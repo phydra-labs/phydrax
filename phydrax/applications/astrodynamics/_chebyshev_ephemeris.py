@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._bodies import CelestialBodyCatalog
@@ -96,8 +96,8 @@ class ChebyshevEphemeris(StrictModule, NonTrainableState):
                 "kind": "chebyshev-ephemeris",
                 "catalog": catalog.catalog_id,
                 "provenance": provenance.provenance_id,
-                "segments": bounds.size - 1,
-                "degree": coefficients.shape[-1] - 1,
+                "segment_bounds": array_tree_fingerprint(bounds),
+                "position_coefficients": array_tree_fingerprint(coefficients),
             }
         )
 

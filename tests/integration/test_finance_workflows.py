@@ -3,15 +3,18 @@
 #
 
 import jax
-
-
-jax.config.update("jax_enable_x64", True)
-
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax.dynamics import TimeGrid
+
+
+@pytest.fixture(autouse=True)
+def _double_precision():
+    with jax.enable_x64(True):
+        yield
 
 
 def _timestamp(

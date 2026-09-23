@@ -185,3 +185,44 @@ def test_sr3_l0_recovers_sparse_fourier_law_with_unbiased_refit():
     expected[names.index("cos(2*state:angle)")] = -0.7
     np.testing.assert_allclose(np.asarray(result.coefficients[0]), expected, atol=1e-11)
     assert result.regression.solver_diagnostics.objective.shape[0] == 201
+
+
+def test_identification_transform_supports_scalar_layout_and_selection_contracts():
+    layout = phx.dynamics.StateLayout((), component_names=("temperature",))
+    transform = phx.dynamics.identification.IdentificationStateTransform(
+        layout,
+        jnp.asarray(1.0),
+        jnp.asarray(2.0),
+        unit_contract_id="temperature-kelvin",
+        partition_id="train-validation-split",
+        source_artifact_ids=("scalar-observations",),
+    )
+    np.testing.assert_allclose(
+        transform.forward(jnp.asarray([1.0, 3.0, 5.0])),
+        jnp.asarray([0.0, 1.0, 2.0]),
+    )
+    system = phx.dynamics.DiscreteSystem(
+        lambda context, state, args: state,
+        state_layout=transform.transformed_layout,
+        system_id="scalar-identified-map",
+    )
+    first = phx.dynamics.identification.IdentifiedDynamicsArtifact(
+        transform,
+        system,
+        support_id="support:a",
+        formulation_id="discrete",
+        evidence_ids=("fit:a",),
+    )
+    second = phx.dynamics.identification.IdentifiedDynamicsArtifact(
+        transform,
+        system,
+        support_id="support:b",
+        formulation_id="discrete",
+        evidence_ids=("fit:b",),
+    )
+
+    with np.testing.assert_raises(ValueError):
+        phx.dynamics.identification.select_identified_dynamics(
+            (first, second),
+            jnp.asarray([0.1, 0.2]),
+        )

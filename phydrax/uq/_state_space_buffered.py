@@ -205,7 +205,7 @@ def fit_buffered_state_space_variational(
             key=jr.fold_in(key, 0xB0FFE2),
         )
         if family is None
-        else family
+        else family.condition(problem)
     )
     if not isinstance(family_, AmortizedGaussianMarkovFamily):
         raise TypeError("family must be AmortizedGaussianMarkovFamily or None.")

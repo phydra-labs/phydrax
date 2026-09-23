@@ -267,8 +267,13 @@ def retarded_open_system_point(
         raise TypeError("embeddings must contain at least one RetardedEmbedding.")
     if any(value.self_energy.shape != hamiltonian_.shape for value in contacts):
         raise ValueError("Every embedding must act on the finite-region basis.")
-    if any(not bool(jnp.all(value.energy_joule == energy)) for value in contacts):
-        raise ValueError("Every embedding must be evaluated at this same energy.")
+    energy = eqx.error_if(
+        energy,
+        ~jnp.all(
+            jnp.stack(tuple(jnp.all(value.energy_joule == energy) for value in contacts))
+        ),
+        "Every embedding must be evaluated at this same energy.",
+    )
 
     self_energy = jnp.sum(
         jnp.stack(tuple(value.self_energy for value in contacts)), axis=0

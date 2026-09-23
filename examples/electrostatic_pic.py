@@ -39,10 +39,12 @@ state = pic.initialize(
     (jnp.zeros((8, 1)), jnp.zeros((8, 1))),
 )
 result = pic.step_detailed(state, 1.0e-3)
+if not bool(result.successful):
+    raise RuntimeError("Electrostatic PIC step failed")
 
 print(
     {
-        "successful": bool(result.successful),
+        "successful": True,
         "charge_balance_defect": float(result.diagnostics.charge_balance_defect),
         "poisson_residual": float(result.diagnostics.poisson_residual),
         "energy_defect": float(result.diagnostics.energy.defect),

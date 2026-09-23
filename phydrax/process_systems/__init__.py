@@ -8,6 +8,7 @@ from ._core import (
     isothermal_flash,
     MaterialStream,
     process_system_candidate_profiles,
+    RecycleResult,
 )
 from ._flowsheet import EquationOrientedFlowsheet, FlowsheetSolveResult
 from ._units import (
@@ -21,6 +22,7 @@ __all__ = [
     "FlowsheetSolveResult",
     "FlashResult",
     "MaterialStream",
+    "RecycleResult",
     "fixed_point_recycle",
     "isothermal_flash",
     "process_system_candidate_profiles",

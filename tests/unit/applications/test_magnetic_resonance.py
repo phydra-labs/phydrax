@@ -215,3 +215,15 @@ def test_epr_and_static_site_musr_are_distinct_signed_profiles():
     assert musr.system.sites[0].isotope.gyromagnetic_ratio_rad_s_t > 0.0
     with pytest.raises(ValueError, match="nuclear spin sites only"):
         mr.ExactSingleCrystalNMRProfile(electron_system)
+
+
+def test_epr_profile_rejects_non_nuclear_companion_sites():
+    mixed = mr.MagneticResonanceSpinSystem(
+        (
+            mr.SpinSite("e", mr.ELECTRON),
+            mr.SpinSite("mu", mr.POSITIVE_MUON),
+        ),
+        (0.0, 0.0, 1.0e-3),
+    )
+    with pytest.raises(ValueError, match="electron and nuclear"):
+        mr.ExactSingleCrystalEPRProfile(mixed)

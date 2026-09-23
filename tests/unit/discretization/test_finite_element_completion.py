@@ -279,6 +279,46 @@ def test_curved_compatible_local_and_hdg_spaces_are_executable():
     assert hdg.local_trace_dof_count == 3
 
 
+def test_explicit_rule_hdiv_functional_honors_shared_dof_orientations():
+    mesh = _square_mesh()
+    discretization = phx.discretization.FiniteElementPlan(
+        mesh,
+        phx.discretization.FiniteElementFieldSpec(
+            "q",
+            phx.discretization.raviart_thomas_element("triangle"),
+        ),
+    ).prepare()
+    rule = phx.integration.ReferenceTriangleRule(phx.integration.GaussLegendreRule(4))
+    functional = phx.equations.FiniteElementFunctional(
+        "hdiv-norm",
+        "q",
+        lambda values, gradients, points, context: jnp.sum(values**2, axis=-1),
+        rules={"triangles": rule},
+    )
+    state = jnp.linspace(
+        -0.4,
+        1.1,
+        discretization.dof_maps[0].global_dof_count,
+    )
+    data = rule.materialize()
+    reconstructed = discretization.reconstruct(
+        "q",
+        state,
+        "triangles",
+        data.points,
+    )
+    geometry = discretization.evaluate_block_geometry(
+        "q",
+        0,
+        discretization.default_runtime.coordinates,
+        data.points,
+        data.weights,
+    )
+    expected = jnp.sum(jnp.sum(reconstructed**2, axis=-1) * geometry.physical_weights)
+
+    assert jnp.allclose(functional.evaluate(discretization, state), expected)
+
+
 def test_solver_material_checkpoint_and_distributed_contracts(tmp_path):
     discretization = _scalar_discretization()
     compiled = phx.equations.compile_finite_element_problem(

@@ -86,16 +86,18 @@ class GaussianLindbladProblem(StrictModule):
         dimension = self.drift.shape[0]
         identity = jnp.eye(dimension, dtype=self.drift.dtype)
         operator = jnp.kron(identity, self.drift) + jnp.kron(self.drift, identity)
-        covariance = solve_linear(
+        covariance_result = solve_linear(
             LinearSystem(DenseLinearOperator(operator)),
             -self.diffusion.reshape(-1),
             policy=self.linear,
-        ).value.reshape(self.diffusion.shape)
-        mean = solve_linear(
+        )
+        covariance = covariance_result.value.reshape(self.diffusion.shape)
+        mean_result = solve_linear(
             LinearSystem(DenseLinearOperator(self.drift)),
             -self.forcing,
             policy=self.linear,
-        ).value
+        )
+        mean = mean_result.value
         state = BosonicGaussianState(
             mean,
             covariance,
@@ -103,10 +105,20 @@ class GaussianLindbladProblem(StrictModule):
             geometry_precision=self.initial_state.geometry_precision,
             hermitian_precision=self.initial_state.hermitian_precision,
         )
-        residual = self.initial_state.geometry_precision.norm(
+        covariance_residual = self.initial_state.geometry_precision.norm(
             self.drift @ covariance + covariance @ self.drift.T + self.diffusion
         )
-        if not bool(jax.device_get(state.valid & (residual <= 1e-7))):
+        mean_residual = self.initial_state.geometry_precision.norm(
+            self.drift @ mean + self.forcing
+        )
+        certified = (
+            covariance_result.successful
+            & mean_result.successful
+            & state.valid
+            & (covariance_residual <= 1e-7)
+            & (mean_residual <= 1e-7)
+        )
+        if not bool(jax.device_get(certified)):
             raise ValueError("Gaussian stationary-state certification failed.")
         return state
 

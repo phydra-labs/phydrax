@@ -747,7 +747,6 @@ def test_triangle_k_exact_uses_shared_positivity_retry_runtime():
         (block.block_id, block.route_id)
         for block in second.accepted_flux_integrals.blocks
     )
-    assert "accepted_" + "integrated_fluxes" not in vars(result)
 
 
 def test_triangle_quadratic_moments_are_stable_under_large_translation():

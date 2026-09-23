@@ -2,11 +2,14 @@ import jax
 import jax.numpy as jnp
 
 from phydrax.solver._hybrid_event import (
+    empty_hybrid_event_tape,
     hybrid_event_jvp,
     hybrid_event_vjp,
     HybridEventPlan,
     HybridGuardPlan,
     HybridReplayPolicy,
+    localize_hybrid_event,
+    record_hybrid_event,
 )
 from phydrax.solver._hybrid_schedule import (
     execute_hybrid_schedule,
@@ -54,6 +57,33 @@ def test_prepared_schedule_emits_replayable_log_jacobian_tape():
     assert jnp.allclose(replay.state, result.tape.states_after[0])
     assert result.tape.log_jacobian_valid[0]
     assert jnp.isclose(result.tape.total_log_abs_determinant, jnp.log(3.0))
+
+
+def test_full_hybrid_tape_preserves_last_committed_event():
+    event = _event()
+    policy = HybridReplayPolicy(1)
+    localized = localize_hybrid_event(
+        event,
+        lambda time, args: jnp.asarray([time]),
+        jnp.asarray(0.0),
+        jnp.asarray(1.0),
+    )
+    empty = empty_hybrid_event_tape(policy, jnp.asarray([0.0]), "full-tape")
+    committed = record_hybrid_event(empty, policy, 0, localized)
+
+    overflowed = record_hybrid_event(committed, policy, 0, localized)
+
+    assert overflowed.event_count == 1
+    assert overflowed.capacity_exceeded
+    assert jax.tree.all(
+        jax.tree.map(
+            jnp.array_equal,
+            committed.states_before,
+            overflowed.states_before,
+        )
+    )
+    assert jnp.array_equal(committed.event_times, overflowed.event_times)
+    assert jnp.array_equal(committed.event_indices, overflowed.event_indices)
 
 
 def test_matrix_free_hybrid_jvp_vjp_are_transposes():

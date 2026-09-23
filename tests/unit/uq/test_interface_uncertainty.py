@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -44,6 +45,17 @@ def test_active_acquisition_combines_signals_without_duplicate_points():
     assert result.indices.shape == (3,)
     assert jnp.unique(result.indices).size == 3
     assert 2 in set(map(int, result.indices))
+
+
+def test_active_acquisition_rejects_nonfinite_existing_points():
+    with pytest.raises(ValueError, match="finite"):
+        phx.uq.select_interface_acquisition(
+            jnp.arange(3.0)[:, None],
+            jnp.ones((3,)),
+            jnp.ones((3,)),
+            1,
+            existing_points=jnp.asarray(((jnp.nan,),)),
+        )
 
 
 def test_bounded_context_adaptation_improves_residual_without_leaving_ball():

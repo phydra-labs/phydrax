@@ -324,6 +324,8 @@ class SubtractiveQMMMSurface(AbstractPreparedPotentialEnergySurface):
         units = region.plan.system.units
         if any(value.units.unit_system_id != units.unit_system_id for value in surfaces):
             raise ValueError("QM/MM component unit systems differ.")
+        if any(not value.capabilities.forces for value in surfaces):
+            raise ValueError("Subtractive QM/MM requires force-capable components.")
         capabilities = PotentialEnergySurfaceCapabilities(
             forces=True,
             conservative=all(value.capabilities.conservative for value in surfaces),
@@ -661,6 +663,10 @@ class ElectrostaticEmbeddingQMMMSurface(AbstractPreparedPotentialEnergySurface):
             != region.plan.system.units.unit_system_id
         ):
             raise ValueError("Classical partition and QM region units differ.")
+        if not classical_partition.capabilities.forces:
+            raise ValueError(
+                "Electrostatic QM/MM requires a force-capable classical partition."
+            )
         partition_id = str(classical_partition_id).strip()
         if not partition_id:
             raise ValueError("classical_partition_id must be non-empty.")

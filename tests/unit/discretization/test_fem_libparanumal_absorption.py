@@ -86,6 +86,29 @@ def test_collocated_tensor_mass_path_is_identity_for_unit_data():
     assert jnp.allclose(operator.transpose_mv(value), value)
 
 
+@pytest.mark.parametrize(
+    ("gathers", "global_size"),
+    (
+        ((0, 1, 2, 3), 0),
+        ((-1, 1, 2, 3), 4),
+        ((0, 1, 2, 4), 4),
+    ),
+)
+def test_collocated_tensor_rejects_invalid_global_gathers(gathers, global_size):
+    derivative = jnp.zeros((2, 2))
+    metric = jnp.ones((1, 2, 2, 3))
+    mass = jnp.ones((1, 2, 2))
+
+    with pytest.raises(ValueError, match="gathers or global size"):
+        phx.equations.fem.CollocatedTensorProductOperator(
+            derivative,
+            metric,
+            mass,
+            jnp.asarray((gathers,), dtype=jnp.int32),
+            global_size,
+        )
+
+
 def test_dg_trace_staging_builds_conservative_jet():
     plus = jnp.asarray([[1.0, 2.0]])
     minus = jnp.asarray([[3.0, 4.0]])

@@ -295,7 +295,7 @@ class PreparedNILSAS(StrictModule, NonTrainableState):
                 "kind": "prepared-nilsas",
                 "plan": plan.plan_id,
                 "problem": problem.problem_id,
-                "trajectory": trajectory.evolution_id,
+                "trajectory": trajectory.trajectory_id,
                 "args": array_tree_fingerprint(args),
                 "terminal_basis": array_tree_fingerprint(terminal_basis),
             }
@@ -336,10 +336,16 @@ class PreparedNILSAS(StrictModule, NonTrainableState):
         neutral_offsets = jnp.zeros((segments,), dtype=dtype)
         relations = jnp.zeros((max(segments - 1, 0), m, m), dtype=dtype)
         offsets = jnp.zeros((max(segments - 1, 0), m), dtype=dtype)
-        endpoint_bases = jnp.zeros((horizon, n, m), dtype=dtype)
-        endpoint_inhomogeneous = jnp.zeros((horizon, n), dtype=dtype)
-        node_bases = jnp.zeros((horizon, n, m), dtype=dtype)
-        node_inhomogeneous = jnp.zeros((horizon, n), dtype=dtype)
+        if plan.memory_mode == "store":
+            endpoint_bases = jnp.zeros((horizon, n, m), dtype=dtype)
+            endpoint_inhomogeneous = jnp.zeros((horizon, n), dtype=dtype)
+            node_bases = jnp.zeros((horizon, n, m), dtype=dtype)
+            node_inhomogeneous = jnp.zeros((horizon, n), dtype=dtype)
+        else:
+            endpoint_bases = jnp.zeros((0, n, m), dtype=dtype)
+            endpoint_inhomogeneous = jnp.zeros((0, n), dtype=dtype)
+            node_bases = jnp.zeros((0, n, m), dtype=dtype)
+            node_inhomogeneous = jnp.zeros((0, n), dtype=dtype)
         valid_values: list[Array] = []
         orthogonality_defects: list[Array] = [self.terminal_basis_defect]
 

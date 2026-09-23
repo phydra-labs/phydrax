@@ -175,8 +175,9 @@ def fit_gaussian_process_kernel(
         if previous_state is None
         else previous_state
     )
-    previous_objective = _negative_log_marginal_likelihood(design, observations, previous)
-    proposed_objective = _negative_log_marginal_likelihood(design, observations, proposed)
+    previous_position = policy.parameter_space.unconstrain(previous)
+    previous_objective = objective(previous_position, None)
+    proposed_objective = objective(optimization.parameters, None)
     finite = jnp.isfinite(proposed_objective)
     accepted = (
         optimization.successful & finite & (proposed_objective <= previous_objective)
@@ -239,8 +240,9 @@ def fit_multioutput_gaussian_process_kernel(
         raise TypeError(
             "Fitted states must be MultiOutputGaussianProcessLikelihoodState."
         )
-    previous_objective = -discrepancy.log_marginal_likelihood(mean, state=previous)
-    proposed_objective = -discrepancy.log_marginal_likelihood(mean, state=proposed)
+    previous_position = policy.parameter_space.unconstrain(previous)
+    previous_objective = objective(previous_position, None)
+    proposed_objective = objective(optimization.parameters, None)
     finite = jnp.isfinite(proposed_objective)
     accepted = (
         optimization.successful & finite & (proposed_objective <= previous_objective)

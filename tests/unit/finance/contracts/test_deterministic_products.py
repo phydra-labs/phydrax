@@ -5,6 +5,7 @@
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax.finance.contracts._commodity import ResolvedFXForward
 from phydrax.finance.contracts._fixed_income import ResolvedFixedRateBond
 from phydrax.finance.contracts._rates import (
     FRASettlement,
@@ -87,7 +88,7 @@ def _zero_curves():
     return CurveSet(
         (
             _curve("discount", USD, jnp.zeros((4,))),
-            _curve("projection", USD, jnp.zeros((4,))),
+            _curve("projection", USD, jnp.zeros((4,)), role="projection"),
         )
     )
 
@@ -259,12 +260,41 @@ def test_cross_currency_swap_retains_both_notional_exchange_streams():
 
     replay = swap.cashflow_replay(curves)
     assert int(jnp.sum(replay.notional_exchange_mask)) == 4
-    assert set(replay.slot_currency_codes) == {"EUR", "USD"}
+    assert set(replay.slot_currency_ids) == {EUR.currency_id, USD.currency_id}
     np.testing.assert_allclose(
         swap.present_value(curves, reporting_currency=USD, spot_quote_per_base=1.1),
         0.0,
         atol=1e-6,
     )
+
+
+def test_deliverable_fx_forward_retains_two_known_notional_exchange_legs():
+    curves = CurveSet(
+        (
+            _curve("eur-discount", EUR, jnp.zeros((4,))),
+            _curve("usd-discount", USD, jnp.zeros((4,))),
+        )
+    )
+    forward = ResolvedFXForward(
+        contract_id="eur-usd-forward",
+        fx_pair=FXPair(EUR, USD),
+        valuation_date=VALUATION_DATE,
+        maturity_date=VALUATION_DATE.add_days(365),
+        maturity_time=1.0,
+        base_notional=100.0,
+        delivery_rate=1.1,
+        quote_discount_curve_id="usd-discount",
+        base_discount_curve_id="eur-discount",
+        pay_receive=PayReceive.RECEIVE,
+    )
+
+    known = forward.known_cashflows
+    replay = forward.cashflow_replay(curves)
+    assert known.active_count == 2
+    assert int(jnp.sum(replay.notional_exchange_mask)) == 2
+    np.testing.assert_allclose(replay.amounts, jnp.asarray((100.0, -110.0)))
+    assert replay.slot_currency_ids == (EUR.currency_id, USD.currency_id)
+    np.testing.assert_allclose(forward.present_value(curves, 1.1), 0.0)
 
 
 def test_inflation_leg_distinguishes_known_and_projected_lagged_fixings():

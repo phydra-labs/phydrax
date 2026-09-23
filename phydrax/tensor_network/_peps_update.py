@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from math import prod
+from math import isfinite, prod
+from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -47,6 +48,15 @@ class PEPSUpdatePolicy(StrictModule):
         maximum_tensor_elements: int = 100_000_000,
         maximum_workspace_bytes: int = 2**31,
     ):
+        if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for value in (
+                maximum_bond_dimension,
+                maximum_tensor_elements,
+                maximum_workspace_bytes,
+            )
+        ):
+            raise TypeError("PEPS update dimensions and budgets must be integers.")
         values = (
             int(maximum_bond_dimension),
             float(singular_value_cutoff),
@@ -56,7 +66,9 @@ class PEPSUpdatePolicy(StrictModule):
         )
         if (
             values[0] < 1
+            or not isfinite(values[1])
             or values[1] < 0.0
+            or not isfinite(values[2])
             or values[2] < 0.0
             or values[3] < 1
             or values[4] < 1

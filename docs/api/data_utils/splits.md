@@ -5,7 +5,7 @@ Index split helpers return JAX integer arrays. Use them with
 `RaggedTimeSeriesDataTerm(case_indices=...)`, and
 `TrajectoryCaseDataTerm(case_indices=...)`.
 
-```python
+```python executable
 import jax.random as jr
 import phydrax as phx
 

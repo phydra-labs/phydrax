@@ -581,6 +581,7 @@ class DelayPrimalTape(StrictModule, NonTrainableState):
     states: Array
     active: Array
     discontinuities: Array
+    solve_start_time: Array
     problem_id: str = eqx.field(static=True)
     path_id: str = eqx.field(static=True)
     interpolation_id: str = eqx.field(static=True)
@@ -594,6 +595,7 @@ class DelayPrimalTape(StrictModule, NonTrainableState):
         discontinuities: ArrayLike = (),
         /,
         *,
+        solve_start_time: ArrayLike,
         problem_id: str,
         path_id: str = "deterministic",
         interpolation_id: str = "piecewise-linear",
@@ -609,6 +611,9 @@ class DelayPrimalTape(StrictModule, NonTrainableState):
         ):
             raise ValueError("delay primal tape time/state/active axes must align.")
         discontinuities_ = jnp.asarray(discontinuities, dtype=times_.dtype)
+        solve_start = jnp.asarray(solve_start_time, dtype=times_.dtype)
+        if solve_start.shape != () or not bool(jnp.isfinite(solve_start)):
+            raise ValueError("solve_start_time must be a finite scalar.")
         active_host = np.asarray(active_)
         active_indices = np.flatnonzero(active_host)
         semantic_size = 0 if active_indices.size == 0 else int(active_indices[-1]) + 1
@@ -617,6 +622,7 @@ class DelayPrimalTape(StrictModule, NonTrainableState):
         self.states = states_
         self.active = active_
         self.discontinuities = discontinuities_
+        self.solve_start_time = solve_start
         self.problem_id = problem_id
         self.path_id = path_id
         self.interpolation_id = interpolation_id
@@ -634,8 +640,15 @@ class DelayPrimalTape(StrictModule, NonTrainableState):
                     np.asarray(states_)[:semantic_size][semantic_mask]
                 ),
                 "discontinuities": array_tree_fingerprint(discontinuities_),
+                "solve_start_time": array_tree_fingerprint(solve_start),
             }
         )
+
+    def covers(self, time: ArrayLike, /) -> Array:
+        query = jnp.asarray(time)
+        count = jnp.sum(self.active.astype(jnp.int32))
+        final_index = jnp.maximum(count - 1, 0)
+        return (count > 0) & (query >= self.times[0]) & (query <= self.times[final_index])
 
     def evaluate(self, time: ArrayLike, /) -> Array:
         query = jnp.asarray(time)
@@ -655,7 +668,8 @@ class DelayPrimalTape(StrictModule, NonTrainableState):
         interpolated = self.states[index] + theta * (
             self.states[index + 1] - self.states[index]
         )
-        return jnp.where(count > 1, interpolated, self.states[0])
+        value = jnp.where(count > 1, interpolated, self.states[0])
+        return jnp.where(self.covers(query), value, jnp.full_like(value, jnp.nan))
 
 
 class DelayBacksolveEvidence(StrictModule, NonTrainableState):
@@ -734,15 +748,25 @@ def backsolve_delay_adjoint(
     active_primals_finite = jnp.all(
         jnp.isfinite(jnp.where(tape.active, tape.times, 0))
     ) & jnp.all(jnp.isfinite(jnp.where(active_state_mask, tape.states, 0)))
-    within_capacity = active_count - 1 <= policy.maximum_backward_steps
-    execution_valid = active_prefix_valid & active_primals_finite & within_capacity
-    terminal_index = jnp.maximum(active_count - 1, 0)
-    terminal_time = tape.times[terminal_index]
     search_times = jnp.where(
         tape.active,
         tape.times,
         jnp.asarray(jnp.inf, dtype=tape.times.dtype),
     )
+    solve_start_index = jnp.searchsorted(search_times, tape.solve_start_time, side="left")
+    safe_solve_start_index = jnp.minimum(solve_start_index, capacity - 1)
+    solve_boundary_covered = (solve_start_index < active_count) & (
+        tape.times[safe_solve_start_index] == tape.solve_start_time
+    )
+    terminal_index = jnp.maximum(active_count - 1, 0)
+    within_capacity = terminal_index - solve_start_index <= policy.maximum_backward_steps
+    execution_valid = (
+        active_prefix_valid
+        & active_primals_finite
+        & solve_boundary_covered
+        & within_capacity
+    )
+    terminal_time = tape.times[terminal_index]
     terminal_value = cotangent + impulses[terminal_index]
     lambdas = jnp.zeros_like(tape.states).at[terminal_index].set(terminal_value)
     residuals = jnp.zeros((capacity - 1,), dtype=tape.states.real.dtype)
@@ -751,14 +775,18 @@ def backsolve_delay_adjoint(
 
     def body(reverse_index, carry):
         index = capacity - 2 - reverse_index
-        interval_active = execution_valid & (index < active_count - 1)
+        interval_active = (
+            execution_valid & (index >= solve_start_index) & (index < active_count - 1)
+        )
 
         def active_body(active_carry):
             lambdas_, residuals_, active_, covered_, args_gradient_ = active_carry
             time = tape.times[index]
             dt = tape.times[index + 1] - time
             state = tape.states[index]
-            delayed = jax.vmap(lambda delay: tape.evaluate(time - delay))(delays_)
+            delayed_times = time - delays_
+            delayed_covered = jnp.all(tape.covers(delayed_times))
+            delayed = jax.vmap(tape.evaluate)(delayed_times)
             future_lambda = lambdas_[index + 1]
             if args is None:
                 _, pullback = jax.vjp(
@@ -777,15 +805,15 @@ def backsolve_delay_adjoint(
                     parameter_action,
                 )
             advanced = jnp.zeros_like(state)
-            advanced_valid = jnp.asarray(True)
+            advanced_valid = delayed_covered
             for delay_index in range(delays_.size):
                 future_time = time + delays_[delay_index]
                 in_domain = future_time <= terminal_time
                 bounded_future_time = jnp.minimum(future_time, terminal_time)
                 future_state = tape.evaluate(bounded_future_time)
-                future_delayed = jax.vmap(
-                    lambda delay: tape.evaluate(bounded_future_time - delay)
-                )(delays_)
+                future_delayed_times = bounded_future_time - delays_
+                future_delayed_covered = jnp.all(tape.covers(future_delayed_times))
+                future_delayed = jax.vmap(tape.evaluate)(future_delayed_times)
                 future_index = jnp.clip(
                     jnp.searchsorted(search_times, bounded_future_time, side="right") - 1,
                     jnp.minimum(index + 1, active_count - 2),
@@ -803,7 +831,9 @@ def backsolve_delay_adjoint(
                 )
                 delayed_action = delayed_pullback(future_adjoint)[0][delay_index]
                 advanced = advanced + jnp.where(in_domain, delayed_action, 0)
-                advanced_valid = advanced_valid & ((~in_domain) | (future_time >= time))
+                advanced_valid = advanced_valid & (
+                    (~in_domain) | ((future_time >= time) & future_delayed_covered)
+                )
             derivative = state_action + advanced
             value = future_lambda + dt * derivative + impulses[index]
             valid = advanced_valid & jnp.all(jnp.isfinite(value)) & (dt > 0)
@@ -865,7 +895,11 @@ def backsolve_delay_adjoint(
             args_gradient,
         )
     )
-    return jnp.where(valid, lambdas[0], jnp.nan), args_gradient, evidence
+    return (
+        jnp.where(valid, lambdas[safe_solve_start_index], jnp.nan),
+        args_gradient,
+        evidence,
+    )
 
 
 __all__ = [

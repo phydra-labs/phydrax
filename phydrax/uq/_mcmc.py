@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from pathlib import Path
 from typing import Any, cast, Literal, NamedTuple
@@ -467,8 +468,8 @@ def _sample_mcmc(
     if not 0.0 < target < 1.0:
         raise ValueError("target_acceptance_rate must lie strictly between zero and one.")
     initial_step = float(initial_step_size)
-    if initial_step <= 0.0:
-        raise ValueError("initial_step_size must be positive.")
+    if not math.isfinite(initial_step) or initial_step <= 0.0:
+        raise ValueError("initial_step_size must be finite and positive.")
     method = (
         _validate_nuts_chain_method(chain_method)
         if algorithm == "nuts"

@@ -100,6 +100,15 @@ def duschinsky_analysis(
         final_vibration, VibrationalAnalysisResult
     ):
         raise TypeError("Duschinsky analysis requires two vibrational results.")
+    if (
+        initial_vibration.source_geometry_id != initial_structure.structure_id
+        or final_vibration.source_geometry_id != final_structure.structure_id
+        or initial_vibration.units.scale.scale_id != initial_structure.scale.scale_id
+        or final_vibration.units.scale.scale_id != final_structure.scale.scale_id
+    ):
+        raise ValueError(
+            "Duschinsky vibrations must match their source structures and unit systems."
+        )
     initial_modes_full = np.asarray(initial_vibration.normal_modes)
     final_modes_full = np.asarray(final_vibration.normal_modes)
     initial_masses_full = np.asarray(initial_structure.masses)

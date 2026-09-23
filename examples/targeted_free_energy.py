@@ -4,6 +4,10 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
+# Exact reduced-unit convention used by both potential callbacks and their work.
+inverse_temperature = 1.0
+
+
 source = phx.uq.CallableReducedPotential(
     lambda value: 0.5 * value[0] ** 2, (1,), "unit-normal"
 )
@@ -40,6 +44,7 @@ work = phx.uq.ReducedWorkDataset(
     run_id="targeted-free-energy-example",
     work_id="affine-targeted-work",
     work_kind="targeted-map",
+    inverse_temperature=inverse_temperature,
     qualification_id="iid-normal-source-sampling",
     sampling_exact=True,
     sampling_bias_bound=0.0,

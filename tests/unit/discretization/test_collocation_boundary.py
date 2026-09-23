@@ -40,6 +40,13 @@ def test_low_rank_boundary_correction_enforces_constraints_exactly():
     assert jnp.allclose(solution, jnp.asarray([1.0, 2.0, 3.0]), atol=1e-7)
 
 
+def test_low_rank_boundary_correction_rejects_singular_capacitance():
+    operator = jnp.asarray([[0.0, 1.0], [1.0, 0.0]])
+
+    with pytest.raises(ValueError, match="capacitance is singular"):
+        phx.linalg.LowRankBoundaryCorrectionPlan(operator, [0])
+
+
 def test_collocation_and_boundary_correction_refuse_unsafe_dense_budgets():
     with pytest.raises(ValueError, match="maximum_dimension"):
         phx.discretization.ChebyshevCollocation(33, maximum_dimension=16)

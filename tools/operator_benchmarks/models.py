@@ -60,7 +60,7 @@ class WeightedMeanBaseline(eqx.Module):
         case_ndim = len(batch.case_shape)
         if values.ndim != case_ndim + sample_ndim:
             raise ValueError("WeightedMeanBaseline currently supports scalar fields.")
-        weights = source.weights(case_shape=batch.case_shape)
+        weights = source.weights(case_shape=batch.case_shape, normalized=True)
         axes = tuple(range(case_ndim, case_ndim + sample_ndim))
         mean = jnp.sum(values * weights, axis=axes)
         output = jnp.broadcast_to(
@@ -223,6 +223,7 @@ class PODLinearROMBaseline(eqx.Module):
     coefficient_map: jax.Array
     input_names: tuple[str, ...] = eqx.field(static=True)
     query_shape: tuple[int, ...] = eqx.field(static=True)
+    target_shape: tuple[int, ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -232,10 +233,13 @@ class PODLinearROMBaseline(eqx.Module):
     ):
         self.input_names = tuple(scenario.train_batch.inputs)
         self.query_shape = scenario.train_batch.require_single_query().sample_shape
+        target = jnp.asarray(scenario.train_target)
+        prefix = scenario.train_batch.case_shape + self.query_shape
+        if target.shape[: len(prefix)] != prefix:
+            raise ValueError("PODLinearROMBaseline target shape is incompatible.")
+        self.target_shape = target.shape[len(prefix) :]
         features = _flatten_batch_inputs(scenario.train_batch, self.input_names)
-        targets = jnp.asarray(scenario.train_target).reshape(
-            (prod(scenario.train_batch.case_shape), -1)
-        )
+        targets = target.reshape((prod(scenario.train_batch.case_shape), -1))
         self.output_mean = jnp.mean(targets, axis=0)
         centered = targets - self.output_mean
         _, _, right = jnp.linalg.svd(centered, full_matrices=False)
@@ -259,7 +263,7 @@ class PODLinearROMBaseline(eqx.Module):
             axis=-1,
         )
         output = self.output_mean + (design @ self.coefficient_map) @ self.basis.T
-        output = output.reshape(batch.case_shape + self.query_shape)
+        output = output.reshape(batch.case_shape + self.query_shape + self.target_shape)
         return _apply_query_mask(output, batch)
 
 

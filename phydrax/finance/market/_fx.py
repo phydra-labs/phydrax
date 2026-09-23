@@ -331,27 +331,30 @@ def fx_triangle_consistency(
     else:
         a = b = c = jnp.asarray(0.0)
         accepted = jnp.asarray(False)
+    domain = jnp.isfinite(a) & jnp.isfinite(b) & jnp.isfinite(c)
+    domain = domain & (a > 0.0) & (b > 0.0) & (c > 0.0)
     implied = a * b
-    denominator = jnp.maximum(jnp.abs(c), jnp.asarray(1.0e-30, dtype=c.dtype))
-    error = jnp.abs(implied - c) / denominator
+    denominator = jnp.where(domain, jnp.abs(c), jnp.asarray(1.0, dtype=c.dtype))
+    error = jnp.where(domain, jnp.abs(implied - c) / denominator, jnp.inf)
     tolerance = jnp.asarray(relative_tolerance, dtype=error.dtype)
-    consistent = accepted & structural & (error <= tolerance)
+    valid = accepted & structural & domain
+    consistent = valid & (error <= tolerance)
     status = jnp.asarray(int(MarketStatus.SUCCESS), dtype=jnp.int32)
     if not present:
         status = status | int(MarketStatus.MISSING_FACTOR)
     if not structural:
         status = status | int(MarketStatus.CURRENCY_MISMATCH)
     status = status | jnp.where(
-        accepted | ~jnp.asarray(present),
+        (~jnp.asarray(present)) | (accepted & domain),
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(int(MarketStatus.INVALID_DOMAIN), dtype=jnp.int32),
     )
     status = status | jnp.where(
-        consistent | ~accepted,
+        consistent | ~valid,
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(int(MarketStatus.INVALID_DOMAIN), dtype=jnp.int32),
     )
-    return FXTriangleResult(implied, c, error, accepted & structural, consistent, status)
+    return FXTriangleResult(implied, c, error, valid, consistent, status)
 
 
 __all__ = [

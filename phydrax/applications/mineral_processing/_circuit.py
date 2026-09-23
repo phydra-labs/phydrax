@@ -5,15 +5,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._strict import StrictModule
 
-@dataclass(frozen=True, slots=True)
-class MineralCircuitResult:
+
+class MineralCircuitResult(StrictModule):
     stage_feed_kg_s: Array
     stage_concentrate_kg_s: Array
     stage_tailings_kg_s: Array
@@ -24,8 +24,7 @@ class MineralCircuitResult:
     successful: Array
 
 
-@dataclass(frozen=True, slots=True)
-class RecycleSeparationCircuit:
+class RecycleSeparationCircuit(StrictModule):
     component_recovery: Array
     tailings_recycle_fraction: Array
 
@@ -58,10 +57,13 @@ class RecycleSeparationCircuit:
     def solve(self, fresh_feed_kg_s: ArrayLike, /) -> MineralCircuitResult:
         fresh = jnp.asarray(fresh_feed_kg_s)
         components = self.component_recovery.shape[1]
-        if fresh.shape != (components,) or bool(jnp.any(fresh < 0)):
-            raise ValueError(
-                "Mineral fresh feed must be a non-negative component vector."
-            )
+        if fresh.shape != (components,):
+            raise ValueError("Mineral fresh feed must be a component vector.")
+        fresh = eqx.error_if(
+            fresh,
+            jnp.any(fresh < 0),
+            "Mineral fresh feed must be non-negative.",
+        )
         incoming = fresh
         stage_feed = []
         concentrate = []

@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 from jaxtyping import ArrayLike
 
@@ -110,6 +111,24 @@ class ElectronicCalculationPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError(
                 "Restricted electronic references require equal alpha and beta populations."
+            )
+        periodic_task = isinstance(task, BandStructureTaskPlan) or any(
+            property_
+            in (
+                ElectronicProperty.STRESS,
+                ElectronicProperty.BAND_ENERGIES,
+                ElectronicProperty.DENSITY_MATRIX,
+                ElectronicProperty.POLARIZATION,
+            )
+            for property_ in task.properties
+        )
+        if periodic_task and (
+            system.cell is None
+            or not any(system.cell.periodic_axes)
+            or not isinstance(prepared_state, PreparedPeriodicElectronicSector)
+        ):
+            raise ValueError(
+                "Periodic electronic tasks require a periodic system and periodic sector."
             )
         numerical_ = ElectronicNumericalPlan() if numerical is None else numerical
         precision_ = AtomisticPrecisionPolicy() if precision is None else precision
@@ -218,16 +237,41 @@ def make_electronic_evaluation(
     provider = str(provider_id).strip()
     if not provider:
         raise ValueError("provider_id must be non-empty.")
+    status_ = ElectronicCalculationStatus(int(np.asarray(status)))
     convergence_ = (
-        ElectronicConvergenceEvidence(status is ElectronicCalculationStatus.SUCCESS)
+        ElectronicConvergenceEvidence(
+            False,
+            energy_residual=jnp.nan,
+            density_residual=jnp.nan,
+            message="not-reported",
+        )
         if convergence is None
         else convergence
     )
     if not isinstance(convergence_, ElectronicConvergenceEvidence):
         raise TypeError("convergence must be ElectronicConvergenceEvidence or None.")
-    work_ = ElectronicWorkEvidence() if work is None else work
+    work_ = (
+        ElectronicWorkEvidence(
+            energy_evaluations=1,
+            force_evaluations=int(forces is not None),
+            hessian_evaluations=int(hessian is not None),
+            property_evaluations=int(dipole is not None),
+        )
+        if work is None
+        else work
+    )
     if not isinstance(work_, ElectronicWorkEvidence):
         raise TypeError("work must be ElectronicWorkEvidence or None.")
+    if int(work_.energy_evaluations) < 1:
+        raise ValueError("Electronic evaluations must report at least one energy call.")
+    if forces is not None and int(work_.force_evaluations) < 1:
+        raise ValueError("Force results must report force-evaluation work.")
+    if hessian is not None and (
+        int(work_.hessian_evaluations) < 1 and int(work_.force_evaluations) < 1
+    ):
+        raise ValueError("Hessian results must report Hessian or force-difference work.")
+    if dipole is not None and int(work_.property_evaluations) < 1:
+        raise ValueError("Dipole results must report property-evaluation work.")
     units = calculation.system.units
     if source_unit_ids is None:
         source_values = [
@@ -253,13 +297,33 @@ def make_electronic_evaluation(
         sources = tuple(source_values)
     else:
         sources = source_unit_ids
+    source_map = dict(sources)
+    required_source_fields = {"energy", "length"}
+    for name, supplied in (
+        ("forces", forces),
+        ("hessian", hessian),
+        ("dipole", dipole),
+        ("stress", stress),
+        ("band_energies", band_energies),
+        ("density_matrices", density_matrices),
+        ("polarization", polarization),
+    ):
+        if supplied is not None:
+            required_source_fields.add(name)
+    missing_source_fields = tuple(sorted(required_source_fields - source_map.keys()))
+    if missing_source_fields:
+        raise ValueError(
+            "source_unit_ids omit supplied result fields: "
+            + ", ".join(missing_source_fields)
+            + "."
+        )
     header = ElectronicEvaluationHeader(
         calculation.system.particle_ids,
         calculation.system.active_mask,
         units,
         convergence_,
         work_,
-        status,
+        status_,
         system_id=calculation.system.system_id,
         geometry_id=electronic_geometry_id(calculation.system, positions, cell_vectors),
         state_id=calculation.state.prepared_id,
@@ -269,6 +333,29 @@ def make_electronic_evaluation(
         source_unit_ids=sources,
         artifact_ids=artifact_ids,
     )
+    supported_properties = {
+        ElectronicProperty.ENERGY,
+        ElectronicProperty.FORCES,
+        ElectronicProperty.HESSIAN,
+        ElectronicProperty.DIPOLE,
+        ElectronicProperty.STRESS,
+        ElectronicProperty.BAND_ENERGIES,
+        ElectronicProperty.DENSITY_MATRIX,
+        ElectronicProperty.POLARIZATION,
+    }
+    unsupported = tuple(
+        value.value
+        for value in calculation.task.properties
+        if value not in supported_properties
+    )
+    if unsupported:
+        raise ValueError(
+            "Electronic result builder cannot represent requested properties: "
+            + ", ".join(unsupported)
+            + "."
+        )
+    if calculation.system.cell is None and cell_vectors is not None:
+        raise ValueError("Finite electronic calculations do not accept cell_vectors.")
     task = calculation.task
     periodic_properties = {
         ElectronicProperty.STRESS: stress,
@@ -281,6 +368,8 @@ def make_electronic_evaluation(
     )
     periodic_supplied = any(value is not None for value in periodic_properties.values())
     if periodic_requested or periodic_supplied:
+        if calculation.system.cell is None:
+            raise ValueError("Periodic electronic results require a periodic system.")
         if cell_vectors is None:
             raise ValueError("Periodic electronic results require cell_vectors.")
         if calculation.task.requires(

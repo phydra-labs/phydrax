@@ -56,8 +56,10 @@ def run():
     ):
         compiled, arguments, state = _compile(schedule)
         detail = compiled.dynamics.step_detailed(state, 0.001, arguments)
+        if not bool(detail.successful):
+            raise RuntimeError(f"{schedule.common_name} MPM schedule step failed")
         results[schedule.common_name] = {
-            "successful": bool(detail.successful),
+            "successful": True,
             "mass_defect": float(detail.diagnostics.transfer.relative_mass_defect),
             "energy_defect": float(detail.diagnostics.energy.balance_defect),
         }
@@ -68,8 +70,10 @@ def run():
         final_time=0.02,
         initial_step_size=1.0,
     ).rollout(state, arguments)
+    if not bool(adaptive.completed):
+        raise RuntimeError("Adaptive MPM rollout did not complete")
     results["adaptive"] = {
-        "completed": bool(adaptive.completed),
+        "completed": True,
         "attempts": int(adaptive.journal.attempt_count),
         "accepted": int(adaptive.journal.accepted_count),
     }

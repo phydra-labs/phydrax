@@ -25,6 +25,14 @@ class AccountingMethod(StrEnum):
     RDP = "rdp"
 
 
+def _exact_integer(value: object, name: str, /, *, minimum: int) -> int:
+    if type(value) is not int:
+        raise TypeError(f"{name} must be an integer.")
+    if value < minimum:
+        raise ValueError(f"{name} must be at least {minimum}.")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class PrivacyBudget:
     """Maximum approximate-DP privacy loss permitted for one release scope."""
@@ -80,9 +88,7 @@ class MechanismTrace:
         if not isinstance(record, dict):
             raise TypeError("event_json must encode one DP event mapping.")
         canonical = canonical_json(record)
-        repetitions = int(self.repetitions)
-        if repetitions < 1:
-            raise ValueError("repetitions must be positive.")
+        repetitions = _exact_integer(self.repetitions, "repetitions", minimum=1)
         object.__setattr__(self, "event_json", canonical)
         object.__setattr__(self, "repetitions", repetitions)
         object.__setattr__(
@@ -104,7 +110,10 @@ class MechanismTrace:
         event = record["event"]
         if not isinstance(event, Mapping):
             raise TypeError("Serialized mechanism event must be a mapping.")
-        value = cls(canonical_json(dict(event)), int(record["repetitions"]))
+        value = cls(
+            canonical_json(dict(event)),
+            _exact_integer(record["repetitions"], "repetitions", minimum=1),
+        )
         recorded_id = record.get("trace_id")
         if recorded_id is not None and str(recorded_id) != value.trace_id:
             raise ValueError("Serialized mechanism trace has an invalid content address.")
@@ -357,7 +366,10 @@ def dp_event_from_record(record: Mapping[str, Any], /) -> object:
     """Reconstruct one event without dynamic module or class lookup."""
     if not isinstance(record, Mapping):
         raise TypeError("DP event record must be a mapping.")
-    kind = str(record["kind"])
+    kind_value = record["kind"]
+    if type(kind_value) is not str:
+        raise TypeError("Serialized DP event kind must be a string.")
+    kind = kind_value
     expected_fields = _EVENT_RECORD_FIELDS.get(kind)
     if expected_fields is None:
         raise ValueError(f"Unsupported serialized DP event kind {kind!r}.")
@@ -380,11 +392,13 @@ def dp_event_from_record(record: Mapping[str, Any], /) -> object:
         return dp.LaplaceDpEvent(float(record["noise_multiplier"]))
     if kind == "discrete-laplace":
         return event_module.DiscreteLaplaceDpEvent(
-            float(record["noise_parameter"]), int(record["sensitivity"])
+            float(record["noise_parameter"]),
+            _exact_integer(record["sensitivity"], "sensitivity", minimum=1),
         )
     if kind == "randomized-response":
         return dp.RandomizedResponseDpEvent(
-            float(record["noise_parameter"]), int(record["num_buckets"])
+            float(record["noise_parameter"]),
+            _exact_integer(record["num_buckets"], "num_buckets", minimum=2),
         )
     if kind == "poisson-sampled":
         return dp.PoissonSampledDpEvent(
@@ -392,19 +406,24 @@ def dp_event_from_record(record: Mapping[str, Any], /) -> object:
         )
     if kind == "sampled-with-replacement":
         return dp.SampledWithReplacementDpEvent(
-            int(record["source_dataset_size"]),
-            int(record["sample_size"]),
+            _exact_integer(
+                record["source_dataset_size"], "source_dataset_size", minimum=1
+            ),
+            _exact_integer(record["sample_size"], "sample_size", minimum=1),
             _nested_event(record, "event"),
         )
     if kind == "sampled-without-replacement":
         return dp.SampledWithoutReplacementDpEvent(
-            int(record["source_dataset_size"]),
-            int(record["sample_size"]),
+            _exact_integer(
+                record["source_dataset_size"], "source_dataset_size", minimum=1
+            ),
+            _exact_integer(record["sample_size"], "sample_size", minimum=1),
             _nested_event(record, "event"),
         )
     if kind == "self-composed":
         return dp.SelfComposedDpEvent(
-            _nested_event(record, "event"), int(record["count"])
+            _nested_event(record, "event"),
+            _exact_integer(record["count"], "count", minimum=1),
         )
     if kind == "composed":
         events = record["events"]
@@ -419,9 +438,11 @@ def dp_event_from_record(record: Mapping[str, Any], /) -> object:
     if kind == "single-epoch-tree-aggregation":
         counts = record["step_counts"]
         if isinstance(counts, Sequence) and not isinstance(counts, (str, bytes)):
-            counts = [int(value) for value in counts]
+            counts = [
+                _exact_integer(value, "step_counts item", minimum=1) for value in counts
+            ]
         else:
-            counts = int(counts)
+            counts = _exact_integer(counts, "step_counts", minimum=1)
         return dp.SingleEpochTreeAggregationDpEvent(
             float(record["noise_multiplier"]), counts
         )
@@ -435,9 +456,13 @@ def dp_event_from_record(record: Mapping[str, Any], /) -> object:
         return dp.ZCDpEvent(float(record["rho"]), float(record["xi"]))
     if kind == "truncated-subsampled-gaussian":
         return dp.TruncatedSubsampledGaussianDpEvent(
-            int(record["dataset_size"]),
+            _exact_integer(record["dataset_size"], "dataset_size", minimum=1),
             float(record["sampling_probability"]),
-            int(record["truncated_batch_size"]),
+            _exact_integer(
+                record["truncated_batch_size"],
+                "truncated_batch_size",
+                minimum=1,
+            ),
             float(record["noise_multiplier"]),
         )
     raise ValueError(f"Unsupported serialized DP event kind {kind!r}.")

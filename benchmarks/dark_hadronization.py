@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 
 import jax.numpy as jnp
@@ -92,11 +93,12 @@ def _profiles(chain_capacity: int):
         species_revision_id="d" * 64,
         topology_revision_id="e" * 64,
     )
+    catalog_payload = b"synthetic-hadron-catalog:(100,-100,101,200,-200,201,-201)"
     catalog = ParticleCatalogReference(
-        source_id="benchmark-hadrons",
-        provider_release="test",
-        checksum="checksum",
-        citation_url="https://example.test/benchmark-hadrons",
+        source_id="synthetic-benchmark-hadrons",
+        provider_release="inline-synthetic-fixture",
+        checksum=hashlib.sha256(catalog_payload).hexdigest(),
+        citation_url="urn:phydrax:benchmark:synthetic-hadrons",
     )
     species = ParticleSpeciesTable(
         jnp.asarray((100, -100, 101, 200, -200, 201, -201)),
@@ -255,16 +257,22 @@ def main() -> None:
     arguments = parser.parse_args()
     if any(value < 3 for value in arguments.chain_capacities):
         raise ValueError("chain capacities must be at least three.")
+    cases = [benchmark_case(value) for value in arguments.chain_capacities]
     payload = {
         "environment": capture_environment().to_dict(),
-        "cases": [benchmark_case(value) for value in arguments.chain_capacities],
+        "source_kind": "synthetic-benchmark-fixture",
+        "cases": cases,
+        "passed": all(case["successful"] for case in cases),
     }
-    encoded = json.dumps(payload, indent=2, sort_keys=True)
+    encoded = json.dumps(payload, allow_nan=False, indent=2, sort_keys=True)
     if arguments.output:
-        with open(arguments.output, "w", encoding="utf-8") as stream:
-            stream.write(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
     else:
         print(encoded)
+    if not payload["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -457,8 +457,9 @@ class _MixedBatchedPlant(AbstractDiscretePlant):
     require_finite_state: bool = eqx.field(static=True)
     require_finite_controls: bool = eqx.field(static=True)
     require_finite_parameters: bool = eqx.field(static=True)
+    reset_successful: bool = eqx.field(static=True)
 
-    def __init__(self, semantic_tag="mixed"):
+    def __init__(self, semantic_tag="mixed", *, reset_successful=True):
         fallback = {
             "position": jnp.zeros((1,), dtype=jnp.float32),
             "memory": {
@@ -467,7 +468,11 @@ class _MixedBatchedPlant(AbstractDiscretePlant):
             },
         }
         semantics = SemanticProvenance(
-            {"kind": "mixed-test-plant", "semantic_tag": semantic_tag}
+            {
+                "kind": "mixed-test-plant",
+                "semantic_tag": semantic_tag,
+                "reset_successful": bool(reset_successful),
+            }
         )
         self.state_schema = ArrayPyTreeSchema.from_tree(
             jax.tree.map(lambda leaf: jnp.stack((leaf, leaf)), fallback),
@@ -487,6 +492,7 @@ class _MixedBatchedPlant(AbstractDiscretePlant):
         )
         self.require_finite_state = True
         self.require_finite_controls = True
+        self.reset_successful = bool(reset_successful)
         self.require_finite_parameters = True
 
     def propose_reset(
@@ -504,9 +510,17 @@ class _MixedBatchedPlant(AbstractDiscretePlant):
             payload,
             payload,
             jnp.ones(case_shape, dtype="bool"),
-            jnp.ones(case_shape, dtype="bool"),
-            jnp.zeros(case_shape, dtype=jnp.int32),
-            jnp.zeros(case_shape, dtype=jnp.int32),
+            jnp.full(case_shape, self.reset_successful, dtype="bool"),
+            jnp.full(
+                case_shape,
+                0 if self.reset_successful else 7,
+                dtype=jnp.int32,
+            ),
+            jnp.full(
+                case_shape,
+                0 if self.reset_successful else 17,
+                dtype=jnp.int32,
+            ),
             (),
         )
 
@@ -534,8 +548,8 @@ class _MixedBatchedPlant(AbstractDiscretePlant):
         )
 
 
-def _mixed_environment(*, semantic_tag="mixed"):
-    plant = _MixedBatchedPlant(semantic_tag)
+def _mixed_environment(*, semantic_tag="mixed", reset_successful=True):
+    plant = _MixedBatchedPlant(semantic_tag, reset_successful=reset_successful)
     parameters = PlantParameters(
         (),
         plant.parameter_schema.schema_id,
@@ -549,6 +563,17 @@ def _mixed_environment(*, semantic_tag="mixed"):
         step_size=0.5,
         environment_id="mixed-display-id",
     )
+
+
+def test_environment_reset_retains_failed_plant_disposition():
+    environment = _mixed_environment(reset_successful=False)
+    reset = environment.reset(jax.random.key(59))
+
+    assert bool(reset.attempted)
+    assert not bool(reset.successful)
+    assert int(reset.status) == 7
+    assert int(reset.backend_status) == 17
+    assert reset.evidence == ()
 
 
 def test_mixed_pytree_cases_never_expose_failed_candidate_and_roll_back_all_leaves():

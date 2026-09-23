@@ -302,6 +302,7 @@ class LaplaceCapacitanceCoordinateJVP3D(StrictModule):
     layer_density_tangent: Array
     capacitance_tangent: Array
     operator_tangent_action: Array
+    linear_results: tuple[tuple[LinearSolveResult, ...], ...]
     valid: Array
     epoch_id: str = eqx.field(static=True)
 
@@ -403,14 +404,17 @@ def differentiate_laplace_capacitance_coordinates_3d(
     density_tangents = []
     capacitance_tangents = []
     actions = []
+    linear_results = []
     for parameter in range(d_operator.shape[0]):
         action = d_operator[parameter] @ result.layer_density
         actions.append(action)
+        parameter_results = tuple(
+            solve(prepared.prepared_linear, -action[:, column])
+            for column in range(len(prepared.conductor_names))
+        )
+        linear_results.append(parameter_results)
         d_density = jnp.stack(
-            tuple(
-                solve(prepared.prepared_linear, -action[:, column]).value
-                for column in range(len(prepared.conductor_names))
-            ),
+            tuple(linear_result.value for linear_result in parameter_results),
             axis=1,
         )
         density_tangents.append(d_density)
@@ -435,13 +439,26 @@ def differentiate_laplace_capacitance_coordinates_3d(
         )
     density = jnp.stack(density_tangents)
     capacitance = jnp.stack(capacitance_tangents)
+    solves_valid = jnp.all(
+        jnp.stack(
+            tuple(
+                linear_result.successful
+                for parameter_results in linear_results
+                for linear_result in parameter_results
+            )
+        )
+    )
     valid = (
-        result.valid & jnp.all(jnp.isfinite(density)) & jnp.all(jnp.isfinite(capacitance))
+        result.valid
+        & solves_valid
+        & jnp.all(jnp.isfinite(density))
+        & jnp.all(jnp.isfinite(capacitance))
     )
     return LaplaceCapacitanceCoordinateJVP3D(
         density,
         capacitance,
         jnp.stack(actions),
+        tuple(linear_results),
         valid,
         prepared.epoch.epoch_id,
     )

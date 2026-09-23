@@ -43,6 +43,11 @@
 
 
 ### Fixed
+- Hardened the quantum Hall, compressible kinetic, and scaled-Taylor additions:
+  scientific owner identities and charge rosters now fail closed, transport and
+  SCBA retain native solve status, finite-support means require convex-support
+  evidence, kinetic remap/AMR/geometry operations expose truthful transactions,
+  and exact-norm Taylor actions enforce their forward truncation bound.
 - Geometry domains now preserve exact, estimated, and unknown mass evidence,
   reject scalar-to-diagonal coercion outside one dimension, and distinguish
   interior from boundary-measure capabilities. Von Mises stress now requires

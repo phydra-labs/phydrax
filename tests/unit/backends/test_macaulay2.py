@@ -200,3 +200,58 @@ def test_unavailable_provider_requires_explicit_environment_and_has_no_fallback(
     assert "discovery is disabled" in availability.reason
     with pytest.raises(BackendUnavailableError, match="macaulay2"):
         availability.require("algebraic.exact.groebner_basis")
+
+
+def test_zero_polynomial_payload_is_a_valid_exact_result(provider):
+    prepared = _prepared(provider, ExactSymbolicOperation.GROEBNER_BASIS)
+    payload = _response(
+        prepared,
+        {
+            "variable_indices": [0],
+            "equation_count": 1,
+            "equation_indices": [0],
+            "exponents": [[0]],
+            "coefficients": ["0"],
+        },
+    )
+
+    result = parse_macaulay2_result(_encoded(payload), prepared)
+
+    assert result.status is ExactSymbolicStatus.SUCCESS
+    assert result.output.coefficients == ("0",)
+    assert result.externally_claimed_exact
+
+
+def test_exact_symbolic_resource_limits_refuse_oversized_dimensions_before_prepare():
+    system = _bivariate_system()
+
+    with pytest.raises(ValueError, match="variable_count"):
+        plan_exact_symbolic(
+            system,
+            ExactSymbolicOperation.ELIMINATE,
+            EliminateArguments((0,)),
+            maximum_variable_count=1,
+        )
+
+
+def test_installation_inventory_is_verified_for_availability(tmp_path):
+    executable = PinnedExecutable(
+        sys.executable,
+        _digest(sys.executable),
+        "1.26.05-test-pin",
+        "GPL-3.0-only",
+        "https://macaulay2.com/",
+    )
+    dependency = tmp_path / "dependency"
+    dependency.write_bytes(b"pinned")
+    environment = Macaulay2Environment(
+        executable,
+        installation_root=tmp_path,
+        installation_inventory=(("dependency", _digest(dependency)),),
+    )
+    dependency.write_bytes(b"changed")
+
+    availability = macaulay2_availability(environment)
+
+    assert not availability.available
+    assert "identity mismatch" in availability.reason

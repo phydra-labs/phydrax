@@ -129,6 +129,25 @@ class DistributedPairing(StrictModule, NonTrainableState):
         weights_ = None if weights is None else jnp.asarray(weights)
         if weights_ is not None and weights_.shape != mask.shape:
             raise ValueError("pairing weights must match owned_mask")
+        if weights_ is not None:
+            if not jnp.issubdtype(weights_.dtype, jnp.number) or jnp.issubdtype(
+                weights_.dtype, jnp.complexfloating
+            ):
+                raise TypeError("pairing weights must have a real numeric dtype")
+            if weights_.is_fully_addressable:
+                host_mask = np.asarray(mask)
+                host_weights = np.asarray(weights_)
+                if np.any(host_mask & (~np.isfinite(host_weights) | (host_weights <= 0))):
+                    raise ValueError(
+                        "Owned pairing weights must be finite and strictly positive."
+                    )
+            else:
+                invalid_owned_weight = mask & (~jnp.isfinite(weights_) | (weights_ <= 0))
+                weights_ = eqx.error_if(
+                    weights_,
+                    jnp.any(invalid_owned_weight),
+                    "Owned pairing weights must be finite and strictly positive.",
+                )
         axis = None if axis_name is None else str(axis_name).strip()
         if axis_name is not None and not axis:
             raise ValueError("axis_name must be non-empty")

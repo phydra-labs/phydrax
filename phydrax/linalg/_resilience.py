@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ._binding import LinearSolveTemplate
+from ._certificates import KernelCertificate
 from ._materialization import MaterializationPolicy, materialize
 from ._policies import FailurePolicy, LinearSolvePolicy, TolerancePolicy
 from ._problems import LinearSystem
@@ -24,6 +25,7 @@ from ._results import LinearSolveResult, LinearSolveStatus
 from ._runtime import _pack_rhs, _unpack_value, bind_numeric, prepare_template, solve
 from ._spaces import _coordinate_dtype, RHSLayout
 from ._structured_operators import TwoSidedScaledLinearOperator
+from ._subspaces import LinearSubspace, NullspacePolicy
 
 
 EquilibrationMode = Literal["none", "ruiz", "symmetric-ruiz", "explicit"]
@@ -938,10 +940,86 @@ def _transformed_problem(
         congruence=congruence,
         operator_id=f"{problem.operator.operator_id}:equilibrated:{transform.mode}",
     )
+    nullspace_policy = _transformed_nullspace_policy(
+        problem.nullspace_policy,
+        operator,
+        transform,
+    )
     return LinearSystem(
         operator,
-        nullspace_policy=problem.nullspace_policy,
+        nullspace_policy=nullspace_policy,
         problem_id=f"{problem.problem_id}:equilibrated:{transform.mode}",
+    )
+
+
+def _transformed_nullspace_policy(
+    policy: NullspacePolicy | None,
+    operator: TwoSidedScaledLinearOperator,
+    transform: DiagonalSystemTransform,
+    /,
+) -> NullspacePolicy | None:
+    if policy is None:
+        return None
+    right = _scaled_right_nullspace(policy.right, transform)
+    left = _scaled_left_nullspace(policy.left, transform)
+    certificate = (
+        None
+        if policy.certificate is None
+        else KernelCertificate(
+            operator,
+            right,
+            left=left,
+            evidence=policy.certificate.evidence,
+            scope=policy.certificate.scope,
+            complete=policy.certificate.complete,
+            tolerance=policy.certificate.tolerance,
+        )
+    )
+    return NullspacePolicy(
+        right=right,
+        left=left,
+        certificate=certificate,
+        compatibility=policy.compatibility,
+        gauge=policy.gauge,
+    )
+
+
+def _scaled_right_nullspace(
+    subspace: LinearSubspace | None,
+    transform: DiagonalSystemTransform,
+    /,
+) -> LinearSubspace | None:
+    if subspace is None:
+        return None
+    return LinearSubspace(
+        subspace.space,
+        subspace.basis / transform.right_scale[..., None],
+        dimension=subspace.dimension,
+        subspace_id=f"{subspace.subspace_id}:right:{transform.transform_id}",
+    )
+
+
+def _scaled_left_nullspace(
+    subspace: LinearSubspace | None,
+    transform: DiagonalSystemTransform,
+    /,
+) -> LinearSubspace | None:
+    if subspace is None:
+        return None
+    space = subspace.space
+
+    def transform_basis_column(column):
+        vector = space.unflatten(column)
+        covector = space.flatten(space.riesz(vector))
+        scaled_covector = covector / jnp.conj(transform.left_scale)
+        return space.flatten(space.inverse_riesz(space.unflatten(scaled_covector)))
+
+    basis = jax.vmap(transform_basis_column, in_axes=1, out_axes=1)(subspace.basis)
+    return LinearSubspace(
+        subspace.space,
+        basis,
+        dimension=subspace.dimension,
+        subspace_id=f"{subspace.subspace_id}:left:{transform.transform_id}",
     )
 
 

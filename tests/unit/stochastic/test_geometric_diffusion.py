@@ -23,6 +23,37 @@ def test_subspace_law_has_hausdorff_density_and_basis_invariant_samples():
     assert not law.contains(jnp.asarray([1.0, 0.0]))
 
 
+def test_subspace_and_trajectory_identities_include_numeric_support():
+    reference = phx.stochastic.AffineSubspaceLayout(
+        jnp.asarray([0.0, 0.0]),
+        jnp.asarray([[1.0], [0.0]]),
+        event_shape=(2,),
+    )
+    shifted = phx.stochastic.AffineSubspaceLayout(
+        jnp.asarray([1.0, 0.0]),
+        jnp.asarray([[1.0], [0.0]]),
+        event_shape=(2,),
+    )
+    reweighted = phx.stochastic.AffineSubspaceLayout(
+        jnp.asarray([0.0, 0.0]),
+        jnp.asarray([[1.0], [0.0]]),
+        event_shape=(2,),
+        quadrature_weights=jnp.asarray([2.0, 1.0]),
+    )
+    assert len({reference.layout_id, shifted.layout_id, reweighted.layout_id}) == 3
+
+    times = jnp.asarray([0.0, 0.5, 1.0])
+    basis = jnp.asarray([[0.0], [1.0], [0.0]])
+    full = phx.stochastic.TrajectoryEventLayout(times, (1,), basis)
+    padded = phx.stochastic.TrajectoryEventLayout(
+        times,
+        (1,),
+        basis,
+        valid_time=jnp.asarray([True, True, False]),
+    )
+    assert full.layout_id != padded.layout_id
+
+
 def test_field_diffusion_preserves_mode_coordinates_across_mesh_transfer():
     source_basis = phx.stochastic.SpatialNoiseBasis(
         jnp.eye(2),

@@ -175,9 +175,16 @@ class ProductCone(AbstractConvexCone):
     slices: tuple[slice, ...] = eqx.field(static=True)
 
     def __init__(self, cones: Sequence[AbstractConvexCone] = (), /):
-        cones_ = tuple(cones)
-        if any(not isinstance(cone, AbstractConvexCone) for cone in cones_):
+        requested = tuple(cones)
+        if any(not isinstance(cone, AbstractConvexCone) for cone in requested):
             raise TypeError("ProductCone blocks must be AbstractConvexCone values.")
+        cones_ = tuple(
+            block
+            for cone in requested
+            for block in (cone.cones if isinstance(cone, ProductCone) else (cone,))
+        )
+        if not cones_:
+            cones_ = (ZeroCone(0),)
         if any(
             isinstance(cone.dimension, bool) or index(cone.dimension) < 0
             for cone in cones_

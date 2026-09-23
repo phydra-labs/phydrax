@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..linalg import ArraySpace, prepare_linearization, PreparedLinearization
 from ._grid import EvolutionGrid, IterationGrid, TimeGrid
@@ -100,6 +101,40 @@ class EvolutionTrajectory(StrictModule):
     @property
     def final_state(self) -> Array:
         return self.states[-1]
+
+    @property
+    def trajectory_id(self) -> str:
+        transition = self.transition_evidence
+        transition_content = (
+            None
+            if transition is None
+            else {
+                "candidate_states": transition.candidate_states,
+                "accepted_states": transition.accepted_states,
+                "attempted": transition.attempted,
+                "successful": transition.successful,
+                "status": transition.status,
+            }
+        )
+        return canonical_fingerprint(
+            {
+                "kind": "evolution-trajectory",
+                "grid": self.grid.grid_id,
+                "evolution": self.evolution_id,
+                "system": self.system_id,
+                "state_layout": self.state_layout.layout_id,
+                "content": array_tree_fingerprint(
+                    {
+                        "coordinates": self.grid.coordinates,
+                        "states": self.states,
+                        "valid": self.valid,
+                        "status": self.status,
+                        "backend_status": self.backend_status,
+                        "transition": transition_content,
+                    }
+                ),
+            }
+        )
 
 
 class AbstractEvolution(StrictModule):
@@ -213,7 +248,15 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         elif input_policy.input_layout.layout_id != system_input_layout.layout_id:
             raise ValueError("Input policy and system input layouts must match exactly.")
         resolved_id = (
-            f"{system.system_id}:discrete-evolution"
+            "discrete-evolution:"
+            + canonical_fingerprint(
+                {
+                    "system": system.system_id,
+                    "input_policy": (
+                        None if input_policy is None else input_policy.policy_id
+                    ),
+                }
+            )
             if evolution_id is None
             else _identifier(evolution_id, "DiscreteEvolution evolution_id")
         )
@@ -480,22 +523,60 @@ def evolve(
     def step(carry, coordinates):
         state, prior_valid = carry
         source, target = coordinates
-        result = evolution.advance(state, source, target, args)
-        valid = prior_valid & result.valid
-        next_state = jnp.where(prior_valid, result.final_state, state)
-        evidence = result.transition_evidence
-        if evidence is None:
-            candidate = result.final_state
-            accepted = result.final_state
-            transition_attempted = jnp.asarray(True)
-            transition_successful = result.valid
-            transition_status = result.backend_status
-        else:
-            candidate = evidence.candidate_states[0]
-            transition_attempted = evidence.attempted[0]
-            accepted = evidence.accepted_states[0]
-            transition_successful = evidence.successful[0]
-            transition_status = evidence.status[0]
+
+        def attempt(_):
+            result = evolution.advance(state, source, target, args)
+            evidence = result.transition_evidence
+            if evidence is None:
+                candidate = result.final_state
+                accepted = result.final_state
+                transition_attempted = jnp.asarray(True)
+                transition_successful = result.valid
+                transition_status = result.backend_status
+            else:
+                candidate = evidence.candidate_states[0]
+                transition_attempted = evidence.attempted[0]
+                accepted = evidence.accepted_states[0]
+                transition_successful = evidence.successful[0]
+                transition_status = evidence.status[0]
+            return (
+                result.final_state,
+                result.valid,
+                result.status,
+                result.backend_status,
+                candidate,
+                accepted,
+                transition_attempted,
+                transition_successful,
+                transition_status,
+            )
+
+        def skip(_):
+            return (
+                state,
+                jnp.asarray(False),
+                jnp.asarray(EVOLUTION_SUCCESS, dtype=jnp.int32),
+                jnp.asarray(0, dtype=jnp.int32),
+                jnp.full_like(state, jnp.nan),
+                jnp.full_like(state, jnp.nan),
+                jnp.asarray(False),
+                jnp.asarray(False),
+                jnp.asarray(0, dtype=jnp.int32),
+            )
+
+        (
+            final_state,
+            result_valid,
+            evolution_status,
+            backend_status,
+            candidate,
+            accepted,
+            transition_attempted,
+            transition_successful,
+            transition_status,
+        ) = jax.lax.cond(prior_valid, attempt, skip, operand=None)
+        valid = prior_valid & result_valid
+        next_state = jnp.where(valid, final_state, state)
         recorded_attempted = prior_valid & transition_attempted
         recorded_candidate = jnp.where(
             recorded_attempted,
@@ -513,21 +594,11 @@ def evolve(
             transition_status,
             jnp.asarray(0, dtype=jnp.int32),
         ).astype(jnp.int32)
-        evolution_status = jnp.where(
-            prior_valid,
-            result.status,
-            jnp.asarray(EVOLUTION_SUCCESS, dtype=jnp.int32),
-        ).astype(jnp.int32)
-        backend_status = jnp.where(
-            recorded_attempted,
-            result.backend_status,
-            jnp.asarray(0, dtype=jnp.int32),
-        ).astype(jnp.int32)
         return (next_state, valid), (
             next_state,
             valid,
-            evolution_status,
-            backend_status,
+            evolution_status.astype(jnp.int32),
+            backend_status.astype(jnp.int32),
             recorded_candidate,
             recorded_accepted,
             recorded_attempted,

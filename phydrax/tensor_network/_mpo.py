@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from math import isfinite
+from numbers import Integral
 
 import equinox as eqx
 import jax
@@ -159,6 +160,10 @@ def compress_mps(
 ) -> tuple[MatrixProductState, ChainCompressionEvidence]:
     if not isinstance(state, MatrixProductState):
         raise TypeError("state must be a MatrixProductState.")
+    if not isinstance(maximum_bond_dimension, Integral) or isinstance(
+        maximum_bond_dimension, bool
+    ):
+        raise TypeError("maximum_bond_dimension must be an integer.")
     capacity = int(maximum_bond_dimension)
     if capacity < 1:
         raise ValueError("maximum_bond_dimension must be positive.")
@@ -200,6 +205,10 @@ def compress_mpo(
 ) -> tuple[MatrixProductOperator, ChainCompressionEvidence]:
     if not isinstance(operator, MatrixProductOperator):
         raise TypeError("operator must be a MatrixProductOperator.")
+    if not isinstance(maximum_bond_dimension, Integral) or isinstance(
+        maximum_bond_dimension, bool
+    ):
+        raise TypeError("maximum_bond_dimension must be an integer.")
     capacity = int(maximum_bond_dimension)
     if capacity < 1:
         raise ValueError("maximum_bond_dimension must be positive.")
@@ -339,6 +348,17 @@ class VariationalCompressionPolicy(StrictModule):
         residual_tolerance: float = 1e-8,
         maximum_tensor_elements: int = 10_000_000,
     ):
+        if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for value in (
+                maximum_bond_dimension,
+                maximum_sweeps,
+                maximum_tensor_elements,
+            )
+        ):
+            raise TypeError(
+                "Variational compression ranks, sweeps, and budgets must be integers."
+            )
         bond = int(maximum_bond_dimension)
         sweeps = int(maximum_sweeps)
         step = float(gradient_step)

@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 from phydrax._numerics import SmolyakIndexSet
@@ -24,6 +25,32 @@ def test_cid04_bounded_breakpoint_discovery_reports_jump():
     assert int(evaluations) == 45
     assert bool(jnp.any(evidence.active))
     assert float(jnp.min(jnp.abs(evidence.points[evidence.active] - 0.2))) < 0.1
+
+
+def test_breakpoint_discovery_budget_refuses_before_callback():
+    domain = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
+    calls = 0
+
+    def callback(x):
+        nonlocal calls
+        calls += 1
+        return x
+
+    discovery = phx.integration.BreakpointDiscoveryPlan(33, 4, 3)
+    plan = phx.integration.AdaptiveQuadraturePlan(
+        discovery=discovery,
+        max_intervals=5,
+        max_evaluations=45,
+        throw=False,
+    )
+
+    with pytest.raises(ValueError, match="cannot fund breakpoint discovery"):
+        phx.integration.integrate(
+            domain.Function("x")(callback),
+            phx.integration.over(domain.component()),
+            plan,
+        )
+    assert calls == 0
 
 
 def test_cid05_sparse_frontier_tracks_admissible_neighbors():

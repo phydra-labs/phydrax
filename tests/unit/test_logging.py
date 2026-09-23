@@ -18,7 +18,11 @@ import pytest
 from loguru import logger
 
 from phydrax import logging as pxlogging
-from phydrax._training import TrainingController, TrainingIterationKind
+from phydrax._training import (
+    TrainingController,
+    TrainingIterationKind,
+    TrainingProgress,
+)
 from phydrax.execution import CallableIterationSink, IterationSession
 
 
@@ -244,3 +248,18 @@ def test_training_controller_can_deliver_without_duplicate_log_event() -> None:
     assert len(delivered) == 1
     assert delivered[0].record.metrics.metric("loss") == 1.25
     assert controller.progress.iteration_session_cursor == 1
+
+
+def test_training_selection_rejects_nonfinite_metrics_without_mutation() -> None:
+    with pytest.raises(ValueError, match="best_value must be finite"):
+        TrainingProgress(best_value=float("nan"))
+
+    controller = TrainingController(
+        total_steps=1,
+        key=jr.key(0),
+        algorithm_id="finite-selection-test",
+    )
+    original = controller.progress
+    with pytest.raises(ValueError, match="selection value must be finite"):
+        controller.select(float("inf"), object(), step=0)
+    assert controller.progress == original

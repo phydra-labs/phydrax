@@ -18,12 +18,13 @@ from ..nonlinear import (
     Bisection,
     Brent,
     NonlinearTermination,
+    NonlinearWork,
     scalar_root,
     ScalarRootProblem,
     TOMS748,
 )
 from ._quantum_jump import QuantumJumpProblem
-from ._quantum_trajectory_contract import QuantumTrajectoryPlan
+from ._quantum_trajectory_contract import QuantumTrajectoryPlan, QuantumTrajectoryStatus
 
 
 class QuantumJumpEventTable(StrictModule):
@@ -57,6 +58,8 @@ class EventDrivenQuantumJumpResult(StrictModule):
     valid: Array
     saturated: Array
     successful: Array
+    status: Array
+    work: NonlinearWork
     problem_id: str = eqx.field(static=True)
 
     def __init__(
@@ -67,14 +70,22 @@ class EventDrivenQuantumJumpResult(StrictModule):
         /,
         *,
         problem_id: str,
+        work: NonlinearWork,
+        status: int | Array = int(QuantumTrajectoryStatus.SUCCESS),
         saturated: bool = False,
         successful: bool = True,
     ):
         self.states = jnp.asarray(states)
         self.times = jnp.asarray(times)
         self.events = events
+        self.status = jnp.asarray(status, dtype=jnp.int32)
+        if not isinstance(work, NonlinearWork):
+            raise TypeError("work must be NonlinearWork.")
+        self.work = work
         self.saturated = jnp.asarray(saturated, dtype=jnp.bool_)
-        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_) & (
+            self.status == int(QuantumTrajectoryStatus.SUCCESS)
+        )
         self.norm_residual = jnp.max(jnp.abs(jnp.linalg.norm(self.states, axis=-1) - 1.0))
         self.valid = (
             jnp.all(jnp.isfinite(self.states))
@@ -154,6 +165,13 @@ def solve_event_driven_quantum_jump(
     saturated = False
     successful = True
     segment_count = 0
+    status = QuantumTrajectoryStatus.SUCCESS
+    work = NonlinearWork.zero()
+    budget = plan.work_budget
+    maximum_root_work = NonlinearWork(
+        residual_evaluations=plan.root_iterations + 3,
+        validity_evaluations=plan.root_iterations + 3,
+    )
 
     precision = GeometryPrecisionPolicy()
     for index in range(count):
@@ -164,6 +182,7 @@ def solve_event_driven_quantum_jump(
             segment_count += 1
             if segment_count > plan.maximum_segments:
                 saturated = True
+                status = QuantumTrajectoryStatus.TRUNCATION_BUDGET_EXCEEDED
                 break
             candidate = _rk4(problem, current, remaining)
             start_survival = jnp.real(jnp.vdot(current, current))
@@ -175,7 +194,12 @@ def solve_event_driven_quantum_jump(
                 break
             if event_count >= event_capacity:
                 saturated = True
+                status = QuantumTrajectoryStatus.EVENT_CAPACITY_EXHAUSTED
                 current = candidate
+                break
+            if not bool(jax.device_get(budget.permits(maximum_root_work))):
+                saturated = True
+                status = QuantumTrajectoryStatus.TRUNCATION_BUDGET_EXCEEDED
                 break
             root_problem = ScalarRootProblem(
                 lambda duration, args: (
@@ -205,8 +229,21 @@ def solve_event_driven_quantum_jump(
                     maximum_steps=plan.root_iterations,
                 ),
             )
+            diagnostics = root.nonlinear_result.diagnostics
+            root_work = NonlinearWork(
+                residual_evaluations=diagnostics.residual_evaluations,
+                validity_evaluations=diagnostics.residual_evaluations,
+                jvp_evaluations=diagnostics.jvp_evaluations,
+            )
+            if not bool(jax.device_get(budget.permits(root_work))):
+                saturated = True
+                status = QuantumTrajectoryStatus.TRUNCATION_BUDGET_EXCEEDED
+                break
+            work = work + root_work
+            budget = budget.consume(root_work)
             if not bool(jax.device_get(root.successful)):
                 successful = False
+                status = QuantumTrajectoryStatus.ROOT_NOT_CONVERGED
                 current = candidate
                 break
             duration = root.nonlinear_result.state
@@ -214,6 +251,7 @@ def solve_event_driven_quantum_jump(
             norm = precision.norm(event_state)
             if not bool(jax.device_get(jnp.isfinite(norm) & (norm > 0.0))):
                 successful = False
+                status = QuantumTrajectoryStatus.INVALID_SURVIVAL
                 current = candidate
                 break
             normalized = event_state / norm
@@ -230,6 +268,7 @@ def solve_event_driven_quantum_jump(
                 )
             ):
                 successful = False
+                status = QuantumTrajectoryStatus.INVALID_RATES
                 current = candidate
                 break
             probabilities = rates / total_rate
@@ -243,6 +282,7 @@ def solve_event_driven_quantum_jump(
                 jax.device_get(jnp.isfinite(selected_norm) & (selected_norm > 0.0))
             ):
                 successful = False
+                status = QuantumTrajectoryStatus.ZERO_JUMP_STATE
                 current = candidate
                 break
             current = selected / selected_norm
@@ -286,6 +326,8 @@ def solve_event_driven_quantum_jump(
         problem_id=problem.problem_id,
         saturated=saturated,
         successful=successful,
+        status=int(status),
+        work=work,
     )
 
 

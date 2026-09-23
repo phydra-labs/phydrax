@@ -12,8 +12,8 @@ requiredKeys := sort {
     "coefficients", "domain", "environment_id", "equation_count",
     "equation_indices", "executable_sha256", "exponents",
     "installation_inventory", "operation", "operation_args", "plan_id",
-    "provider_id", "provider_version", "request_id", "support_id",
-    "system_id", "variables", "worker_sha256"
+    "provider_id", "provider_version", "request_id", "resource_limits",
+    "support_id", "system_id", "variables", "worker_sha256"
     };
 if class request =!= HashTable or sort keys request =!= requiredKeys then
     error "request field inventory mismatch";
@@ -64,7 +64,11 @@ coefficientRing := (
     else if kind === "QQ" then QQ
     else if kind === "GF" then (
         if sort keys domain =!= {"kind", "modulus"} then error "invalid finite field";
-        ZZ/(domain#"modulus"))
+        modulus := domain#"modulus";
+        if not instance(modulus, ZZ) or modulus < 2 or modulus > 2147483647
+            or not isPrime modulus then
+            error "invalid finite-field modulus";
+        ZZ/modulus)
     else error "unsupported coefficient domain");
 if (kind === "ZZ" or kind === "QQ") and sort keys domain =!= {"kind"} then
     error "invalid characteristic-zero domain";
@@ -76,6 +80,8 @@ allowedOperations := {
     };
 if not member(operation, allowedOperations) then error "unsupported exact operation";
 
+if not instance(request#"variables", List) then
+    error "worker variables must be an array";
 variableCount := #(request#"variables");
 if request#"variables" =!= apply(variableCount, i -> "x" | toString i) then
     error "worker variables must be canonically numbered";
@@ -113,6 +119,66 @@ if not member(orderName, {"grevlex", "lex"}) then error "unsupported monomial or
 monomialOrder := (
     if operation === "eliminate" then Eliminate(#eliminated)
     else if orderName === "lex" then Lex else GRevLex);
+
+limits := request#"resource_limits";
+limitKeys := {
+    "maximum_equation_count", "maximum_exponent_entries",
+    "maximum_storage_bytes", "maximum_term_count", "maximum_variable_count"
+    };
+if class limits =!= HashTable or sort keys limits =!= sort limitKeys then
+    error "resource limit field inventory mismatch";
+positiveLimit := (name, hard) -> (
+    value := limits#name;
+    if not instance(value, ZZ) or value <= 0 or value > hard then
+        error("invalid resource limit " | name);
+    value);
+maximumVariableCount := positiveLimit("maximum_variable_count", 4096);
+maximumEquationCount := positiveLimit("maximum_equation_count", 100000);
+maximumTermCount := positiveLimit("maximum_term_count", 1000000);
+maximumExponentEntries := positiveLimit("maximum_exponent_entries", 10000000);
+maximumStorageBytes := positiveLimit("maximum_storage_bytes", 268435456);
+if variableCount > maximumVariableCount then
+    error "variable count exceeds its resource bound";
+
+resourceRecords := if operation === "normal_form"
+    then {request, arguments#"polynomial"} else {request};
+totalTerms := 0;
+totalExponentEntries := 0;
+estimatedStorage := variableCount * 64;
+scan(resourceRecords, record -> (
+    eqCount := record#"equation_count";
+    eqIndices := record#"equation_indices";
+    exponentRows := record#"exponents";
+    coefficientRows := record#"coefficients";
+    if not instance(eqCount, ZZ) or eqCount <= 0
+        or eqCount > maximumEquationCount then
+        error "equation count exceeds its resource bound";
+    if not instance(eqIndices, List) or not instance(exponentRows, List)
+        or not instance(coefficientRows, List)
+        or #eqIndices =!= #exponentRows or #eqIndices =!= #coefficientRows then
+        error "invalid sparse polynomial arrays";
+    totalTerms = totalTerms + #eqIndices;
+    if totalTerms > maximumTermCount then
+        error "term count exceeds its resource bound";
+    totalExponentEntries = totalExponentEntries + #eqIndices * variableCount;
+    if totalExponentEntries > maximumExponentEntries then
+        error "exponent entry count exceeds its resource bound";
+    estimatedStorage = estimatedStorage + eqCount * 64
+        + #eqIndices * 40 + #eqIndices * variableCount * 8;
+    if estimatedStorage > maximumStorageBytes then
+        error "estimated polynomial storage exceeds its resource bound";
+    scan(#eqIndices, termIndex -> (
+        equationIndex := eqIndices#termIndex;
+        row := exponentRows#termIndex;
+        if not instance(equationIndex, ZZ)
+            or equationIndex < 0 or equationIndex >= eqCount then
+            error "sparse equation index is out of range";
+        if not instance(row, List) or #row =!= variableCount
+            or any(row, exponent -> not instance(exponent, ZZ) or exponent < 0) then
+            error "invalid sparse exponent row";
+        if not instance(coefficientRows#termIndex, String) then
+            error "exact coefficients must be strings")));
+    ));
 R := coefficientRing[Variables => variableCount, MonomialOrder => monomialOrder];
 
 coefficientFromText := text -> (
@@ -187,7 +253,7 @@ scan(#outputPolynomials, equationIndex -> (
     polynomial := outputPolynomials#equationIndex;
     if polynomial == 0 then (
         width := if operation === "eliminate" then #kept else variableCount;
-        termRows = append(termRows, {equationIndex, width : 0, "0"}))
+        termRows = append(termRows, {equationIndex, toList(width : 0), "0"}))
     else scan(terms polynomial, term -> (
         exponentRow := first exponents term;
         visibleExponents := if operation === "eliminate" then

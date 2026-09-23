@@ -289,6 +289,10 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
         propagated_factors = jax.vmap(pushforward)(input_factors)
         pushed_covariance = propagated_factors.T @ propagated_factors
         observation_hermitian = 0.5 * (observation_covariance + observation_covariance.T)
+        observation_stabilized = observation_hermitian + self.stabilization * jnp.eye(
+            self.output_dimension, dtype=observation_hermitian.dtype
+        )
+        observation_eigenvalues = jnp.linalg.eigvalsh(observation_stabilized)
         effective_covariance = (
             observation_hermitian
             + pushed_covariance
@@ -309,6 +313,7 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
                 <= observation_tolerance
             )
             & (jnp.min(input_eigenvalues) >= -input_tolerance)
+            & (jnp.min(observation_eigenvalues) > observation_tolerance)
             & (jnp.min(effective_eigenvalues) > effective_tolerance)
         )
 

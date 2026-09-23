@@ -219,13 +219,3 @@ monodomain limit:
 ```text
 python tools/cardiovascular_advanced_ep_qualification.py
 ```
-
-The benchmark separately compiles and measures full gauge-fixed bidomain and
-analytic monodomain-limit steps on the same fixed one-dimensional FEM problem:
-
-```text
-python benchmarks/cardiovascular_bidomain.py --nodes 128 --warmup 2 --repeats 10
-```
-
-Benchmark output includes environment identity, compiler cost/memory evidence,
-per-run synchronized timing samples, logical array sizes, and solve residuals.

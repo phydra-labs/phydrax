@@ -60,10 +60,12 @@ for step in range(5):
         jnp.asarray(1.0e-5),
         None,
     )
+    if not bool(result.successful):
+        raise RuntimeError(f"Wet granular bridge step {step} failed")
     state = result.accepted_state
 
 response = result.evaluation.particle_contact
-print(f"successful={bool(result.successful)}")
+print("successful=True")
 print(f"interaction_range={compiled.dynamics.contact_model.interaction_range:.6e}")
 print(f"normal_force={float(response.normal_force[0, 0]):.6e}")
 print(f"bridge_active={bool(response.next_history.cohesion.components[1].active[0])}")

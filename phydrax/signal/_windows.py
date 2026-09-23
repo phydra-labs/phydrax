@@ -122,8 +122,8 @@ def tukey_window(
     alpha_value = jnp.asarray(raw_alpha, dtype=resolved_dtype)
     alpha_value = eqx.error_if(
         alpha_value,
-        ~jnp.isfinite(alpha_value),
-        "alpha must be finite.",
+        ~jnp.isfinite(alpha_value) | (alpha_value < 0.0) | (alpha_value > 1.0),
+        "alpha must be finite and lie in [0, 1].",
     )
     coordinate = _window_coordinate(length, periodic, resolved_dtype)
     if length == 1:

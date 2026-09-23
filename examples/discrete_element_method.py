@@ -69,8 +69,10 @@ problem = phx.solver.FixedStepProblem(
 solution = phx.solver.solve_fixed_step(problem)
 final_state = jax.tree.map(lambda leaf: leaf[-1], solution.states)
 diagnostics = compiled.diagnostics(solution.times[-1], final_state)
+if not bool(solution.successful):
+    raise RuntimeError("Discrete-element integration failed")
 
-print(f"successful={bool(solution.successful)}")
+print("successful=True")
 print(f"active_contacts={int(diagnostics.active_contacts)}")
 print(f"maximum_overlap_fraction={float(diagnostics.maximum_overlap_fraction):.6f}")
 print(

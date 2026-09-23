@@ -19,6 +19,7 @@ from jaxtyping import Array, ArrayLike, Key
 
 from .._execution_array import shard_array_axis
 from .._execution_runtime import ExecutionGroup
+from .._fingerprint import canonical_fingerprint
 from .._iteration import (
     bind_iteration_scope,
     finalize_iteration,
@@ -106,6 +107,7 @@ class PreparedHamiltonianKernel(StrictModule):
     divergence_threshold: float = eqx.field(static=True)
     method: Literal["hmc", "nuts"] = eqx.field(static=True)
     target_id: str = eqx.field(static=True)
+    kernel_id: str = eqx.field(static=True)
     valid: Array
 
 
@@ -115,6 +117,8 @@ class HamiltonianChainState(StrictModule):
     gradient: Array
     step_index: Array
     valid: Array
+    target_id: str = eqx.field(static=True)
+    kernel_id: str = eqx.field(static=True)
 
 
 class HamiltonianSampleResult(StrictModule):
@@ -130,6 +134,7 @@ class HamiltonianSampleResult(StrictModule):
     root_key: Array
     frozen_step_size: Array
     target_id: str = eqx.field(static=True)
+    kernel_id: str = eqx.field(static=True)
     method: str = eqx.field(static=True)
     claim: str = eqx.field(static=True)
     iteration_evidence: IterationEvidence | None
@@ -206,6 +211,18 @@ def prepare_hamiltonian_kernel(
         ),
         FactorizationPolicy("cholesky"),
     )
+    kernel_id = canonical_fingerprint(
+        {
+            "kind": "prepared-hamiltonian-kernel",
+            "target_id": target_id,
+            "mass_matrix": mass,
+            "step_size": size,
+            "maximum_leapfrog_steps": steps,
+            "maximum_tree_depth": depth,
+            "divergence_threshold": threshold,
+            "method": method,
+        }
+    )
     return PreparedHamiltonianKernel(
         log_target=log_target,
         mass_matrix=mass,
@@ -217,6 +234,7 @@ def prepare_hamiltonian_kernel(
         divergence_threshold=threshold,
         method=method,
         target_id=target_id,
+        kernel_id=kernel_id,
         valid=valid,
     )
 
@@ -251,6 +269,8 @@ def initialize_hamiltonian_state(
         gradient=gradients,
         step_index=jnp.asarray(0, dtype=jnp.uint32),
         valid=valid,
+        target_id=kernel.target_id,
+        kernel_id=kernel.kernel_id,
     )
 
 
@@ -472,6 +492,8 @@ def sample_hamiltonian(
         state, HamiltonianChainState
     ):
         raise TypeError("kernel/state types are invalid.")
+    if state.target_id != kernel.target_id or state.kernel_id != kernel.kernel_id:
+        raise ValueError("Hamiltonian state belongs to another prepared kernel.")
     draws = int(num_draws)
     if draws <= 0:
         raise ValueError("num_draws must be positive.")
@@ -517,6 +539,8 @@ def sample_hamiltonian(
         & jnp.all(jnp.isfinite(positions), axis=-1)
         & jnp.isfinite(values)
         & jnp.all(jnp.isfinite(gradients), axis=-1),
+        target_id=kernel.target_id,
+        kernel_id=kernel.kernel_id,
     )
     iteration_evidence = None
     if iteration is not None:
@@ -617,9 +641,63 @@ def sample_hamiltonian(
         root_key=jnp.asarray(key),
         frozen_step_size=kernel.step_size,
         target_id=kernel.target_id,
+        kernel_id=kernel.kernel_id,
         method=kernel.method,
         claim="finite-capacity-frozen-production-hamiltonian-chain",
         iteration_evidence=iteration_evidence,
+    )
+
+
+@eqx.filter_jit
+def _adapt_hamiltonian_warmup(
+    kernel: PreparedHamiltonianKernel,
+    state: HamiltonianChainState,
+    scale_policy: RobbinsMonroScalePolicy,
+    key: Key[Array, ""],
+    /,
+):
+    adaptive = initialize_proposal_adaptation(scale_policy, kernel.step_size)
+    current = state
+    sizes = []
+    acceptances = []
+    for _ in range(scale_policy.warmup_chunks):
+        warmup_kernel = eqx.tree_at(
+            lambda value: value.step_size,
+            kernel,
+            adaptive.scale,
+        )
+        draw = sample_hamiltonian(
+            warmup_kernel,
+            current,
+            key=key,
+            num_draws=1,
+        )
+        acceptance = jnp.mean(draw.acceptance_probability)
+        sizes.append(adaptive.scale)
+        acceptances.append(acceptance)
+        adaptive = adapt_proposal_scale(scale_policy, adaptive, acceptance)
+        current = draw.final_state
+    return (
+        current,
+        adaptive,
+        jnp.stack(sizes),
+        jnp.stack(acceptances),
+    )
+
+
+def _rebind_adapted_state(
+    state: HamiltonianChainState,
+    kernel: PreparedHamiltonianKernel,
+    /,
+) -> HamiltonianChainState:
+    return HamiltonianChainState(
+        position=state.position,
+        log_target=state.log_target,
+        gradient=state.gradient,
+        step_index=state.step_index,
+        valid=state.valid,
+        target_id=kernel.target_id,
+        kernel_id=kernel.kernel_id,
     )
 
 
@@ -646,41 +724,24 @@ def adapt_hamiltonian_kernel(
         maximum_scale=plan.maximum_step_size,
         warmup_chunks=plan.warmup_steps,
     )
-    adaptive = initialize_proposal_adaptation(scale_policy, kernel.step_size)
-    current = state
-    sizes = []
-    acceptances = []
-    adapted = kernel
-    for _ in range(plan.warmup_steps):
-        adapted = eqx.tree_at(
-            lambda value: value.step_size,
-            adapted,
-            adaptive.scale,
-        )
-        draw = sample_hamiltonian(
-            adapted,
-            current,
-            key=key,
-            num_draws=1,
-        )
-        acceptance = jnp.mean(draw.acceptance_probability)
-        sizes.append(adaptive.scale)
-        acceptances.append(acceptance)
-        adaptive = adapt_proposal_scale(scale_policy, adaptive, acceptance)
-        current = draw.final_state
-    adapted = eqx.tree_at(
-        lambda value: value.step_size,
-        adapted,
-        adaptive.scale,
+    current, adaptive, size_history, acceptance_history = _adapt_hamiltonian_warmup(
+        kernel,
+        state,
+        scale_policy,
+        key,
     )
-    size_history = (
-        jnp.stack(sizes) if sizes else jnp.empty((0,), dtype=kernel.step_size.dtype)
+    final_step_size = float(jax.device_get(adaptive.scale))
+    adapted = prepare_hamiltonian_kernel(
+        kernel.log_target,
+        kernel.mass_matrix,
+        step_size=final_step_size,
+        method=kernel.method,
+        leapfrog_steps=kernel.maximum_leapfrog_steps,
+        maximum_tree_depth=kernel.maximum_tree_depth,
+        divergence_threshold=kernel.divergence_threshold,
+        target_id=kernel.target_id,
     )
-    acceptance_history = (
-        jnp.stack(acceptances)
-        if acceptances
-        else jnp.empty((0,), dtype=kernel.step_size.dtype)
-    )
+    current = _rebind_adapted_state(current, adapted)
     return HamiltonianAdaptationResult(
         kernel=adapted,
         final_state=current,

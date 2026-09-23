@@ -102,6 +102,8 @@ class ScenarioResult:
         if (self.error_type is None) != (self.error_message is None):
             raise ValueError("Scenario error type and message must be set together.")
         _validate_json_value(self.metadata, path="metadata")
+        if self.error_type is None and not self.metrics:
+            raise ValueError("Successful scenarios require at least one metric.")
 
     @property
     def passed(self) -> bool:
@@ -163,7 +165,11 @@ class BenchmarkReport:
 
     @property
     def passed(self) -> bool:
-        return all(scenario.passed for scenario in self.scenarios)
+        return (
+            bool(self.configuration.get("matrix_complete", True))
+            and bool(self.configuration.get("environment_complete", True))
+            and all(scenario.passed for scenario in self.scenarios)
+        )
 
     @property
     def summary(self) -> dict[str, Any]:
@@ -234,6 +240,101 @@ class BenchmarkReport:
         temporary.write_text(self.to_json(), encoding="utf-8")
         temporary.replace(destination)
         return destination
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any], /) -> BenchmarkReport:
+        """Strictly reconstruct a report and reject forged derived fields."""
+        expected_keys = {
+            "suite",
+            "profile",
+            "root_seed",
+            "started_at_utc",
+            "duration_seconds",
+            "passed",
+            "summary",
+            "configuration",
+            "environment",
+            "scenarios",
+        }
+        if set(payload) != expected_keys:
+            raise ValueError("Benchmark report fields do not match the canonical schema.")
+        scenarios: list[ScenarioResult] = []
+        for item in payload["scenarios"]:
+            if set(item) != {
+                "name",
+                "description",
+                "seed",
+                "passed",
+                "failures",
+                "metrics",
+                "metadata",
+                "error",
+            }:
+                raise ValueError("Scenario fields do not match the canonical schema.")
+            metrics = {
+                name: _metric_from_dict(value) for name, value in item["metrics"].items()
+            }
+            error = item["error"]
+            scenario = ScenarioResult(
+                name=item["name"],
+                description=item["description"],
+                seed=item["seed"],
+                metrics=metrics,
+                metadata=item["metadata"],
+                error_type=None if error is None else error["type"],
+                error_message=None if error is None else error["message"],
+            )
+            if item["passed"] != scenario.passed or item["failures"] != list(
+                scenario.failures
+            ):
+                raise ValueError("Scenario derived status does not match its evidence.")
+            scenarios.append(scenario)
+        report = cls(
+            profile=payload["profile"],
+            root_seed=payload["root_seed"],
+            started_at_utc=payload["started_at_utc"],
+            duration_seconds=payload["duration_seconds"],
+            configuration=payload["configuration"],
+            environment=payload["environment"],
+            scenarios=tuple(scenarios),
+            suite=payload["suite"],
+        )
+        if payload["passed"] != report.passed or payload["summary"] != report.summary:
+            raise ValueError("Report derived status does not match its evidence.")
+        return report
+
+    @classmethod
+    def read_json(cls, path: str | os.PathLike[str], /) -> BenchmarkReport:
+        return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+
+
+def _metric_from_dict(payload: dict[str, Any], /) -> Metric:
+    expected_keys = {
+        "value",
+        "unit",
+        "category",
+        "description",
+        "gate",
+        "passed",
+    }
+    if set(payload) != expected_keys:
+        raise ValueError("Metric fields do not match the canonical schema.")
+    gate = payload["gate"]
+    if gate is not None and set(gate) != {"minimum", "maximum", "inclusive"}:
+        raise ValueError("Metric gate fields do not match the canonical schema.")
+    if gate is not None and gate["inclusive"] is not True:
+        raise ValueError("Only inclusive metric gates are supported.")
+    metric_value = Metric(
+        value=payload["value"],
+        category=payload["category"],
+        unit=payload["unit"],
+        minimum=None if gate is None else gate["minimum"],
+        maximum=None if gate is None else gate["maximum"],
+        description=payload["description"],
+    )
+    if payload["passed"] != metric_value.passed:
+        raise ValueError("Metric derived status does not match its evidence.")
+    return metric_value
 
 
 def metric(

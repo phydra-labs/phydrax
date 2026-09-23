@@ -18,13 +18,10 @@ import numpy as np
 from phydrax.domain import DomainFunction
 
 from .._document_resource import decode_json_resource
-from .._external_resource import read_bounded_resource, ResourceLimits
+from .._external_resource import bounded_resource_from_bytes, ResourceLimits
 from .._fingerprint import canonical_fingerprint
 from .._publication import publish_resource_set, ResourceSetPublicationReceipt
-from .._resource_set import (
-    read_bounded_resource_set,
-    ResourceSetLimits,
-)
+from .._resource_set import open_bounded_resource_set, ResourceSetLimits
 from ..backends.iree import import_iree, iree_availability
 from ._inference import make_inference_export_callable
 
@@ -268,11 +265,22 @@ class IREEExecutable:
         return outputs[0] if output_count == 1 else tuple(outputs)
 
 
-def load_iree(path: str | Path, /) -> IREEExecutable:
-    """Verify and load a pickle-free IREE inference artifact."""
+def load_iree(
+    path: str | Path,
+    /,
+    *,
+    trusted_module_sha256: str,
+) -> IREEExecutable:
+    """Load a descriptor-admitted IREE module authorized by an out-of-band pin."""
 
+    if (
+        not isinstance(trusted_module_sha256, str)
+        or len(trusted_module_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in trusted_module_sha256)
+    ):
+        raise ValueError("trusted_module_sha256 must be a lowercase SHA-256 digest.")
     source = Path(path).expanduser().absolute()
-    bundle = read_bounded_resource_set(
+    with open_bounded_resource_set(
         source.name,
         trusted_root=source.parent,
         limits=ResourceSetLimits(
@@ -281,21 +289,32 @@ def load_iree(path: str | Path, /) -> IREEExecutable:
             max_members=2,
             max_depth=1,
         ),
-    )
-    member_names = {member.relative_path for member in bundle.manifest.members}
-    if "manifest.json" not in member_names:
-        raise ValueError("IREE artifact manifest is missing.")
-    manifest_resource = read_bounded_resource(
-        "manifest.json",
-        trusted_root=source,
-        limits=ResourceLimits(16 * 1024 * 1024, 64, 100_000, 100_000, 0),
-    )
-    value = decode_json_resource(manifest_resource).value
-    if not isinstance(value, Mapping):
-        raise TypeError("IREE manifest JSON must contain an object.")
-    manifest = IREEArtifactManifest.from_dict(value)
-    if member_names != {"manifest.json", manifest.module_file}:
-        raise ValueError("IREE artifact bundle inventory changed.")
+    ) as bundle:
+        member_names = {member.relative_path for member in bundle.manifest.members}
+        if "manifest.json" not in member_names:
+            raise ValueError("IREE artifact manifest is missing.")
+        manifest_bytes = bundle.read_member(
+            "manifest.json", maximum_bytes=16 * 1024 * 1024
+        )
+        manifest_resource = bounded_resource_from_bytes(
+            manifest_bytes,
+            limits=ResourceLimits(16 * 1024 * 1024, 64, 100_000, 100_000, 0),
+            source_path="manifest.json",
+        )
+        value = decode_json_resource(manifest_resource).value
+        if not isinstance(value, Mapping):
+            raise TypeError("IREE manifest JSON must contain an object.")
+        manifest = IREEArtifactManifest.from_dict(value)
+        if member_names != {"manifest.json", manifest.module_file}:
+            raise ValueError("IREE artifact bundle inventory changed.")
+        module_bytes = bundle.read_member(manifest.module_file)
+    observed_module_sha256 = _sha256_bytes(module_bytes)
+    if observed_module_sha256 != manifest.module_sha256:
+        raise ValueError("IREE module checksum mismatch.")
+    if observed_module_sha256 != trusted_module_sha256:
+        raise PermissionError(
+            "IREE module is not authorized by the caller-supplied trusted pin."
+        )
     availability = iree_availability()
     availability.require("compiled-inference")
     versions = dict(availability.versions)
@@ -306,14 +325,7 @@ def load_iree(path: str | Path, /) -> IREEExecutable:
         raise ValueError(
             "IREE artifact compiler/runtime versions differ from the runtime."
         )
-    module_resource = read_bounded_resource(
-        manifest.module_file,
-        trusted_root=source,
-        limits=ResourceLimits(4 * 1024 * 1024 * 1024, 1, 1, 0, 0),
-    )
-    if module_resource.manifest.content_sha256 != manifest.module_sha256:
-        raise ValueError("IREE module checksum mismatch.")
-    return IREEExecutable(manifest, module_resource.data)
+    return IREEExecutable(manifest, module_bytes)
 
 
 def save_iree(

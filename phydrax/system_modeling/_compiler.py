@@ -92,10 +92,14 @@ def compile_linear_acausal_system(
     )
     variable_index = {key: index for index, key in enumerate(variable_keys)}
 
+    connected: set[str] = set()
     connection_rows: list[np.ndarray] = []
     for connection in system.connections:
         if any(identifier not in connectors for identifier in connection.connector_ids):
             raise ValueError("Connection set references an unknown connector.")
+        if any(identifier in connected for identifier in connection.connector_ids):
+            raise ValueError("A connector may belong to only one connection set.")
+        connected.update(connection.connector_ids)
         members = tuple(connectors[identifier] for identifier in connection.connector_ids)
         signature = tuple(
             (variable.name, variable.kind, variable.unit)
@@ -132,6 +136,8 @@ def compile_linear_acausal_system(
         raise ValueError("Component equations do not match the connector variable basis.")
     if right.shape != (component.shape[0],):
         raise ValueError("Component right-hand side does not match component equations.")
+    if not np.all(np.isfinite(component)) or not np.all(np.isfinite(right)):
+        raise ValueError("Component equations must be finite.")
     connection_matrix = (
         np.stack(connection_rows)
         if connection_rows

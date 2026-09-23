@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.spatial import PreparedSparseVoxelGrid, SparseVoxelField
@@ -54,6 +54,7 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
 
     grid: PreparedSparseVoxelGrid
     enclosure: ExactSDFEnclosureCertificate | None = eqx.field(static=True)
+    enclosure_geometry: CompiledGeometry | None
     narrow_band_width: float | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -63,6 +64,7 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
         /,
         *,
         enclosure: ExactSDFEnclosureCertificate | None = None,
+        enclosure_geometry: CompiledGeometry | None = None,
         narrow_band_width: float | None = None,
     ) -> None:
         if not isinstance(grid, PreparedSparseVoxelGrid):
@@ -70,8 +72,29 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
         width = None if narrow_band_width is None else float(narrow_band_width)
         if width is not None and (not np.isfinite(width) or width < 0.0):
             raise ValueError("narrow_band_width must be finite and nonnegative.")
+        if enclosure is None:
+            if enclosure_geometry is not None:
+                raise ValueError(
+                    "enclosure_geometry requires an exact-SDF enclosure certificate."
+                )
+        else:
+            if not isinstance(enclosure, ExactSDFEnclosureCertificate):
+                raise TypeError("enclosure must be ExactSDFEnclosureCertificate or None.")
+            if not isinstance(enclosure_geometry, CompiledGeometry):
+                raise TypeError(
+                    "An enclosure certificate requires its exact compiled geometry owner."
+                )
+            if enclosure.field != enclosure_geometry.field_certificate:
+                raise ValueError(
+                    "The enclosure certificate field does not match its geometry owner."
+                )
+            if not bool(np.asarray(enclosure_geometry.validity().accepted)):
+                raise ValueError(
+                    "The enclosure geometry owner must have accepted validity evidence."
+                )
         object.__setattr__(self, "grid", grid)
         object.__setattr__(self, "enclosure", enclosure)
+        object.__setattr__(self, "enclosure_geometry", enclosure_geometry)
         object.__setattr__(self, "narrow_band_width", width)
         object.__setattr__(
             self,
@@ -85,6 +108,27 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
                     else {
                         "evaluation_error": enclosure.evaluation_error,
                         "lipschitz_upper_bound": enclosure.lipschitz_upper_bound,
+                        "geometry_owner": canonical_fingerprint(
+                            {
+                                "kernel_type": (
+                                    f"{type(enclosure_geometry.kernel).__module__}."
+                                    f"{type(enclosure_geometry.kernel).__qualname__}"
+                                ),
+                                "schema": [
+                                    {
+                                        "parameter_id": str(spec.parameter_id),
+                                        "shape": list(spec.shape),
+                                        "dtype": spec.dtype,
+                                        "role": spec.role,
+                                        "physical_scale": spec.physical_scale,
+                                        "bounds": list(spec.bounds),
+                                        "trainable": spec.trainable,
+                                    }
+                                    for spec in enclosure_geometry.schema.specs
+                                ],
+                                "arrays": array_tree_fingerprint(enclosure_geometry),
+                            }
+                        ),
                     },
                     "narrow_band_width": width,
                 }
@@ -98,6 +142,17 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
             raise ValueError("Geometry and voxel dimensions disagree.")
         centers = self.grid.voxel_centers()
         flat_centers = centers.reshape((-1, self.grid.dimension))
+        if self.enclosure is not None:
+            owner_matches = eqx.tree_equal(
+                self.enclosure_geometry,
+                geometry,
+                typematch=True,
+            )
+            flat_centers = eqx.error_if(
+                flat_centers,
+                ~jnp.asarray(owner_matches, dtype=jnp.bool_),
+                "SDF enclosure evidence does not belong to the sampled geometry.",
+            )
         sampled = geometry.boundary_field(flat_centers).reshape(
             (self.grid.brick_capacity, self.grid.voxels_per_brick)
         )

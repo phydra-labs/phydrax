@@ -185,6 +185,39 @@ class MonotoneZigzagIntervals(StrictModule, NonTrainableState):
         )
 
 
+def _initial_zigzag_masks(
+    ambient: CellSubcomplex,
+    initial_masks,
+    /,
+) -> list[np.ndarray]:
+    if not isinstance(ambient, CellSubcomplex):
+        raise TypeError("ambient must be a CellSubcomplex.")
+    supplied = tuple(initial_masks)
+    if len(supplied) != len(ambient.masks):
+        raise ValueError("One initial zigzag mask is required per cell degree.")
+    masks = [np.asarray(value, dtype=np.bool_).copy() for value in supplied]
+    CellSubcomplex(ambient.topology, masks)
+    for selected, allowed in zip(masks, ambient.masks, strict=True):
+        if np.any(selected & ~np.asarray(allowed, dtype=np.bool_)):
+            raise ValueError("Initial zigzag state lies outside the ambient subcomplex.")
+    return masks
+
+
+def _validate_ambient_operation(
+    ambient: CellSubcomplex,
+    operation: ZigzagCellOperation,
+    /,
+) -> None:
+    degree = operation.degree
+    cell = operation.ambient_cell
+    if degree > ambient.max_degree or cell >= ambient.masks[degree].shape[0]:
+        raise ValueError("Zigzag operation addresses a cell outside the ambient complex.")
+    if not bool(np.asarray(ambient.masks[degree])[cell]):
+        raise ValueError(
+            "Zigzag operation addresses a cell outside the ambient subcomplex."
+        )
+
+
 def compute_monotone_zigzag_intervals(
     ambient: CellSubcomplex,
     initial_masks,
@@ -201,12 +234,10 @@ def compute_monotone_zigzag_intervals(
             "Monotone interval decomposition requires an all-insertion stream; "
             "mixed insert/remove streams use compute_zigzag_topology."
         )
-    masks = [np.asarray(value, dtype=np.bool_).copy() for value in initial_masks]
-    filtration_values = [
-        np.zeros_like(np.asarray(mask), dtype=np.float64) for mask in initial_masks
-    ]
-    CellSubcomplex(ambient.topology, masks)
+    masks = _initial_zigzag_masks(ambient, initial_masks)
+    filtration_values = [np.zeros_like(mask, dtype=np.float64) for mask in masks]
     for step, operation in enumerate(values, start=1):
+        _validate_ambient_operation(ambient, operation)
         if masks[operation.degree][operation.ambient_cell]:
             raise ValueError("Monotone insertion targets an already active cell.")
         masks[operation.degree][operation.ambient_cell] = True
@@ -236,15 +267,12 @@ def compute_zigzag_topology(
     resources: TopologyResourcePolicy | None = None,
 ) -> ZigzagTopologyResult:
     """Validate an operation stream and compute exact field homology after each step."""
-    masks = [np.asarray(value, dtype=np.bool_).copy() for value in initial_masks]
+    masks = _initial_zigzag_masks(ambient, initial_masks)
     state = CellSubcomplex(ambient.topology, masks)
     states = [state]
     for operation in operations:
         degree = operation.degree
-        if degree > ambient.max_degree or operation.ambient_cell >= masks[degree].size:
-            raise ValueError(
-                "Zigzag operation addresses a cell outside the ambient complex."
-            )
+        _validate_ambient_operation(ambient, operation)
         if operation.action == "insert":
             if masks[degree][operation.ambient_cell]:
                 raise ValueError("Zigzag insertion targets an already active cell.")

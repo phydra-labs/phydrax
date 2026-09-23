@@ -22,7 +22,8 @@ transition, _ = phx.meshing.refine_triangle_mesh(
     certified.coordinate_contract,
 )
 stencil = transition.vertex_stencil
-assert stencil is not None
+if stencil is None:
+    raise RuntimeError("Triangle refinement did not provide a vertex transfer stencil")
 transferred = stencil.apply(
     mesh.vertex_global_ids, mesh.coordinates[:, 0] + mesh.coordinates[:, 1]
 )

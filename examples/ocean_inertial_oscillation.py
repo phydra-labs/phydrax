@@ -46,8 +46,10 @@ def run():
     solution = phx.solver.solve_fixed_step(problem)
     final = jax_tree_last(solution.states)
     view = ocean.state_view(final.coordinates)
+    if not bool(solution.successful):
+        raise RuntimeError("Ocean inertial-oscillation solve failed")
     return {
-        "successful": bool(solution.successful),
+        "successful": True,
         "mean_u": float(jnp.mean(view.velocity[0])),
         "mean_v": float(jnp.mean(view.velocity[1])),
         "coriolis_work": float(final.coriolis_work),

@@ -11,6 +11,7 @@ import importlib.util
 from collections.abc import Mapping
 from typing import Any
 
+import jax.numpy as jnp
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
@@ -197,6 +198,8 @@ def electronic_calculation_to_qcschema(
         raise ValueError(
             "QCSchema molecular input currently supports nonperiodic systems."
         )
+    if cell_vectors is not None:
+        raise ValueError("Finite QCSchema calculations do not accept cell_vectors.")
     coordinate = np.asarray(
         positions, dtype=np.dtype(calculation.system.coordinate_dtype)
     )
@@ -310,15 +313,20 @@ def _energy(record: Mapping[str, Any], driver: str, /) -> float:
     return float(properties["return_energy"])
 
 
-def _source_units() -> tuple[tuple[str, str], ...]:
+def _source_units(
+    calculation: ElectronicCalculationPlan, /
+) -> tuple[tuple[str, str], ...]:
     gradient = derived_unit("hartree/bohr", ((HARTREE, 1), (BOHR, -1)))
     hessian = derived_unit("hartree/bohr^2", ((HARTREE, 1), (BOHR, -2)))
-    return (
-        ("energy", HARTREE.unit_id),
-        ("gradient", gradient.unit_id),
-        ("hessian", hessian.unit_id),
-        ("length", BOHR.unit_id),
-    )
+    dipole = derived_unit("elementary-charge*bohr", ((ELEMENTARY_CHARGE, 1), (BOHR, 1)))
+    units = [("energy", HARTREE.unit_id), ("length", BOHR.unit_id)]
+    if calculation.task.requires(ElectronicProperty.FORCES):
+        units.append(("forces", gradient.unit_id))
+    if calculation.task.requires(ElectronicProperty.HESSIAN):
+        units.append(("hessian", hessian.unit_id))
+    if calculation.task.requires(ElectronicProperty.DIPOLE):
+        units.append(("dipole", dipole.unit_id))
+    return tuple(units)
 
 
 def electronic_evaluation_from_qcschema(
@@ -384,49 +392,66 @@ def electronic_evaluation_from_qcschema(
     dipole = None
     if calculation.task.requires(ElectronicProperty.DIPOLE):
         properties = record.get("properties", {})
-        if not isinstance(properties, Mapping) or "scf_dipole_moment" not in properties:
-            raise ValueError("QCSchema result omitted the requested dipole moment.")
-        dipole = np.asarray(properties["scf_dipole_moment"], dtype=np.float64).reshape(
-            (3,)
-        )
-        charge_factor = float(
-            conversion_factor(
-                ELEMENTARY_CHARGE,
-                calculation.system.units.charge_unit,
+        if success:
+            if (
+                not isinstance(properties, Mapping)
+                or "scf_dipole_moment" not in properties
+            ):
+                raise ValueError("QCSchema result omitted the requested dipole moment.")
+            dipole = np.asarray(
+                properties["scf_dipole_moment"], dtype=np.float64
+            ).reshape((3,))
+            charge_factor = float(
+                conversion_factor(
+                    ELEMENTARY_CHARGE,
+                    calculation.system.units.charge_unit,
+                )
             )
-        )
-        dipole = dipole * charge_factor * length_factor
+            dipole = dipole * charge_factor * length_factor
+        else:
+            dipole = np.full((3,), np.nan, dtype=np.float64)
     molecule = record.get("molecule", {})
     molecule_extras = molecule.get("extras", {}) if isinstance(molecule, Mapping) else {}
     extras = record.get("extras", {})
-    phydrax = (
+    molecule_identity = (
         molecule_extras.get("phydrax", {}) if isinstance(molecule_extras, Mapping) else {}
     )
-    if not phydrax and isinstance(extras, Mapping):
-        phydrax = extras.get("phydrax", {})
-    losses: tuple[AdapterLoss, ...] = ()
-    expected_ids = np.asarray(calculation.system.particle_ids)[active].tolist()
-    observed_ids = (
-        phydrax.get("stable_particle_ids") if isinstance(phydrax, Mapping) else None
+    calculation_identity = (
+        extras.get("phydrax", {}) if isinstance(extras, Mapping) else {}
     )
-    if observed_ids is None:
-        losses = (
-            AdapterLoss(
-                "extras.phydrax.stable_particle_ids",
-                "import",
-                "synthesized",
-                "QCSchema result did not retain native IDs; request order was used.",
-                changes_interpretation=False,
-            ),
+    expected_molecule_identity = {
+        "system_id": calculation.system.system_id,
+        "geometry_id": electronic_geometry_id(
+            calculation.system, positions, cell_vectors
+        ),
+        "stable_particle_ids": np.asarray(calculation.system.particle_ids)[
+            active
+        ].tolist(),
+        "state_id": calculation.state.prepared_id,
+    }
+    expected_calculation_identity = {
+        "calculation_id": calculation.calculation_id,
+        "task_id": calculation.task.task_id,
+        "model_chemistry_id": calculation.model_chemistry.model_chemistry_id,
+    }
+    if (
+        not isinstance(molecule_identity, Mapping)
+        or not isinstance(calculation_identity, Mapping)
+        or dict(molecule_identity) != expected_molecule_identity
+        or dict(calculation_identity) != expected_calculation_identity
+    ):
+        raise ValueError(
+            "QCSchema result does not preserve the exact calculation, task, model, system, state, geometry, and particle identities."
         )
-    elif list(observed_ids) != expected_ids:
-        raise ValueError("QCSchema result changed native particle order.")
+    losses: tuple[AdapterLoss, ...] = ()
     provenance = record.get("provenance", {})
     provenance_id = canonical_fingerprint(
         {"kind": "qcschema-result-provenance", "content": provenance}
     )
     convergence = ElectronicConvergenceEvidence(
         success,
+        energy_residual=0.0 if success else jnp.nan,
+        density_residual=0.0 if success else jnp.nan,
         message="qcschema-success" if success else "qcschema-failure",
     )
     work = ElectronicWorkEvidence(
@@ -451,7 +476,7 @@ def electronic_evaluation_from_qcschema(
             if success
             else ElectronicCalculationStatus.BACKEND_FAILED
         ),
-        source_unit_ids=_source_units(),
+        source_unit_ids=_source_units(calculation),
         artifact_ids=(provenance_id,),
     )
     source_id = canonical_fingerprint(

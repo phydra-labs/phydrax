@@ -310,6 +310,11 @@ def project_control_halfspaces(
 ) -> SafetyFilterResult:
     """Dykstra projection onto C u <= d for CBF/CLF control constraints."""
 
+    if isinstance(iterations, bool) or not isinstance(iterations, (int, np.integer)):
+        raise TypeError("iterations must be an integer.")
+    iteration_count = int(iterations)
+    if iteration_count < 0:
+        raise ValueError("iterations must be nonnegative.")
     nominal = jnp.asarray(nominal_control)
     matrix = jnp.asarray(coefficients)
     right = jnp.asarray(bounds)
@@ -321,7 +326,7 @@ def project_control_halfspaces(
         raise ValueError("Safety halfspaces do not match the control dimension.")
     corrections = jnp.zeros_like(matrix)
     control = nominal
-    for _ in range(int(iterations)):
+    for _ in range(iteration_count):
         for index in range(matrix.shape[0]):
             normal = matrix[index]
             shifted = control + corrections[index]
@@ -337,7 +342,7 @@ def project_control_halfspaces(
     return SafetyFilterResult(
         control,
         maximum,
-        int(iterations),
+        iteration_count,
         jnp.isfinite(maximum) & (maximum <= 1.0e-8),
     )
 

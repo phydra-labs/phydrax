@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from enum import IntEnum
 from math import prod
+from numbers import Integral
 
 import equinox as eqx
 import jax
@@ -43,7 +45,16 @@ class TensorCompletionPlan(StrictModule):
         regularization: float,
         max_local_unknowns: int,
     ):
-        modes = tuple(mode_sizes)
+        raw_modes = tuple(mode_sizes)
+        integer_fields = raw_modes + (max_rank, sweeps, max_local_unknowns)
+        if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for value in integer_fields
+        ):
+            raise TypeError(
+                "Completion dimensions, ranks, sweeps, and budgets must be integers."
+            )
+        modes = tuple(int(value) for value in raw_modes)
         rank = int(max_rank)
         sweep_count = int(sweeps)
         tolerance = float(relative_tolerance)
@@ -54,7 +65,9 @@ class TensorCompletionPlan(StrictModule):
         if (
             rank <= 0
             or sweep_count <= 0
+            or not np.isfinite(tolerance)
             or tolerance < 0.0
+            or not np.isfinite(ridge)
             or ridge <= 0.0
             or local_limit <= 0
         ):
@@ -112,23 +125,32 @@ class TensorCompletionEvidence(StrictModule):
         self.estimator_is_guarantee = False
 
 
+class TensorCompletionStatus(IntEnum):
+    CONVERGED = 0
+    ITERATION_BUDGET_EXHAUSTED = 1
+
+
 class TensorCompletionResult(StrictModule):
     tensor: TensorTrain
     evidence: TensorCompletionEvidence
-    converged: bool = eqx.field(static=True)
-    status: str = eqx.field(static=True)
+    converged: Array
+    status: Array
 
     def __init__(
         self,
         tensor: TensorTrain,
         evidence: TensorCompletionEvidence,
-        converged: bool,
+        converged: Array,
         /,
     ):
         self.tensor = tensor
         self.evidence = evidence
-        self.converged = bool(converged)
-        self.status = "converged" if self.converged else "iteration_budget_exhausted"
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
+        self.status = jnp.where(
+            self.converged,
+            int(TensorCompletionStatus.CONVERGED),
+            int(TensorCompletionStatus.ITERATION_BUDGET_EXHAUSTED),
+        ).astype(jnp.int32)
 
 
 def _validate_samples(
@@ -139,22 +161,33 @@ def _validate_samples(
     label: str,
     /,
 ) -> tuple[Array, Array, Array]:
-    points = jnp.asarray(indices, dtype=jnp.int32)
+    raw_points = jnp.asarray(indices)
+    if not jnp.issubdtype(raw_points.dtype, jnp.integer):
+        raise TypeError(f"{label} indices must have an integer dtype.")
+    points = raw_points
     targets = jnp.asarray(values)
     importance = jnp.asarray(weights)
     if points.ndim != 2 or points.shape[1] != len(mode_sizes) or points.shape[0] == 0:
         raise ValueError(f"{label} indices must be a nonempty multi-index matrix.")
     if targets.shape != (points.shape[0],) or importance.shape != targets.shape:
         raise ValueError(f"{label} values and weights must match its index count.")
-    host_points = np.asarray(points)
-    if any(
-        np.any(host_points[:, axis] < 0) or np.any(host_points[:, axis] >= size)
-        for axis, size in enumerate(mode_sizes)
-    ):
-        raise IndexError(f"{label} contains an index outside the tensor shape.")
-    if bool(np.any(np.asarray(importance) <= 0)):
-        raise ValueError(f"{label} weights must be strictly positive.")
-    return points, targets, importance
+    limits = jnp.asarray(mode_sizes, dtype=points.dtype)
+    points = eqx.error_if(
+        points,
+        jnp.any((points < 0) | (points >= limits)),
+        f"{label} contains an index outside the tensor shape.",
+    )
+    targets = eqx.error_if(
+        targets,
+        jnp.any(~jnp.isfinite(targets)),
+        f"{label} values must be finite.",
+    )
+    importance = eqx.error_if(
+        importance,
+        jnp.any(~jnp.isfinite(importance)) | jnp.any(importance <= 0),
+        f"{label} weights must be finite and strictly positive.",
+    )
+    return points.astype(jnp.int32), targets, importance
 
 
 def _deterministic_initial(
@@ -261,11 +294,12 @@ def weighted_tensor_completion(
     holdout_errors: list[Array] = []
     for _ in range(plan.sweeps):
         for axis in range(tensor.order):
-            frame = _sample_core_frame(tensor, indices, axis)
-            if frame.shape[1] > plan.max_local_unknowns:
+            unknowns = prod(tensor.cores[axis].shape)
+            if unknowns > plan.max_local_unknowns:
                 raise ValueError(
-                    f"Completion core needs {frame.shape[1]} unknowns, exceeding budget {plan.max_local_unknowns}."
+                    f"Completion core needs {unknowns} unknowns, exceeding budget {plan.max_local_unknowns}."
                 )
+            frame = _sample_core_frame(tensor, indices, axis)
             solution = regularized_least_squares(
                 square_root_weights[:, None] * frame,
                 square_root_weights * values,
@@ -275,6 +309,11 @@ def weighted_tensor_completion(
             cores[axis] = solution.reshape(cores[axis].shape)
             tensor = TensorTrain(tuple(cores))
         for axis in range(tensor.order - 1, -1, -1):
+            unknowns = prod(tensor.cores[axis].shape)
+            if unknowns > plan.max_local_unknowns:
+                raise ValueError(
+                    f"Completion core needs {unknowns} unknowns, exceeding budget {plan.max_local_unknowns}."
+                )
             frame = _sample_core_frame(tensor, indices, axis)
             solution = regularized_least_squares(
                 square_root_weights[:, None] * frame,
@@ -303,13 +342,14 @@ def weighted_tensor_completion(
         observed_count=indices.shape[0],
         holdout_count=held_indices.shape[0],
     )
-    converged = bool(np.asarray(relative_estimator <= plan.relative_tolerance))
+    converged = relative_estimator <= plan.relative_tolerance
     return TensorCompletionResult(tensor, evidence, converged)
 
 
 __all__ = [
     "TensorCompletionEvidence",
     "TensorCompletionPlan",
+    "TensorCompletionStatus",
     "TensorCompletionResult",
     "weighted_tensor_completion",
 ]

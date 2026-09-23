@@ -211,6 +211,25 @@ def _validate_contract_record(record: Mapping[str, Any], /) -> None:
         if not isinstance(payment, Mapping):
             raise TypeError(f"{name} must be a mapping.")
         _validate_payment_record(payment, name)
+    first = record["exchanged_currency_1"]
+    second = record["exchanged_currency_2"]
+    if first["currency"] == second["currency"]:
+        raise ValueError("fx-forward currencies must differ.")
+    for payment_name, payment in (
+        ("exchanged_currency_1", first),
+        ("exchanged_currency_2", second),
+    ):
+        if payment["payer_party_id"] == payment["receiver_party_id"]:
+            raise ValueError(f"{payment_name} payer and receiver must differ.")
+    if (
+        first["payer_party_id"] != second["receiver_party_id"]
+        or first["receiver_party_id"] != second["payer_party_id"]
+    ):
+        raise ValueError("fx-forward payment directions must be complementary.")
+    trade_date = date.fromisoformat(record["trade_date"])
+    value_date = date.fromisoformat(record["value_date"])
+    if value_date < trade_date:
+        raise ValueError("fx-forward value_date cannot precede trade_date.")
 
 
 class FpMLImportResult(StrictModule, NonTrainableState):
@@ -444,6 +463,7 @@ def import_fpml_contract(
                 "trade/fxSingleLeg/valueDate",
             ),
         }
+        _validate_contract_record(record)
     except ValueError as error:
         return _refusal(source_id, str(error))
     return FpMLImportResult(

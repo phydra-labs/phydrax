@@ -57,6 +57,8 @@ class MPMCheckpointPlan(StrictModule, NonTrainableState):
     template_state: MPMRuntimeState
     checkpoint_id: str = eqx.field(static=True)
     leaf_names: tuple[str, ...] = eqx.field(static=True)
+    leaf_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    leaf_dtypes: tuple[str, ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -72,16 +74,20 @@ class MPMCheckpointPlan(StrictModule, NonTrainableState):
         names = tuple(_leaf_name(path, index) for index, (path, _) in enumerate(paths))
         if len(set(names)) != len(names):
             raise ValueError("MPM checkpoint leaf names are not unique.")
+        shapes = tuple(tuple(np.asarray(leaf).shape) for _, leaf in paths)
+        dtypes = tuple(np.asarray(leaf).dtype.str for _, leaf in paths)
         self.compiled = compiled
         self.template_state = template_state
         self.leaf_names = names
+        self.leaf_shapes = shapes
+        self.leaf_dtypes = dtypes
         self.checkpoint_id = canonical_fingerprint(
             {
                 "kind": "mpm-checkpoint-plan",
                 "compilation": compiled.compilation_id,
                 "leaf_names": names,
-                "leaf_shapes": [list(np.asarray(leaf).shape) for _, leaf in paths],
-                "leaf_dtypes": [np.asarray(leaf).dtype.str for _, leaf in paths],
+                "leaf_shapes": [list(shape) for shape in shapes],
+                "leaf_dtypes": dtypes,
             }
         )
 
@@ -90,9 +96,12 @@ class MPMCheckpointPlan(StrictModule, NonTrainableState):
         names = tuple(_leaf_name(path, index) for index, (path, _) in enumerate(paths))
         if names != self.leaf_names:
             raise ValueError("MPM checkpoint runtime tree layout changed.")
-        return {
-            name: np.asarray(leaf) for name, (_, leaf) in zip(names, paths, strict=True)
-        }
+        arrays = tuple(np.asarray(leaf) for _, leaf in paths)
+        signatures = tuple((tuple(array.shape), array.dtype.str) for array in arrays)
+        expected = tuple(zip(self.leaf_shapes, self.leaf_dtypes, strict=True))
+        if signatures != expected:
+            raise ValueError("MPM checkpoint runtime leaf shape or dtype changed.")
+        return dict(zip(names, arrays, strict=True))
 
     def write(self, path: str | Path, state: MPMRuntimeState, /, *, generation: int = 0):
         if not isinstance(state, MPMRuntimeState):

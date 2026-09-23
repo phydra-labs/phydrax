@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from enum import IntEnum
 from math import prod
+from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -48,7 +50,21 @@ class BlockTensorTrainEigenPlan(StrictModule):
         inverse_shift: float,
         max_dense_entries: int,
     ):
-        modes = tuple(mode_sizes)
+        raw_modes = tuple(mode_sizes)
+        integer_fields = raw_modes + (
+            block_size,
+            iterations,
+            max_rank,
+            max_dense_entries,
+        )
+        if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for value in integer_fields
+        ):
+            raise TypeError(
+                "Block TT eigen dimensions, ranks, counts, and budgets must be integers."
+            )
+        modes = tuple(int(value) for value in raw_modes)
         block = int(block_size)
         iteration_count = int(iterations)
         rank = int(max_rank)
@@ -64,9 +80,15 @@ class BlockTensorTrainEigenPlan(StrictModule):
             raise ValueError(
                 "Block size, iterations, and rank must be positive and feasible."
             )
-        if min(compression_tolerance, residual_tolerance, orthogonality, shift) < 0.0:
+        numeric_policy = (
+            compression_tolerance,
+            residual_tolerance,
+            orthogonality,
+            shift,
+        )
+        if any(not np.isfinite(value) or value < 0.0 for value in numeric_policy):
             raise ValueError(
-                "Block TT eigen tolerances and inverse shift must be non-negative."
+                "Block TT eigen tolerances and inverse shift must be finite and non-negative."
             )
         if dense_limit < dimension**2:
             raise ValueError("Block TT eigen dense resource budget is infeasible.")
@@ -135,19 +157,24 @@ class BlockTensorTrainEigenEvidence(StrictModule):
         self.iteration_count = int(iteration_count)
 
 
+class BlockTensorTrainEigenStatus(IntEnum):
+    CONVERGED = 0
+    ITERATION_BUDGET_EXHAUSTED = 1
+
+
 class BlockTensorTrainEigenResult(StrictModule):
     eigenvalues: Array
     eigenvectors: tuple[TensorTrain, ...]
     evidence: BlockTensorTrainEigenEvidence
-    converged: bool = eqx.field(static=True)
-    status: str = eqx.field(static=True)
+    converged: Array
+    status: Array
 
     def __init__(
         self,
         eigenvalues: Array,
         eigenvectors: Sequence[TensorTrain],
         evidence: BlockTensorTrainEigenEvidence,
-        converged: bool,
+        converged: Array,
         /,
     ):
         values = jnp.asarray(eigenvalues)
@@ -157,8 +184,12 @@ class BlockTensorTrainEigenResult(StrictModule):
         self.eigenvalues = values
         self.eigenvectors = vectors
         self.evidence = evidence
-        self.converged = bool(converged)
-        self.status = "converged" if self.converged else "iteration_budget_exhausted"
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
+        self.status = jnp.where(
+            self.converged,
+            int(BlockTensorTrainEigenStatus.CONVERGED),
+            int(BlockTensorTrainEigenStatus.ITERATION_BUDGET_EXHAUSTED),
+        ).astype(jnp.int32)
 
 
 def smallest_eigenpairs(
@@ -220,15 +251,16 @@ def smallest_eigenpairs(
         jnp.stack(bounds),
         iteration_count=plan.iterations,
     )
-    converged = bool(
-        np.asarray(jnp.max(relative_residuals) <= plan.residual_relative_tolerance)
-    ) and bool(np.asarray(orthogonality_error <= plan.orthogonality_tolerance))
+    converged = (jnp.max(relative_residuals) <= plan.residual_relative_tolerance) & (
+        orthogonality_error <= plan.orthogonality_tolerance
+    )
     return BlockTensorTrainEigenResult(values, tuple(trains), evidence, converged)
 
 
 __all__ = [
     "BlockTensorTrainEigenEvidence",
     "BlockTensorTrainEigenPlan",
+    "BlockTensorTrainEigenStatus",
     "BlockTensorTrainEigenResult",
     "smallest_eigenpairs",
 ]

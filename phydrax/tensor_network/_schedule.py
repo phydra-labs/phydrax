@@ -99,9 +99,11 @@ def build_contraction_schedule(
     if not isinstance(structure, ContractionStructure):
         raise TypeError("structure must be ContractionStructure.")
     path_ = tuple(tuple(step) for step in path)
-    if any(not step or len(set(step)) != len(step) or min(step) < 0 for step in path_):
+    if any(
+        len(step) < 2 or len(set(step)) != len(step) or min(step) < 0 for step in path_
+    ):
         raise ValueError(
-            "Every contraction path step needs distinct non-negative indices."
+            "Every contraction path step needs at least two distinct non-negative indices."
         )
     dimensions = dict(zip(structure.labels, structure.dimensions, strict=True))
     symbols = _symbols(structure)

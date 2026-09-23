@@ -26,6 +26,7 @@ from phydrax.statistical_dynamics._interactions import InteractionContinuationSc
 from phydrax.statistical_dynamics._plan import (
     execute_interaction_continuation,
     QuadraticDynamics,
+    StatisticalDynamicsCheckpoint,
     StatisticalDynamicsPlan,
 )
 
@@ -138,6 +139,29 @@ def test_psd_hermitian_and_rank_gates_are_fail_closed_without_repair():
         factorize_cumulant(layout, full, RankAdaptationPolicy(0, 2))
 
 
+def test_cumulant_gates_reject_nonfinite_tolerances():
+    layout, _ = _coupled_plan()
+    state = DenseCumulantState(
+        jnp.zeros(1),
+        -jnp.eye(1),
+        layout_id=layout.layout_id,
+    )
+    for tolerance in (jnp.inf, jnp.nan):
+        with pytest.raises(ValueError, match="tolerances"):
+            require_valid_state(
+                layout,
+                state,
+                hermitian_tolerance=tolerance,
+                psd_tolerance=tolerance,
+            )
+        with pytest.raises(ValueError, match="finite and non-negative"):
+            ForcingCovariance(
+                -jnp.eye(1),
+                hermitian_tolerance=tolerance,
+                psd_tolerance=tolerance,
+            )
+
+
 def test_dense_and_factor_paths_match_before_explicit_rank_adaptation():
     layout, prepared = _coupled_plan()
     dense = DenseCumulantState(
@@ -216,7 +240,6 @@ def test_continuation_restart_and_distributed_topology_relation():
     np.testing.assert_allclose(restarted.covariance, continued.state.covariance)
     np.testing.assert_allclose(time, 0.04)
     assert int(step) == 4
-
     source = DistributedStatisticalLayout(
         DistributedBatchLayout(8, 2, item_bytes=16, maximum_local_bytes=64),
         DistributedCovarianceLayout(4, 2, maximum_local_bytes=64),
@@ -235,3 +258,42 @@ def test_continuation_restart_and_distributed_topology_relation():
 
     with pytest.raises(MemoryError, match="maximum_local_bytes"):
         DistributedCovarianceLayout(100, 1, maximum_local_bytes=100)
+
+
+def test_zero_step_execution_validates_initial_state_and_checkpoint_identity():
+    layout, prepared = _coupled_plan()
+    invalid = DenseCumulantState(
+        jnp.zeros(1),
+        -jnp.eye(1),
+        layout_id=layout.layout_id,
+    )
+    with pytest.raises(ValueError, match="positive-semidefinite"):
+        prepared.execute(invalid, 0)
+    valid = DenseCumulantState(
+        jnp.zeros(1),
+        jnp.eye(1),
+        layout_id=layout.layout_id,
+    )
+    with pytest.raises(ValueError, match="finite scalar"):
+        prepared.execute(valid, 0, initial_time=jnp.asarray([0.0]))
+
+    checkpoint = prepared.checkpoint(valid, 0.0, 0)
+    forged = StatisticalDynamicsCheckpoint(
+        state=checkpoint.state,
+        time=checkpoint.time,
+        step=checkpoint.step,
+        prepared_id=checkpoint.prepared_id,
+        checkpoint_id="forged-checkpoint",
+    )
+    with pytest.raises(ValueError, match="content identity"):
+        prepared.restart(forged)
+
+    invalid_time = StatisticalDynamicsCheckpoint(
+        state=checkpoint.state,
+        time=jnp.asarray([0.0]),
+        step=checkpoint.step,
+        prepared_id=checkpoint.prepared_id,
+        checkpoint_id=checkpoint.checkpoint_id,
+    )
+    with pytest.raises(ValueError, match="time and step"):
+        prepared.restart(invalid_time)

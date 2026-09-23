@@ -15,7 +15,7 @@ import phydrax.ein as ein
 
 from ..discretization.spectral import SphericalSpectralDiscretization
 from ..metrix import SphereLaplacianLevels
-from ._base import AbstractPositiveDefiniteKernel
+from ._base import _as_real_array, AbstractPositiveDefiniteKernel
 from ._spectral import AbstractSpectralMultiplier
 
 
@@ -58,7 +58,7 @@ def _sphere_points(
     tolerance: float,
     /,
 ) -> Array:
-    array = jnp.asarray(points, dtype=jnp.float64)
+    array = _as_real_array(points, name="Sphere points")
     if array.ndim == 1:
         array = array[None, :]
     if array.ndim != 2 or array.shape[1] != ambient_dimension:
@@ -257,7 +257,7 @@ def _real_matrix_points(
     *,
     special: bool,
 ) -> Array:
-    array = jnp.asarray(points, dtype=jnp.float64)
+    array = _as_real_array(points, name="Real matrix points")
     if array.shape == (rows, columns):
         array = array[None, :, :]
     elif array.ndim == 1 and array.size == rows * columns:

@@ -33,6 +33,7 @@ from ...units import (
 )
 from .._kernel import ElectronicKernelEvaluation
 from ._hartree_fock import _symmetric_eigh, SCFState
+from ._mean_field import mean_field_owner_id
 
 
 class MolecularIntegrationGridPlan(StrictModule, NonTrainableState):
@@ -330,10 +331,13 @@ class NativeLDAPlan(StrictModule, NonTrainableState):
             residual,
             completed,
             converged,
+            mean_field_owner_id(self.plan_id, positions),
         )
 
     def dipole_atomic_units(self, positions_bohr: ArrayLike, state: SCFState, /) -> Array:
         positions = jnp.asarray(positions_bohr)
+        if state.owner_id != mean_field_owner_id(self.plan_id, positions):
+            raise ValueError("Dipole state belongs to another KS plan or geometry.")
         charges = jnp.asarray(self.system.atomic_numbers, dtype=positions.dtype)
         integrals = molecular_integrals(self.basis, positions, charges)
         return -contract("ab,xab->x", state.density, integrals.dipole) + contract(

@@ -116,15 +116,20 @@ class CPICFracturePlan(StrictModule, NonTrainableState):
         compatible = routes.stencil.valid & (
             (routed_tags < 0) | (routed_tags == particles[:, None])
         )
-        valid_tags = jnp.all(
-            (particles >= 0) & (particles < self.maximum_tags)
-        ) & jnp.all((nodes >= -1) & (nodes < self.maximum_tags))
+        particle_tag_valid = jnp.all(
+            (~routes.source_active_mask)
+            | ((particles >= 0) & (particles < self.maximum_tags))
+        )
+        valid_tags = particle_tag_valid & jnp.all(
+            (nodes >= -1) & (nodes < self.maximum_tags)
+        )
         return CPICCompatibilityState(
             compatible,
             particles,
             nodes,
             jnp.asarray(topology_generation, dtype=jnp.int32),
-            valid_tags & jnp.all(jnp.any(compatible, axis=1)),
+            valid_tags
+            & jnp.all((~routes.source_active_mask) | jnp.any(compatible, axis=1)),
         )
 
     def route_velocities(

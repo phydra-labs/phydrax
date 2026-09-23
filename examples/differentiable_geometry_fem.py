@@ -58,7 +58,10 @@ def run():
 
     def physical_area(radius):
         design = geometry.state.replace_at(radius_index, radius)
-        realization = motion.realize(design)
+        realization = motion.realize(
+            design,
+            numeric_version="radius-design-evaluation",
+        )
         blocks = discretization.evaluate_geometry(
             "u",
             realization.runtime.coordinates,
@@ -66,10 +69,16 @@ def run():
         return sum(jnp.sum(block.physical_weights) for block in blocks)
 
     design = geometry.state.replace_at(radius_index, jnp.asarray(1.1))
-    realization = eqx.filter_jit(motion.realize)(design)
+    realization = eqx.filter_jit(motion.realize)(
+        design,
+        numeric_version="accepted-radius-1.1",
+    )
     area = physical_area(jnp.asarray(1.1))
     area_derivative = jax.grad(physical_area)(jnp.asarray(1.1))
-    expired = motion.realize(geometry.state.replace_at(radius_index, jnp.asarray(1.8)))
+    expired = motion.realize(
+        geometry.state.replace_at(radius_index, jnp.asarray(1.8)),
+        numeric_version="rejected-radius-1.8",
+    )
 
     sphere = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
@@ -87,9 +96,13 @@ def run():
         source_id="display-sphere-surface",
     )
     surface = surface_plan.realize(sphere.state)
+    if not bool(realization.accepted & surface.accepted):
+        raise RuntimeError("Accepted mesh or surface realization failed")
+    if bool(expired.accepted) or not bool(expired.refresh_required):
+        raise RuntimeError("Invalid mesh trial did not preserve rejection evidence")
 
     return {
-        "accepted": bool(realization.accepted),
+        "accepted": True,
         "topology_id": realization.evidence.topology_id,
         "geometry_layout_id": realization.evidence.geometry_layout_id,
         "area": float(area),
@@ -97,9 +110,9 @@ def run():
         "minimum_relative_jacobian": float(
             realization.evidence.geometry.minimum_relative_jacobian
         ),
-        "invalid_trial_accepted": bool(expired.accepted),
-        "invalid_trial_refresh_required": bool(expired.refresh_required),
-        "surface_accepted": bool(surface.accepted),
+        "invalid_trial_accepted": False,
+        "invalid_trial_refresh_required": True,
+        "surface_accepted": True,
         "surface_topology_id": surface.evidence.topology_id,
         "surface_vertices": surface.vertices.shape[0],
         "surface_faces": surface.faces.shape[0],

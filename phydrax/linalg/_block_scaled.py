@@ -38,12 +38,16 @@ def contract_block_scaled(
         raise TypeError(
             "Block-scaled contraction compute dtype must be float32 or wider."
         )
-    decoded = tuple(
-        dequantize_mx(value, dtype=dtype)
-        if isinstance(value, MicroscaledArray)
-        else jnp.asarray(value, dtype=dtype)
-        for value in operands
-    )
+    decoded_operands = []
+    for value in operands:
+        if isinstance(value, MicroscaledArray):
+            decoded_operands.append(dequantize_mx(value, dtype=dtype))
+            continue
+        array = jnp.asarray(value)
+        if jnp.issubdtype(array.dtype, jnp.complexfloating):
+            raise TypeError("Block-scaled contraction operands must be real.")
+        decoded_operands.append(array.astype(dtype))
+    decoded = tuple(decoded_operands)
     return contract(subscripts, *decoded, backend="jax").astype(dtype)
 
 

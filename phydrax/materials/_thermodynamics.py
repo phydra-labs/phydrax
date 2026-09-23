@@ -4,6 +4,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
@@ -18,18 +19,39 @@ class EquilibriumProblem:
 
     @classmethod
     def create(cls, components, phases, temperature_k, pressure_pa, composition):
-        value = cls(
-            tuple(components),
-            tuple(phases),
-            jnp.asarray(temperature_k),
-            jnp.asarray(pressure_pa),
-            jnp.asarray(composition),
-        )
-        if value.composition.shape[-1] != len(value.component_names) or not bool(
-            jnp.allclose(jnp.sum(value.composition, axis=-1), 1)
+        component_values = tuple(components)
+        phase_values = tuple(phases)
+        if (
+            not component_values
+            or not phase_values
+            or any(not isinstance(value, str) or not value for value in component_values)
+            or any(not isinstance(value, str) or not value for value in phase_values)
+            or len(set(component_values)) != len(component_values)
+            or len(set(phase_values)) != len(phase_values)
         ):
-            raise ValueError("Equilibrium composition must align and normalize.")
-        return value
+            raise ValueError(
+                "Equilibrium component and phase identities must be unique and nonempty."
+            )
+        temperature = jnp.asarray(temperature_k)
+        pressure = jnp.asarray(pressure_pa)
+        composition_ = jnp.asarray(composition)
+        if composition_.ndim < 1 or composition_.shape[-1] != len(component_values):
+            raise ValueError("Equilibrium composition must align with components.")
+        composition_ = eqx.error_if(
+            composition_,
+            jnp.any(~jnp.isfinite(composition_) | (composition_ < 0))
+            | jnp.any(~jnp.isfinite(temperature) | (temperature <= 0))
+            | jnp.any(~jnp.isfinite(pressure) | (pressure <= 0))
+            | jnp.any(~jnp.isclose(jnp.sum(composition_, axis=-1), 1.0)),
+            "Equilibrium temperature/pressure/composition are outside physical bounds.",
+        )
+        return cls(
+            component_values,
+            phase_values,
+            temperature,
+            pressure,
+            composition_,
+        )
 
 
 @dataclass(frozen=True, slots=True)

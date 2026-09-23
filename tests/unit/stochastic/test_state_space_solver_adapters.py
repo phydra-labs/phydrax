@@ -1,4 +1,5 @@
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -13,6 +14,24 @@ class _AdditiveFieldOperator(eqx.Module):
             + batch.input("driver").values
             + batch.input("duration").values * batch.input("forcing").values
         )
+
+
+class _ScalarPathwiseTransition(phx.stochastic.AbstractPathwiseTransition):
+    state_shape: tuple[int, ...] = eqx.field(static=True)
+    driver_shape: tuple[int, ...] = eqx.field(static=True)
+    process_id: str = eqx.field(static=True)
+
+    def __init__(self):
+        self.state_shape = ()
+        self.driver_shape = ()
+        self.process_id = "scalar-pathwise"
+
+    def pathwise_transition(self, state, /, *, t0, t1, driver_increment):
+        del t0, t1
+        return state + driver_increment
+
+    def combine_driver_segments(self, first, second, /):
+        return first + second
 
 
 def test_differential_transition_adapts_ode_and_sde_solvers():
@@ -46,6 +65,17 @@ def test_differential_transition_adapts_ode_and_sde_solvers():
     assert jnp.allclose(ode_sample.values, jnp.exp(1.0), rtol=1e-5)
     assert first.valid
     assert jnp.array_equal(first.values, replay.values)
+    traced = jax.jit(
+        lambda start, end: ode.sample(
+            jr.key(10),
+            jnp.asarray([1.0]),
+            start,
+            end,
+            context,
+        )
+    )(jnp.asarray(0.0), jnp.asarray(1.0))
+    assert traced.valid
+    assert jnp.allclose(traced.values, jnp.exp(1.0), rtol=1e-5)
 
 
 def test_jump_and_hybrid_transition_adapters_preserve_solver_status():
@@ -73,7 +103,68 @@ def test_jump_and_hybrid_transition_adapters_preserve_solver_status():
     assert hybrid_sample.valid
     assert jump_sample.status == phx.stochastic.JUMP_SUCCESS
     assert hybrid_sample.status == phx.stochastic.JUMP_SUCCESS
+    traced_jump = jax.jit(
+        lambda start, end: jump.sample(
+            jr.key(20),
+            jnp.asarray([0.0]),
+            start,
+            end,
+            context,
+        )
+    )(jnp.asarray(0.0), jnp.asarray(1.0))
+    traced_hybrid = jax.jit(
+        lambda start, end: hybrid.sample(
+            jr.key(21),
+            jnp.asarray([0.0]),
+            start,
+            end,
+            context,
+        )
+    )(jnp.asarray(0.0), jnp.asarray(1.0))
+    assert traced_jump.status == phx.stochastic.JUMP_SUCCESS
+    assert traced_hybrid.status == phx.stochastic.JUMP_SUCCESS
     assert hybrid_sample.values[0] >= 1.0
+
+
+def test_scalar_transition_batches_keep_per_member_validity():
+    transition = phx.stochastic.PathwiseTransitionKernel(
+        _ScalarPathwiseTransition(),
+        lambda _key, _t0, _t1, _context: jnp.asarray([1.0, 1.0, 1.0]),
+    )
+    sample = transition.sample(
+        jr.key(30),
+        jnp.asarray([0.0, jnp.nan, 2.0]),
+        0.0,
+        1.0,
+        phx.stochastic.StateSpaceStepContext.empty(),
+    )
+
+    assert sample.values.shape == (3,)
+    assert jnp.array_equal(sample.valid, jnp.asarray([True, False, True]))
+    assert jnp.array_equal(sample.status, jnp.asarray([0, 1, 0]))
+
+    scalar_process = phx.stochastic.JumpProcess(
+        lambda _time, state, _context: jnp.asarray([jnp.where(state < 2, 1.0, 0.0)]),
+        lambda state, _channel, _mark, _context: jnp.minimum(state + 1, 2),
+        state_shape=(),
+        num_channels=1,
+        process_id="scalar-finite-birth",
+    )
+    scalar_transition = phx.stochastic.FiniteStateTransitionKernel(
+        phx.solver.finite_state_generator(
+            scalar_process,
+            jnp.asarray([0, 1, 2]),
+        )
+    )
+    scalar_sample = scalar_transition.sample(
+        jr.key(31),
+        jnp.asarray([0, 1]),
+        0.0,
+        1.0,
+        phx.stochastic.StateSpaceStepContext.empty(),
+    )
+    assert scalar_sample.values.shape == (2,)
+    assert scalar_sample.valid.shape == (2,)
 
 
 def test_finite_state_transition_has_exact_normalized_mass_and_filters():

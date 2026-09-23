@@ -124,7 +124,10 @@ def test_lbm_iree_forward_and_ordered_vjp_execute_with_named_outputs(tmp_path):
         mode="forward-vjp",
     )
 
-    forward = load_iree(bundle.forward.path)
+    forward = load_iree(
+        bundle.forward.path,
+        trusted_module_sha256=bundle.forward.manifest.module_sha256,
+    )
     forward_output = forward(initial, coefficient)
     assert not isinstance(forward_output, tuple)
     assert bundle.forward.manifest.output_names == ("final_populations",)
@@ -133,7 +136,10 @@ def test_lbm_iree_forward_and_ordered_vjp_execute_with_named_outputs(tmp_path):
         "cotangent_populations",
         "cotangent_coefficient",
     )
-    vjp = load_iree(bundle.vjp.path)
+    vjp = load_iree(
+        bundle.vjp.path,
+        trusted_module_sha256=bundle.vjp.manifest.module_sha256,
+    )
     cotangents = vjp(
         *bundle.contract.pack_vjp_inputs((initial, coefficient), jnp.ones_like(initial))
     )

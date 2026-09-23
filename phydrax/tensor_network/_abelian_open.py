@@ -9,6 +9,7 @@ from itertools import pairwise
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._array_archive import array_collection_digest
@@ -83,6 +84,8 @@ class AbelianKrausOperator(StrictModule):
 class ChargeCovariantKrausMap(StrictModule):
     operators: tuple[AbelianKrausOperator, ...]
     completeness_residual: Array
+    completeness_tolerance: float = eqx.field(static=True)
+    trace_preserving_required: bool = eqx.field(static=True)
     map_id: str = eqx.field(static=True)
 
     def __init__(
@@ -93,6 +96,9 @@ class ChargeCovariantKrausMap(StrictModule):
         completeness_tolerance: float = 1e-10,
         require_trace_preserving: bool = True,
     ):
+        tolerance = float(completeness_tolerance)
+        if not np.isfinite(tolerance) or tolerance < 0.0:
+            raise ValueError("completeness_tolerance must be finite and non-negative.")
         values = tuple(operators)
         if not values or any(
             not isinstance(value, AbelianKrausOperator) for value in values
@@ -121,7 +127,7 @@ class ChargeCovariantKrausMap(StrictModule):
             first = values[0]
             checked = eqx.error_if(
                 first.blocks[0],
-                residual > float(completeness_tolerance),
+                residual > tolerance,
                 "Charge-covariant Kraus map is not trace preserving.",
             )
             values = (
@@ -135,11 +141,14 @@ class ChargeCovariantKrausMap(StrictModule):
             ) + values[1:]
         self.operators = values
         self.completeness_residual = residual
+        self.completeness_tolerance = tolerance
+        self.trace_preserving_required = bool(require_trace_preserving)
         self.map_id = canonical_fingerprint(
             {
                 "kind": "charge-covariant-kraus-map",
                 "operators": tuple(value.operator_id for value in values),
                 "trace_preserving": bool(require_trace_preserving),
+                "completeness_tolerance": tolerance,
             }
         )
 
@@ -185,12 +194,13 @@ class AbelianLPDO(StrictModule):
         self.physical_leg = physical_leg
         self.purification_capacities = capacities
         self.factors = values
+        arrays = {f"factor/{index:06d}": value for index, value in enumerate(values)}
         self.lpdo_id = canonical_fingerprint(
             {
                 "kind": "abelian-lpdo",
                 "physical_leg": physical_leg.allocation_id,
                 "purification_capacities": capacities,
-                "dtypes": tuple(str(value.dtype) for value in values),
+                "values": array_collection_digest(arrays),
             }
         )
 
@@ -209,6 +219,8 @@ class AbelianOpenEvolutionEvidence(StrictModule):
     per_sector_retained_ranks: Array
     undeclared_charge_residual: Array
     valid: Array
+    trace_tolerance: float = eqx.field(static=True)
+    charge_tolerance: float = eqx.field(static=True)
     route_id: str = eqx.field(static=True)
 
 
@@ -269,13 +281,25 @@ def apply_charge_covariant_kraus(
     )
     input_trace, output_trace = state.trace(), result.trace()
     trace_residual = jnp.abs(output_trace - (1.0 if normalize else input_trace))
+    trace_tolerance = channel.completeness_tolerance
+    charge_tolerance = channel.completeness_tolerance
     charge_residual = jnp.asarray(0.0, dtype=trace_residual.dtype)
+    channel_residual = channel.completeness_residual
     valid = (
         jnp.isfinite(input_trace)
         & jnp.isfinite(output_trace)
         & jnp.isfinite(discarded)
-        & (discarded >= 0)
-        & (channel.completeness_residual >= 0)
+        & jnp.isfinite(channel_residual)
+        & jnp.isfinite(trace_residual)
+        & jnp.isfinite(charge_residual)
+        & (input_trace >= 0.0)
+        & (output_trace >= 0.0)
+        & (discarded >= 0.0)
+        & (channel_residual >= 0.0)
+        & jnp.asarray(channel.trace_preserving_required)
+        & (channel_residual <= channel.completeness_tolerance)
+        & (trace_residual <= trace_tolerance)
+        & (charge_residual <= charge_tolerance)
     )
     return result, AbelianOpenEvolutionEvidence(
         input_trace,
@@ -285,6 +309,8 @@ def apply_charge_covariant_kraus(
         jnp.asarray(retained_ranks, dtype=jnp.int32),
         charge_residual,
         valid,
+        trace_tolerance,
+        charge_tolerance,
         channel.map_id,
     )
 

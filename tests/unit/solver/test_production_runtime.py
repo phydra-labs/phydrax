@@ -45,6 +45,44 @@ def _manifest(method):
     )
 
 
+def test_production_resource_forecast_rejects_invalid_multipliers():
+    mesh = phx.discretization.CellMesh.from_triangles(
+        jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
+        jnp.asarray(((0, 1, 2),), dtype=jnp.int32),
+    )
+    field = phx.discretization.FiniteElementFieldSpec(
+        "u", phx.discretization.lagrange_element("triangle", 1)
+    )
+    discretization = phx.discretization.FiniteElementPlan(mesh, field).prepare()
+    form = phx.equations.FiniteElementForm(
+        "resource-forecast",
+        "u",
+        (phx.equations.DiffusionAction("u"),),
+    )
+    action_ir = phx.equations.fem.lower_finite_element_form(form, discretization)
+    worksets = phx.equations.fem.compile_workset_program(action_ir, form, discretization)
+    budget = phx.solver.ProductionResourceBudget(
+        maximum_compile_units=100,
+        maximum_host_bytes=1_000_000,
+        maximum_device_bytes=1_000_000,
+        maximum_output_queue_bytes=1_000_000,
+    )
+    with pytest.raises(ValueError, match="ad_multiplier"):
+        phx.solver.prepare_production_resource_forecast(
+            worksets,
+            jnp.zeros((3,)),
+            budget,
+            ad_multiplier=-1.0,
+        )
+    with pytest.raises(ValueError, match="output_snapshots"):
+        phx.solver.prepare_production_resource_forecast(
+            worksets,
+            jnp.zeros((3,)),
+            budget,
+            output_snapshots=-1,
+        )
+
+
 def test_production_run_checkpoints_observes_triggers_and_resumes(tmp_path):
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
@@ -159,6 +197,7 @@ def test_production_iteration_session_stops_and_restores_exact_cursor(tmp_path):
     result = prepared.run(initial)
 
     assert result.state.status == "canceled"
+    assert not result.successful
     assert int(result.state.step_index) == 1
     assert [phase(event) for event in events] == [
         int(phx.execution.IterationPhase.START),

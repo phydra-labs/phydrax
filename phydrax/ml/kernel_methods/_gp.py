@@ -103,7 +103,7 @@ class GaussianProcessClassifierModel(AbstractArrayModel):
             probability = jnp.stack((1.0 - probability, probability), axis=-1)
         return probability.reshape(points.shape[:-1] + (self.class_count,))
 
-    def probabilities(self, x: ArrayLike, /) -> Array:
+    def predict_proba(self, x: ArrayLike, /) -> Array:
         return self(x)
 
     def predict(self, x: ArrayLike, /) -> Array:

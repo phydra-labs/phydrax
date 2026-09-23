@@ -22,6 +22,21 @@ def _tree_index(tree: ArrayTree, index: jnp.ndarray) -> ArrayTree:
     return jtu.tree_map(lambda x: x[index], tree)
 
 
+def _tree_mask(
+    tree: ArrayTree | None,
+    mask: jnp.ndarray,
+) -> ArrayTree | None:
+    if tree is None:
+        return None
+
+    def mask_leaf(value: jnp.ndarray) -> jnp.ndarray:
+        array = jnp.asarray(value)
+        expanded = mask.reshape((mask.shape[0],) + (1,) * (array.ndim - 1))
+        return jnp.where(expanded, array, jnp.zeros((), dtype=array.dtype))
+
+    return jtu.tree_map(mask_leaf, tree)
+
+
 def _tree_leading_size(tree: ArrayTree) -> int:
     leaves = jtu.tree_leaves(tree)
     if not leaves:
@@ -43,8 +58,16 @@ def _tree_segment(
     segment_ids: jnp.ndarray,
     num_segments: int,
     aggregate_fn: Callable[[jnp.ndarray, jnp.ndarray, int], jnp.ndarray],
+    *,
+    valid: jnp.ndarray,
 ) -> ArrayTree:
-    return jtu.tree_map(lambda x: aggregate_fn(x, segment_ids, num_segments), tree)
+    safe_tree = _tree_mask(tree, valid)
+    safe_segment_ids = jnp.where(valid, segment_ids, num_segments)
+    aggregated = jtu.tree_map(
+        lambda x: aggregate_fn(x, safe_segment_ids, num_segments + 1),
+        safe_tree,
+    )
+    return jtu.tree_map(lambda x: x[:num_segments], aggregated)
 
 
 class GraphNetwork(StrictModule):
@@ -94,7 +117,6 @@ class GraphNetwork(StrictModule):
 
         if graph.senders is None or graph.receivers is None:
             raise ValueError("GraphNetwork requires explicit senders and receivers.")
-
         if graph.nodes is None:
             raise ValueError("GraphNetwork requires node features.")
 
@@ -105,9 +127,41 @@ class GraphNetwork(StrictModule):
         receivers = graph.receivers
         n_node = graph.n_node
         n_edge = graph.n_edge
-
         sum_n_node = _tree_leading_size(nodes)
         sum_n_edge = senders.shape[0]
+        n_graph = n_node.shape[0]
+        graph_idx = jnp.arange(n_graph, dtype=jnp.int32)
+        node_gr_idx = jnp.repeat(
+            graph_idx,
+            n_node,
+            axis=0,
+            total_repeat_length=sum_n_node,
+        )
+        edge_gr_idx = jnp.repeat(
+            graph_idx,
+            n_edge,
+            axis=0,
+            total_repeat_length=sum_n_edge,
+        )
+        graph_mask = (
+            jnp.ones((n_graph,), dtype=jnp.bool_)
+            if graph.graph_mask is None
+            else graph.graph_mask
+        )
+        node_mask = (
+            jnp.ones((sum_n_node,), dtype=jnp.bool_)
+            if graph.node_mask is None
+            else graph.node_mask
+        ) & graph_mask[node_gr_idx]
+        edge_mask = (
+            jnp.ones((sum_n_edge,), dtype=jnp.bool_)
+            if graph.edge_mask is None
+            else graph.edge_mask
+        ) & graph_mask[edge_gr_idx]
+
+        nodes = _tree_mask(nodes, node_mask)
+        edges = _tree_mask(edges, edge_mask)
+        globals_ = _tree_mask(globals_, graph_mask)
 
         if self.update_edge_fn is not None:
             sent = _tree_index(nodes, senders)
@@ -116,6 +170,7 @@ class GraphNetwork(StrictModule):
             if globals_ is not None:
                 glob_edge = _tree_repeat(globals_, n_edge, total_repeat_length=sum_n_edge)
             edges = self.update_edge_fn(edges, sent, recv, glob_edge)
+            edges = _tree_mask(edges, edge_mask)
 
         if self.attention_logit_fn is not None:
             if edges is None:
@@ -126,18 +181,21 @@ class GraphNetwork(StrictModule):
             if globals_ is not None:
                 glob_edge = _tree_repeat(globals_, n_edge, total_repeat_length=sum_n_edge)
             logits = self.attention_logit_fn(edges, sent, recv, glob_edge)
+            safe_receivers = jnp.where(edge_mask, receivers, sum_n_node)
+            safe_logits = _tree_mask(logits, edge_mask)
             normalize = functools.partial(
                 self.attention_normalize_fn,
-                segment_ids=receivers,
-                num_segments=sum_n_node,
+                segment_ids=safe_receivers,
+                num_segments=sum_n_node + 1,
             )
-            weights = jtu.tree_map(normalize, logits)
+            weights = _tree_mask(jtu.tree_map(normalize, safe_logits), edge_mask)
             attention_reduce_fn = self.attention_reduce_fn
             if attention_reduce_fn is None:
                 raise RuntimeError(
                     "GraphNetwork attention reducer invariant was violated."
                 )
             edges = attention_reduce_fn(edges, weights)
+            edges = _tree_mask(edges, edge_mask)
 
         if self.update_node_fn is not None:
             if edges is None:
@@ -147,39 +205,28 @@ class GraphNetwork(StrictModule):
                 senders,
                 sum_n_node,
                 self.aggregate_edges_for_nodes_fn,
+                valid=edge_mask,
             )
             recv_aggr = _tree_segment(
                 edges,
                 receivers,
                 sum_n_node,
                 self.aggregate_edges_for_nodes_fn,
+                valid=edge_mask,
             )
             glob_node = None
             if globals_ is not None:
                 glob_node = _tree_repeat(globals_, n_node, total_repeat_length=sum_n_node)
             nodes = self.update_node_fn(nodes, sent_aggr, recv_aggr, glob_node)
+            nodes = _tree_mask(nodes, node_mask)
 
         if self.update_global_fn is not None:
-            n_graph = n_node.shape[0]
-            graph_idx = jnp.arange(n_graph, dtype=jnp.int32)
-            node_gr_idx = jnp.repeat(
-                graph_idx,
-                n_node,
-                axis=0,
-                total_repeat_length=sum_n_node,
-            )
-            edge_gr_idx = jnp.repeat(
-                graph_idx,
-                n_edge,
-                axis=0,
-                total_repeat_length=sum_n_edge,
-            )
-
             node_aggr = _tree_segment(
                 nodes,
                 node_gr_idx,
                 n_graph,
                 self.aggregate_nodes_for_globals_fn,
+                valid=node_mask,
             )
             edge_aggr = None
             if edges is not None:
@@ -188,8 +235,10 @@ class GraphNetwork(StrictModule):
                     edge_gr_idx,
                     n_graph,
                     self.aggregate_edges_for_globals_fn,
+                    valid=edge_mask,
                 )
             globals_ = self.update_global_fn(node_aggr, edge_aggr, globals_)
+            globals_ = _tree_mask(globals_, graph_mask)
 
         return graph.replace(nodes=nodes, edges=edges, globals=globals_, validate=False)
 

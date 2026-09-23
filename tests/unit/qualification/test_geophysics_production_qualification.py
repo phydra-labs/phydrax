@@ -367,6 +367,14 @@ def test_fwi_rtm_source_projection_and_anisotropic_equilibrium_are_exact():
     )
     np.testing.assert_allclose(state.velocity_m_s, 0.0)
     np.testing.assert_allclose(observations, 0.0)
+    other_grid = geo.AcousticGrid((7, 7), (2.0, 1.0))
+    with pytest.raises(ValueError, match="another grid"):
+        anisotropic.simulate(
+            1.0,
+            stiffness,
+            geo.ElasticAcquisition(other_grid, [[3.0, 3.0]], [[4.0, 3.0]]),
+            jnp.zeros((2, 1, 2)),
+        )
 
 
 def test_layered_mt_surface_wave_and_noise_processing_recover_known_responses():
@@ -407,6 +415,13 @@ def test_layered_mt_surface_wave_and_noise_processing_recover_known_responses():
     correlation = geo.AmbientNoiseCorrelationPlan(8, 4, 0.1).evaluate(series, series)
     assert correlation.successful
     assert jnp.argmax(correlation.correlation) == 4
+    shifted = SampledSeries(
+        SeriesSupport(np.arange(16) * 0.1 + 0.05),
+        values,
+        series_id="shifted-ambient-noise",
+    )
+    with pytest.raises(Exception, match="connected uniformly sampled clock"):
+        geo.AmbientNoiseCorrelationPlan(8, 4, 0.1).evaluate(series, shifted)
     frequency, ratio = geo.HVSRPlan(0.1).evaluate(2 * values, 2 * values, values)
     assert frequency.shape == ratio.shape
     np.testing.assert_allclose(ratio[2], 2.0, rtol=1e-6)

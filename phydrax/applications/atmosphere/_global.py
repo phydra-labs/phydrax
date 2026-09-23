@@ -57,6 +57,7 @@ class GlobalAtmosphereState(StrictModule):
     surface_water: Array
     surface_energy: Array
     environment_energy: Array
+    prepared_id: str = eqx.field(static=True)
 
 
 class GlobalAtmosphereLedger(StrictModule):
@@ -81,6 +82,7 @@ class GlobalAtmosphereContinuation(StrictModule):
     held_forcing: GlobalHeldForcing
     forcing_age: Array
     ledger: GlobalAtmosphereLedger
+    prepared_id: str = eqx.field(static=True)
 
 
 class GlobalStepEvidence(StrictModule):
@@ -256,6 +258,12 @@ class GlobalPrimitiveEquationPlan(StrictModule):
             )
         if not isinstance(vertical, HybridPressureCoordinate):
             raise TypeError("vertical must be a HybridPressureCoordinate.")
+        if isinstance(filter_order, bool) or not isinstance(filter_order, int):
+            raise TypeError("filter_order must be an integer.")
+        if isinstance(water_projection_iterations, bool) or not isinstance(
+            water_projection_iterations, int
+        ):
+            raise TypeError("water_projection_iterations must be an integer.")
         values = (
             dt,
             gravity,
@@ -307,10 +315,7 @@ class GlobalPrimitiveEquationPlan(StrictModule):
             raise ValueError("water_limiter must be 'reject' or 'conservative'.")
         if water_limiter == "conservative" and self.processes.thermodynamics is None:
             raise ValueError("Conservative water limiting requires moist thermodynamics.")
-        if (
-            int(water_projection_iterations) != water_projection_iterations
-            or water_projection_iterations < 1
-        ):
+        if water_projection_iterations < 1:
             raise ValueError("water_projection_iterations must be a positive integer.")
         if angular_momentum_projection not in ("none", "energy-neutral"):
             raise ValueError(
@@ -465,6 +470,9 @@ class PreparedGlobalAtmosphere(StrictModule):
             {
                 "kind": "prepared-global-atmosphere",
                 "plan": plan.plan_id,
+                "physical_parameters": array_tree_fingerprint(
+                    eqx.filter(plan.processes, eqx.is_array)
+                ),
                 "work_space": self.work_space.prepared_id,
                 "partition": "isothermal-degreewise-imex-midpoint",
             }
@@ -504,6 +512,10 @@ class PreparedGlobalAtmosphere(StrictModule):
         return below + thermal * jnp.log(interfaces[..., 1:] / middle)
 
     def view(self, state: GlobalAtmosphereState) -> GlobalAtmosphereView:
+        if not isinstance(state, GlobalAtmosphereState):
+            raise TypeError("state must be a GlobalAtmosphereState.")
+        if state.prepared_id != self.prepared_id:
+            raise ValueError("Atmosphere state belongs to another prepared runtime.")
         east, north = self.vectors.wind(
             self.lift(state.vorticity), self.lift(state.divergence)
         )
@@ -597,6 +609,7 @@ class PreparedGlobalAtmosphere(StrictModule):
             surface_mass,
             surface_energy,
             zero,
+            self.prepared_id,
         )
         if not bool(self.admissible(state)):
             raise ValueError(
@@ -626,6 +639,7 @@ class PreparedGlobalAtmosphere(StrictModule):
                 scalar,
                 scalar,
             ),
+            self.prepared_id,
         )
 
     def admissible(self, state: GlobalAtmosphereState) -> Array:
@@ -1374,6 +1388,7 @@ class PreparedGlobalAtmosphere(StrictModule):
             process.surface_water,
             process.surface_energy,
             process.environment_energy,
+            self.prepared_id,
         )
         # Isolate the process contribution INCLUDING the mass-source-induced
         # moving-coordinate flux and compression. Direct heating alone misses
@@ -1427,6 +1442,7 @@ class PreparedGlobalAtmosphere(StrictModule):
                 process.surface_water,
                 process.surface_energy,
                 process.environment_energy,
+                self.prepared_id,
             )
             power = jax.jvp(lambda s: self.inventories(s)[2], (state,), (process_rate,))[
                 1
@@ -1450,7 +1466,14 @@ class PreparedGlobalAtmosphere(StrictModule):
 
     def advance(self, continuation: GlobalAtmosphereContinuation) -> GlobalStepResult:
         """One IMEX midpoint attempt; rejection preserves state, time, forcing and ledgers."""
+        if not isinstance(continuation, GlobalAtmosphereContinuation):
+            raise TypeError("continuation must be a GlobalAtmosphereContinuation.")
+        if continuation.prepared_id != self.prepared_id:
+            raise ValueError(
+                "Continuation belongs to another prepared atmosphere runtime."
+            )
         old, dt = continuation.state, self.plan.dt
+        incoming_admissible = self.admissible(old)
         refresh = continuation.forcing_age >= self.plan.processes.cadence
         held = jax.lax.cond(
             refresh,
@@ -1555,7 +1578,8 @@ class PreparedGlobalAtmosphere(StrictModule):
             + self.work_space.integral(process1.phase_conversion_mass_rate)
         )
         accepted = (
-            admissible
+            incoming_admissible
+            & admissible
             & process_ok
             & solved
             & budgets
@@ -1587,6 +1611,7 @@ class PreparedGlobalAtmosphere(StrictModule):
             held,
             jnp.where(refresh, 1, continuation.forcing_age + 1),
             ledger,
+            self.prepared_id,
         )
         rejected = eqx.tree_at(
             lambda c: c.rejected_steps, continuation, continuation.rejected_steps + 1
@@ -1626,12 +1651,43 @@ class PreparedGlobalAtmosphere(StrictModule):
         return GlobalStepResult(chosen, evidence)
 
 
+def _validate_global_atmosphere_continuation(
+    model: PreparedGlobalAtmosphere,
+    continuation: GlobalAtmosphereContinuation,
+    /,
+) -> None:
+    if not isinstance(model, PreparedGlobalAtmosphere):
+        raise TypeError("model must be a PreparedGlobalAtmosphere.")
+    if not isinstance(continuation, GlobalAtmosphereContinuation):
+        raise TypeError("continuation must be a GlobalAtmosphereContinuation.")
+    if continuation.prepared_id != model.prepared_id:
+        raise ValueError("Global atmosphere continuation belongs to another runtime.")
+    arrays = tuple(np.asarray(leaf) for leaf in jax.tree.leaves(continuation))
+    if any(
+        np.issubdtype(value.dtype, np.inexact) and np.any(~np.isfinite(value))
+        for value in arrays
+    ):
+        raise ValueError("Global atmosphere continuation contains nonfinite values.")
+    if (
+        np.asarray(continuation.time).shape != ()
+        or np.asarray(continuation.accepted_steps).shape != ()
+        or np.asarray(continuation.rejected_steps).shape != ()
+        or np.asarray(continuation.forcing_age).shape != ()
+        or int(np.asarray(continuation.accepted_steps)) < 0
+        or int(np.asarray(continuation.rejected_steps)) < 0
+        or int(np.asarray(continuation.forcing_age)) < 0
+        or not bool(np.asarray(model.admissible(continuation.state)))
+    ):
+        raise ValueError("Global atmosphere continuation is not admissible.")
+
+
 def write_global_atmosphere_checkpoint(
     path: str | Path,
     model: PreparedGlobalAtmosphere,
     continuation: GlobalAtmosphereContinuation,
     /,
 ) -> Path:
+    _validate_global_atmosphere_continuation(model, continuation)
     arrays: dict[str, object] = {}
     specification = pack_array_tree("continuation", continuation, arrays)
     return write_array_archive(
@@ -1654,6 +1710,7 @@ def read_global_atmosphere_checkpoint(
     template: GlobalAtmosphereContinuation,
     /,
 ) -> GlobalAtmosphereContinuation:
+    _validate_global_atmosphere_continuation(model, template)
     manifest, arrays = read_array_archive(path)
     if (
         manifest.get("kind") != "global-atmosphere-checkpoint"
@@ -1662,7 +1719,14 @@ def read_global_atmosphere_checkpoint(
         != array_tree_fingerprint(eqx.filter(model.plan.processes, eqx.is_array))
     ):
         raise ValueError("Global atmosphere checkpoint model identity mismatch.")
-    return unpack_array_tree(manifest["continuation"], arrays, template)
+    if any(
+        np.issubdtype(value.dtype, np.inexact) and np.any(~np.isfinite(value))
+        for value in arrays.values()
+    ):
+        raise ValueError("Global atmosphere checkpoint contains nonfinite array data.")
+    restored = unpack_array_tree(manifest["continuation"], arrays, template)
+    _validate_global_atmosphere_continuation(model, restored)
+    return restored
 
 
 __all__ = [

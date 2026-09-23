@@ -10,19 +10,26 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
-from ..._model import AbstractArrayModel
+from ..._model import AbstractArrayModel, ModelBinding
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import AbstractRecipe, FitResult, GradientContract
 from .._schema import FeatureSchema
 from ._common import (
     _align_parameter,
     _check_features,
+    _dense_batch,
     _diagnostics,
     _feature_observations,
     _fit_result,
     _weighted_mean,
     _weighted_quantiles,
 )
+
+
+def _case_binding(case_shape: tuple[int, ...], /) -> ModelBinding:
+    if case_shape:
+        return ModelBinding.blockwise("flat", pass_key=False)
+    return ModelBinding.pointwise("flat", pass_key=False)
 
 
 class _AbstractAffineTransform(AbstractArrayModel):
@@ -35,20 +42,42 @@ class _AbstractAffineTransform(AbstractArrayModel):
     output_schema: FeatureSchema = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
     clip_bounds: tuple[float, float] | None = eqx.field(static=True)
+    _input_binding: ModelBinding = eqx.field(static=True)  # ty: ignore[invalid-attribute-override]
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
+        return self.transform(x, key=key)
+
+    def transform(
+        self,
+        x: Any,
+        /,
+        *,
+        mask: Any | None = None,
+        key: Any = None,
+    ) -> Array:
         del key
         values = _check_features(x, self.in_size)
         center = _align_parameter(self.center, values, self.case_shape)
         scale = _align_parameter(self.scale, values, self.case_shape)
         offset = _align_parameter(self.output_offset, values, self.case_shape)
-        transformed = (values - center) / scale + offset
+        active = (
+            jnp.ones(values.shape, dtype=jnp.bool_)
+            if mask is None
+            else jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), values.shape)
+        )
+        safe_values = jnp.where(active, values, center)
+        transformed = (safe_values - center) / scale + offset
         if self.clip_bounds is not None:
             transformed = jnp.clip(transformed, self.clip_bounds[0], self.clip_bounds[1])
-        return transformed
+        return jnp.where(active, transformed, 0.0)
 
-    def transform(self, x: Any, /, *, key: Any = None) -> Array:
-        return self(x, key=key)
+    def transform_batch(self, batch: MLBatch, /, *, key: Any = None) -> MLBatch:
+        values = _dense_batch(batch)
+        return batch.with_features(
+            self.transform(values, mask=batch.feature_mask, key=key),
+            feature_schema=self.output_schema,
+            feature_mask=batch.feature_mask,
+        )
 
     def inverse_transform(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -83,6 +112,7 @@ class FittedStandardScaler(_AbstractAffineTransform):
         self.input_schema = schema
         self.output_schema = schema
         self.case_shape = tuple(case_shape)
+        self._input_binding = _case_binding(self.case_shape)
         self.clip_bounds = None
 
 
@@ -179,6 +209,7 @@ class FittedMinMaxScaler(_AbstractAffineTransform):
         self.input_schema = schema
         self.output_schema = schema
         self.case_shape = tuple(case_shape)
+        self._input_binding = _case_binding(self.case_shape)
         self.feature_range = feature_range
         self.clip = bool(clip)
         self.clip_bounds = feature_range if clip else None
@@ -279,6 +310,7 @@ class FittedMaxAbsScaler(_AbstractAffineTransform):
         self.input_schema = schema
         self.output_schema = schema
         self.case_shape = tuple(case_shape)
+        self._input_binding = _case_binding(self.case_shape)
         self.clip_bounds = None
 
 
@@ -348,6 +380,7 @@ class FittedRobustScaler(_AbstractAffineTransform):
         self.input_schema = schema
         self.output_schema = schema
         self.case_shape = tuple(case_shape)
+        self._input_binding = _case_binding(self.case_shape)
         self.clip_bounds = None
         self.quantile_range = quantile_range
 
@@ -478,6 +511,14 @@ class FittedNormScaler(AbstractArrayModel):
                 0,
             )
         return self(values, key=key)
+
+    def transform_batch(self, batch: MLBatch, /, *, key: Any = None) -> MLBatch:
+        values = _dense_batch(batch)
+        return batch.with_features(
+            self.transform(values, mask=batch.feature_mask, key=key),
+            feature_schema=self.output_schema,
+            feature_mask=batch.feature_mask,
+        )
 
     def inverse_transform(self, x: Any, /, *, key: Any = None) -> Array:
         del x, key

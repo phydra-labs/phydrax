@@ -448,7 +448,8 @@ def main() -> None:
     payload = {
         "environment": capture_environment().to_dict(),
         "cases": cases,
-        "all_valid": all(case["valid"] for case in cases),
+        "all_valid": all(case["valid"] for case in cases)
+        and all(math.isfinite(value) and value <= 1e-8 for value in certificate_values),
         "all_finite": all(math.isfinite(value) for value in certificate_values),
         "maximum_certificate": max(certificate_values),
     }
@@ -458,6 +459,8 @@ def main() -> None:
         print(json.dumps(payload, indent=2))
     else:
         write_json_atomic(arguments.output, payload)
+    if not payload["all_valid"] or not payload["all_finite"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

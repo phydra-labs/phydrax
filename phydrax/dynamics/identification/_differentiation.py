@@ -316,7 +316,7 @@ def bspline_derivative(
         (data.num_cases, data.capacity - 1)
     )
     flat_weights = np.asarray(data.weights).reshape((data.num_cases, data.capacity))
-    derivative = np.full_like(flat_states, np.nan, dtype=np.float64)
+    derivative = np.full_like(flat_states, np.nan, dtype=flat_states.dtype)
     valid = np.zeros((data.num_cases, data.capacity), dtype=np.bool_)
     condition = np.full((data.num_cases, data.capacity), np.inf, dtype=np.float64)
     minimum = resolved_plan.degree + 1

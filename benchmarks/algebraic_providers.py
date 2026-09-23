@@ -141,7 +141,11 @@ def main():
     exact_result = execute_exact_symbolic(exact_prepared)
     symbolic_solve_seconds = time.perf_counter() - start
 
-    if exact_result.output is None or exact_result.evidence is None:
+    if (
+        exact_result.status.name != "SUCCESS"
+        or exact_result.output is None
+        or exact_result.evidence is None
+    ):
         raise RuntimeError(
             f"Exact symbolic benchmark failed: {exact_result.status.name}: "
             f"{exact_result.diagnostic}"

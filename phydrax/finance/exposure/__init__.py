@@ -7,6 +7,7 @@
 from ._bsde import evaluate_exposure_bsde, ExposureBSDEEvaluation, ExposureBSDERoute
 from ._collateral import (
     CloseoutConvention,
+    CloseoutIdentityBinding,
     CloseoutObservation,
     CloseoutPath,
     CloseoutValueSource,
@@ -27,6 +28,7 @@ from ._collateral import (
 from ._pathwise import (
     aggregate_exposure,
     DefaultDependence,
+    DiscountFactorPath,
     exposure_evidence,
     ExposureEvidence,
     ExposureProfile,
@@ -62,6 +64,7 @@ from ._xva import (
 
 __all__ = [
     "CVAResult",
+    "CloseoutIdentityBinding",
     "CloseoutConvention",
     "CloseoutObservation",
     "CloseoutPath",
@@ -71,6 +74,7 @@ __all__ = [
     "CollateralState",
     "DVAResult",
     "DefaultDependence",
+    "DiscountFactorPath",
     "EconomicCapitalPolicy",
     "ExposureBSDEEvaluation",
     "ExposureBSDERoute",

@@ -61,11 +61,12 @@ def _derivation():
     )
 
 
-def _quantity(kind, unit, *, support):
+def _quantity(kind, unit, *, support, axes=()):
     return phx.measurement.resolve_radiation_quantity(
         "iodine-131-activity",
         kind,
         unit,
+        axes=axes,
         support_association=support,
         reference_configuration="iodine-131-calibrated-activity",
     )
@@ -86,6 +87,7 @@ def _regional_series(values=(4.0, 2.0, 1.0)):
             phx.measurement.RadiationQuantityKind.ACTIVITY,
             phx.units.BECQUEREL,
             support="source-region-instantaneous",
+            axes=("time",),
         ),
         phx.measurement.ValueLayout.scalar(),
         support,
@@ -101,7 +103,7 @@ def _regional_series(values=(4.0, 2.0, 1.0)):
         (data.reference,),
         _derivation(),
         "research",
-        {"radionuclide": transition.parent.nuclide_id},
+        {"radionuclide_id": transition.parent.nuclide_id},
     )
     return dosimetry.TimeActivitySeries(asset, transition), data
 
@@ -130,6 +132,7 @@ def _spatial_series():
             phx.measurement.RadiationQuantityKind.ACTIVITY_CONCENTRATION,
             phx.units.BECQUEREL_PER_CUBIC_METER,
             support="voxel-cell-average",
+            axes=("x", "y", "z", "time"),
         ),
         phx.measurement.ValueLayout.scalar(),
         phx.measurement.SamplingSemantics(
@@ -148,6 +151,7 @@ def _spatial_series():
         (data.reference,),
         _derivation(),
         time_axis=axis,
+        metadata={"radionuclide_id": transition.parent.nuclide_id},
     )
     return dosimetry.TimeActivitySeries(image.measurement, transition), data
 
@@ -163,6 +167,7 @@ def test_time_activity_trapezoid_is_six_becquerel_seconds_and_refuses_extrapolat
         result.asset.field.quantity.quantity_kind
         == phx.measurement.RadiationQuantityKind.TIME_INTEGRATED_ACTIVITY.value
     )
+    assert result.asset.field.quantity.axes == ()
     assert result.asset.field.support.sample_shape == ()
     assert result.asset.field.uncertainty is None
 
@@ -270,6 +275,7 @@ def test_spatial_delta_kernel_converts_activity_concentration_through_voxel_volu
     integrated = dosimetry.TimeActivityIntegrationPlan(
         series.time_axis, 0.0, 3.0, phx.units.SECOND
     ).integrate(series)
+    assert integrated.asset.field.quantity.axes == ("x", "y", "z")
     support = integrated.asset.field.support
     kernel = dosimetry.SpatialSValueKernel(
         np.ones((1, 1, 1)),

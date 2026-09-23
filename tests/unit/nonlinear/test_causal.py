@@ -231,3 +231,46 @@ def test_nonconverged_causal_result_is_observable_and_not_differentiable():
     assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_STEPS_REACHED)
     with pytest.raises(Exception, match="successfully converged"):
         jax.grad(objective)(jnp.asarray(0.7))
+
+
+@pytest.mark.parametrize("method", (nl.CausalNewton(), nl.CausalLevenbergMarquardt()))
+def test_causal_recurrence_honors_transition_evaluation_limit(method):
+    drivers = jnp.linspace(-0.2, 0.3, 8)
+    problem = nl.CausalRecurrenceProblem(
+        _transition,
+        jnp.asarray(0.1),
+        drivers,
+        parameters=jnp.asarray(0.7),
+    )
+    result = nl.solve_causal_recurrence(
+        problem,
+        method=method,
+        termination=nl.NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            maximum_steps=10,
+            maximum_evaluations=problem.num_steps,
+        ),
+    )
+
+    assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED)
+    assert int(result.diagnostics.transition_evaluations) == problem.num_steps
+    assert int(result.diagnostics.iteration_count) == 0
+
+
+def test_causal_recurrence_rejects_budget_smaller_than_initial_full_evaluation():
+    drivers = jnp.linspace(-0.2, 0.3, 4)
+    problem = nl.CausalRecurrenceProblem(
+        _transition,
+        jnp.asarray(0.1),
+        drivers,
+        parameters=jnp.asarray(0.7),
+    )
+
+    with pytest.raises(ValueError, match="initial full recurrence"):
+        nl.solve_causal_recurrence(
+            problem,
+            termination=nl.NonlinearTermination(
+                maximum_evaluations=problem.num_steps - 1
+            ),
+        )

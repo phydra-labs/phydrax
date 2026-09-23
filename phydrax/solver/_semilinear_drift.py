@@ -114,10 +114,7 @@ class SemilinearDrift(StrictModule):
                 or spectral_operator.target.shape != shape
             ):
                 raise ValueError("Spectral representation state_shape must match.")
-            if (
-                isinstance(linear_operator, AbstractLinearOperator)
-                and spectral_operator.operator_id != identifier
-            ):
+            if spectral_operator.operator_id != identifier:
                 raise ValueError("Spectral representation must bind the linear operator.")
         if compatible_noise_eigenvalues is None:
             noise_values = None

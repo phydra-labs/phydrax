@@ -520,6 +520,7 @@ class DelayedAcceptanceHMCState(StrictModule):
     surrogate_gradient: Array
     step_index: Array
     valid: Array
+    kernel_id: str = eqx.field(static=True)
 
 
 class DelayedAcceptanceHMCResult(AbstractChainSampleResult):
@@ -670,6 +671,7 @@ def initialize_delayed_acceptance_hmc(
         surrogate_gradient=gradients,
         step_index=jnp.asarray(0, dtype=jnp.uint32),
         valid=valid,
+        kernel_id=kernel.kernel_id,
     )
 
 
@@ -818,6 +820,10 @@ def sample_delayed_acceptance_hmc(
         state, DelayedAcceptanceHMCState
     ):
         raise TypeError("kernel/state types are invalid.")
+    if state.kernel_id != kernel.kernel_id:
+        raise ValueError(
+            "Delayed-acceptance HMC state belongs to another prepared kernel."
+        )
     draws = int(num_draws)
     if draws <= 0:
         raise ValueError("num_draws must be positive.")
@@ -892,6 +898,7 @@ def sample_delayed_acceptance_hmc(
         surrogate_gradient=gradients,
         step_index=index,
         valid=final_valid,
+        kernel_id=kernel.kernel_id,
     )
     return DelayedAcceptanceHMCResult(
         samples=samples,
@@ -1054,6 +1061,7 @@ class GaugeFlowChainState(StrictModule):
     log_proposal: Array
     step_index: Array
     valid: Array
+    proposal_id: str = eqx.field(static=True)
 
 
 class GaugeFlowProposalResult(AbstractChainSampleResult):
@@ -1221,6 +1229,7 @@ def initialize_gauge_flow_chain(
         log_proposal=proposal_values,
         step_index=jnp.asarray(0, dtype=jnp.uint32),
         valid=valid,
+        proposal_id=proposal.proposal_id,
     )
 
 
@@ -1316,6 +1325,8 @@ def sample_gauge_flow_proposal(
         state, GaugeFlowChainState
     ):
         raise TypeError("proposal/state types are invalid.")
+    if state.proposal_id != proposal.proposal_id:
+        raise ValueError("Gauge-flow state belongs to another prepared proposal.")
     draws = int(num_draws)
     if draws <= 0:
         raise ValueError("num_draws must be positive.")
@@ -1373,6 +1384,7 @@ def sample_gauge_flow_proposal(
             & jnp.isfinite(targets)
             & jnp.isfinite(proposals)
         ),
+        proposal_id=proposal.proposal_id,
     )
     return GaugeFlowProposalResult(
         samples=samples,

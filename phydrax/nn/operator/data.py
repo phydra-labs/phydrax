@@ -364,9 +364,11 @@ class FunctionSamples(StrictModule):
     @property
     def has_physical_quadrature(self) -> bool:
         """Whether every sample dimension carries an explicit physical measure."""
-        if self.axes:
-            return all(axis.quadrature_weights is not None for axis in self.axes)
-        return self.quadrature_weights is not None
+        if self.quadrature_weights is not None:
+            return True
+        return bool(self.axes) and all(
+            axis.quadrature_weights is not None for axis in self.axes
+        )
 
     def geometry_fingerprint(self) -> str:
         """Return a host-side digest of physical geometry and measure metadata."""

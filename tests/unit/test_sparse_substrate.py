@@ -277,6 +277,83 @@ def test_sparse_plans_reuse_global_structural_jacobian_and_hessian_patterns():
     assert jnp.allclose(result.value, jnp.linalg.solve(hessian_matrix, rhs))
 
 
+def test_prepared_riesz_hessian_primal_uses_inverse_pairing():
+    space = ArraySpace(
+        (2,),
+        dtype=jnp.float64,
+        pairing=DiagonalPairing(jnp.asarray([2.0, 4.0])),
+    )
+    point = jnp.asarray([3.0, -2.0])
+    pattern = phx.sparse.SparsePattern.from_coo(
+        [0, 1],
+        [0, 1],
+        (2, 2),
+        symmetric=True,
+    )
+    plan = phx.sparse.compile_sparse_hessian(
+        lambda value, _: 0.5 * value[0] ** 2 + 1.5 * value[1] ** 2,
+        point,
+        space=space,
+        structure=pattern,
+        compiler="native",
+        contract=phx.sparse.SparseHessianContract("riesz"),
+    )
+
+    prepared = phx.sparse.prepare_sparse_linearization(plan, point)
+
+    assert plan.hessian_contract is not None
+    assert plan.hessian_contract.kind == "riesz"
+    assert jnp.allclose(
+        prepared.linearization.primal,
+        jnp.asarray([point[0] / 2.0, 3.0 * point[1] / 4.0]),
+    )
+
+
+def test_element_tensor_identity_includes_routes_validity_and_properties():
+    matrices = jnp.asarray([[[2.0, -1.0], [-1.0, 2.0]]])
+    inputs = jnp.asarray([[0, 1]], dtype=jnp.int32)
+    outputs = jnp.asarray([[1, 2]], dtype=jnp.int32)
+    baseline = phx.sparse.ElementTensorOperator(matrices, inputs, outputs, 3, 3)
+    rerouted = phx.sparse.ElementTensorOperator(
+        matrices,
+        jnp.asarray([[1, 0]], dtype=jnp.int32),
+        outputs,
+        3,
+        3,
+    )
+    inactive = phx.sparse.ElementTensorOperator(
+        matrices,
+        inputs,
+        outputs,
+        3,
+        3,
+        valid=jnp.asarray([False]),
+    )
+    ranked = phx.sparse.ElementTensorOperator(
+        matrices,
+        inputs,
+        outputs,
+        3,
+        3,
+        properties=phx.linalg.OperatorProperties(
+            rank=2,
+            evidence={"rank": "asserted"},
+        ),
+    )
+
+    assert (
+        len(
+            {
+                baseline.operator_id,
+                rerouted.operator_id,
+                inactive.operator_id,
+                ranked.operator_id,
+            }
+        )
+        == 4
+    )
+
+
 def test_sparse_diagonal_assembly_and_numeric_refresh_are_jit_safe():
     indices = jnp.arange(3, dtype=jnp.int32)
     relation = phx.sparse.EdgeRelation(
@@ -382,3 +459,34 @@ def test_prepared_relation_execution_preserves_canonical_complex_reductions():
     assert jnp.array_equal(deterministic, expected)
     assert jnp.array_equal(compensated, expected)
     assert bool(evidence.successful)
+
+
+def test_relation_execution_masks_padding_and_reports_target_capacity_status():
+    padded = phx.sparse.EdgeRelation(
+        jnp.asarray([0, -1], dtype=jnp.int32),
+        jnp.asarray([0, -1], dtype=jnp.int32),
+        source_size=1,
+        target_size=1,
+        valid=jnp.asarray([True, False]),
+    )
+    padded_execution = phx.sparse.RelationExecutionPlan().prepare(padded)
+    reduced, accepted = padded_execution.reduce(jnp.asarray([2.0, jnp.nan]))
+
+    assert jnp.array_equal(reduced, jnp.asarray([2.0]))
+    assert bool(accepted.successful)
+    assert int(accepted.valid_routes) == 1
+
+    overflowing = phx.sparse.EdgeRelation(
+        jnp.asarray([0, 0], dtype=jnp.int32),
+        jnp.asarray([0, 1], dtype=jnp.int32),
+        source_size=1,
+        target_size=2,
+    )
+    limited_execution = phx.sparse.RelationExecutionPlan(
+        maximum_active_targets=1
+    ).prepare(overflowing)
+    refused, evidence = limited_execution.reduce(jnp.asarray([3.0, 4.0]))
+
+    assert not bool(evidence.successful)
+    assert int(evidence.active_targets) == 2
+    assert jnp.array_equal(refused, jnp.zeros((2,)))

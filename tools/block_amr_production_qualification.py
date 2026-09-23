@@ -454,7 +454,7 @@ def main() -> int:
     print(payload)
     if arguments.output is not None:
         arguments.output.write_text(payload + "\n")
-    return 1 if report["status"] == "fail" else 0
+    return 0 if report["status"] == "pass" else 1
 
 
 if __name__ == "__main__":

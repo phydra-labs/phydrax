@@ -972,8 +972,13 @@ fixed-topology parameter families without rediscovering derivatives.
 `solve_structured_nonlinear` accepts native `PrimalDualInteriorPoint` and
 external `IpoptMinimize` implementations without domain-side backend tests.
 `StructuredNonlinearResult` contains the generic `MinimizationResult`, exact
-structured work, and a portable `StructuredNonlinearWarmStart` containing the
-primal, complete constraint multipliers, and direct variable-bound multipliers.
+structured work, and the exact `numeric_binding_id` used for execution. Structured
+JVP, VJP, and continuation operations require that identifier to match the prepared
+numeric binding. Only `PrimalDualInteriorPoint(mode="sparse-augmented")` advertises
+and accepts a portable `StructuredNonlinearWarmStart` containing the primal,
+complete constraint multipliers, and direct variable-bound multipliers. Dense and
+matrix-free routes reject supplied structured warm starts instead of silently
+discarding their dual state.
 
 `solve_pooled_structured_nonlinear` advances more independent structured tasks
 than execution lanes while retaining input order, exactly-once completion,

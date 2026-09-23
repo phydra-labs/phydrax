@@ -212,6 +212,7 @@ def publish_resource_set(
         receipts: list[PublishedMemberReceipt] = []
         total = 0
         canonical_members: dict[str, bytes] = {}
+        entries: set[str] = set()
         for name, data in members.items():
             relative = _canonical_relative_path(name, limits.max_depth)
             if relative in canonical_members:
@@ -224,8 +225,15 @@ def publish_resource_set(
                 raise ValueError(
                     "Published resource set exceeds its aggregate byte limit."
                 )
-            if len(canonical_members) >= limits.max_members:
-                raise ValueError("Published resource set exceeds its member limit.")
+            path = PurePosixPath(relative)
+            entries.add(relative)
+            entries.update(
+                parent.as_posix()
+                for parent in path.parents
+                if parent != PurePosixPath(".")
+            )
+            if len(entries) > limits.max_members:
+                raise ValueError("Published resource set exceeds its total entry limit.")
             canonical_members[relative] = data
             total += len(data)
         for relative in sorted(canonical_members):

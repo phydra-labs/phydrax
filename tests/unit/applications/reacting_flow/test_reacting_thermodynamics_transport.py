@@ -163,6 +163,39 @@ def test_mixture_averaged_transport_conserves_mass_and_carries_full_enthalpy():
     np.testing.assert_allclose(inert.total_heat_flux, 0.0, atol=0.0)
 
 
+def test_mixture_transport_absent_species_velocity_has_finite_derivative():
+    plan = _transport(MixtureAveragedTransportPlan)
+    temperature = jnp.asarray(1000.0)
+    pressure = jnp.asarray(101325.0)
+    mass = jnp.asarray((0.0, 0.4, 0.6))
+    density = _pressure_state(
+        plan.thermodynamics, temperature, pressure, mass
+    ).mass_density
+    gradient = jnp.asarray(((0.05, -0.03), (-0.02, 0.01), (-0.03, 0.02)))
+
+    def velocities(absent_fraction):
+        composition = jnp.stack(
+            (absent_fraction, 0.4 - absent_fraction, jnp.asarray(0.6))
+        )
+        return plan.evaluate(
+            temperature,
+            pressure,
+            density,
+            composition,
+            gradient,
+        ).diffusion_velocities
+
+    value, tangent = jax.jvp(
+        velocities,
+        (jnp.asarray(0.0),),
+        (jnp.asarray(1.0),),
+    )
+
+    np.testing.assert_allclose(value[0], 0.0, atol=0.0)
+    assert jnp.all(jnp.isfinite(value))
+    assert jnp.all(jnp.isfinite(tangent))
+
+
 def test_stefan_maxwell_matches_reference_system_mass_and_enthalpy_constraints():
     plan = _transport(StefanMaxwellTransportPlan)
     temperature = jnp.asarray(1000.0)

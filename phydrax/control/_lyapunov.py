@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import IntEnum
+from math import isfinite
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -145,12 +146,12 @@ def _validate_solver_scalars(
     residual_tolerance = float(tolerance)
     stability_threshold = float(stability_tolerance)
     separation_threshold = float(separation_tolerance)
-    if residual_tolerance < 0.0:
-        raise ValueError("tolerance must be non-negative.")
-    if stability_threshold < 0.0:
-        raise ValueError("stability_tolerance must be non-negative.")
-    if separation_threshold < 0.0:
-        raise ValueError("separation_tolerance must be non-negative.")
+    if not isfinite(residual_tolerance) or residual_tolerance < 0.0:
+        raise ValueError("tolerance must be finite and non-negative.")
+    if not isfinite(stability_threshold) or stability_threshold < 0.0:
+        raise ValueError("stability_tolerance must be finite and non-negative.")
+    if not isfinite(separation_threshold) or separation_threshold < 0.0:
+        raise ValueError("separation_tolerance must be finite and non-negative.")
     return residual_tolerance, stability_threshold, separation_threshold
 
 

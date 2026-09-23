@@ -24,7 +24,7 @@ from ..._fingerprint import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...dynamics import DiscreteStepContext
+from ...dynamics import DiscreteStepContext, DiscreteTransitionEvidence
 from .._lqr import AffineFeedbackPolicy
 from .._trajectory import (
     CONTROL_DYNAMICS_FAILED,
@@ -404,6 +404,10 @@ def _validate_initial_policy(
             "initial_policy case_shape must be scalar or exactly problem.case_shape."
         )
     if isinstance(policy, LocalAffineGamePolicy):
+        if policy.dynamics_id != problem.dynamics.dynamics_id:
+            raise ValueError(
+                "initial_policy dynamics identity must exactly match the problem."
+            )
         if policy.time_grid.time_id != problem.time_grid.time_id:
             raise ValueError(
                 "initial_policy time-grid identity must exactly match the problem."
@@ -848,48 +852,96 @@ def _evaluate_affine_profile(
             problem.time_grid.times[step_index + 1],
             step_index,
         )
+        safe_state = jnp.where(trajectory_active[:, None], state, jnp.zeros_like(state))
         gain = gain_flat[:, step_index]
         if law_kind == "local":
-            control = (
+            raw_control = (
                 nominal_controls_flat[:, step_index]
                 + ein.contract(
                     "cmn,cn->cm",
                     gain,
-                    state - nominal_states_flat[:, step_index],
+                    safe_state - nominal_states_flat[:, step_index],
                 )
                 + feedforward_scale * feedforward_flat[:, step_index]
             )
         else:
-            control = (
-                ein.contract("cmn,cn->cm", gain, state) + feedforward_flat[:, step_index]
+            raw_control = (
+                ein.contract("cmn,cn->cm", gain, safe_state)
+                + feedforward_flat[:, step_index]
             )
-        control_finite = jnp.all(jnp.isfinite(control), axis=-1)
-        stage = jax.vmap(
-            lambda case_state, case_control: _stage_cost_vector(
-                problem, context, case_state, case_control
+        control_finite = jnp.all(jnp.isfinite(raw_control), axis=-1)
+        attempted = trajectory_active & control_finite
+        safe_control = jnp.where(
+            attempted[:, None], raw_control, jnp.zeros_like(raw_control)
+        )
+
+        def evaluate_stage(case_state, case_control, active):
+            return jax.lax.cond(
+                active,
+                lambda _: _stage_cost_vector(problem, context, case_state, case_control),
+                lambda _: jnp.zeros((players,), dtype=case_state.dtype),
+                operand=None,
             )
-        )(state, control)
-        stage_finite = jnp.isfinite(stage)
-        candidate = jax.vmap(
-            lambda case_state, case_control: problem.dynamics.system.evaluate(
-                context,
-                case_state,
-                problem.args,
-                inputs=case_control,
+
+        raw_stage = jax.vmap(evaluate_stage)(safe_state, safe_control, attempted)
+        stage = jnp.where(
+            attempted[:, None],
+            raw_stage,
+            jnp.full_like(raw_stage, jnp.nan),
+        )
+        stage_finite = attempted[:, None] & jnp.isfinite(raw_stage)
+
+        def transition(case_state, case_control, active):
+            def run(_):
+                result = problem.dynamics.system.evaluate_result(
+                    context,
+                    case_state,
+                    problem.args,
+                    inputs=case_control,
+                )
+                return (
+                    result.candidate_state,
+                    result.accepted_state,
+                    result.successful,
+                    result.status,
+                )
+
+            return jax.lax.cond(
+                active,
+                run,
+                lambda _: (
+                    jnp.full_like(case_state, jnp.nan),
+                    case_state,
+                    jnp.asarray(False),
+                    jnp.asarray(0, dtype=jnp.int32),
+                ),
+                operand=None,
             )
-        )(state, control)
-        transition_finite = jnp.all(jnp.isfinite(candidate), axis=-1)
+
+        candidate, accepted, transition_successful, transition_status = jax.vmap(
+            transition
+        )(safe_state, safe_control, attempted)
+        transition_finite = jnp.all(jnp.isfinite(accepted), axis=-1)
+        transition_valid = attempted & transition_successful & transition_finite
         stage_all_finite = jnp.all(stage_finite, axis=-1)
         stage_status = jnp.where(
-            ~control_finite,
-            int(GamePolicyEvaluationStatus.NONFINITE_POLICY_CONTROL),
+            ~trajectory_active,
+            int(GamePolicyEvaluationStatus.SUCCESS),
             jnp.where(
-                ~transition_finite,
-                int(GamePolicyEvaluationStatus.NONFINITE_DYNAMICS_STATE),
+                ~control_finite,
+                int(GamePolicyEvaluationStatus.NONFINITE_POLICY_CONTROL),
                 jnp.where(
-                    ~stage_all_finite,
-                    int(GamePolicyEvaluationStatus.NONFINITE_STAGE_COST),
-                    int(GamePolicyEvaluationStatus.SUCCESS),
+                    ~transition_successful,
+                    int(GamePolicyEvaluationStatus.TRANSITION_FAILED),
+                    jnp.where(
+                        ~transition_finite,
+                        int(GamePolicyEvaluationStatus.NONFINITE_DYNAMICS_STATE),
+                        jnp.where(
+                            ~stage_all_finite,
+                            int(GamePolicyEvaluationStatus.NONFINITE_STAGE_COST),
+                            int(GamePolicyEvaluationStatus.SUCCESS),
+                        ),
+                    ),
                 ),
             ),
         ).astype(jnp.int32)
@@ -904,27 +956,37 @@ def _evaluate_affine_profile(
         failed_player = jnp.where(
             cost_failure, _first_false(stage_finite), failed_player
         ).astype(jnp.int32)
-        next_active = trajectory_active & control_finite & transition_finite
+        next_active = transition_valid & stage_all_finite
+        next_state = jnp.where(next_active[:, None], accepted, safe_state)
         return (
-            candidate,
+            next_state,
             next_active,
             status,
             failed_step,
             failed_player,
         ), (
-            candidate,
-            control,
+            jnp.where(attempted[:, None], accepted, jnp.full_like(accepted, jnp.nan)),
+            jnp.where(
+                trajectory_active[:, None],
+                raw_control,
+                jnp.full_like(raw_control, jnp.nan),
+            ),
             next_active,
-            control_finite,
-            transition_finite,
+            trajectory_active & control_finite,
+            transition_valid,
             stage,
             stage_finite,
+            candidate,
+            jnp.where(attempted[:, None], accepted, jnp.full_like(accepted, jnp.nan)),
+            attempted,
+            attempted & transition_successful,
+            jnp.where(attempted, transition_status, 0).astype(jnp.int32),
         )
 
-    (_, _, status, failed_step, failed_player), output = jax.lax.scan(
+    final_carry, output = jax.lax.scan(
         scan_step,
         (
-            initial,
+            jnp.where(initial_valid[:, None], initial, jnp.zeros_like(initial)),
             initial_valid,
             initial_status,
             initial_failed_step,
@@ -932,6 +994,7 @@ def _evaluate_affine_profile(
         ),
         jnp.arange(horizon, dtype=jnp.int32),
     )
+    final_state, final_active, status, failed_step, failed_player = final_carry
     (
         state_tail,
         controls_time,
@@ -940,10 +1003,28 @@ def _evaluate_affine_profile(
         transition_valid_time,
         stage_time,
         stage_valid_time,
+        candidate_time,
+        accepted_time,
+        attempted_time,
+        successful_time,
+        transition_status_time,
     ) = output
-    final_state = state_tail[-1]
-    terminal = jax.vmap(lambda state: _terminal_cost_vector(problem, state))(final_state)
-    terminal_valid_flat = jnp.isfinite(terminal)
+
+    def terminal_cost(case_state, active):
+        return jax.lax.cond(
+            active,
+            lambda _: _terminal_cost_vector(problem, case_state),
+            lambda _: jnp.zeros((players,), dtype=case_state.dtype),
+            operand=None,
+        )
+
+    raw_terminal = jax.vmap(terminal_cost)(final_state, final_active)
+    terminal = jnp.where(
+        final_active[:, None],
+        raw_terminal,
+        jnp.full_like(raw_terminal, jnp.nan),
+    )
+    terminal_valid_flat = final_active[:, None] & jnp.isfinite(raw_terminal)
     terminal_all_finite = jnp.all(terminal_valid_flat, axis=-1)
     terminal_failure = (
         status == int(GamePolicyEvaluationStatus.SUCCESS)
@@ -974,13 +1055,25 @@ def _evaluate_affine_profile(
         CONTROL_DYNAMICS_FAILED,
     ).astype(jnp.int32)
     trajectory_status = trajectory_status_flat.reshape(cases)
+    transition_evidence = DiscreteTransitionEvidence(
+        jnp.moveaxis(candidate_time, 0, 1).reshape(
+            cases + (horizon,) + problem.state_shape
+        ),
+        jnp.moveaxis(accepted_time, 0, 1).reshape(
+            cases + (horizon,) + problem.state_shape
+        ),
+        jnp.moveaxis(attempted_time, 0, 1).reshape(cases + (horizon,)),
+        jnp.moveaxis(successful_time, 0, 1).reshape(cases + (horizon,)),
+        jnp.moveaxis(transition_status_time, 0, 1).reshape(cases + (horizon,)),
+    )
     trajectory = ControlTrajectory(
         time_grid=problem.time_grid,
         states=states,
         controls=controls,
         valid=trajectory_valid,
         status=trajectory_status,
-        backend_status=trajectory_status,
+        backend_status=transition_evidence.first_failure_status,
+        transition_evidence=transition_evidence,
         case_shape=cases,
         state_shape=problem.state_shape,
         control_shape=problem.control_shape,
@@ -1881,6 +1974,7 @@ def solve_prepared_ilq_feedback_game(
         time_grid=problem.time_grid,
         input_layout=system_input_layout,
         partition=problem.partition,
+        dynamics_id=problem.dynamics.dynamics_id,
         case_shape=problem.case_shape,
         policy_id=runtime_policy_id,
     )

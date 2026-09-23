@@ -7,10 +7,12 @@ from typing import TYPE_CHECKING
 from ._compressible_adaptivity import (
     KineticAMRTransferEvidence,
     KineticAMRTransferPlan,
+    KineticAMRTransferResult,
     KineticMultiblockInterfacePlan,
     MappedKineticGridPlan,
     MovingKineticGeometryEvidence,
     MovingKineticGeometryPlan,
+    MovingKineticGeometryResult,
     PredictiveKineticRefinementPlan,
     PredictiveRefinementEvidence,
 )
@@ -478,6 +480,7 @@ __all__ = [
     "IntegerLatticeTransportPlan",
     "KineticAMRTransferEvidence",
     "KineticAMRTransferPlan",
+    "KineticAMRTransferResult",
     "KineticAuxiliaryState",
     "KineticEffectiveTransportEvidence",
     "KineticEffectiveTransportPlan",
@@ -502,6 +505,7 @@ __all__ = [
     "MappedKineticGridPlan",
     "MovingKineticGeometryEvidence",
     "MovingKineticGeometryPlan",
+    "MovingKineticGeometryResult",
     "PositiveCompressibleKineticPlan",
     "PositiveKineticCollisionKind",
     "PredictiveKineticRefinementPlan",

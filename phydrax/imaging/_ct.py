@@ -154,9 +154,17 @@ class HUToMaterialResult:
             )
         if self.density.support.support_id != self.material_fractions.support.support_id:
             raise ValueError("Calibrated density and fractions must share one support.")
-        object.__setattr__(
-            self, "calibration_id", _identifier(self.calibration_id, "calibration_id")
-        )
+        calibration_id = _identifier(self.calibration_id, "calibration_id")
+        for asset in (self.density, self.material_fractions):
+            if asset.metadata.get("hu_calibration_id") != calibration_id:
+                raise ValueError(
+                    "calibration_id must match both calibrated asset metadata records."
+                )
+            if calibration_id not in asset.derivation.calibration_ids:
+                raise ValueError(
+                    "calibration_id must match both calibrated asset derivation records."
+                )
+        object.__setattr__(self, "calibration_id", calibration_id)
 
     @property
     def support(self):

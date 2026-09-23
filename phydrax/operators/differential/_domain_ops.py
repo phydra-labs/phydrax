@@ -2500,6 +2500,33 @@ def partial_n(
     ):
         ad_engine = "jvp"
     mode_eff = _resolve_ad_mode(mode, ad_engine)
+    _, var_dim = _factor_and_dim(u, var)
+    if var_dim == 1:
+        if axis is None:
+            axis_i = 0
+        else:
+            axis_i = int(axis)
+            if axis_i != 0:
+                raise ValueError("axis must be 0 for a 1D variable.")
+    else:
+        if axis is None:
+            raise ValueError("partial_n(var=...) for a vector variable requires axis=...")
+        axis_i = int(axis)
+        if not (0 <= axis_i < int(var_dim)):
+            raise ValueError(f"axis must be in [0,{int(var_dim)}), got {axis_i}.")
+    if backend == "ad":
+        hooked = _try_derivative_rule(
+            u,
+            var=var,
+            axis=axis,
+            order=order_i,
+            mode=mode_eff,
+            backend="ad",
+            basis=basis,
+            periodic=periodic,
+        )
+        if hooked is not None:
+            return hooked
 
     if backend == "ad" and ad_engine == "jvp":
         out = u
@@ -2532,7 +2559,6 @@ def partial_n(
             ad_engine="auto",
         )
 
-    _, var_dim = _factor_and_dim(u, var)
     out_metadata = u.metadata
 
     if var not in u.deps:
@@ -2545,21 +2571,7 @@ def partial_n(
             domain=u.domain, deps=u.deps, func=_zero, metadata=out_metadata
         )
 
-    if var_dim == 1:
-        if axis is None:
-            axis_i = 0
-        else:
-            axis_i = int(axis)
-            if axis_i != 0:
-                raise ValueError("axis must be 0 for a 1D variable.")
-    else:
-        if axis is None:
-            raise ValueError("partial_n(var=...) for a vector variable requires axis=...")
-        axis_i = int(axis)
-        if not (0 <= axis_i < int(var_dim)):
-            raise ValueError(f"axis must be in [0,{int(var_dim)}), got {axis_i}.")
-
-    if backend == "ad" or backend == "jet":
+    if backend == "jet":
         hooked = _try_derivative_rule(
             u,
             var=var,
@@ -4183,7 +4195,7 @@ def maxwell_stress(
             eps_v = jnp.asarray(eps2.func(*[args[i] for i in eps_pos], key=key, **kwargs))
             ee = ein.contract("...i,...j->...ij", Ex, Ex)
             e2 = jnp.sum(Ex * Ex, axis=-1)[..., None, None]
-            T = T + eps_v * (ee - 0.5 * e2 * I)
+            T = T + eps_v[..., None, None] * (ee - 0.5 * e2 * I)
 
         if H2 is not None:
             Hx = jnp.asarray(H2.func(*[args[i] for i in H_pos], key=key, **kwargs))
@@ -4194,7 +4206,7 @@ def maxwell_stress(
             mu_v = jnp.asarray(mu2.func(*[args[i] for i in mu_pos], key=key, **kwargs))
             hh = ein.contract("...i,...j->...ij", Hx, Hx)
             h2 = jnp.sum(Hx * Hx, axis=-1)[..., None, None]
-            T = T + mu_v * (hh - 0.5 * h2 * I)
+            T = T + mu_v[..., None, None] * (hh - 0.5 * h2 * I)
 
         return T
 

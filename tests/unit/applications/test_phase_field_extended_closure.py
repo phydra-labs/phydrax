@@ -278,6 +278,21 @@ def test_active_phase_storage_is_dense_equivalent_and_capacity_safe():
     overflow = plan.from_dense(dense.at[0].set(jnp.asarray((0.4, 0.3, 0.3, 0.0, 0.0))))
     assert bool(overflow.evidence.dof_overflow)
     assert not bool(overflow.evidence.successful)
+    negative = plan.from_dense(dense.at[0].set(jnp.asarray((-1.0, 2.0, 0.0, 0.0, 0.0))))
+    assert not bool(negative.evidence.successful)
+
+    first = plan.transition(state, dense)
+    np.testing.assert_array_equal(
+        first.candidate.dwell[first.candidate.active],
+        jnp.ones_like(first.candidate.dwell[first.candidate.active]),
+    )
+    pruned_dense = dense.at[0].set(jnp.asarray((1.0, 0.0, 0.0, 0.0, 0.0)))
+    premature = plan.transition(first.candidate, pruned_dense)
+    assert not bool(premature.successful)
+
+    second = plan.transition(first.candidate, dense)
+    allowed = plan.transition(second.candidate, pruned_dense)
+    assert bool(allowed.successful)
 
 
 def test_amr_stochastic_replay_and_distributed_ownership_are_identity_safe():

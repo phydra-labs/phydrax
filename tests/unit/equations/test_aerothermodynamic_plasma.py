@@ -166,3 +166,37 @@ def test_fixed_work_plasma_source_preserves_zero_rate_state_and_ledgers():
     np.testing.assert_allclose(result.evidence.element_defect, 0.0, atol=0.0)
     np.testing.assert_allclose(result.evidence.charge_defect, 0.0, atol=0.0)
     np.testing.assert_allclose(result.evidence.energy_defect, 0.0, atol=0.0)
+
+
+def test_thermochemical_source_certifies_each_backward_euler_substep():
+    system = _ionized_system()
+    reaction = phx.equations.ChemicalReactionSpec(
+        "finite-ionization",
+        {"N": 1.0},
+        {"N+": 1.0, "e-": 1.0},
+        phx.equations.ArrheniusRatePlan(0.2),
+    )
+    mechanism = phx.equations.ChemicalMechanismIR(
+        "finite-ionization",
+        system.thermodynamics.schema,
+        system.thermodynamics.base.heavy_thermodynamics,
+        (reaction,),
+    ).prepare()
+    plasma = phx.equations.PreparedPlasmaMechanism(
+        mechanism,
+        (phx.equations.ReactionTemperatureSpec("electron"),),
+        mode_energy_per_progress=jnp.zeros((1, system.mode_count)),
+    )
+    source = phx.solver.FixedWorkThermochemicalSourcePlan(
+        plasma,
+        substeps=4,
+        newton_iterations=8,
+        residual_tolerance=1.0e-9,
+    )
+    incoming = system.primitive_to_conserved(_neutral_primitive(system))
+    result = source.advance(system, incoming, 0.2)
+    assert bool(result.evidence.successful)
+    assert result.evidence.residual_norm <= source.residual_tolerance * jnp.max(
+        jnp.abs(result.candidate)
+    )
+    assert not jnp.array_equal(result.accepted, incoming)

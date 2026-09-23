@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -65,19 +67,49 @@ def correlate_modes(
     maximum_relative_frequency_error: float = 0.05,
     frequency_weight: float = 1.0,
 ) -> ModalCorrelationResult:
-    reference_frequency = jnp.asarray(reference_frequencies_hz)
-    candidate_frequency = jnp.asarray(candidate_frequencies_hz)
+    if (
+        np.iscomplexobj(reference_frequencies_hz)
+        or np.iscomplexobj(candidate_frequencies_hz)
+        or not isfinite(minimum_mac)
+        or not 0 <= minimum_mac <= 1
+        or not isfinite(maximum_relative_frequency_error)
+        or maximum_relative_frequency_error < 0
+        or not isfinite(frequency_weight)
+        or frequency_weight < 0
+    ):
+        raise ValueError("Modal correlation frequencies and thresholds are invalid.")
+    reference_frequency = jnp.asarray(reference_frequencies_hz, dtype=jnp.float64)
+    candidate_frequency = jnp.asarray(candidate_frequencies_hz, dtype=jnp.float64)
     reference = jnp.asarray(reference_modes)
     candidate = jnp.asarray(candidate_modes)
     mapping = jnp.asarray(coordinate_map)
     if reference.ndim != 2 or candidate.ndim != 2:
         raise ValueError("Modal correlation requires coordinate-by-mode matrices.")
+    if reference_frequency.ndim != 1 or candidate_frequency.ndim != 1:
+        raise ValueError("Modal correlation frequencies must be rank-one vectors.")
     if reference.shape[1] != reference_frequency.size:
         raise ValueError("Reference frequencies and modes do not align.")
     if candidate.shape[1] != candidate_frequency.size:
         raise ValueError("Candidate frequencies and modes do not align.")
     if mapping.shape != (reference.shape[0], candidate.shape[0]):
         raise ValueError("Correlation coordinate map has incompatible shape.")
+    if (
+        not all(
+            np.all(np.isfinite(np.asarray(value)))
+            for value in (
+                reference_frequency,
+                candidate_frequency,
+                reference,
+                candidate,
+                mapping,
+            )
+        )
+        or np.any(np.asarray(reference_frequency) < 0)
+        or np.any(np.asarray(candidate_frequency) < 0)
+    ):
+        raise ValueError(
+            "Modal correlation inputs must be finite with nonnegative frequencies."
+        )
     mapped_candidate = mapping @ candidate
     mac = modal_assurance_criterion(reference, mapped_candidate)
     cost = modal_pairing_cost(
@@ -110,9 +142,21 @@ def correlate_frequency_responses(
     maximum_relative_amplitude_error: float = 0.1,
 ) -> FrequencyResponseCorrelationResult:
     reference = jnp.asarray(reference_response)
+    if (
+        not isfinite(minimum_assurance)
+        or not 0 <= minimum_assurance <= 1
+        or not isfinite(maximum_relative_amplitude_error)
+        or maximum_relative_amplitude_error < 0
+    ):
+        raise ValueError("Frequency-response correlation thresholds are invalid.")
     candidate = jnp.asarray(candidate_response)
     if reference.shape != candidate.shape or reference.ndim < 1:
         raise ValueError("Frequency responses must have identical non-scalar shapes.")
+    reference = eqx.error_if(
+        reference,
+        jnp.any(~jnp.isfinite(reference) | ~jnp.isfinite(candidate)),
+        "Frequency responses must be finite.",
+    )
     numerator = jnp.abs(jnp.sum(jnp.conj(reference) * candidate, axis=0)) ** 2
     reference_power = jnp.sum(jnp.abs(reference) ** 2, axis=0)
     candidate_power = jnp.sum(jnp.abs(candidate) ** 2, axis=0)

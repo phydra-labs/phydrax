@@ -65,6 +65,29 @@ def test_adaptive_rollout_replay_and_terminal_derivatives_are_certified():
     assert jnp.all(jnp.isfinite(vjp.initial_state_cotangent))
 
 
+def test_adaptive_continuation_stops_at_remaining_grid_capacity():
+    compiled, state = _compiled()
+    plan = phx.solver.MACAdaptiveRolloutPlan(
+        compiled,
+        phx.solver.SSPRK33FixedStepMethod(compiled),
+        phx.solver.MACCompositeStepController(compiled),
+        phx.solver.MACAdaptivePolicy(2, maximum_step_size=0.005),
+        final_time=0.02,
+        initial_step_size=0.005,
+    )
+    runtime = plan.initialize(jnp.asarray(0.0), state)
+    first = plan.advance(runtime, jnp.asarray(0.005)).runtime_state
+
+    continued = plan.advance(first, jnp.asarray(0.02)).runtime_state
+
+    assert continued.accepted_step_count == 2
+    assert jnp.isclose(continued.time, 0.01)
+    assert jnp.isclose(
+        continued.time,
+        continued.grid_times[continued.accepted_step_count],
+    )
+
+
 def test_segmented_shadowing_returns_explicit_certification_status():
     compiled, state = _compiled()
     method = phx.solver.SSPRK33FixedStepMethod(compiled)

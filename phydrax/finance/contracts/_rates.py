@@ -211,7 +211,7 @@ class DeterministicCashflowReplay(StrictModule):
     discount_factors: Array
     present_values: Array
     currencies: tuple[Currency, ...] = eqx.field(static=True)
-    slot_currency_codes: tuple[str, ...] = eqx.field(static=True)
+    slot_currency_ids: tuple[str, ...] = eqx.field(static=True)
     obligation_ids: tuple[str, ...] = eqx.field(static=True)
     curve_ids: tuple[str, ...] = eqx.field(static=True)
 
@@ -267,15 +267,16 @@ class DeterministicCashflowReplay(StrictModule):
             | jnp.any(~valid & (known | projected | notional)),
             "Cashflow replay arrays are invalid or non-neutral when inactive.",
         )
-        by_code: dict[str, Currency] = {}
+        by_id: dict[str, Currency] = {}
         for currency in slot_currencies:
-            by_code.setdefault(currency.code, currency)
-        currencies = tuple(by_code[code] for code in sorted(by_code))
-        index_by_code = {
-            currency.code: index for index, currency in enumerate(currencies)
+            by_id.setdefault(currency.currency_id, currency)
+        currencies = tuple(by_id[identifier] for identifier in sorted(by_id))
+        index_by_id = {
+            currency.currency_id: index for index, currency in enumerate(currencies)
         }
         indices = jnp.asarray(
-            tuple(index_by_code[value.code] for value in slot_currencies), dtype=jnp.int32
+            tuple(index_by_id[value.currency_id] for value in slot_currencies),
+            dtype=jnp.int32,
         )
         self.payment_ordinals = payment
         self.payment_times = times
@@ -288,7 +289,7 @@ class DeterministicCashflowReplay(StrictModule):
         self.discount_factors = discounts
         self.present_values = jnp.where(valid, amounts_ * discounts, 0.0)
         self.currencies = currencies
-        self.slot_currency_codes = tuple(value.code for value in slot_currencies)
+        self.slot_currency_ids = tuple(value.currency_id for value in slot_currencies)
         self.obligation_ids = identifiers
         self.curve_ids = tuple(
             dict.fromkeys(_identifier(value, "curve_id") for value in curve_ids)
@@ -301,10 +302,10 @@ class DeterministicCashflowReplay(StrictModule):
     def present_value(self, currency: Currency, /) -> Array:
         if not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency.")
-        codes = tuple(value.code for value in self.currencies)
-        if currency.code not in codes:
+        identifiers = tuple(value.currency_id for value in self.currencies)
+        if currency.currency_id not in identifiers:
             return jnp.asarray(0.0, dtype=self.present_values.dtype)
-        index = codes.index(currency.code)
+        index = identifiers.index(currency.currency_id)
         return jnp.sum(
             jnp.where(
                 self.valid_mask & (self.currency_index == index),
@@ -321,11 +322,24 @@ def _resolved_id(contract_id: str, kind: str, facts: dict[str, Any], /) -> str:
 
 
 def _curve(
-    curves: CurveSet, curve_id: str, schedule: ResolvedRateSchedule, /
+    curves: CurveSet,
+    curve_id: str,
+    schedule: ResolvedRateSchedule,
+    currency: Currency,
+    role: str,
+    /,
 ) -> PreparedCurve:
     curve = curves.curve(curve_id)
-    if curve.definition.valuation_date.ordinal != schedule.valuation_date.ordinal:
+    definition = curve.definition
+    if definition.valuation_date.ordinal != schedule.valuation_date.ordinal:
         raise ValueError("Curve and resolved schedule valuation dates must match.")
+    if definition.role != role:
+        raise ValueError(f"Curve {curve_id!r} must have role {role!r}.")
+    if (
+        definition.currency is None
+        or definition.currency.currency_id != currency.currency_id
+    ):
+        raise ValueError("Curve and cashflow currencies must match exactly.")
     return curve
 
 
@@ -374,9 +388,9 @@ def _combine_known(*batches: CashflowBatch) -> CashflowBatch:
     )
 
 
-def _slot_currency(replay: DeterministicCashflowReplay, code: str, /) -> Currency:
+def _slot_currency(replay: DeterministicCashflowReplay, currency_id: str, /) -> Currency:
     for currency in replay.currencies:
-        if currency.code == code:
+        if currency.currency_id == currency_id:
             return currency
     raise RuntimeError("Replay currency topology is inconsistent.")
 
@@ -387,9 +401,9 @@ def _combine_replays(
     if not replays:
         raise ValueError("At least one replay is required.")
     slot_currencies = tuple(
-        _slot_currency(replay, code)
+        _slot_currency(replay, currency_id)
         for replay in replays
-        for code in replay.slot_currency_codes
+        for currency_id in replay.slot_currency_ids
     )
     return DeterministicCashflowReplay(
         payment_ordinals=jnp.concatenate(
@@ -616,7 +630,9 @@ class ResolvedFixedLeg(AbstractResolvedContract):
             projected,
             notional,
         ) = self._cashflow_arrays()
-        discount = _curve(curves, self.discount_curve_id, self.schedule)
+        discount = _curve(
+            curves, self.discount_curve_id, self.schedule, self.currency, "discount"
+        )
         return DeterministicCashflowReplay(
             payment_ordinals=payment,
             payment_times=times,
@@ -735,7 +751,9 @@ class ResolvedFloatingLeg(AbstractResolvedContract):
         )
 
     def coupon_rates(self, curves: CurveSet, /) -> Array:
-        projection = _curve(curves, self.projection_curve_id, self.schedule)
+        projection = _curve(
+            curves, self.projection_curve_id, self.schedule, self.currency, "projection"
+        )
         projected_mask = self.schedule.schedule.valid & ~self.fixing_mask
         safe_start = jnp.where(projected_mask, self.schedule.accrual_start_times, 0.0)
         safe_end = jnp.where(projected_mask, self.schedule.accrual_end_times, 1.0)
@@ -840,7 +858,9 @@ class ResolvedFloatingLeg(AbstractResolvedContract):
             projected,
             notional,
         ) = self._cashflow_arrays(rates)
-        discount = _curve(curves, self.discount_curve_id, self.schedule)
+        discount = _curve(
+            curves, self.discount_curve_id, self.schedule, self.currency, "discount"
+        )
         return DeterministicCashflowReplay(
             payment_ordinals=payment,
             payment_times=times,
@@ -954,7 +974,9 @@ class ResolvedDeposit(AbstractResolvedContract):
 
     def cashflow_replay(self, curves: CurveSet, /) -> DeterministicCashflowReplay:
         payment, times, amounts, valid, currencies, identifiers = self._arrays()
-        discount = _curve(curves, self.discount_curve_id, self.schedule)
+        discount = _curve(
+            curves, self.discount_curve_id, self.schedule, self.currency, "discount"
+        )
         return DeterministicCashflowReplay(
             payment_ordinals=payment,
             payment_times=times,
@@ -1054,7 +1076,9 @@ class ResolvedForwardRateAgreement(AbstractResolvedContract):
     def rate(self, curves: CurveSet, /) -> Array:
         if self.fixing_known:
             return self.fixing_value
-        projection = _curve(curves, self.projection_curve_id, self.schedule)
+        projection = _curve(
+            curves, self.projection_curve_id, self.schedule, self.currency, "projection"
+        )
         return projection.forward_rate(
             self.schedule.accrual_start_times[0],
             self.schedule.accrual_end_times[0],
@@ -1105,7 +1129,9 @@ class ResolvedForwardRateAgreement(AbstractResolvedContract):
         rate = self.rate(curves)
         payment, times, valid = self._settlement_coordinates()
         amounts = jnp.asarray((jnp.where(valid[0], self.settlement_amount(rate), 0.0),))
-        discount = _curve(curves, self.discount_curve_id, self.schedule)
+        discount = _curve(
+            curves, self.discount_curve_id, self.schedule, self.currency, "discount"
+        )
         known = valid & self.fixing_known
         projected = valid & (not self.fixing_known)
         return DeterministicCashflowReplay(
@@ -1206,7 +1232,9 @@ class ResolvedInterestRateFuture(AbstractResolvedContract):
     def model_rate(self, curves: CurveSet, /) -> Array:
         if self.fixing_known:
             return self.fixing_value
-        projection = _curve(curves, self.projection_curve_id, self.schedule)
+        projection = _curve(
+            curves, self.projection_curve_id, self.schedule, self.currency, "projection"
+        )
         forward = projection.forward_rate(
             self.schedule.accrual_start_times[0],
             self.schedule.accrual_end_times[0],
@@ -1413,7 +1441,13 @@ class ResolvedInflationLeg(AbstractResolvedContract):
         )
 
     def index_levels(self, curves: CurveSet, /) -> tuple[Array, Array]:
-        curve = _curve(curves, self.index_curve_id, self.schedule)
+        curve = _curve(
+            curves,
+            self.index_curve_id,
+            self.schedule,
+            self.currency,
+            "inflation-index",
+        )
         active = self.schedule.schedule.valid
         project_start = active & ~self.start_fixing_mask
         project_end = active & ~self.end_fixing_mask
@@ -1463,7 +1497,9 @@ class ResolvedInflationLeg(AbstractResolvedContract):
             f"{self.contract_id}:inflation:{index}"
             for index in range(self.schedule.schedule.capacity)
         )
-        discount = _curve(curves, self.discount_curve_id, self.schedule)
+        discount = _curve(
+            curves, self.discount_curve_id, self.schedule, self.currency, "discount"
+        )
         return DeterministicCashflowReplay(
             payment_ordinals=payment,
             payment_times=times,

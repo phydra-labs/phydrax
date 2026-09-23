@@ -43,7 +43,18 @@ def _runtime(
     gradient = phx.discretization.CellPolynomialReconstructionPlan(1).prepare(
         discretization
     )
-    vof = phx.discretization.UnstructuredVOFPlan(discretization, gradient)
+    motion_plan = (
+        None
+        if motion is None
+        else phx.discretization.FixedConnectivityMotionPlan(
+            geometry_plan, motion, mapping_id="vof-moving-grid"
+        )
+    )
+    vof = phx.discretization.UnstructuredVOFPlan(
+        discretization,
+        gradient,
+        geometry_family_id=(None if motion_plan is None else motion_plan.plan_id),
+    )
     phase_change_operator = None
     if phase_change or phase_change_law is not None:
         rate_law = (
@@ -63,13 +74,6 @@ def _runtime(
             vof,
             thermal_diffusion=thermal,
         )
-    motion_plan = (
-        None
-        if motion is None
-        else phx.discretization.FixedConnectivityMotionPlan(
-            geometry_plan, motion, mapping_id="vof-moving-grid"
-        )
-    )
     embedded_boundary = None
     embedded_boundaries = None
     contact_angles = None

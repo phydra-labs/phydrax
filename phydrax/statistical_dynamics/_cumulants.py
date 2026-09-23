@@ -309,7 +309,9 @@ def state_evidence(
     psd_tol = float(psd_tolerance)
     rank_limit = layout.eddy_dimension if maximum_rank is None else int(maximum_rank)
     if (
-        hermitian_tol < 0.0
+        not np.isfinite(hermitian_tol)
+        or not np.isfinite(psd_tol)
+        or hermitian_tol < 0.0
         or psd_tol < 0.0
         or rank_limit < 0
         or rank_limit > layout.eddy_dimension
@@ -389,8 +391,15 @@ class ForcingCovariance(StrictModule, NonTrainableState):
             raise TypeError("Forcing covariance must use an inexact dtype.")
         hermitian_tol = float(hermitian_tolerance)
         psd_tol = float(psd_tolerance)
-        if hermitian_tol < 0.0 or psd_tol < 0.0:
-            raise ValueError("Forcing covariance tolerances must be non-negative.")
+        if (
+            not np.isfinite(hermitian_tol)
+            or not np.isfinite(psd_tol)
+            or hermitian_tol < 0.0
+            or psd_tol < 0.0
+        ):
+            raise ValueError(
+                "Forcing covariance tolerances must be finite and non-negative."
+            )
         defect = _matrix_defect(value)
         spectrum = HermitianSpectrum(value, tolerance=hermitian_tol)
         scale = jnp.maximum(jnp.max(jnp.abs(spectrum.eigenvalues), initial=0.0), 1.0)

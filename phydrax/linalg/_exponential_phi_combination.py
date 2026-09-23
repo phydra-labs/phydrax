@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, PyTree
 
+from .._fingerprint import canonical_fingerprint
 from ._matrix_function_contracts import MatrixFunctionProvenance, MatrixFunctionResult
 from ._operators import (
     AbstractLinearOperator,
@@ -53,12 +54,28 @@ def _augmented_exponential_operator(
             (
                 operator,
                 FunctionLinearOperator(
-                    coupling, source=auxiliary, target=operator.source
+                    coupling,
+                    source=auxiliary,
+                    target=operator.source,
+                    operator_id=canonical_fingerprint(
+                        {
+                            "kind": "augmented-phi-coupling",
+                            "operator": operator.operator_id,
+                            "coefficient_count": count,
+                        }
+                    ),
                 ),
             ),
             (
                 None,
-                FunctionLinearOperator(shift, source=auxiliary, target=auxiliary),
+                FunctionLinearOperator(
+                    shift,
+                    source=auxiliary,
+                    target=auxiliary,
+                    operator_id=canonical_fingerprint(
+                        {"kind": "augmented-phi-shift", "size": count}
+                    ),
+                ),
             ),
         ),
         source=space,

@@ -11,10 +11,23 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, Bool, Float, Key
 
 from .._doc import DOC_KEY0
-from .._sampling import host_design_factory, seed_from_key
+from .._sampling import (
+    HammersleyDesign,
+    host_design_factory,
+    resolve_design,
+    seed_from_key,
+)
 from ..discretization._axis import broadcasted_grid
 from ._base import AbstractGeometry, EnforcementGateMethod, GeometryTransitionKind
 from ._structure import _validate_label
+
+
+def _validate_rejection_design(where: Callable | None, sampler, /) -> None:
+    if where is not None and isinstance(resolve_design(sampler), HammersleyDesign):
+        raise ValueError(
+            "Hammersley is count-dependent and cannot be used with a rejection "
+            "filter; use a prefix-stable or randomized sampler."
+        )
 
 
 class HyperRectangle(AbstractGeometry):
@@ -159,6 +172,7 @@ class HyperRectangle(AbstractGeometry):
         sampler: str = "latin_hypercube",
         key: Key[Array, ""] = DOC_KEY0,
     ) -> Array:
+        _validate_rejection_design(where, sampler)
         lower = np.asarray(self.lower, dtype=np.float64)
         upper = np.asarray(self.upper, dtype=np.float64)
         dim = int(self.spatial_dim)
@@ -202,6 +216,7 @@ class HyperRectangle(AbstractGeometry):
         sampler: str = "latin_hypercube",
         key: Key[Array, ""] = DOC_KEY0,
     ) -> Array:
+        _validate_rejection_design(where, sampler)
         lower = np.asarray(self.lower, dtype=np.float64)
         upper = np.asarray(self.upper, dtype=np.float64)
         widths = upper - lower

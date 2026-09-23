@@ -10,9 +10,10 @@ import errno
 import hashlib
 import os
 import stat
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Literal
+from typing import Iterator, Literal
 
 from ._fingerprint import canonical_fingerprint
 from ._host_io import directory_identity, open_directory_beneath, stat_identity
@@ -38,7 +39,7 @@ class ResourceSetReadError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class ResourceSetLimits:
-    """Finite bounds for one directory-backed external resource set."""
+    """Finite byte, total-entry, and depth bounds for one directory resource."""
 
     max_total_bytes: int
     max_member_bytes: int
@@ -83,6 +84,7 @@ class ResourceSetManifest:
     relative_components: tuple[str, ...]
     members: tuple[ResourceMemberManifest, ...]
     total_size_bytes: int
+    total_entry_count: int
     aggregate_sha256: str
     limits: ResourceSetLimits
     manifest_id: str
@@ -95,15 +97,118 @@ class BoundedResourceSet:
     manifest: ResourceSetManifest
 
 
-def read_bounded_resource_set(
+@dataclass(slots=True)
+class OpenedResourceSet:
+    """Descriptor-held resource set whose admitted members can be read safely."""
+
+    descriptor: int
+    manifest: ResourceSetManifest
+
+    def read_member(
+        self,
+        relative_path: str,
+        /,
+        *,
+        maximum_bytes: int | None = None,
+    ) -> bytes:
+        if not isinstance(relative_path, str):
+            raise TypeError("relative_path must be a string.")
+        maximum = (
+            self.manifest.limits.max_member_bytes
+            if maximum_bytes is None
+            else maximum_bytes
+        )
+        if type(maximum) is not int or maximum <= 0:
+            raise ValueError("maximum_bytes must be a positive integer or None.")
+        path = PurePosixPath(relative_path)
+        if (
+            not relative_path
+            or "\\" in relative_path
+            or "\x00" in relative_path
+            or path.is_absolute()
+            or any(part in {"", ".", ".."} for part in path.parts)
+        ):
+            raise ResourceSetReadError(
+                "policy", "Resource-set member path is not confined."
+            )
+        inventory = {member.relative_path: member for member in self.manifest.members}
+        expected = inventory.get(path.as_posix())
+        if expected is None:
+            raise ResourceSetReadError(
+                "policy", "Requested resource-set member was not admitted."
+            )
+        if expected.size_bytes > maximum:
+            raise ResourceSetReadError(
+                "limit", "Resource-set member exceeds the requested byte limit."
+            )
+        descriptors = [os.dup(self.descriptor)]
+        try:
+            for component in path.parts[:-1]:
+                descriptors.append(
+                    os.open(component, _DIRECTORY_FLAGS, dir_fd=descriptors[-1])
+                )
+            descriptor = os.open(path.parts[-1], _FILE_FLAGS, dir_fd=descriptors[-1])
+            descriptors.append(descriptor)
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or int(opened.st_dev) != expected.file_device
+                or int(opened.st_ino) != expected.file_inode
+                or int(opened.st_mode) != expected.file_mode
+                or opened.st_size != expected.size_bytes
+            ):
+                raise ResourceSetReadError(
+                    "inconsistent",
+                    "A resource-set member changed after admission.",
+                )
+            digest = hashlib.sha256()
+            payload = bytearray()
+            while len(payload) <= expected.size_bytes:
+                chunk = os.read(
+                    descriptor,
+                    min(
+                        _HASH_CHUNK_BYTES,
+                        expected.size_bytes + 1 - len(payload),
+                    ),
+                )
+                if not chunk:
+                    break
+                payload.extend(chunk)
+                digest.update(chunk)
+            after = os.fstat(descriptor)
+            if (
+                len(payload) != expected.size_bytes
+                or digest.hexdigest() != expected.content_sha256
+                or stat_identity(opened) != stat_identity(after)
+            ):
+                raise ResourceSetReadError(
+                    "inconsistent",
+                    "A resource-set member changed after admission.",
+                )
+            return bytes(payload)
+        except ResourceSetReadError:
+            raise
+        except OSError as error:
+            raise ResourceSetReadError(
+                "inconsistent",
+                "An admitted resource-set member changed before it could be read.",
+            ) from error
+        finally:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
+
+
+@contextmanager
+def open_bounded_resource_set(
     path: str | os.PathLike[str],
     /,
     *,
     trusted_root: str | os.PathLike[str],
     limits: ResourceSetLimits,
-) -> BoundedResourceSet:
-    """Admit all regular files beneath one descriptor-held directory."""
+) -> Iterator[OpenedResourceSet]:
+    """Hold an admitted resource-set directory for exact member reads."""
 
+    consumer_boundary = False
     try:
         with open_directory_beneath(
             path,
@@ -111,7 +216,7 @@ def read_bounded_resource_set(
             maximum_depth=limits.max_depth,
         ) as opened:
             members: list[ResourceMemberManifest] = []
-            totals = [0]
+            totals = [0, 0]
             _walk_directory(
                 opened.descriptor,
                 prefix=(),
@@ -154,6 +259,7 @@ def read_bounded_resource_set(
                     for member in ordered
                 ],
                 "total_size_bytes": totals[0],
+                "total_entry_count": totals[1],
                 "aggregate_sha256": digest,
                 "limits": {
                     "max_total_bytes": limits.max_total_bytes,
@@ -171,26 +277,53 @@ def read_bounded_resource_set(
                 opened.components,
                 ordered,
                 totals[0],
+                totals[1],
                 digest,
                 limits,
                 canonical_fingerprint(payload),
             )
-            return BoundedResourceSet(manifest)
+            consumer_boundary = True
+            yield OpenedResourceSet(opened.descriptor, manifest)
+            consumer_boundary = False
+            opened.verify_stable()
     except ResourceSetReadError:
         raise
     except OverflowError as error:
+        if consumer_boundary:
+            raise
         raise ResourceSetReadError("limit", str(error)) from error
     except ValueError as error:
+        if consumer_boundary:
+            raise
         raise ResourceSetReadError("policy", str(error)) from error
     except RuntimeError as error:
+        if consumer_boundary:
+            raise
         raise ResourceSetReadError("inconsistent", str(error)) from error
     except OSError as error:
+        if consumer_boundary:
+            raise
         reason: _ResourceSetFailure = (
             "policy" if error.errno in (errno.ELOOP, errno.ENOTDIR) else "malformed"
         )
         raise ResourceSetReadError(
             reason, "The requested resource set could not be opened or read."
         ) from error
+
+
+def read_bounded_resource_set(
+    path: str | os.PathLike[str],
+    /,
+    *,
+    trusted_root: str | os.PathLike[str],
+    limits: ResourceSetLimits,
+) -> BoundedResourceSet:
+    """Admit all entries beneath one descriptor-held directory."""
+
+    with open_bounded_resource_set(
+        path, trusted_root=trusted_root, limits=limits
+    ) as opened:
+        return BoundedResourceSet(opened.manifest)
 
 
 def _walk_directory(
@@ -210,7 +343,16 @@ def _walk_directory(
         raise ResourceSetReadError(
             "policy", "Resource-set members must be regular files or directories."
         )
-    for name in sorted(os.listdir(directory_descriptor)):
+    names: list[str] = []
+    with os.scandir(directory_descriptor) as entries:
+        for entry in entries:
+            if totals[1] >= limits.max_members:
+                raise ResourceSetReadError(
+                    "limit", "Resource set exceeds its total entry limit."
+                )
+            totals[1] += 1
+            names.append(entry.name)
+    for name in sorted(names):
         if not name or name in {".", ".."} or "/" in name or "\x00" in name:
             raise ResourceSetReadError(
                 "malformed", "Resource-set member name is invalid."
@@ -251,8 +393,6 @@ def _walk_directory(
             raise ResourceSetReadError(
                 "policy", "Resource sets cannot contain special files."
             )
-        if len(members) >= limits.max_members:
-            raise ResourceSetReadError("limit", "Resource set exceeds its member limit.")
         if information.st_size > limits.max_member_bytes:
             raise ResourceSetReadError(
                 "limit", "Resource-set member exceeds its byte limit."
@@ -339,9 +479,11 @@ def _read_member(
 
 __all__ = [
     "BoundedResourceSet",
+    "OpenedResourceSet",
     "ResourceMemberManifest",
     "ResourceSetLimits",
     "ResourceSetManifest",
     "ResourceSetReadError",
+    "open_bounded_resource_set",
     "read_bounded_resource_set",
 ]

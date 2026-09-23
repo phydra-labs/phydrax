@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -126,3 +127,15 @@ def test_weak_and_integral_windows_crossing_reset_are_invalid():
     crossing_weak = (weak.window_start <= 4) & (weak.window_end > 4)
     assert not bool(jnp.any(integral.valid[crossing_integral]))
     assert not bool(jnp.any(weak.valid[crossing_weak]))
+
+
+def test_pde_metadata_rejects_fractional_and_boolean_orders():
+    with pytest.raises(TypeError, match="orders must contain integers"):
+        phx.dynamics.identification.PDEDerivative(0, (1.5,))
+    with pytest.raises(TypeError, match="orders must contain integers"):
+        phx.dynamics.identification.PDEDerivative(0, (True,))
+    with pytest.raises(TypeError, match="state_powers must contain integers"):
+        phx.dynamics.identification.PDELibraryTerm(
+            (0.5,),
+            name="fractional-power",
+        )

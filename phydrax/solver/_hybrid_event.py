@@ -373,23 +373,50 @@ def record_hybrid_event(
 
     valid = room & result.successful
     event_indices = tape.event_indices.at[safe_slot].set(
-        jnp.where(valid, jnp.asarray(event_index, dtype=jnp.int32), -1)
+        jnp.where(
+            valid,
+            jnp.asarray(event_index, dtype=jnp.int32),
+            tape.event_indices[safe_slot],
+        )
     )
-    event_times = tape.event_times.at[safe_slot].set(result.event_time)
-    states_before = tape.states_before.at[safe_slot].set(result.state_before)
-    states_after = tape.states_after.at[safe_slot].set(result.state_after)
-    guard_residuals = tape.guard_residuals.at[safe_slot].set(result.guard_residual)
-    transversality = tape.transversality.at[safe_slot].set(result.transversality)
-    saltation_valid = tape.saltation_valid.at[safe_slot].set(valid)
-    determinant_signs = tape.determinant_signs.at[safe_slot].set(result.determinant_sign)
+    event_times = tape.event_times.at[safe_slot].set(
+        jnp.where(valid, result.event_time, tape.event_times[safe_slot])
+    )
+    states_before = tape.states_before.at[safe_slot].set(
+        jnp.where(valid, result.state_before, tape.states_before[safe_slot])
+    )
+    states_after = tape.states_after.at[safe_slot].set(
+        jnp.where(valid, result.state_after, tape.states_after[safe_slot])
+    )
+    guard_residuals = tape.guard_residuals.at[safe_slot].set(
+        jnp.where(valid, result.guard_residual, tape.guard_residuals[safe_slot])
+    )
+    transversality = tape.transversality.at[safe_slot].set(
+        jnp.where(valid, result.transversality, tape.transversality[safe_slot])
+    )
+    saltation_valid = tape.saltation_valid.at[safe_slot].set(
+        jnp.where(valid, True, tape.saltation_valid[safe_slot])
+    )
+    determinant_signs = tape.determinant_signs.at[safe_slot].set(
+        jnp.where(valid, result.determinant_sign, tape.determinant_signs[safe_slot])
+    )
     log_abs_determinants = tape.log_abs_determinants.at[safe_slot].set(
-        result.log_abs_determinant
+        jnp.where(
+            valid,
+            result.log_abs_determinant,
+            tape.log_abs_determinants[safe_slot],
+        )
     )
     log_jacobian_valid = tape.log_jacobian_valid.at[safe_slot].set(
-        valid & result.log_jacobian_valid
+        jnp.where(
+            valid,
+            result.log_jacobian_valid,
+            tape.log_jacobian_valid[safe_slot],
+        )
     )
-    active = tape.active.at[safe_slot].set(valid)
-    failed = tape.capacity_exceeded | (~room) | (~result.successful)
+    active = tape.active.at[safe_slot].set(jnp.where(valid, True, tape.active[safe_slot]))
+    capacity_exceeded = tape.capacity_exceeded | (~room)
+    failed = (~result.successful) | capacity_exceeded
     next_status = jnp.where(failed, policy.failure, jnp.asarray(status, dtype=jnp.int32))
     return HybridEventTape(
         event_indices,
@@ -403,9 +430,9 @@ def record_hybrid_event(
         log_abs_determinants,
         log_jacobian_valid,
         active,
-        tape.event_count + jnp.where(room, 1, 0),
-        jnp.asarray(terminal, dtype=jnp.bool_) & valid,
-        failed,
+        tape.event_count + valid.astype(jnp.int32),
+        tape.terminal | (jnp.asarray(terminal, dtype=jnp.bool_) & valid),
+        capacity_exceeded,
         next_status,
         tape.policy_id,
         tape.schedule_id,
@@ -915,9 +942,7 @@ def replay_hybrid_events(
                 jnp.abs(reset_state - tape.states_after[index])
                 <= jnp.sqrt(jnp.finfo(state.real.dtype).eps)
             )
-            event_valid = (
-                index_valid & before_match & after_match & tape.saltation_valid[index]
-            )
+            event_valid = index_valid & before_match & after_match
             return reset_state, valid & event_valid, count + 1
 
         return jax.lax.cond(active, apply, lambda _: carry, None)

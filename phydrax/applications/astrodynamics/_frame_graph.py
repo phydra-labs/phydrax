@@ -36,19 +36,21 @@ class FrameTransformEdge(StrictModule, NonTrainableState):
         requirements = tuple(str(value).strip() for value in required_products)
         if not precision or any(not value for value in requirements):
             raise ValueError("Frame edge metadata must be non-empty.")
-        if int(cost) <= 0:
+        if isinstance(cost, bool) or not isinstance(cost, int):
+            raise TypeError("Frame edge cost must be an integer.")
+        if cost <= 0:
             raise ValueError("Frame edge cost must be positive.")
         self.transform = transform
         self.precision_class = precision
         self.required_products = requirements
-        self.cost = int(cost)
+        self.cost = cost
         self.edge_id = canonical_fingerprint(
             {
                 "kind": "frame-transform-edge",
                 "transform": transform.transform_id,
                 "precision": precision,
                 "requirements": list(requirements),
-                "cost": int(cost),
+                "cost": cost,
             }
         )
 

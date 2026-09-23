@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from phydrax.applications.numerical_relativity._distributed import (
     NumericalRelativityAMRDistributionPlan,
@@ -276,3 +277,44 @@ def test_checkpoint_restart_preserves_particles_routes_and_allows_resharding(tmp
         restored.state.particles.frame_token, state.particles.frame_token
     )
     np.testing.assert_array_equal(restored.route.local_slot, routed.local_slot)
+    child_checkpoint = EinsteinVlasovCheckpointPlan(
+        state,
+        routed,
+        migration,
+        topology_epoch=5,
+        analysis_plan_id="analysis",
+        numeric_revision_id="numeric",
+        execution_plan_id="execution",
+        stress_plan_id="stress",
+        frame_provider_id="frame-provider",
+        placement_id="one-device",
+    )
+    child_publication = child_checkpoint.publish(
+        repository,
+        state,
+        routed,
+        writer_id="rank-0-child",
+        parent_manifest=manifest,
+    )
+    child_manifest = child_checkpoint.assemble(
+        repository,
+        (child_publication,),
+        expected_process_count=1,
+        parent_manifest=manifest,
+    )
+    assert child_manifest.parent_manifest_id == manifest.manifest_id
+    with pytest.raises(ValueError, match="exact parent"):
+        child_checkpoint.restore(
+            repository,
+            child_manifest,
+            state,
+            routed,
+        )
+    child_restored = child_checkpoint.restore(
+        repository,
+        child_manifest,
+        state,
+        routed,
+        parent_manifest=manifest,
+    )
+    assert bool(child_restored.exact)

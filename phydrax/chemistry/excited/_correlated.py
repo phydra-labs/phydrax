@@ -101,10 +101,22 @@ class CallableCorrelatedManifoldProvider(AbstractCorrelatedManifoldProvider):
         self.provider_id = provider
 
     def evaluate(self, plan: CorrelatedManifoldPlan, /) -> ElectronicManifoldResult:
+        if not isinstance(plan, CorrelatedManifoldPlan):
+            raise TypeError("plan must be CorrelatedManifoldPlan.")
         result = self.evaluator(plan)
         if not isinstance(result, ElectronicManifoldResult):
             raise TypeError(
                 "Correlated manifold provider returned the wrong result type."
+            )
+        if (
+            result.provider_id != self.provider_id
+            or result.request_id != plan.plan_id
+            or result.method != plan.method
+            or result.spin_sector != plan.sector
+            or result.excitation_energies.shape != (plan.root_count,)
+        ):
+            raise ValueError(
+                "Correlated manifold result does not match provider, plan, method, sector, or root count."
             )
         return result
 
@@ -153,10 +165,13 @@ def casci_manifold(
         residuals,
         successful,
         plan.method,
-        "state-averaged",
+        plan.sector,
         tuple((index,) for index in range(plan.root_count)),
         energy_unit,
         transition_dipole_unit,
+        provider_id="native-casci",
+        request_id=plan.plan_id,
+        state_space_id=plan.plan_id,
     )
 
 
@@ -207,6 +222,9 @@ def biorthogonal_manifold(
         tuple((index,) for index in range(plan.root_count)),
         energy_unit,
         transition_dipole_unit,
+        provider_id="native-correlated",
+        request_id=plan.plan_id,
+        state_space_id=plan.plan_id,
     )
 
 

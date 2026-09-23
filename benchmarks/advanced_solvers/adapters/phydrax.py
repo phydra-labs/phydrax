@@ -70,6 +70,7 @@ class _PhydraxState:
     initial_coordinate: Any = None
     refreshed_certificate_problem: Any = None
     host_to_device_bytes: int = 0
+    refresh_host_to_device_bytes: int = 0
 
 
 class PhydraxAdapter(BenchmarkAdapter):
@@ -113,14 +114,14 @@ class PhydraxAdapter(BenchmarkAdapter):
                 dependency_version=None,
                 reason=f"required public module {missing!r} is not installed",
             )
-        except ImportError as error:
+        except (ImportError, OSError, RuntimeError) as error:
             return Availability(
                 available=False,
                 capability=capability,
                 dependency=self.dependency,
                 dependency_version=None,
                 reason=(
-                    f"required public module {required_module!r} could not be imported: "
+                    f"required public module {required_module!r} could not be initialized: "
                     f"{type(error).__name__}: {error}"
                 ),
             )
@@ -349,6 +350,9 @@ class PhydraxAdapter(BenchmarkAdapter):
                             (dimension, dimension),
                             symmetric=True,
                         )
+                        transferred_bytes += 2 * (3 * dimension - 2) * np.dtype(
+                            np.int64
+                        ).itemsize
                         properties = phx.linalg.OperatorProperties(
                             self_adjoint=True,
                             positive_definite=True,
@@ -661,20 +665,20 @@ class PhydraxAdapter(BenchmarkAdapter):
                     maximum_steps=spec.tolerances.max_steps,
                 ),
             )
-            transferred_bytes = int(
-                sum(
-                    array.nbytes
-                    for array in (
-                        problem.linear,
-                        problem.equality_matrix,
-                        problem.equality_rhs,
-                        problem.inequality_matrix,
-                        problem.inequality_rhs,
-                        problem.lower,
-                        problem.upper,
-                    )
-                )
-            )
+            arrays = [
+                problem.linear,
+                problem.equality_matrix,
+                problem.equality_rhs,
+                problem.inequality_matrix,
+                problem.inequality_rhs,
+                problem.lower,
+                problem.upper,
+            ]
+            if problem.quadratic is not None:
+                arrays.append(problem.quadratic)
+            if problem.conic_matrix is not None and problem.conic_rhs is not None:
+                arrays.extend((problem.conic_matrix, problem.conic_rhs))
+            transferred_bytes = int(sum(array.nbytes for array in arrays))
             return _PhydraxState(
                 spec=spec,
                 phx=phx,
@@ -1236,6 +1240,9 @@ class PhydraxAdapter(BenchmarkAdapter):
             refreshed_setup = self.setup(refreshed_spec)
             prepared_state.native_problem = refreshed_setup.native_problem
             prepared_state.refreshed_certificate_problem = refreshed_problem
+            prepared_state.refresh_host_to_device_bytes += (
+                refreshed_setup.host_to_device_bytes
+            )
             prepared_state.prepared = (
                 prepared_state.phx.optim.refresh_mixed_integer_program(
                     prepared_state.prepared,
@@ -1267,14 +1274,14 @@ class PhydraxAdapter(BenchmarkAdapter):
             )
         return prepared_state, RefreshEvidence(
             applicable=True,
-            symbolic_reused=True,
+            symbolic_reused=None,
             numeric_refreshed=True,
             symbolic_refresh_count=0,
             numeric_refresh_count=1,
             evidence=(
-                "public Phydrax refresh reused the compiled symbolic plan after a "
-                "deterministic structure-preserving 1% numeric perturbation; the "
-                "refreshed state is re-solved and independently certified"
+                "The public refresh API applied a deterministic structure-preserving "
+                "numeric perturbation and the refreshed problem is independently "
+                "certified; the provider does not expose direct symbolic-reuse evidence"
             ),
         )
 
@@ -1294,7 +1301,10 @@ class PhydraxAdapter(BenchmarkAdapter):
         problem = prepared_state.spec.problem
         if isinstance(problem, SparseLinearProblem):
             matrix_bytes = int(
-                problem.coefficients.nbytes + problem.rows.nbytes + problem.columns.nbytes
+                problem.coefficients.nbytes
+                + problem.rows.nbytes
+                + problem.columns.nbytes
+                + problem.rhs.nbytes
             )
             selected = prepared_state.plan.candidates[-1]
             setup_bytes = int(
@@ -1358,7 +1368,7 @@ class PhydraxAdapter(BenchmarkAdapter):
                 arrays.extend((problem.conic_matrix, problem.conic_rhs))
             matrix_bytes = int(sum(array.nbytes for array in arrays))
         elif isinstance(problem, OptimizationProblem):
-            arrays = [problem.initial, problem.optimum]
+            arrays = [problem.initial]
             if problem.target is not None:
                 arrays.append(problem.target)
             matrix_bytes = int(sum(array.nbytes for array in arrays))
@@ -1369,11 +1379,11 @@ class PhydraxAdapter(BenchmarkAdapter):
             )
         return {
             "matrix_bytes": matrix_bytes,
-            "setup_bytes": 0,
+            "setup_bytes": None,
             "peak_estimate_bytes": None,
             "evidence": (
-                "exact benchmark input bytes; optimization/nonlinear/continuation "
-                "transient workspace peak is unavailable"
+                "exact solver input bytes; optimization/nonlinear/continuation "
+                "retained setup and transient workspace storage are unavailable"
             ),
         }
 
@@ -1389,8 +1399,15 @@ class PhydraxAdapter(BenchmarkAdapter):
         refresh_measured = self.refresh_applicable(prepared_state)
         return TransferEvidence(
             input_origin="numpy-host",
-            host_to_device_bytes=prepared_state.host_to_device_bytes,
-            host_to_device_timing_phase="setup",
+            host_to_device_bytes=(
+                prepared_state.host_to_device_bytes
+                + prepared_state.refresh_host_to_device_bytes
+            ),
+            host_to_device_timing_phase=(
+                "setup+refresh"
+                if prepared_state.refresh_host_to_device_bytes
+                else "setup"
+            ),
             device_to_host_bytes=device_to_host_bytes,
             device_to_host_timing_phase=(
                 "verification+refreshed_verification"
@@ -1398,9 +1415,10 @@ class PhydraxAdapter(BenchmarkAdapter):
                 else "verification"
             ),
             evidence=(
-                "canonical NumPy problem arrays were converted to JAX arrays during "
-                "setup; all returned JAX solution, status, diagnostics, and certificate "
-                "inputs were materialized by jax.device_get during "
+                "canonical NumPy solver inputs were converted to JAX arrays during "
+                "setup and, where applicable, refresh; all returned JAX solution, "
+                "status, diagnostics, and certificate inputs were materialized by "
+                "jax.device_get during "
                 + (
                     "verification and refreshed verification"
                     if refresh_measured

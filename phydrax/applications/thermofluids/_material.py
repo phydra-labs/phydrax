@@ -7,6 +7,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 import numpy as np
 
+from ..._fingerprint import canonical_fingerprint
 from ...dynamics import (
     DAEComponent,
     DAEDerivativeIncidence,
@@ -23,6 +24,16 @@ from ._process import (
     ThermofluidPortKind,
     ThermofluidPortSpec,
 )
+
+
+def _residual_numeric_id(semantic_id: str, parameters, /) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "thermofluid-residual-binding",
+            "semantic": semantic_id,
+            "parameters": parameters,
+        }
+    )
 
 
 def _species_count(value):
@@ -155,6 +166,11 @@ def material_boundary_component(
                     f"prescribe_{variable}",
                     prescribe(variable, target),
                     (DAEDerivativeIncidence(variable),),
+                    residual_semantic_id="thermofluids.material.boundary.prescribed-value",
+                    residual_numeric_id=_residual_numeric_id(
+                        "thermofluids.material.boundary.prescribed-value",
+                        {"variable": variable, "target": target},
+                    ),
                 )
                 for variable, target in prescribed.items()
             ),
@@ -236,6 +252,11 @@ def material_mixer_component(
                     DAEDerivativeIncidence(f"{inlet}_pressure"),
                     DAEDerivativeIncidence("outlet_pressure"),
                 ),
+                residual_semantic_id="thermofluids.material.mixer.equal-pressure",
+                residual_numeric_id=_residual_numeric_id(
+                    "thermofluids.material.mixer.equal-pressure",
+                    {"inlet": inlet},
+                ),
             )
             for inlet in names[:-1]
         )
@@ -244,6 +265,11 @@ def material_mixer_component(
                 "mass_balance",
                 mass_balance,
                 tuple(DAEDerivativeIncidence(f"{port}_mass_flow") for port in names),
+                residual_semantic_id="thermofluids.material.mixer.mass-balance",
+                residual_numeric_id=_residual_numeric_id(
+                    "thermofluids.material.mixer.mass-balance",
+                    {"ports": names},
+                ),
             ),
         )
         + tuple(
@@ -254,6 +280,11 @@ def material_mixer_component(
                     DAEDerivativeIncidence(f"{port}_{variable}")
                     for port in names
                     for variable in ("mass_flow", field)
+                ),
+                residual_semantic_id="thermofluids.material.mixer.advective-balance",
+                residual_numeric_id=_residual_numeric_id(
+                    "thermofluids.material.mixer.advective-balance",
+                    {"field": field, "ports": names},
                 ),
             )
             for field in ("specific_enthalpy",)
@@ -432,6 +463,15 @@ def homogeneous_fluid_heat_exchanger_component(
                     residual,
                     tuple(DAEDerivativeIncidence(variable) for variable in variables),
                     residual_scale=equation_scales[equation],
+                    residual_semantic_id=f"thermofluids.material.homogeneous-heat-exchanger.{equation}",
+                    residual_numeric_id=_residual_numeric_id(
+                        f"thermofluids.material.homogeneous-heat-exchanger.{equation}",
+                        {
+                            "thermodynamics_id": thermodynamics.model_id,
+                            "mole_fraction": fraction,
+                            "conductance": conductance_value,
+                        },
+                    ),
                 )
                 for equation, residual, variables in specifications
             ),

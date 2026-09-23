@@ -276,6 +276,12 @@ class PeriodicAnisotropicViscoelasticPlan(StrictModule, NonTrainableState):
         force_history_N_m3: ArrayLike,
         /,
     ) -> tuple[AnisotropicViscoelasticState, Array]:
+        if (
+            not isinstance(acquisition, ElasticAcquisition)
+            or acquisition.sources.grid_id != self.grid.grid_id
+            or acquisition.receivers.grid_id != self.grid.grid_id
+        ):
+            raise ValueError("Elastic acquisition belongs to another grid.")
         force = jnp.asarray(force_history_N_m3)
         if force.shape != (
             self.step_count,

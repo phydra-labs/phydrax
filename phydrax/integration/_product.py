@@ -80,6 +80,7 @@ class ProductIntegrationRealization(StrictModule):
 
     batches: tuple[PointIntegrationBatch, ...]
     factor_plans: tuple[Any, ...]
+    stochastic_plans: tuple[Any, ...]
     stochastic_axes: tuple[str, ...] = eqx.field(static=True)
     deterministic_axes: tuple[str, ...] = eqx.field(static=True)
     randomized_qmc: bool = eqx.field(static=True)
@@ -392,13 +393,20 @@ def _materialize_product_factor(
     )
     base_design = design.base if isinstance(design, AntitheticDesign) else design
     name = design_name(base_design)
+    axis = structure.axis_for(labels[0])
+    if axis is None:
+        raise RuntimeError("Stochastic product factor has no axis.")
     address = SampleAddress(
         "integration",
         "product-group",
         target=labels,
         role=name,
     )
-    design_key = derive_key(key, address, replica)
+    design_key = derive_key(
+        key,
+        address,
+        replica if axis in reduction_axes else 0,
+    )
     if isinstance(design, AntitheticDesign):
         if count % 2:
             raise ValueError("Antithetic product factors require even num_samples.")
@@ -424,9 +432,6 @@ def _materialize_product_factor(
             dimension=reference_dimension,
             key=design_key,
         )
-    axis = structure.axis_for(labels[0])
-    if axis is None:
-        raise RuntimeError("Stochastic product factor has no axis.")
     offset = 0
     for label, transport in zip(labels, transports, strict=True):
         if transport is None:
@@ -565,16 +570,21 @@ def materialize_product(
         component.domain.labels, fixed_labels=fixed_labels
     )
     reduction_axes = axes_for_over(structure, base.axes)
+    reduced_stochastic_groups: list[tuple[tuple[str, ...], Any]] = []
     stochastic_axes_list: list[str] = []
-    for labels, _ in stochastic_groups:
+    for labels, factor_plan in stochastic_groups:
         axis = structure.axis_for(labels[0])
         if axis is None:
             raise RuntimeError("Stochastic product factor has no axis.")
         if axis in reduction_axes:
             stochastic_axes_list.append(axis)
+            reduced_stochastic_groups.append((labels, factor_plan))
     stochastic_axes = tuple(stochastic_axes_list)
+    stochastic_plans = tuple(plan for _, plan in reduced_stochastic_groups)
     integrated_stochastic = bool(stochastic_axes)
-    replicas = _replicate_count(groups) if integrated_stochastic else 1
+    replicas = (
+        _replicate_count(tuple(reduced_stochastic_groups)) if integrated_stochastic else 1
+    )
     batches: list[PointIntegrationBatch] = []
     deterministic_axes: list[str] = []
     factor_plans = tuple(factor_plan for _, factor_plan in groups)
@@ -595,6 +605,7 @@ def materialize_product(
     return ProductIntegrationRealization(
         tuple(batches),
         factor_plans,
+        stochastic_plans,
         stochastic_axes=stochastic_axes,
         deterministic_axes=tuple(deterministic_axes),
         randomized_qmc=randomized_qmc,
@@ -857,11 +868,7 @@ def integrate_product(
         )
 
     stochastic_axis = realization.stochastic_axes[0]
-    stochastic_plan = next(
-        factor_plan
-        for factor_plan in realization.factor_plans
-        if isinstance(factor_plan, (MonteCarloPlan, QuasiMonteCarloPlan))
-    )
+    stochastic_plan = realization.stochastic_plans[0]
     design = stochastic_plan.design
     reductions = tuple(
         _reduce_stochastic_product(

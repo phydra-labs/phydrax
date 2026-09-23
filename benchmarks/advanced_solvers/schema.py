@@ -13,11 +13,12 @@ from benchmarks._runtime import DurationDistribution
 from phydrax._fingerprint import canonical_fingerprint
 
 
-ROW_STATUSES = frozenset({"success", "nonconverged", "skipped"})
+ROW_STATUSES = frozenset({"success", "nonconverged", "failed", "skipped"})
 TIMING_PHASES = (
     "setup",
     "compilation",
     "preparation",
+    "warmup",
     "solve",
     "differentiation_compilation",
     "differentiation",
@@ -36,14 +37,23 @@ def empty_distribution() -> dict[str, Any]:
     return DurationDistribution(()).to_milliseconds_dict()
 
 
-def skip_certificate(kind: str, /) -> dict[str, Any]:
+def skip_certificate(
+    kind: str,
+    /,
+    *,
+    capability: str,
+    problem_fingerprint: str,
+) -> dict[str, Any]:
     return {
         "kind": kind,
+        "capability": capability,
+        "problem_fingerprint": problem_fingerprint,
         "residual_norm": None,
         "relative_residual": None,
         "backward_error": None,
-        "independently_computed": True,
-        "evaluator": "benchmarks.advanced_solvers.certificates",
+        "independently_computed": False,
+        "evaluator": "not executed",
+        "evaluator_fingerprint": None,
         "details": {},
     }
 
@@ -52,15 +62,34 @@ def validate_report(report: Mapping[str, Any], /) -> None:
     """Validate the stable report schema and all cross-row evidence invariants."""
     _require_keys(
         report,
-        ("environment", "campaign", "rows"),
+        ("environment", "provenance", "campaign", "rows", "passed"),
         path="report",
     )
     environment = _mapping(report["environment"], "report.environment")
     _validate_environment(environment, "report.environment")
+    provenance = _mapping(report["provenance"], "report.provenance")
+    _require_keys(
+        provenance,
+        (
+            "harness_source_fingerprint",
+            "certificate_evaluator_fingerprint",
+            "case_source_fingerprint",
+        ),
+        path="report.provenance",
+    )
+    for field in provenance:
+        _sha256(provenance[field], f"report.provenance.{field}")
     campaign = _mapping(report["campaign"], "report.campaign")
     _require_keys(
         campaign,
-        ("seed", "warmup", "repeats", "selected_adapters", "selected_cases"),
+        (
+            "seed",
+            "warmup",
+            "repeats",
+            "selected_adapters",
+            "selected_cases",
+            "case_fingerprints",
+        ),
         path="report.campaign",
     )
     _nonnegative_integer(campaign["warmup"], "report.campaign.warmup")
@@ -79,6 +108,17 @@ def validate_report(report: Mapping[str, Any], /) -> None:
             )
         if len(set(values)) != len(values):
             raise SchemaError(f"report.campaign.{field} must not contain duplicates")
+    case_fingerprints = _mapping(
+        campaign["case_fingerprints"], "report.campaign.case_fingerprints"
+    )
+    if set(case_fingerprints) != set(campaign["selected_cases"]):
+        raise SchemaError(
+            "report.campaign.case_fingerprints must cover exactly the selected cases"
+        )
+    for case_id, fingerprint in case_fingerprints.items():
+        _sha256(fingerprint, f"report.campaign.case_fingerprints.{case_id}")
+    if not isinstance(report["passed"], bool):
+        raise SchemaError("report.passed must be boolean")
     rows = report["rows"]
     if not isinstance(rows, list):
         raise SchemaError("report.rows must be a list")
@@ -100,15 +140,40 @@ def validate_report(report: Mapping[str, Any], /) -> None:
                 f"report.rows[{index}].environment must equal report.environment"
             )
         if (
-            row["outcome"]["status"] != "skipped"
+            row["outcome"]["status"] in {"success", "nonconverged"}
             and row["timing"]["solve"]["count"] != campaign["repeats"]
         ):
             raise SchemaError(
                 f"report.rows[{index}].timing.solve.count must equal "
                 "report.campaign.repeats"
             )
+        if (
+            row["outcome"]["status"] in {"success", "nonconverged"}
+            and row["timing"]["warmup"]["count"] != campaign["warmup"]
+        ):
+            raise SchemaError(
+                f"report.rows[{index}].timing.warmup.count must equal "
+                "report.campaign.warmup"
+            )
+        if row["problem"]["fingerprint"] != case_fingerprints[row["case_id"]]:
+            raise SchemaError(
+                f"report.rows[{index}].problem fingerprint does not match the "
+                "campaign case descriptor"
+            )
+        if (
+            row["outcome"]["status"] in {"success", "nonconverged"}
+            and row["certificate"]["evaluator_fingerprint"]
+            != provenance["certificate_evaluator_fingerprint"]
+        ):
+            raise SchemaError(
+                f"report.rows[{index}] certificate evaluator source does not match "
+                "report provenance"
+            )
         differentiation_count = row["timing"]["differentiation"]["count"]
-        if differentiation_count not in (0, campaign["repeats"]):
+        if (
+            row["outcome"]["status"] in {"success", "nonconverged"}
+            and differentiation_count not in (0, campaign["repeats"])
+        ):
             raise SchemaError(
                 f"report.rows[{index}].timing.differentiation.count must equal "
                 "report.campaign.repeats when differentiation is measured"
@@ -118,6 +183,11 @@ def validate_report(report: Mapping[str, Any], /) -> None:
             raise SchemaError(f"duplicate benchmark row identity {identity!r}")
         identities.add(identity)
 
+    expected_passed = all(
+        row["outcome"]["status"] in {"success", "skipped"} for row in rows
+    )
+    if report["passed"] is not expected_passed:
+        raise SchemaError("report.passed does not match row outcomes")
     if actual_protocol != expected_protocol:
         raise SchemaError(
             "report.rows must be the exact selected case×adapter cross-product "
@@ -159,6 +229,7 @@ def validate_row(row: Mapping[str, Any], /, *, path: str = "row") -> None:
     )
     for field in ("family", "name", "variant", "dtype", "fingerprint"):
         _nonempty_string(problem[field], f"{path}.problem.{field}")
+    _sha256(problem["fingerprint"], f"{path}.problem.fingerprint")
     if not isinstance(problem["seed"], int) or isinstance(problem["seed"], bool):
         raise SchemaError(f"{path}.problem.seed must be an integer")
     _mapping(problem["parameters"], f"{path}.problem.parameters")
@@ -196,7 +267,7 @@ def validate_row(row: Mapping[str, Any], /, *, path: str = "row") -> None:
     outcome = _mapping(row["outcome"], f"{path}.outcome")
     _require_keys(
         outcome,
-        ("status", "converged", "message", "skip_reason"),
+        ("status", "converged", "message", "skip_reason", "failure_phase"),
         path=f"{path}.outcome",
     )
     status = outcome["status"]
@@ -221,11 +292,14 @@ def validate_row(row: Mapping[str, Any], /, *, path: str = "row") -> None:
         certificate,
         (
             "kind",
+            "capability",
+            "problem_fingerprint",
             "residual_norm",
             "relative_residual",
             "backward_error",
             "independently_computed",
             "evaluator",
+            "evaluator_fingerprint",
             "details",
         ),
         path=f"{path}.certificate",
@@ -235,9 +309,15 @@ def validate_row(row: Mapping[str, Any], /, *, path: str = "row") -> None:
         certificate["details"],
         f"{path}.certificate.details",
     )
-    if certificate["independently_computed"] is not True:
-        raise SchemaError(f"{path}.certificate must be independently computed")
-    _nonempty_string(certificate["evaluator"], f"{path}.certificate.evaluator")
+    if certificate["capability"] != availability["capability"]:
+        raise SchemaError(f"{path}.certificate capability does not match availability")
+    if certificate["problem_fingerprint"] != problem["fingerprint"]:
+        raise SchemaError(f"{path}.certificate is bound to a different problem")
+    if certificate["kind"] not in _certificate_kinds(certificate["capability"]):
+        raise SchemaError(
+            f"{path}.certificate.kind is invalid for capability "
+            f"{certificate['capability']!r}"
+        )
 
     operations = _mapping(row["operations"], f"{path}.operations")
     _require_keys(
@@ -290,18 +370,38 @@ def validate_row(row: Mapping[str, Any], /, *, path: str = "row") -> None:
     )
     if refresh["applicable"]:
         for field in ("symbolic_reused", "numeric_refreshed"):
-            if not isinstance(refresh[field], bool):
+            if refresh[field] is not None and not isinstance(refresh[field], bool):
                 raise SchemaError(
-                    f"{path}.refresh.{field} must be boolean when refresh is applicable"
+                    f"{path}.refresh.{field} must be boolean or null"
                 )
+        if refresh["symbolic_reused"] is True and refresh["symbolic_refresh_count"] != 0:
+            raise SchemaError(
+                f"{path}.refresh symbolic reuse conflicts with symbolic refresh count"
+            )
+        if refresh["symbolic_reused"] is False and refresh["symbolic_refresh_count"] == 0:
+            raise SchemaError(
+                f"{path}.refresh symbolic rebuild requires a positive refresh count"
+            )
+        if refresh["numeric_refreshed"] is not True:
+            raise SchemaError(f"{path}.refresh must prove the numeric refresh")
+        if refresh["numeric_refresh_count"] != 1:
+            raise SchemaError(
+                f"{path}.refresh numeric refresh count must equal the measured call"
+            )
         _nonempty_string(
             refresh["certificate_problem_fingerprint"],
             f"{path}.refresh.certificate_problem_fingerprint",
         )
+        if refresh["certificate_problem_fingerprint"] == problem["fingerprint"]:
+            raise SchemaError(f"{path}.refresh must bind a distinct numeric problem")
         _nonempty_string(
             refresh["certificate_kind"],
             f"{path}.refresh.certificate_kind",
         )
+        if refresh["certificate_kind"] not in _certificate_kinds(
+            certificate["capability"]
+        ):
+            raise SchemaError(f"{path}.refresh certificate relation is incompatible")
         _nonnegative_finite(
             refresh["certificate_relative_residual"],
             f"{path}.refresh.certificate_relative_residual",
@@ -314,6 +414,10 @@ def validate_row(row: Mapping[str, Any], /, *, path: str = "row") -> None:
             raise SchemaError(f"{path}.refresh.certificate_converged must be boolean")
         if refresh["independently_certified"] is not True:
             raise SchemaError(f"{path}.refresh.independently_certified must be true")
+        if status == "success" and refresh["certificate_converged"] is not True:
+            raise SchemaError(
+                f"{path} cannot report lifecycle success when refreshed solve failed"
+            )
     elif (
         refresh["symbolic_reused"] is not None
         or refresh["numeric_refreshed"] is not None
@@ -328,13 +432,20 @@ def validate_row(row: Mapping[str, Any], /, *, path: str = "row") -> None:
     memory = _mapping(row["memory"], f"{path}.memory")
     _require_keys(
         memory,
-        ("matrix_bytes", "setup_bytes", "peak_estimate_bytes", "evidence"),
+        ("initial", "refreshed", "evidence"),
         path=f"{path}.memory",
     )
-    for field in ("matrix_bytes", "setup_bytes", "peak_estimate_bytes"):
-        if memory[field] is not None:
-            _nonnegative_integer(memory[field], f"{path}.memory.{field}")
     _nonempty_string(memory["evidence"], f"{path}.memory.evidence")
+    if memory["initial"] is not None:
+        _validate_memory_measurement(
+            _mapping(memory["initial"], f"{path}.memory.initial"),
+            f"{path}.memory.initial",
+        )
+    if memory["refreshed"] is not None:
+        _validate_memory_measurement(
+            _mapping(memory["refreshed"], f"{path}.memory.refreshed"),
+            f"{path}.memory.refreshed",
+        )
 
     transfers = _mapping(row["transfers"], f"{path}.transfers")
     _require_keys(
@@ -373,6 +484,12 @@ def validate_row(row: Mapping[str, Any], /, *, path: str = "row") -> None:
         _nonempty_string(availability["reason"], f"{path}.availability.reason")
         if availability["available"]:
             raise SchemaError(f"{path}.availability.available must be false for a skip")
+        if outcome["failure_phase"] is not None:
+            raise SchemaError(f"{path}.outcome.failure_phase must be null for a skip")
+        if certificate["independently_computed"] is not False:
+            raise SchemaError(f"{path}.certificate cannot be computed for a skip")
+        if certificate["evaluator_fingerprint"] is not None:
+            raise SchemaError(f"{path}.certificate evaluator must be null for a skip")
         for field in ("residual_norm", "relative_residual", "backward_error"):
             if certificate[field] is not None:
                 raise SchemaError(f"{path}.certificate.{field} must be null for a skip")
@@ -399,10 +516,53 @@ def validate_row(row: Mapping[str, Any], /, *, path: str = "row") -> None:
             )
         return
 
+    if status == "failed":
+        if outcome["converged"] is not False:
+            raise SchemaError(f"{path}.outcome.converged must be false for a failure")
+        if outcome["skip_reason"] is not None:
+            raise SchemaError(f"{path}.outcome.skip_reason must be null for a failure")
+        _nonempty_string(outcome["failure_phase"], f"{path}.outcome.failure_phase")
+        if certificate["independently_computed"] is not False:
+            raise SchemaError(f"{path}.certificate cannot be computed for a failure")
+        if any(
+            certificate[field] is not None
+            for field in (
+                "residual_norm",
+                "relative_residual",
+                "backward_error",
+                "evaluator_fingerprint",
+            )
+        ):
+            raise SchemaError(f"{path}.certificate must be empty for a failure")
+        if (
+            transfers["host_to_device_bytes"] is not None
+            or transfers["host_to_device_timing_phase"] is not None
+            or transfers["device_to_host_bytes"] is not None
+            or transfers["device_to_host_timing_phase"] is not None
+        ):
+            raise SchemaError(f"{path}.transfers must be unknown for a failure")
+        return
+
+    if certificate["independently_computed"] is not True:
+        raise SchemaError(f"{path}.certificate must be independently computed")
+    _nonempty_string(certificate["evaluator"], f"{path}.certificate.evaluator")
+    _sha256(
+        certificate["evaluator_fingerprint"],
+        f"{path}.certificate.evaluator_fingerprint",
+    )
+    if outcome["failure_phase"] is not None:
+        raise SchemaError(f"{path}.outcome.failure_phase must be null when measured")
+
     if availability["available"] is not True or availability["reason"] is not None:
         raise SchemaError(f"{path}.availability must record an available implementation")
     if outcome["skip_reason"] is not None:
         raise SchemaError(f"{path}.outcome.skip_reason must be null for a measured row")
+    if memory["initial"] is None:
+        raise SchemaError(f"{path}.memory.initial must be measured for an executed row")
+    if refresh["applicable"] != (memory["refreshed"] is not None):
+        raise SchemaError(
+            f"{path}.memory.refreshed presence must match refresh applicability"
+        )
     transfer_contracts = (
         ("host_to_device_bytes", "host_to_device_timing_phase"),
         ("device_to_host_bytes", "device_to_host_timing_phase"),
@@ -534,6 +694,8 @@ def validate_row(row: Mapping[str, Any], /, *, path: str = "row") -> None:
             "primal_feasibility",
             "dual_stationarity_norm",
             "cone_violation",
+            "dual_feasibility",
+            "complementarity",
         ),
     }
     if certificate["kind"] in optimization_fields:
@@ -721,6 +883,59 @@ def _validate_distribution(distribution: Mapping[str, Any], path: str) -> None:
                     f"{path}.{field} does not match samples_ms: "
                     f"expected {expected_value!r}"
                 )
+
+
+def _validate_memory_measurement(value: Mapping[str, Any], path: str) -> None:
+    _require_keys(
+        value,
+        ("matrix_bytes", "setup_bytes", "peak_estimate_bytes", "evidence"),
+        path=path,
+    )
+    for field in ("matrix_bytes", "setup_bytes", "peak_estimate_bytes"):
+        if value[field] is not None:
+            _nonnegative_integer(value[field], f"{path}.{field}")
+    _nonempty_string(value["evidence"], f"{path}.evidence")
+
+
+def _certificate_kinds(capability: str, /) -> frozenset[str]:
+    kinds = {
+        "linear.scalar": {"linear-system"},
+        "linear.block": {"linear-system"},
+        "nonlinear.root": {"nonlinear-root"},
+        "nonlinear.vi": {"variational-inequality-natural-map"},
+        "eigen.general": {
+            "eigenpair-relation",
+            "schur-relation",
+            "eigenpair-or-schur-relation",
+        },
+        "continuation.fold": {"continuation-branch-residual"},
+        "optimization.unconstrained": {"optimization-stationarity"},
+        "optimization.constrained": {"optimization-kkt"},
+        "optimization.proximal": {"optimization-proximal-stationarity"},
+        "optimization.bounded-least-squares": {"optimization-bound-stationarity"},
+        "optimization.linear-program": {"optimization-program-kkt"},
+        "optimization.quadratic-program": {"optimization-program-kkt"},
+        "optimization.conic-program": {"optimization-program-kkt"},
+        "optimization.mixed-integer-linear-program": {
+            "mixed-integer-program-primal-global-reference"
+        },
+        "optimization.mixed-integer-conic-program": {
+            "mixed-integer-program-primal-global-reference"
+        },
+    }
+    try:
+        return frozenset(kinds[capability])
+    except KeyError as error:
+        raise SchemaError(f"unknown certificate capability {capability!r}") from error
+
+
+def _sha256(value: Any, path: str) -> None:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise SchemaError(f"{path} must be a lowercase SHA-256 digest")
 
 
 def _require_keys(value: Mapping[str, Any], keys: Sequence[str], *, path: str) -> None:

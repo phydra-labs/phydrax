@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
@@ -189,6 +190,81 @@ def solve_local_blocks(
         detailed.value,
     )
     return solution, failed
+
+
+def _portable_positive_definite_solve(
+    matrix: Array,
+    right_hand_side: Array,
+    /,
+) -> tuple[Array, Array]:
+    """Batched Cholesky solve expressed only with portable array primitives."""
+    batch_size, dimension, _ = matrix.shape
+    row_indices = jnp.arange(dimension)
+    factor = jnp.zeros_like(matrix)
+    failed = jnp.zeros((batch_size,), dtype=jnp.bool_)
+
+    def factor_step(index, state):
+        current, current_failed = state
+        selector = jax.nn.one_hot(index, dimension, dtype=matrix.dtype)
+        diagonal_selector = selector[:, None] * selector[None, :]
+        row = jnp.sum(current * selector[None, :, None], axis=1)
+        matrix_diagonal = jnp.sum(matrix * diagonal_selector[None, :, :], axis=(-2, -1))
+        diagonal_residual = matrix_diagonal - jnp.sum(row * row, axis=-1)
+        valid = jnp.isfinite(diagonal_residual) & (diagonal_residual > 0.0)
+        diagonal = jnp.sqrt(jnp.where(valid, diagonal_residual, 1.0))
+        current = (
+            current * (1.0 - diagonal_selector[None, :, :])
+            + diagonal[:, None, None] * diagonal_selector[None, :, :]
+        )
+        pivot_row = jnp.sum(current * selector[None, :, None], axis=1)
+        products = jnp.sum(current * pivot_row[:, None, :], axis=-1)
+        matrix_column = jnp.sum(matrix * selector[None, None, :], axis=-1)
+        column = (matrix_column - products) / diagonal[:, None]
+        current_column = jnp.sum(current * selector[None, None, :], axis=-1)
+        updated_column = jnp.where(
+            row_indices[None, :] > index,
+            column,
+            current_column,
+        )
+        current = (
+            current * (1.0 - selector[None, None, :])
+            + updated_column[:, :, None] * selector[None, None, :]
+        )
+        return current, current_failed | ~valid
+
+    factor, failed = jax.lax.fori_loop(
+        0,
+        dimension,
+        factor_step,
+        (factor, failed),
+    )
+    forward = jnp.zeros_like(right_hand_side)
+
+    def forward_step(index, current):
+        selector = jax.nn.one_hot(index, dimension, dtype=matrix.dtype)
+        factor_row = jnp.sum(factor * selector[None, :, None], axis=1)
+        rhs_value = jnp.sum(right_hand_side * selector[None, :], axis=-1)
+        diagonal = jnp.sum(factor_row * selector[None, :], axis=-1)
+        value = (rhs_value - jnp.sum(factor_row * current, axis=-1)) / diagonal
+        return current * (1.0 - selector[None, :]) + value[:, None] * selector[None, :]
+
+    forward = jax.lax.fori_loop(0, dimension, forward_step, forward)
+    solution = jnp.zeros_like(right_hand_side)
+
+    def backward_step(offset, current):
+        index = dimension - 1 - offset
+        selector = jax.nn.one_hot(index, dimension, dtype=matrix.dtype)
+        factor_column = jnp.sum(factor * selector[None, None, :], axis=-1)
+        rhs_value = jnp.sum(forward * selector[None, :], axis=-1)
+        diagonal = jnp.sum(factor_column * selector[None, :], axis=-1)
+        value = (rhs_value - jnp.sum(factor_column * current, axis=-1)) / diagonal
+        return current * (1.0 - selector[None, :]) + value[:, None] * selector[None, :]
+
+    solution = jax.lax.fori_loop(0, dimension, backward_step, solution)
+    failed |= jnp.any(~jnp.isfinite(factor), axis=(-2, -1)) | jnp.any(
+        ~jnp.isfinite(solution), axis=-1
+    )
+    return jnp.where(failed[:, None], 0.0, solution), failed
 
 
 __all__ = [

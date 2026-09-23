@@ -132,3 +132,28 @@ def test_adaptive_triangle_is_jittable_and_differentiable():
     derivative = jax.grad(objective)(2.0)
     assert value == pytest.approx(2.0 * 0.9330127018922193, rel=2e-13)
     assert derivative == pytest.approx(0.9330127018922193, rel=2e-13)
+
+
+def test_adaptive_triangle_ratio_must_meet_the_declared_tolerance():
+    domain, boundary = _problem()
+    base = phx.integration.over(boundary)
+    target = phx.integration.normalized_density(
+        base,
+        domain.Function("x")(lambda x: -30.0 + 0.0 * x[0]),
+    )
+    plan = phx.integration.AdaptiveTrianglePlan(
+        absolute_tolerance=1e-12,
+        relative_tolerance=0.0,
+        max_cells=4,
+        throw=False,
+    )
+
+    estimate = phx.integration.integrate(
+        domain.Function("x")(lambda x: jnp.exp(x[0])),
+        target,
+        plan,
+    )
+
+    assert estimate.status == int(phx.integration.IntegrationStatus.REFINEMENT_STAGNATION)
+    assert estimate.diagnostics.status == estimate.status
+    assert estimate.diagnostics.estimated_error == estimate.error_estimate

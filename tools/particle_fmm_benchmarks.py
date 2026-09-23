@@ -116,13 +116,27 @@ def main() -> None:
         for count in counts
         for order in orders
     ]
+    maximum_relative_error = 0.25
+    maximum_rms_relative_error = 0.1
     report = {
         "kind": "particle-cartesian-fmm-benchmark",
         "device": str(jax.devices()[0]),
+        "maximum_relative_error": maximum_relative_error,
+        "maximum_rms_relative_error": maximum_rms_relative_error,
         "cases": cases,
-        "passed": all(case["successful"] for case in cases),
+        "passed": bool(
+            cases
+            and all(
+                case["successful"]
+                and jnp.isfinite(case["maximum_relative_error"])
+                and jnp.isfinite(case["rms_relative_error"])
+                and case["maximum_relative_error"] <= maximum_relative_error
+                and case["rms_relative_error"] <= maximum_rms_relative_error
+                for case in cases
+            )
+        ),
     }
-    print(json.dumps(report, indent=2, sort_keys=True))
+    print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
     if not report["passed"]:
         raise SystemExit(1)
 

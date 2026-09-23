@@ -174,7 +174,7 @@ finite path evidence, all stage statuses, equilibrium tolerance, zero-load
 consistency, and final loaded-geometry residual. Pickle-free checkpoints retain
 the exact prepared identity and reject shape or preparation changes.
 
-## Qualification and performance
+## Qualification
 
 Run the focused scientific qualification artifact:
 
@@ -185,10 +185,3 @@ python tools/cardiovascular_mechanics_qualification.py --output mechanics.json
 It reports objectivity, energy-stress-tangent consistency, mixed gauge/inf-sup
 and no-locking evidence, cavity derivative and pressure work, support limits,
 and unloaded-reference recovery.
-
-The benchmark separates batch energy evaluation, full point response including
-tangent, and chamber follower-load execution:
-
-```text
-python benchmarks/cardiovascular_mechanics.py --points 128 1024 --repeats 5
-```

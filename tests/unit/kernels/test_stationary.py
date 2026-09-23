@@ -95,3 +95,12 @@ def test_matern_origin_derivatives_match_process_regularity_moments():
     assert jnp.allclose(matern32_cross, 3.0 / length_scale**2)
     assert jnp.allclose(matern52_cross, 5.0 / (3.0 * length_scale**2))
     assert jnp.allclose(matern52_fourth, 25.0 / length_scale**4)
+
+
+def test_real_coordinate_kernel_rejects_complex_inputs_before_casting():
+    kernel = phx.kernels.SquaredExponentialKernel()
+    with pytest.raises(TypeError, match="real coordinates"):
+        kernel.pairwise(
+            jnp.asarray([1.0 + 0.5j]),
+            jnp.asarray([1.0 + 0.0j]),
+        )

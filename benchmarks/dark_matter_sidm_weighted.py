@@ -125,15 +125,16 @@ def _case(root_count: int, grid_count: int, repetitions: int):
     )
     collide = eqx.filter_jit(plan.collide)
     started = time.perf_counter()
-    first = collide(state, jr.key(0), 0, 1.0e-3)
-    jax.block_until_ready(first.accepted_state.canonical_momenta)
+    root_key = jr.key(0)
+    first = collide(state, jr.fold_in(root_key, 0), 0, 1.0e-3)
+    jax.block_until_ready(first)
     compile_and_first_ms = 1000.0 * (time.perf_counter() - started)
 
     started = time.perf_counter()
     result = first
     for epoch in range(repetitions):
-        result = collide(state, jr.key(epoch + 1), epoch + 1, 1.0e-3)
-    jax.block_until_ready(result.accepted_state.canonical_momenta)
+        result = collide(state, jr.fold_in(root_key, epoch + 1), epoch + 1, 1.0e-3)
+        jax.block_until_ready(result)
     execution_ms = 1000.0 * (time.perf_counter() - started) / repetitions
     return {
         "root_packet_count": root_count,
@@ -141,6 +142,7 @@ def _case(root_count: int, grid_count: int, repetitions: int):
         "pair_capacity": neighborhood.pair_capacity,
         "grid_count_per_axis": grid_count,
         "compile_and_first_ms": compile_and_first_ms,
+        "rng": {"root_seed": 0, "stream": "fold_in(epoch)"},
         "execution_ms": execution_ms,
         "pairs_per_second": 1000.0 * neighborhood.pair_capacity / execution_ms,
         "accepted_events": int(result.diagnostics.event_count),

@@ -652,15 +652,19 @@ class GaussSeidelGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
         count = _action_count(self.max_actions, observation_count=observation_count)
         values = _required_residual(residual, observation_count=observation_count)
         if self.ordering == "fixed":
-            host = jax.device_get(self.fixed_order[:count])
-            if (
-                bool(jnp.any(host < 0))
-                or bool(jnp.any(host >= observation_count))
-                or len(set(int(index) for index in host)) != count
-            ):
-                raise ValueError(
-                    "fixed_order must select distinct in-range observation indices."
-                )
+            selected_order = self.fixed_order[:count]
+            duplicate = (selected_order[:, None] == selected_order[None, :]) & ~jnp.eye(
+                count, dtype=jnp.bool_
+            )
+            selected_order = eqx.error_if(
+                selected_order,
+                jnp.any(selected_order < 0)
+                | jnp.any(selected_order >= observation_count)
+                | jnp.any(duplicate),
+                "fixed_order must select distinct in-range observation indices.",
+            )
+        else:
+            selected_order = self.fixed_order
         remainder = values.astype(points.dtype)
         used = jnp.zeros((observation_count,), dtype=jnp.bool_)
         columns = []
@@ -671,7 +675,7 @@ class GaussSeidelGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
             if self.ordering == "cyclic":
                 index = jnp.asarray(iteration, dtype=jnp.int32)
             elif self.ordering == "fixed":
-                index = self.fixed_order[iteration]
+                index = selected_order[iteration]
             else:
                 scores = jnp.where(used, -jnp.inf, jnp.abs(remainder))
                 index = jax.lax.stop_gradient(jnp.argmax(scores).astype(jnp.int32))

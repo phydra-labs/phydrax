@@ -9,7 +9,12 @@ import json
 
 import jax.numpy as jnp
 
-from benchmarks._runtime import capture_environment, logical_array_bytes, measure_host
+from benchmarks._runtime import (
+    capture_environment,
+    logical_array_bytes,
+    measure_host,
+    measure_synchronized,
+)
 from phydrax.applications.phase_field import DoubleWellKinkPlan, solve_double_well_kink
 from phydrax.discretization import FourierAxisSpec, TensorGridPlan
 from phydrax.equations import DoubleWellFreeEnergy
@@ -33,7 +38,7 @@ def benchmark_case(kink_points: int, optical_steps: int):
         gradient_coefficient=1.0,
         residual_tolerance=1e-9,
     )
-    kink, kink_seconds = measure_host(lambda: solve_double_well_kink(kink_plan))
+    kink, kink_seconds = measure_synchronized(lambda: solve_double_well_kink(kink_plan))
 
     plane_grid = TensorGridPlan(
         (FourierAxisSpec(2), FourierAxisSpec(2)), axis_names=("u", "v")
@@ -67,7 +72,7 @@ def benchmark_case(kink_points: int, optical_steps: int):
             response,
         )
     )
-    propagation, propagation_seconds = measure_host(
+    propagation, propagation_seconds = measure_synchronized(
         lambda: propagate_envelope(prepared, field, 0.2)
     )
     intensity_error = jnp.max(
@@ -108,19 +113,24 @@ def main() -> None:
     arguments = parser.parse_args()
     if any(value < 5 for value in arguments.kink_points) or arguments.optical_steps < 1:
         raise ValueError("Benchmark resolutions must be positive and supported.")
+    cases = [
+        benchmark_case(points, arguments.optical_steps)
+        for points in arguments.kink_points
+    ]
     payload = {
         "environment": capture_environment().to_dict(),
-        "cases": [
-            benchmark_case(points, arguments.optical_steps)
-            for points in arguments.kink_points
-        ],
+        "cases": cases,
+        "passed": all(case["successful"] for case in cases),
     }
-    encoded = json.dumps(payload, indent=2, sort_keys=True)
+    encoded = json.dumps(payload, allow_nan=False, indent=2, sort_keys=True)
     if arguments.output:
-        with open(arguments.output, "w", encoding="utf-8") as stream:
-            stream.write(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
     else:
         print(encoded)
+    if not payload["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

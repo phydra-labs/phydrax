@@ -557,6 +557,8 @@ def main() -> None:
         print(json.dumps(payload, allow_nan=False, indent=2, sort_keys=True))
     else:
         write_json_atomic(arguments.output, payload)
+    if not payload["all_valid"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

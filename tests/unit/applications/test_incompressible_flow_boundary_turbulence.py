@@ -193,6 +193,19 @@ def test_inflow_prng_lineage_reproducibility_and_restart_are_exact():
         continued.evidence.fluctuation_volume_flux, 0.0, atol=1e-12
     )
 
+    with pytest.raises(ValueError, match="leave room"):
+        prepared.initialize(
+            jax.random.key(20),
+            sample_index=int(np.iinfo(np.uint32).max),
+        )
+    exhausted = StochasticTurbulentInflowState(
+        jax.random.key(20),
+        jnp.asarray(np.iinfo(np.uint32).max, dtype=jnp.uint32),
+        prepared.prepared_id,
+    )
+    with pytest.raises(eqx.EquinoxRuntimeError, match="sample_index is exhausted"):
+        prepared.sample(exhausted)
+
 
 def test_spectral_inflow_certifies_surface_divergence_mass_and_jit():
     angles = 0.5 * jnp.pi * jnp.arange(4)

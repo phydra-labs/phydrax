@@ -864,6 +864,11 @@ def evaluate_stochastic_maximum_principle(
         ~path_causal,
         StochasticMaximumPrincipleStatus.NONCAUSAL_INFORMATION,
     )
+    status = jnp.where(
+        jnp.any(status == int(StochasticMaximumPrincipleStatus.SUCCESS)),
+        status,
+        int(StochasticMaximumPrincipleStatus.NO_VALID_PATHS),
+    ).astype(jnp.int32)
     valid = status == int(StochasticMaximumPrincipleStatus.SUCCESS)
 
     forward_norm = _path_rms(forward_residual)

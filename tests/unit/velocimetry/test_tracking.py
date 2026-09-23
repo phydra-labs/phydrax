@@ -25,6 +25,7 @@ from phydrax.velocimetry.tracking import (
     ParticleDetections,
     ParticleReconstructionResult,
     reconstruct_particles,
+    ReconstructionStatus,
     refine_tracks_min_cost_flow,
     smooth_tracks,
     to_trajectory_data,
@@ -131,6 +132,14 @@ def test_detector_reports_border_crowding_and_capacity_overflow():
     assert int(result.overflow_count) >= 1
     assert jnp.all(jnp.isfinite(result.covariance_rc[result.valid]))
     assert jnp.any(result.status[result.valid] == 1)
+    with pytest.raises(ValueError, match="finite"):
+        ParticleDetectionPlan(crowding_distance=np.nan)
+    with pytest.raises(TypeError, match="real-valued"):
+        detect_particles(
+            image.astype(jnp.complex64),
+            ImagePlaneSupport((17, 17)),
+            ParticleDetectionPlan(maximum_detections=2),
+        )
     assert jnp.any(result.status[result.valid] == 2)
 
 
@@ -200,6 +209,9 @@ def test_public_detection_association_reconstruction_workflow_is_physical():
     for camera in range(2):
         assert len(np.unique(np.asarray(used[:, camera]))) == used.shape[0]
     assert jnp.isfinite(reconstruction.reprojection_residual[0]).all()
+    assert association.selected[0]
+    assert reconstruction.status[0] == int(ReconstructionStatus.SUCCESS)
+    assert reconstruction.status[1] == int(ReconstructionStatus.NOT_SELECTED)
 
 
 def test_streaming_tracks_keep_ids_through_crossing_and_one_miss():

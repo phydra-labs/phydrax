@@ -182,15 +182,24 @@ class KernelParityCheck:
     name: str
     family: str
     reference: str
-    relative_error: float
+    relative_error: float | None
     tolerance: float
     passed: bool
 
     def __post_init__(self):
         if not self.name or not self.family or not self.reference:
             raise ValueError("Parity check name, family, and reference are required.")
-        if float(self.relative_error) < 0.0 or float(self.tolerance) < 0.0:
-            raise ValueError("Parity errors and tolerances must be non-negative.")
+        if not math.isfinite(float(self.tolerance)) or float(self.tolerance) < 0.0:
+            raise ValueError("Parity tolerance must be finite and non-negative.")
+        if self.relative_error is None:
+            if self.passed:
+                raise ValueError("Unavailable parity evidence cannot pass.")
+            return
+        if (
+            not math.isfinite(float(self.relative_error))
+            or float(self.relative_error) < 0.0
+        ):
+            raise ValueError("Parity error must be finite and non-negative.")
         if bool(self.passed) != (float(self.relative_error) <= float(self.tolerance)):
             raise ValueError("Parity pass status must agree with error and tolerance.")
 
@@ -534,6 +543,7 @@ class OperatorBenchmarkV2Result:
     ladders: tuple[OperatorBenchmarkLadder, ...]
     audits: tuple[ScenarioIntegrityAudit, ...]
     symmetry_audits: tuple[SymmetryScenarioIntegrityAudit, ...]
+    geometry_audits: tuple[GeometryScenarioIntegrityAudit, ...]
     kernel_parity: tuple[KernelParityCheck, ...]
     family_parity: tuple[FamilyParityEvidence, ...]
     external_audits: tuple[ExternalCandidateAudit, ...]
@@ -570,6 +580,7 @@ class OperatorBenchmarkV2Result:
             ],
             "audits": [asdict(audit) for audit in self.audits],
             "symmetry_audits": [asdict(audit) for audit in self.symmetry_audits],
+            "geometry_audits": [asdict(audit) for audit in self.geometry_audits],
             "difficulty_audits": [asdict(audit) for audit in self.difficulty_audits],
             "kernel_parity": [asdict(check) for check in self.kernel_parity],
             "family_parity": [asdict(evidence) for evidence in self.family_parity],
@@ -1207,7 +1218,13 @@ def audit_symmetry_scenario(
         and train_ids.isdisjoint(evaluation_ids)
         and validation_ids.isdisjoint(evaluation_ids)
     )
+    transforms_generated_post_split = (
+        "transforms_generated_post_split",
+        "true",
+    ) in scenario.metadata
     reasons = []
+    if not transforms_generated_post_split:
+        reasons.append("transform generation provenance is absent or pre-split")
     if defects[0] > tolerance:
         reasons.append("identity action exceeds the reference tolerance")
     if exact_indices and max(defects[index] for index in exact_indices) > tolerance:
@@ -1248,7 +1265,7 @@ def audit_symmetry_scenario(
             None if not reflections else float(np.mean(reflections))
         ),
         physical_split_disjoint=physical_split_disjoint,
-        transforms_generated_post_split=True,
+        transforms_generated_post_split=transforms_generated_post_split,
         passed=not reasons,
         reasons=tuple(reasons),
     )
@@ -1363,6 +1380,8 @@ def audit_operator_scenario(
         threshold=near_identity_threshold,
         quick=quick,
     )
+    if near_identity.detected:
+        reasons.append("near-identity baseline falls below the integrity threshold")
     return ScenarioIntegrityAudit(
         scenario=scenario.name,
         checksum=scenario_checksum(scenario),
@@ -2199,7 +2218,7 @@ def kernel_parity_checks(
                     name=scenario.name,
                     family="reference_solver",
                     reference="missing",
-                    relative_error=math.inf,
+                    relative_error=None,
                     tolerance=0.0,
                     passed=False,
                 )
@@ -3621,6 +3640,22 @@ def run_operator_benchmark_protocol(
             f"{audit.scenario}: {', '.join(audit.reasons)}" for audit in failed_symmetry
         )
         raise ValueError(f"Benchmark symmetry audit failed: {messages}")
+    geometry_audits = tuple(
+        audit_geometry_scenario(scenario)
+        for scenario in scenarios
+        if {
+            "forcing",
+            "diffusivity",
+            "boundary_value",
+            "boundary_indicator",
+        }.issubset(scenario.train_batch.inputs)
+    )
+    failed_geometry = tuple(audit for audit in geometry_audits if not audit.passed)
+    if failed_geometry:
+        messages = "; ".join(
+            f"{audit.scenario}: {', '.join(audit.reasons)}" for audit in failed_geometry
+        )
+        raise ValueError(f"Benchmark geometry audit failed: {messages}")
     difficulty_audits = tuple(
         audit_scenario_difficulty(scenario, promotion_criteria)
         for scenario in difficulty_scenarios
@@ -3700,6 +3735,7 @@ def run_operator_benchmark_protocol(
         ladders=ladders,
         audits=audits,
         symmetry_audits=symmetry_audits,
+        geometry_audits=geometry_audits,
         kernel_parity=kernel_parity_checks(scenarios),
         family_parity=family_parity,
         external_audits=external_audits,

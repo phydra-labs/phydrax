@@ -1008,6 +1008,7 @@ def _ratio(
     numerator: IntegrationEstimate,
     denominator: IntegrationEstimate,
     plan: AdaptiveCubaturePlan,
+    precision: IntegrationPrecisionPolicy,
     /,
 ) -> IntegrationEstimate:
     numerator_error = numerator.error_estimate
@@ -1034,25 +1035,51 @@ def _ratio(
             ),
         ),
     ).astype(jnp.int32)
-    value = numerator.value.data / mass
+    safe_mass = jnp.where(mass_valid, mass, jnp.ones_like(mass))
+    value = numerator.value.data / safe_mass
+    value = jnp.where(mass_valid, value, jnp.full_like(value, jnp.nan))
     mass_norm = jnp.maximum(_error_norm(mass), jnp.finfo(jnp.real(mass).dtype).tiny)
     error = (
         numerator_error / mass_norm
         + _error_norm(numerator.value.data) * denominator_error / mass_norm**2
     )
+    ratio_converged = _meets_plan_tolerance(value, error, plan, precision)
+    status = jnp.where(
+        (status == int(IntegrationStatus.CONVERGED)) & (~ratio_converged),
+        int(IntegrationStatus.REFINEMENT_STAGNATION),
+        status,
+    ).astype(jnp.int32)
     if plan.throw:
         value = eqx.error_if(
             value,
             status != int(IntegrationStatus.CONVERGED),
             "Adaptive cubature normalization failed.",
         )
+    numerator_diagnostics = numerator.diagnostics
+    if not isinstance(numerator_diagnostics, AdaptiveCubatureDiagnostics):
+        raise RuntimeError("Adaptive cubature ratio lost its native diagnostics.")
+    diagnostics = AdaptiveCubatureDiagnostics(
+        status=status,
+        num_evaluations=numerator.num_evaluations + denominator.num_evaluations,
+        estimated_error=error,
+        partition=numerator_diagnostics.partition,
+        dimension=numerator_diagnostics.dimension,
+        rule_id=numerator_diagnostics.rule_id,
+        family=numerator_diagnostics.family,
+        num_rule_points=numerator_diagnostics.num_rule_points,
+        exact_degree=numerator_diagnostics.exact_degree,
+        embedded_degree=numerator_diagnostics.embedded_degree,
+        weight_l1_norm=numerator_diagnostics.weight_l1_norm,
+        negative_weight_mass=numerator_diagnostics.negative_weight_mass,
+        max_batch_points=numerator_diagnostics.max_batch_points,
+    )
     return IntegrationEstimate(
         cx.AxisArray(value, dims=numerator.value.dims),
         status=status,
         num_evaluations=numerator.num_evaluations + denominator.num_evaluations,
         error_estimate=error,
         error_kind="ratio-embedded-cubature-indicator",
-        diagnostics=numerator.diagnostics,
+        diagnostics=diagnostics,
         provenance=IntegrationProvenance("adaptive-cubature", "density-ratio"),
     )
 
@@ -1082,6 +1109,12 @@ def integrate_adaptive_cubature(
             base.component.spec.selection_for(label), (Fixed, FixedStart, FixedEnd)
         )
     )
+    if base.axes is not None:
+        requested = (base.axes,) if isinstance(base.axes, str) else tuple(base.axes)
+        if len(requested) != len(varying) or frozenset(requested) != frozenset(varying):
+            raise ValueError(
+                "Adaptive cubature does not support partial-axis reduction of a coupled component."
+            )
     geometry_factor = (
         base.component.domain.factor(varying[0]) if len(varying) == 1 else None
     )
@@ -1126,7 +1159,7 @@ def integrate_adaptive_cubature(
             kwargs=callback_kwargs,
             precision=precision_,
         )
-        return _ratio(numerator, denominator, plan)
+        return _ratio(numerator, denominator, plan, precision_)
     if isinstance(target, DensityTarget) and base.normalized:
         denominator = _run_product(
             1.0,
@@ -1137,7 +1170,18 @@ def integrate_adaptive_cubature(
             kwargs=callback_kwargs,
             precision=precision_,
         )
-        return _ratio(numerator, denominator, plan)
+        return _ratio(numerator, denominator, plan, precision_)
+    if isinstance(target, ComponentTarget) and target.normalized:
+        denominator = _run_product(
+            1.0,
+            base.component,
+            plan,
+            log_density=None,
+            key=key,
+            kwargs=callback_kwargs,
+            precision=precision_,
+        )
+        return _ratio(numerator, denominator, plan, precision_)
     return numerator
 
 

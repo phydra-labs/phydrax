@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -89,6 +90,24 @@ def test_coupled_vehicle_and_tracking_closure():
     )
     assert bool(observed.valid[0])
     np.testing.assert_allclose(observed.predicted[0, 0], 2.0)
+    nonfinite_state = jnp.asarray([[2.0, 0.0, 0.0, jnp.nan, 0.0, 0.0]])
+    nonfinite = astro.TrackingObservationPlan(stations, schedule).evaluate(
+        nonfinite_state
+    )
+    assert not bool(nonfinite.valid[0])
+    assert int(nonfinite.status[0]) == int(astro.AstrodynamicsStatus.NONFINITE_INPUT)
+
+    bad_schedule = astro.ObservationSchedule(
+        jnp.asarray([0.0]),
+        jnp.asarray([1]),
+        jnp.asarray([0]),
+        jnp.zeros((1, 2)),
+        jnp.eye(2)[None],
+        jnp.asarray([False]),
+        ("range",),
+    )
+    with pytest.raises(ValueError, match="absent tracking station"):
+        astro.TrackingObservationPlan(stations, bad_schedule)
 
 
 def test_variational_od_and_mission_closure():
@@ -116,3 +135,42 @@ def test_variational_od_and_mission_closure():
         jnp.asarray([2.0, 0.0, 0.0]),
     )
     assert bool(access.visible)
+
+
+def test_mission_geometry_covariance_and_od_controls_reject_invalid_inputs():
+    astro = phx.applications.astrodynamics
+    access = astro.AccessPlan().evaluate(
+        jnp.asarray([1.0, 0.0, 0.0]),
+        jnp.zeros(3),
+        jnp.asarray([2.0, 0.0, 0.0]),
+    )
+    assert not bool(access.valid)
+    assert not bool(access.visible)
+
+    conjunction = astro.ConjunctionPlan(0.1).evaluate(
+        jnp.asarray([1.0, 0.0, 0.0]),
+        jnp.asarray([0.0, 1.0, 0.0]),
+        jnp.full((3, 3), jnp.nan),
+    )
+    assert not bool(conjunction.valid)
+    assert int(conjunction.status) == int(astro.AstrodynamicsStatus.NONFINITE_INPUT)
+
+    with pytest.raises(TypeError, match="maximum_iterations"):
+        astro.BatchOrbitDeterminationPlan(
+            lambda parameter, args: parameter,
+            jnp.asarray([1.0]),
+            jnp.eye(1),
+            maximum_iterations=True,
+        )
+    provider = lambda time, args: jnp.asarray([time, 0.0, 0.0])
+    with pytest.raises(TypeError, match="max_iterations"):
+        astro.LightTimePlan(
+            provider,
+            provider,
+            provider,
+            1.0,
+            max_iterations=True,
+            transmitter_provider_id="transmitter",
+            receiver_provider_id="receiver",
+            gravitating_body_provider_id="body",
+        )

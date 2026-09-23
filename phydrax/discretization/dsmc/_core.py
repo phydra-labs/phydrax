@@ -322,10 +322,11 @@ class DSMCStreamingPlan(StrictModule, NonTrainableState):
         position = state.position + displacement
         velocity = state.velocity
         active = state.active
+        surface_pending = jnp.zeros((state.capacity,), dtype=jnp.bool_)
         crossed = jnp.zeros((state.capacity, self.cells.dimension), dtype=jnp.bool_)
         domain_length = self.cells.upper - self.cells.lower
         maximum_cells = jnp.max(jnp.abs(displacement) / self.cells.cell_widths)
-        reflective = {"specular", "surface"}
+        reflective = {"specular"}
         for axis, (lower_kind, upper_kind) in enumerate(self.boundary_kinds):
             below = position[:, axis] < self.cells.lower[axis]
             above = position[:, axis] >= self.cells.upper[axis]
@@ -365,6 +366,8 @@ class DSMCStreamingPlan(StrictModule, NonTrainableState):
                     velocity = velocity.at[:, axis].set(
                         jnp.where(below, -velocity[:, axis], velocity[:, axis])
                     )
+                elif lower_kind == "surface":
+                    surface_pending = surface_pending | (active & below)
                 else:
                     active = active & ~below
                 if upper_kind in reflective:
@@ -378,6 +381,8 @@ class DSMCStreamingPlan(StrictModule, NonTrainableState):
                     velocity = velocity.at[:, axis].set(
                         jnp.where(above, -velocity[:, axis], velocity[:, axis])
                     )
+                elif upper_kind == "surface":
+                    surface_pending = surface_pending | (active & above)
                 else:
                     active = active & ~above
         crossed_face = jnp.full((state.capacity,), -1, dtype=jnp.int32)
@@ -393,7 +398,7 @@ class DSMCStreamingPlan(StrictModule, NonTrainableState):
                 crossed_face,
             )
         cell_id, inside = self.cells.locate(position)
-        active = active & inside
+        active = active & (inside | surface_pending)
         deactivated = state.active & ~active
         inert_position = 0.5 * (self.cells.lower + self.cells.upper)
         position = jnp.where(active[:, None], position, inert_position)

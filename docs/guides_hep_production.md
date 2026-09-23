@@ -28,7 +28,12 @@ Native RNG can claim exact semantic replay. External providers declare event-sta
 
 ## Collision environment
 
-`CollisionEnvironmentPlan` declares mean and maximum pileup, luminosity, bunch spacing, source profile, and beam backgrounds. `assign_collision_pileup` folds the caller key by stable event identity. Primary and pileup truth remain separate in `CollisionEventBundle`; composition does not erase their source status namespaces or event identities.
+`BeamConditionSnapshot` binds beam quantities to typed energy and length units; unit
+strings or implicit conversion factors are not accepted. `CollisionEnvironmentPlan`
+declares mean and maximum pileup, luminosity, bunch spacing, source profile, and beam
+backgrounds. `assign_collision_pileup` folds the caller key by stable event identity.
+Primary and pileup truth remain separate in `CollisionEventBundle`; composition does
+not erase their source status namespaces or event identities.
 
 ## Interchange
 

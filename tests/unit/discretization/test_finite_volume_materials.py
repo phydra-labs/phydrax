@@ -5,6 +5,7 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -66,6 +67,20 @@ def test_constant_and_sutherland_transport_have_physical_values_and_gradients():
         ).dynamic_viscosity[0]
     )(jnp.asarray(300.0))
     assert jnp.isfinite(gradient) and gradient > 0.0
+
+
+def test_transport_closures_reject_negative_bulk_viscosity():
+    with pytest.raises(ValueError, match="non-negative"):
+        phx.equations.ConstantTransport(1.0, 1.0, bulk_viscosity=-0.1)
+    with pytest.raises(ValueError, match="invalid"):
+        phx.equations.SutherlandTransport(
+            1.8e-5,
+            300.0,
+            110.4,
+            1004.5,
+            0.71,
+            bulk_viscosity=-0.1,
+        )
 
 
 def test_material_owned_viscous_flux_resolves_couette_shear():

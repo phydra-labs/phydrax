@@ -17,10 +17,12 @@ def main() -> None:
         jnp.asarray((-2.0, 0.35, 0.0)),
         jnp.asarray((2.1, 0.65, 0.0)),
     )
+    if not bool(result.evidence.successful):
+        raise RuntimeError("Analytic sphere-wrap evaluation failed")
     payload = {
         "source_revision": result.evidence.source_revision,
         "prepared_id": result.prepared_id,
-        "successful": bool(result.evidence.successful),
+        "successful": True,
         "applied": bool(result.evidence.applied),
         "surface_length_m": float(result.surface_length_m),
         "total_length_m": float(result.total_length_m),

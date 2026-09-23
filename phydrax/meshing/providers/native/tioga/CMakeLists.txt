@@ -15,8 +15,29 @@ else()
   message(FATAL_ERROR "TIOGA did not provide a tioga library target.")
 endif()
 
-if(DEFINED TIOGA_HAS_NODEGID AND NOT TIOGA_HAS_NODEGID)
-  message(FATAL_ERROR "The Phydrax bridge requires TIOGA global node-ID support.")
+if(NOT DEFINED TIOGA_HAS_NODEGID OR NOT TIOGA_HAS_NODEGID)
+  message(
+    FATAL_ERROR
+    "The Phydrax bridge requires an explicit true TIOGA_HAS_NODEGID capability."
+  )
+endif()
+
+get_target_property(
+  _phydrax_tioga_link_interface
+  "${_phydrax_tioga_target}"
+  INTERFACE_LINK_LIBRARIES
+)
+string(
+  FIND
+  "${_phydrax_tioga_link_interface}"
+  "MPI::MPI_CXX"
+  _phydrax_tioga_mpi_target_index
+)
+if(_phydrax_tioga_mpi_target_index EQUAL -1)
+  message(
+    FATAL_ERROR
+    "The TIOGA package target must export MPI::MPI_CXX so the bridge cannot mix MPI implementations."
+  )
 endif()
 
 set(

@@ -111,6 +111,7 @@ def _switching_record():
         destination_potential_id="destination-potential",
         measure_ids=("common-measure", "common-measure"),
         unit_system_id="reduced-unit-system",
+        inverse_temperature=1.0,
         unit_id="1",
         producer_id="switching-producer",
         run_id="switching-run",

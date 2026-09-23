@@ -33,7 +33,6 @@ def test_finite_element_form_lowers_to_typed_actions_and_worksets():
     workset_program = phx.equations.fem.compile_workset_program(
         action_ir, form, discretization
     )
-    compiled = phx.equations.compile_finite_element_problem(form, discretization)
     assert action_ir.ir_id
     assert tuple(slot.name for slot in action_ir.slots) == ("u",)
     assert len(action_ir.actions) == 2
@@ -41,8 +40,6 @@ def test_finite_element_form_lowers_to_typed_actions_and_worksets():
     assert all(workset.entity_indices.size for workset in workset_program.worksets)
     assert len(workset_program.worksets) == 2
     assert sum(workset.action_indices.size for workset in workset_program.worksets) == 2
-    assert compiled._kernel_table.table_id
-    assert compiled._workset_program.program_id == workset_program.program_id
 
 
 def test_high_order_tensor_family_partition_unity_and_sum_factorization():
@@ -93,6 +90,17 @@ def test_edge_and_node_smoothing_partition_patch_and_rigid_modes():
     assert jnp.linalg.norm(node_stiffness @ translation_x) < 1.0e-10
     assert jnp.linalg.norm(edge_stiffness @ rotation) < 1.0e-10
     assert jnp.linalg.norm(node_stiffness @ rotation) < 1.0e-10
+
+    shifted = smoothing.certify_smoothing_operator(
+        edge.layout,
+        edge_geometry,
+        mesh.coordinates.at[0, 0].add(0.25),
+        edge_stiffness,
+        jnp.zeros((edge_stiffness.shape[0],), dtype=jnp.bool_),
+        1.0,
+        3,
+    )
+    assert jnp.max(shifted.affine_reproduction_defect) > 1.0e-3
 
 
 def test_q4_plate_smoothing_keeps_channel_partitions_independent():

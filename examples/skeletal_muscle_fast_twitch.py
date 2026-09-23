@@ -20,10 +20,12 @@ def main() -> None:
     ca2_index = model.state_layout.index("Ca_2")
     a2_index = model.state_layout.index("A_2")
     voltage_index = model.state_layout.index("vS")
+    if not bool(jnp.all(trajectory.successful)):
+        raise RuntimeError("Shorten fast-twitch integration failed")
     payload = {
         "model_id": model.model_id,
         "source_revision": model.source_revision,
-        "all_steps_successful": bool(jnp.all(trajectory.successful)),
+        "all_steps_successful": True,
         "peak_sarcolemmal_voltage_mV": float(
             jnp.max(trajectory.states[:, voltage_index])
         ),

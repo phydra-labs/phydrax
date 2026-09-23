@@ -2,8 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
+from jax.sharding import Mesh
 
 import phydrax as phx
 
@@ -185,6 +188,30 @@ def test_reference_domain_decomposition_updates_halos_and_migration():
     assert halo.successful
     assert local.shape == (2, 4, 1)
     assert migrated.migration_count == 2
+    assert bool(halo.halo_mask[1, 0])
+    assert bool(halo.halo_mask[0, 3])
+
+
+def test_distributed_runtime_rejects_invalid_active_stable_ids():
+    layout = phx.solver.DistributedParticleLayout(
+        1,
+        2,
+        np.asarray((0, np.iinfo(np.uint32).max), dtype=np.uint32),
+    )
+    mesh = Mesh(np.asarray(jax.devices()[:1]), ("particles",))
+    runtime = phx.discretization.DistributedParticleRuntimePlan(
+        layout,
+        (1.0,),
+    ).prepare(mesh, "particles")
+    with pytest.raises(RuntimeError, match="invalid stable IDs"):
+        runtime.initialize(
+            jnp.asarray(((0.25,), (0.75,))),
+            jnp.zeros((2, 1)),
+            jnp.ones((2,)),
+            jnp.asarray((-1, 4), dtype=jnp.int64),
+            jnp.asarray((True, True)),
+            1.0,
+        )
 
 
 def test_benchmark_registry_and_replay_round_trip(tmp_path):
@@ -217,6 +244,16 @@ def test_benchmark_registry_and_replay_round_trip(tmp_path):
         method_id="method:test",
         failure_status="overflow",
     )
+    changed_packet = phx.discretization.ParticleReplayPacket(
+        jnp.asarray([3.0]),
+        0.1,
+        3,
+        jnp.asarray([1.0]),
+        problem_id="problem:test",
+        method_id="method:test",
+        failure_status="overflow",
+    )
+    assert changed_packet.packet_id != packet.packet_id
     packet_path = tmp_path / "replay.npz"
     phx.discretization.write_particle_replay(packet_path, packet)
     recovered = phx.discretization.read_particle_replay(packet_path)

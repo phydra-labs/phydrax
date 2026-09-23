@@ -3,6 +3,7 @@
 #
 
 import jax.numpy as jnp
+import numpy as np
 
 import phydrax as phx
 
@@ -150,6 +151,22 @@ def test_fixed_pool_topology_split_conserves_mass_and_momentum():
     assert jnp.all(result.accepted_state.active[1:])
     assert jnp.isclose(jnp.sum(result.accepted_state.mass[1:]), 2.0)
     assert jnp.linalg.norm(result.record.linear_momentum_residual[0]) < 1.0e-12
+    invalid = phx.discretization.split_preallocated_owner(
+        plan,
+        state,
+        record,
+        jnp.asarray(-1, dtype=jnp.int32),
+        jnp.asarray([1, 2]),
+        jnp.asarray([True, True]),
+        jnp.asarray([1.0, 1.0]),
+        jnp.asarray([[-0.25, 0.0, 0.0], [0.25, 0.0, 0.0]]),
+        jnp.stack((jnp.eye(3), jnp.eye(3))),
+        jnp.asarray(1, dtype=jnp.int32),
+        jnp.asarray(0.1),
+    )
+    assert not bool(invalid.successful)
+    np.testing.assert_array_equal(invalid.accepted_state.active, state.active)
+    np.testing.assert_array_equal(invalid.accepted_state.mass, state.mass)
 
 
 def _tetrahedron(shift):

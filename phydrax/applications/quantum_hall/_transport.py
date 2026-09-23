@@ -57,6 +57,8 @@ class HallBarPlan(StrictModule, NonTrainableState):
             source == drain
             or len(hall) != 2
             or len(longitudinal) != 2
+            or hall[0] == hall[1]
+            or longitudinal[0] == longitudinal[1]
             or any(value < 0 or value >= count for value in selected)
             or not isfinite(floor)
             or floor <= 0.0

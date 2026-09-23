@@ -45,6 +45,7 @@ def test_exponential_rosenbrock_euler_is_exact_for_linear_scalar_flow() -> None:
 
 def test_radau_iia_integrator_resolves_stiff_scalar_step() -> None:
     method = phx.solver.RadauIIAIntegrator(3, residual_tolerance=1.0e-11)
+    assert method.capabilities.equation_forms == ("explicit-ode",)
 
     state, defect, accepted = method.step(
         lambda time, value, args: -10.0 * value,

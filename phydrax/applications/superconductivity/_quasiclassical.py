@@ -425,7 +425,7 @@ class QuasiclassicalSuperconductivityPlan(StrictModule, NonTrainableState):
             {
                 "kind": "quasiclassical-equilibrium-branch",
                 "plan": self.plan_id,
-                "channel_count": count,
+                "solution": array_tree_fingerprint((amplitudes, gap)),
             }
         )
         evidence = QuasiclassicalEquilibriumEvidence(

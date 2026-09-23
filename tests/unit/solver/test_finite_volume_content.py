@@ -2,7 +2,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import inspect
 
 import equinox as eqx
 import jax
@@ -309,12 +308,11 @@ def test_precision_policy_controls_storage_and_reduction_casts():
 
 
 def test_stage_rate_update_requires_explicit_target_time():
-    target_time = inspect.signature(apply_stage_rate_euler_update).parameters[
-        "target_time"
-    ]
+    state = _state()
+    ledger = _source_ledger(jnp.ones_like(state.conservative_content))
 
-    assert target_time.kind is inspect.Parameter.KEYWORD_ONLY
-    assert target_time.default is inspect.Parameter.empty
+    with pytest.raises(TypeError, match="target_time"):
+        apply_stage_rate_euler_update(state, ledger, jnp.asarray(0.125))
 
 
 def test_stage_rate_update_rejects_stale_starting_identities():
@@ -610,23 +608,16 @@ def test_cell_average_jit_and_gradient_are_finite_with_inactive_cells():
     np.testing.assert_array_equal(gradient[1], jnp.zeros((2,)))
 
 
-def test_geometry_family_is_explicit_checkpoint_ready_static_state():
+def test_geometry_family_identity_changes_with_topology_epoch():
     state = _state(geometry_family_id="geometry-family:checkpoint")
     rebound = state.with_topology_epoch(
         "topology:1",
         geometry_family_id="geometry-family:successor",
     )
 
-    assert "geometry_family_id" in vars(state)
     assert state.geometry_family_id == "geometry-family:checkpoint"
     assert rebound.geometry_family_id == "geometry-family:successor"
     assert rebound.geometry_layout_id == state.geometry_layout_id
-    assert (
-        inspect.signature(FiniteVolumeConservativeContentState)
-        .parameters["geometry_family_id"]
-        .default
-        is inspect.Parameter.empty
-    )
 
 
 def test_dynamic_versions_reuse_one_jit_layout_and_static_fingerprints():

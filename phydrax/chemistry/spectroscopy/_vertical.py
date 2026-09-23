@@ -181,10 +181,17 @@ class UVVisibleSpectrumPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "UV-visible spectra require a successful excited-state manifold."
             )
+        oscillator_strengths = jnp.asarray(manifold.oscillator_strengths)
+        if bool(jnp.any(~jnp.isfinite(oscillator_strengths))) or bool(
+            jnp.any(oscillator_strengths < 0.0)
+        ):
+            raise ValueError(
+                "UV-visible oscillator strengths must be finite and non-negative."
+            )
         positions = self._line_positions(
             manifold.excitation_energies, manifold.energy_unit
         )
-        strengths = jnp.maximum(manifold.oscillator_strengths, 0.0)
+        strengths = oscillator_strengths
         profile = SpectralProfilePlan(
             self.line_shape,
             self.minimum,

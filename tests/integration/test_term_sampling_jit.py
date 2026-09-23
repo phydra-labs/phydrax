@@ -5,7 +5,6 @@
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-import jax.tree_util as jtu
 
 import phydrax as phx
 import phydrax.axes as cx
@@ -35,48 +34,27 @@ class _KeyConsumingResidual(BatchEvaluator):
         )
 
 
-def _sum_fields(tree) -> jnp.ndarray:
-    leaves = jtu.tree_leaves(tree, is_leaf=lambda x: isinstance(x, cx.AxisArray))
-    total = jnp.array(0.0, dtype="float64")
-    for leaf in leaves:
-        if isinstance(leaf, cx.AxisArray):
-            total = total + jnp.sum(leaf.data)
-    return total
-
-
-def _jit_sample_sum(component, sampling):
-    def _sample_sum(key):
-        batch = component.sample(sampling, key=key)
-        if isinstance(batch, tuple):
-            total = jnp.array(0.0, dtype="float64")
-            for item in batch:
-                total = total + _sum_fields(item.points)
-            return total
-        if isinstance(batch, (PointBatch, GridBatch)):
-            return _sum_fields(batch.points)
-        return _sum_fields(batch)
-
-    return eqx.filter_jit(_sample_sum)(jr.key(0))
+def _jit_loss(term, functions):
+    return eqx.filter_jit(lambda key: term.loss(functions, key=key))(jr.key(0))
 
 
 def test_sampling_jit_boundary_constraint():
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
-    structure = SampleLayout((("x",),))
-
     condition = Dirichlet("u", component, target=0.0)
-    ResidualPenalty(
+    term = ResidualPenalty(
         condition,
         phx.integration.per_step(
             phx.integration.mean_over(condition.on),
             phx.integration.MonteCarloPlan(8),
         ),
     )
-    total = _jit_sample_sum(
-        component,
-        phx.domain.PointSampling(8, layout=structure),
-    )
-    assert jnp.isfinite(total)
+
+    @geom.Function("x")
+    def u(x):
+        return 0.0
+
+    assert jnp.allclose(_jit_loss(term, {"u": u}), 0.0)
 
 
 def test_sampling_jit_initial_constraint():
@@ -84,52 +62,48 @@ def test_sampling_jit_initial_constraint():
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
     component = domain.component({"t": FixedStart()})
-    structure = SampleLayout((("x",),))
-
     condition = Initial("u", component, target=0.0)
-    ResidualPenalty(
+    term = ResidualPenalty(
         condition,
         phx.integration.per_step(
             phx.integration.mean_over(condition.on),
             phx.integration.MonteCarloPlan(8),
         ),
     )
-    total = _jit_sample_sum(
-        component,
-        phx.domain.PointSampling(8, layout=structure),
-    )
-    assert jnp.isfinite(total)
+
+    @domain.Function("x", "t")
+    def u(x, t):
+        return 0.0
+
+    assert jnp.allclose(_jit_loss(term, {"u": u}), 0.0)
 
 
 def test_sampling_jit_interior_constraint():
     geom = Interval1d(0.0, 1.0)
-    structure = SampleLayout((("x",),))
-
     component = geom.component()
     condition = Residual("u", component, lambda u: u)
-    ResidualPenalty(
+    term = ResidualPenalty(
         condition,
         phx.integration.per_step(
             phx.integration.mean_over(condition.on),
             phx.integration.MonteCarloPlan(8),
         ),
     )
-    total = _jit_sample_sum(
-        component,
-        phx.domain.PointSampling(8, layout=structure),
-    )
-    assert jnp.isfinite(total)
+
+    @geom.Function("x")
+    def u(x):
+        return 0.0
+
+    assert jnp.allclose(_jit_loss(term, {"u": u}), 0.0)
 
 
 def test_sampling_jit_interior_constraint_coord_separable_fourier_axis_spec():
     geom = Interval1d(0.0, 1.0)
-    SampleLayout((("x",),))
-
     component = geom.component()
     sampling = phx.domain.GridSampling({"x": FourierAxisSpec(8)})
     batch = component.sample(sampling, key=jr.key(1))
     condition = Residual("u", component, lambda u: u)
-    ResidualPenalty(
+    term = ResidualPenalty(
         condition,
         phx.integration.fixed(
             phx.integration.from_samples(
@@ -138,28 +112,31 @@ def test_sampling_jit_interior_constraint_coord_separable_fourier_axis_spec():
             )
         ),
     )
-    total = _jit_sample_sum(component, sampling)
-    assert jnp.isfinite(total)
+
+    @geom.Function("x")
+    def u(x):
+        return 0.0
+
+    assert jnp.allclose(_jit_loss(term, {"u": u}), 0.0)
 
 
 def test_sampling_jit_integral_constraint():
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
-    structure = SampleLayout((("x",),))
-
     condition = Moment("u", component, lambda u: u)
-    RandomizedMomentPenalty(
+    term = RandomizedMomentPenalty(
         condition,
         phx.integration.per_step(
             phx.integration.over(condition.on),
             phx.integration.MonteCarloPlan(8),
         ),
     )
-    total = _jit_sample_sum(
-        component,
-        phx.domain.PointSampling(8, layout=structure),
-    )
-    assert jnp.isfinite(total)
+
+    @geom.Function("x")
+    def u(x):
+        return 0.0
+
+    assert jnp.allclose(_jit_loss(term, {"u": u}), 0.0)
 
 
 def test_residual_penalty_splits_sampling_and_evaluation_keys():

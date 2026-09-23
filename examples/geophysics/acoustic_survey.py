@@ -42,11 +42,13 @@ def main() -> None:
         (jnp.asarray(1500.0),),
         (jnp.asarray(1.0),),
     )
+    if not bool(jnp.all(jnp.isfinite(tangent))):
+        raise RuntimeError("Acoustic survey tangent is nonfinite")
     print(
         {
             "cfl_number": plan.cfl_number,
             "maximum_pressure_Pa": float(jnp.max(jnp.abs(traces))),
-            "finite_tangent": bool(jnp.all(jnp.isfinite(tangent))),
+            "finite_tangent": True,
             "trace_shape": np.asarray(traces.shape).tolist(),
         }
     )

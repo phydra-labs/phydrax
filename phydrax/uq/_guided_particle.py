@@ -682,19 +682,24 @@ def guided_particle_filter(
             start = times[case_index]
             context = problem.step_context(case_index, index)
             end = flat_times[case_index, index]
-            lookahead = jnp.stack(
-                [
-                    proposal.lookahead_log_weight(
-                        problem,
-                        particles[case_index, particle_index],
-                        start,
-                        end,
-                        value,
-                        mask,
-                        context,
-                    )
-                    for particle_index in range(count)
-                ]
+            zero_duration = bool(jnp.equal(start, end))
+            lookahead = (
+                jnp.zeros((count,), dtype=particles.dtype)
+                if zero_duration
+                else jnp.stack(
+                    [
+                        proposal.lookahead_log_weight(
+                            problem,
+                            particles[case_index, particle_index],
+                            start,
+                            end,
+                            value,
+                            mask,
+                            context,
+                        )
+                        for particle_index in range(count)
+                    ]
+                )
             )
             auxiliary_candidates = log_weights[case_index] + lookahead
             auxiliary_weights, auxiliary_normalizer, auxiliary_valid = (
@@ -718,25 +723,42 @@ def guided_particle_filter(
 
             proposals = []
             for particle_index in range(count):
-                proposal_key = state_space_key(
-                    key,
-                    "guided-particle-proposal",
-                    case_id,
-                    index,
-                    member=particle_index,
-                )
-                proposals.append(
-                    proposal.propose(
-                        proposal_key,
-                        problem,
-                        parents[particle_index],
-                        start,
-                        end,
-                        value,
-                        mask,
-                        context,
+                if zero_duration:
+                    proposals.append(
+                        ParticleProposalSample(
+                            values=parents[particle_index],
+                            log_importance_correction=jnp.zeros(
+                                (), dtype=particles.dtype
+                            ),
+                            valid=jnp.asarray(context.input_valid),
+                            status=jnp.where(
+                                context.input_valid,
+                                0,
+                                GUIDED_PARTICLE_PROPOSAL_FAILURE,
+                            ).astype(jnp.int32),
+                            proposal_id=proposal.proposal_id,
+                        )
                     )
-                )
+                else:
+                    proposal_key = state_space_key(
+                        key,
+                        "guided-particle-proposal",
+                        case_id,
+                        index,
+                        member=particle_index,
+                    )
+                    proposals.append(
+                        proposal.propose(
+                            proposal_key,
+                            problem,
+                            parents[particle_index],
+                            start,
+                            end,
+                            value,
+                            mask,
+                            context,
+                        )
+                    )
             predicted = jnp.stack([sample.values for sample in proposals])
             corrections = jnp.stack(
                 [sample.log_importance_correction for sample in proposals]

@@ -43,9 +43,13 @@ class AutoregressiveLaw(AbstractProbabilityLaw):
             raise ValueError("length must be positive and order_id non-empty.")
         resolved_dtype = jnp.dtype(dtype)
         probe = conditional(jnp.empty((0,), dtype=resolved_dtype), 0)
-        if not isinstance(probe, AbstractProbabilityLaw) or probe.event_shape != ():
+        if (
+            not isinstance(probe, AbstractProbabilityLaw)
+            or probe.event_shape != ()
+            or probe.batch_shape != ()
+        ):
             raise ValueError(
-                "Autoregressive conditionals must be scalar probability laws."
+                "Autoregressive conditionals must be unbatched scalar probability laws."
             )
         self.conditional = conditional
         self.length = size
@@ -75,8 +79,14 @@ class AutoregressiveLaw(AbstractProbabilityLaw):
 
     def _conditional_law(self, prefix: Array, index: int, /) -> AbstractProbabilityLaw:
         law = self.conditional(prefix, index)
-        if not isinstance(law, AbstractProbabilityLaw) or law.event_shape != ():
-            raise ValueError("Autoregressive conditional must return a scalar law.")
+        if (
+            not isinstance(law, AbstractProbabilityLaw)
+            or law.event_shape != ()
+            or law.batch_shape != ()
+        ):
+            raise ValueError(
+                "Autoregressive conditional must return an unbatched scalar law."
+            )
         if law.density_measure_kind != self.density_measure_kind:
             raise ValueError(
                 "Every autoregressive conditional must use one reference measure."

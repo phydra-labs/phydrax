@@ -645,7 +645,8 @@ def search_differential_evolution(
     mean = jnp.nanmean(finite_scalar)
     spread = jnp.nanstd(finite_scalar)
     converged = bool(
-        np.asarray(
+        search.selection == "scalar"
+        and np.asarray(
             jnp.asarray(any_valid)
             & jnp.isfinite(spread)
             & (

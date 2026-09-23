@@ -72,11 +72,23 @@ class J2SecularPlan(StrictModule, NonTrainableState):
         )
         elements = ClassicalOrbitalElements(next_values, initial.context)
         state, state_valid, _ = classical_to_cartesian(elements, self.mu)
-        valid = state_valid & (eccentricity < 1.0) & (p > 0.0)
+        finite = (
+            jnp.all(jnp.isfinite(initial.values))
+            & jnp.isfinite(self.mu)
+            & jnp.isfinite(self.reference_radius)
+            & jnp.isfinite(self.j2)
+            & jnp.isfinite(dt)
+            & jnp.all(jnp.isfinite(next_values))
+        )
+        valid = finite & state_valid & (eccentricity < 1.0) & (p > 0.0)
         status = jnp.where(
-            valid,
-            int(AstrodynamicsStatus.SUCCESS),
-            int(AstrodynamicsStatus.UNSUPPORTED_REGIME),
+            ~finite,
+            int(AstrodynamicsStatus.NONFINITE_INPUT),
+            jnp.where(
+                valid,
+                int(AstrodynamicsStatus.SUCCESS),
+                int(AstrodynamicsStatus.UNSUPPORTED_REGIME),
+            ),
         ).astype(jnp.int32)
         return J2SecularResult(elements, state, valid, status, self.plan_id)
 

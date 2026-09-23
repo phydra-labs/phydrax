@@ -44,8 +44,8 @@ The commercial layer fails closed. Missing evidence is a blocker; it is never re
 All capability families treat the following as explicit threats:
 
 - untrusted ZIP, XML, HDF5, DICOM, mesh, event-record, checkpoint, or model input causing traversal, decompression, allocation, parser, or code-execution failures;
-- external Julia, Macaulay2, chemistry, meshing, HEP, FMI, HELICS, OpenDSS, rendering, or learned-model execution escaping its declared process and resource boundary;
-- ambient credentials, environment variables, home-directory state, network access, or executable dependencies entering an isolated provider run;
+- trusted-local Julia, Macaulay2, chemistry, meshing, HEP, FMI, HELICS, OpenDSS, rendering, or learned-model execution being mistaken for a security boundary;
+- ambient credentials, environment variables, home-directory state, network access, or executable dependencies entering a trusted-local provider run;
 - a candidate, synthetic benchmark, generated qualification program, or API-stable method being represented as released;
 - source, dependency, provider, data, model, or hardware substitution beneath retained evidence;
 - incomplete, stale, cyclic, unsigned, or differently bound evidence;
@@ -53,7 +53,7 @@ All capability families treat the following as explicit threats:
 - a distributed process publishing a partial checkpoint or reusing stale lease/attempt identity;
 - a model checkpoint or external dataset being admitted from package licensing alone.
 
-The canonical `ExternalExecutionPolicy` records whether a worker is trusted-local, container-isolated, or sandboxed, whether network access is declared, and which environment variables may cross the boundary. A policy record is evidence of the declared boundary, not proof that an operating-system sandbox exists. Networked or managed-service execution must require independently verified container/sandbox controls rather than the trusted-local default.
+The canonical `ExternalExecutionPolicy` is intentionally truthful: this runtime supports only direct `trusted-local` execution with host filesystem, process, and network access. Requests for container/sandbox isolation or network denial fail closed because no enforcing launcher is present. Environment inheritance may be disabled and explicit overrides allowlisted, but that does not create a sandbox. Untrusted, network-denied, or managed-service execution requires a separately provisioned and independently verified OS/container launcher and firewall boundary.
 
 ## Required controls
 

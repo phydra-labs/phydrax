@@ -15,6 +15,7 @@ from ..._artifact_security import (
     read_admitted_artifact,
 )
 from ..._strict import StrictModule
+from ...artifacts import ArtifactManifest
 from ...atomistic import AtomisticUnitSystem
 from ...atomistic.interchange._core import canonical_source_digest, require_mapping_fields
 from ...discretization import PeriodicCell
@@ -130,13 +131,14 @@ def polymer_recipe_from_mapping(
 
 def polymer_recipe_from_admitted_json(
     artifact: AdmittedExternalArtifact,
+    manifest: ArtifactManifest,
     units: AtomisticUnitSystem,
     /,
     *,
     policy: ExternalArtifactPolicy,
     cell: PeriodicCell | None = None,
 ) -> PolymerRecipeAdapterResult:
-    payload = read_admitted_artifact(artifact, policy=policy)
+    payload = read_admitted_artifact(artifact, manifest, policy=policy)
     source = json.loads(payload.decode("utf-8"))
     if not isinstance(source, Mapping):
         raise TypeError("Admitted polymer recipe JSON must decode to a mapping.")

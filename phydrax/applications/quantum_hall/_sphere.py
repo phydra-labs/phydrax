@@ -514,27 +514,51 @@ def neutral_gap(spectrum: HaldaneSphereSpectrumResult, /) -> QuantumHallGapResul
 
 
 def charge_gap(
-    lower_flux_ground_energy: float,
-    center_ground_energy: float,
-    upper_flux_ground_energy: float,
+    lower_flux: HaldaneSphereSpectrumResult,
+    center: HaldaneSphereSpectrumResult,
+    upper_flux: HaldaneSphereSpectrumResult,
     /,
 ) -> QuantumHallGapResult:
-    components = np.asarray(
-        (lower_flux_ground_energy, center_ground_energy, upper_flux_ground_energy),
-        dtype=np.float64,
-    )
-    if np.any(~np.isfinite(components)):
-        raise ValueError("Charge-gap component energies must be finite.")
+    spectra = (lower_flux, center, upper_flux)
+    if any(not isinstance(value, HaldaneSphereSpectrumResult) for value in spectra):
+        raise TypeError("charge_gap requires three HaldaneSphereSpectrumResult values.")
+    spheres = tuple(value.prepared.sphere for value in spectra)
+    particle_counts = {value.particle_count for value in spheres}
+    energy_scales = {value.energy_scale.scale_id for value in spheres}
+    component_ids = {value.manifold.component.key_id for value in spheres}
+    landau_levels = {value.manifold.landau_level for value in spheres}
+    statistics = {value.statistics for value in spheres}
+    fluxes = tuple(value.twice_monopole_strength for value in spheres)
+    if (
+        len(particle_counts) != 1
+        or len(energy_scales) != 1
+        or len(component_ids) != 1
+        or len(landau_levels) != 1
+        or len(statistics) != 1
+        or fluxes != (fluxes[1] - 1, fluxes[1], fluxes[1] + 1)
+        or any(value.energies.size < 1 for value in spectra)
+    ):
+        raise ValueError(
+            "Charge-gap spectra must share particle, component, Landau-level, "
+            "statistics, and energy-scale identities across adjacent flux sectors."
+        )
+    components = jnp.stack(tuple(value.energies[0] for value in spectra))
     gap = components[0] + components[2] - 2.0 * components[1]
+    successful = (
+        jnp.all(jnp.stack(tuple(value.successful for value in spectra)))
+        & jnp.all(jnp.isfinite(components))
+        & jnp.isfinite(gap)
+        & (gap >= 0.0)
+    )
     return QuantumHallGapResult(
         "charge",
-        jnp.asarray(gap),
-        jnp.asarray(components),
-        jnp.asarray(gap >= 0.0),
+        gap,
+        components,
+        successful,
         canonical_fingerprint(
             {
                 "kind": "quantum-hall-charge-gap",
-                "components": array_tree_fingerprint(components),
+                "spectra": tuple(value.result_id for value in spectra),
             }
         ),
     )

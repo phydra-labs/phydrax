@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -34,6 +35,7 @@ class SpatialOptomechanicalSystem:
     thermoelastic_load_n_k: Array
     displacement_to_opd: Array
     temperature_to_opd_m_k: Array
+    tolerance: float
     optical_weights: Array
 
     @classmethod
@@ -55,6 +57,20 @@ class SpatialOptomechanicalSystem:
         displacement_map = np.asarray(displacement_to_opd, dtype=np.float64)
         temperature_map = np.asarray(temperature_to_opd_m_k, dtype=np.float64)
         weights = np.asarray(optical_weights, dtype=np.float64)
+        if not np.isfinite(tolerance) or tolerance <= 0:
+            raise ValueError("STOP tolerance must be finite and positive.")
+        if not all(
+            np.all(np.isfinite(value))
+            for value in (
+                thermal,
+                mechanical,
+                coupling,
+                displacement_map,
+                temperature_map,
+                weights,
+            )
+        ):
+            raise ValueError("STOP operators and weights must be finite.")
         if thermal.ndim != 2 or thermal.shape[0] != thermal.shape[1]:
             raise ValueError("STOP thermal stiffness must be square.")
         if mechanical.ndim != 2 or mechanical.shape[0] != mechanical.shape[1]:
@@ -85,6 +101,7 @@ class SpatialOptomechanicalSystem:
             jnp.asarray(coupling),
             jnp.asarray(displacement_map),
             jnp.asarray(temperature_map),
+            float(tolerance),
             jnp.asarray(weights),
         )
 
@@ -97,6 +114,11 @@ class SpatialOptomechanicalSystem:
             raise ValueError("STOP absorbed power has incompatible shape.")
         if force.shape != (self.mechanical_stiffness_n_m.shape[0],):
             raise ValueError("STOP optical force has incompatible shape.")
+        power = eqx.error_if(
+            power,
+            jnp.any(~jnp.isfinite(power) | ~jnp.isfinite(force)),
+            "STOP absorbed power and optical force must be finite.",
+        )
         thermal = solve(
             LinearSystem(DenseLinearOperator(self.thermal_stiffness_w_k)),
             power,
@@ -136,6 +158,12 @@ class SpatialOptomechanicalSystem:
             & mechanical.successful
             & jnp.all(jnp.isfinite(opd))
             & jnp.isfinite(rms)
+            & jnp.isfinite(strain_energy)
+            & (thermal_norm <= self.tolerance * (1.0 + jnp.linalg.norm(power)))
+            & (
+                mechanical_norm
+                <= self.tolerance * (1.0 + jnp.linalg.norm(mechanical_right))
+            )
         )
         return OptomechanicalSTOPResult(
             thermal.value,

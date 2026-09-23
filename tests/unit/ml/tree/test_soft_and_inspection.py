@@ -315,6 +315,9 @@ def test_soft_classification_objectives_labels_and_failure_status_are_observable
     logistic_model = logistic.as_trainable()
     assert logistic_model.objective_transform == "sigmoid"
     assert logistic_model.predict_labels(binary_batch.features).shape == (8,)
+    assert logistic_model.predict(binary_batch.features).shape == (8,)
+    assert logistic_model.predict_proba(binary_batch.features).shape == (8, 2)
+    assert logistic_model.decision_function(binary_batch.features).shape == (8,)
 
     multiclass_batch = MLBatch(
         jnp.linspace(-3.0, 3.0, 9)[:, None],
@@ -329,6 +332,8 @@ def test_soft_classification_objectives_labels_and_failure_status_are_observable
     assert probabilities.shape == (9, 3)
     assert jnp.allclose(jnp.sum(probabilities, axis=-1), 1.0)
     assert softmax_model.predict_labels(multiclass_batch.features).shape == (9,)
+    assert softmax_model.predict(multiclass_batch.features).shape == (9,)
+    assert softmax_model.predict_proba(multiclass_batch.features).shape == (9, 3)
 
     empty = SoftDecisionTreeRecipe(depth=1, iterations=2).fit_batch(
         MLBatch(

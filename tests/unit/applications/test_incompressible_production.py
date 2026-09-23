@@ -518,6 +518,39 @@ def test_periodic_constant_power_adapter_executes_through_generic_runtime(tmp_pa
         prepared.initialize(2.0 * initial_velocity)
 
 
+def test_constant_power_failure_rolls_back_periodic_production(tmp_path):
+    dynamics, method, forcing, statistics, _, initial_velocity = (
+        _periodic_production_inputs()
+    )
+    zero = jnp.zeros_like(initial_velocity)
+    case = flow.PeriodicSpectralProductionCase(
+        dynamics,
+        zero,
+        case_id="constant-power-inactive",
+    )
+    plan = flow.PeriodicSpectralProductionPlan(
+        dynamics,
+        method,
+        statistics,
+        case,
+        start_time=0.0,
+        end_time=0.05,
+        step_size=0.05,
+        checkpoint_interval=1,
+        constant_power_forcing=forcing,
+        constant_power_wiring="adapter",
+    )
+    prepared = plan.prepare(tmp_path / "constant-power-inactive")
+    initial = prepared.initialize(zero)
+    following, transition = prepared.step(initial)
+    snapshot = prepared.statistics_snapshot(0.0, zero)
+
+    assert not bool(transition.successful)
+    np.testing.assert_array_equal(following.accepted_state, zero)
+    assert int(following.step_index) == 0
+    assert not bool(snapshot.successful)
+
+
 def test_periodic_artifact_checkpoint_restart_preserves_exact_case(tmp_path):
     plan, _, _, initial_velocity = _periodic_plan(end_time=0.05)
     profile = HPCFilesystemProfile(

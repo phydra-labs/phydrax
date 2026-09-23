@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 from functools import partial
+from math import isfinite
 
 import equinox as eqx
 import jax
@@ -609,9 +610,16 @@ def solve_continuous_are(
     Hamiltonian invariant-subspace solve is JAX-native; its derivative is the
     exact implicit Sylvester equation at the returned stabilizing solution.
     """
-    if tolerance <= 0.0 or pbh_tolerance <= 0.0 or cost_tolerance < 0.0:
+    if (
+        not isfinite(float(tolerance))
+        or not isfinite(float(pbh_tolerance))
+        or not isfinite(float(cost_tolerance))
+        or tolerance <= 0.0
+        or pbh_tolerance <= 0.0
+        or cost_tolerance < 0.0
+    ):
         raise ValueError(
-            "Riccati tolerances must be positive (cost_tolerance may be zero)."
+            "Riccati tolerances must be finite and positive (cost_tolerance may be zero)."
         )
     a_, b_, q_, r_, s_ = _validate_are_inputs(a, b, q, r, s, cost_tolerance)
     p = _care_solution(a_, b_, q_, r_, s_)
@@ -655,9 +663,16 @@ def solve_discrete_are(
     exact implicit discrete Lyapunov equation and do not differentiate through
     the iteration count.
     """
-    if tolerance <= 0.0 or pbh_tolerance <= 0.0 or cost_tolerance < 0.0:
+    if (
+        not isfinite(float(tolerance))
+        or not isfinite(float(pbh_tolerance))
+        or not isfinite(float(cost_tolerance))
+        or tolerance <= 0.0
+        or pbh_tolerance <= 0.0
+        or cost_tolerance < 0.0
+    ):
         raise ValueError(
-            "Riccati tolerances must be positive (cost_tolerance may be zero)."
+            "Riccati tolerances must be finite and positive (cost_tolerance may be zero)."
         )
     if not isinstance(max_iterations, int) or max_iterations <= 0:
         raise ValueError("max_iterations must be a positive integer.")

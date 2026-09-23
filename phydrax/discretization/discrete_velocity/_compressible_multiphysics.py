@@ -80,6 +80,8 @@ class KineticSpeciesTransportPlan(StrictModule, NonTrainableState):
         species = jnp.asarray(species_densities)
         if species.shape != state.spatial_shape + (self.species_count,):
             raise ValueError("species_densities do not match the kinetic state.")
+        if state.rule_id != self.transport.rule.rule_id:
+            raise ValueError("Species transport and kinetic state rules differ.")
         particle = state.population("particle")
         density = jnp.sum(particle, axis=-1)
         safe_density = jnp.where(density > 0.0, density, 1.0)
@@ -124,10 +126,22 @@ class KineticSpeciesTransportPlan(StrictModule, NonTrainableState):
         tolerance = (
             512.0 * jnp.finfo(species.dtype).eps * jnp.maximum(particle_streamed, 1.0)
         )
+        element_scale = jnp.maximum(
+            jnp.abs(jnp.sum(old_elements, axis=tuple(range(species.ndim - 1)))),
+            1.0,
+        )
+        charge_scale = jnp.maximum(jnp.abs(jnp.sum(old_charge)), 1.0)
+        conservation_tolerance = 512.0 * jnp.finfo(species.dtype).eps
+        element_conserved = jnp.all(
+            jnp.abs(element_defect) <= conservation_tolerance * element_scale
+        )
+        charge_conserved = jnp.abs(charge_defect) <= conservation_tolerance * charge_scale
         successful = (
             jnp.all(jnp.isfinite(transported), axis=-1)
             & (minimum >= 0.0)
             & (jnp.abs(mass_defect) <= tolerance)
+            & element_conserved
+            & charge_conserved
         )
         return transported, KineticSpeciesTransportEvidence(
             mixture_mass_defect=mass_defect,
@@ -195,6 +209,8 @@ class EquilibratingKineticSourceLiftPlan(StrictModule, NonTrainableState):
             state.frame_velocity,
             state.frame_temperature_scale,
             self.model.layout,
+            self.model.model_id,
+            self.model.rule.rule_id,
         )
         candidate_macro = self.model.moments(candidate)
         successful = (
@@ -219,6 +235,8 @@ class EquilibratingKineticSourceLiftPlan(StrictModule, NonTrainableState):
             state.frame_velocity,
             state.frame_temperature_scale,
             self.model.layout,
+            self.model.model_id,
+            self.model.rule.rule_id,
         )
         old_equilibrium, _, _ = self.model.equilibrium(
             old.density,

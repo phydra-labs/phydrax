@@ -141,18 +141,15 @@ def main():
         for step_size in (1.0e-4, 5.0e-5)
     ]
     passed = all(case["passed"] for case in mesh_cases + conversion_cases)
-    print(
-        json.dumps(
-            {
-                "campaign": "particle-conversion-conservation-and-backend-agreement",
-                "passed": passed,
-                "mesh_cases": mesh_cases,
-                "conversion_cases": conversion_cases,
-            },
-            indent=2,
-        )
-    )
+    report = {
+        "campaign": "particle-conversion-conservation-and-backend-agreement",
+        "passed": passed,
+        "mesh_cases": mesh_cases,
+        "conversion_cases": conversion_cases,
+    }
+    print(json.dumps(report, indent=2, allow_nan=False))
+    return 0 if report["passed"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

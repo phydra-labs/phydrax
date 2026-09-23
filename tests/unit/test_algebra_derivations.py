@@ -65,9 +65,15 @@ def test_derivation_projector_returns_a_leibniz_matrix():
     candidate = jnp.arange(16, dtype=jnp.float64).reshape((4, 4)) / 7.0
     projected = derivations.project(candidate)
     constraint = derivations.plan.constraint.materialize(jnp.float64)
+    basis = derivations.subspace.basis[:, : int(derivations.dimension)]
+    coefficients = jnp.linalg.lstsq(basis, candidate.reshape((-1,)), rcond=None)[0]
+    expected = (basis @ coefficients).reshape(candidate.shape)
 
     assert projected.shape == (4, 4)
     assert jnp.linalg.norm(constraint @ projected.reshape((-1,))) < 1e-10
+    assert jnp.linalg.norm(projected) > 0.0
+    assert jnp.allclose(projected, expected, atol=1e-10)
+    assert jnp.allclose(derivations.project(projected), projected, atol=1e-10)
 
 
 def test_derivation_rank_ambiguity_and_resource_failures_are_explicit():

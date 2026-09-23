@@ -22,8 +22,8 @@ from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
-from phydrax.interchange.energy_runtime import pin_energy_executable
 
+from phydrax._external_runtime import pin_energy_executable
 from phydrax.interchange.dafoam import pin_dafoam_runtime, run_dafoam
 from phydrax.interchange.xfoil import run_xfoil_polar, XFOILOperatingPoint
 
@@ -142,7 +142,7 @@ def _mesh_files(surface, radial_cells=48, radius=20.0, span=0.1):
         ),
         "faces": ("faceList", ["4(" + " ".join(map(str, f[0])) + ")" for f in ordered]),
         "owner": ("labelList", [str(f[1]) for f in ordered]),
-        "neighbor": ("labelList", [str(f[2]) for f in internal]),
+        "neighbour": ("labelList", [str(f[2]) for f in internal]),
         "boundary": ("polyBoundaryMesh", boundary),
     }
     return {

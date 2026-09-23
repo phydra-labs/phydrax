@@ -594,6 +594,7 @@ class MappedTensorMetricPlan(StrictModule, NonTrainableState):
             {
                 "kind": "mapped-tensor-metrics",
                 "plan": self.plan_id,
+                "coordinates": array_tree_fingerprint(coordinates),
                 "coordinate_shape": list(coordinates.shape),
                 "face_pairs": [
                     [

@@ -595,12 +595,21 @@ def _solve_mma(
         & jnp.isfinite(optimality)
     )
     certified = finite & (optimality <= threshold)
+    exhausted_evaluations = (
+        jnp.asarray(False)
+        if termination.maximum_evaluations is None
+        else state.objective_evaluations >= termination.maximum_evaluations
+    )
     status = jnp.where(
         certified,
         int(OptimizationStatus.SUCCESS),
         jnp.where(
             state.status == int(OptimizationStatus.ITERATING),
-            int(OptimizationStatus.MAXIMUM_STEPS_REACHED),
+            jnp.where(
+                exhausted_evaluations,
+                int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED),
+                int(OptimizationStatus.MAXIMUM_STEPS_REACHED),
+            ),
             state.status,
         ),
     ).astype(jnp.int32)

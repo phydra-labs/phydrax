@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 
+import phydrax as phx
 from phydrax.applications.relativistic_scattering import (
     bhabha_amplitude,
     breit_wheeler_amplitude,
@@ -43,6 +44,75 @@ from phydrax.applications.relativistic_scattering import (
     TwoBodyPhaseSpaceMap,
     WeightedEventStream,
 )
+from phydrax.applications.relativistic_scattering._collision_environment import (
+    assign_collision_pileup,
+    CollisionEnvironmentPlan,
+)
+
+
+def _empty_event_batch(event_ids):
+    identifiers = jnp.asarray(event_ids, dtype=jnp.int64)
+    count = identifiers.size
+    prepared = phx.particle_physics.ParticleEventPlan(
+        catalog=phx.particle_physics.ParticleCatalogReference(
+            source_id="collision-test-pdg",
+            provider_release="test",
+            checksum="test-checksum",
+            citation_url="https://pdg.lbl.gov/",
+        ),
+        momentum_unit=phx.units.GIGAELECTRONVOLT,
+        length_unit=phx.units.MILLIMETER,
+        time_unit=phx.units.NANOSECOND,
+        event_capacity=count,
+        particle_capacity=1,
+        vertex_capacity=1,
+        provider_status_namespace="collision-test",
+    ).prepare()
+    weights = phx.particle_physics.EventWeightSet(
+        jnp.ones((count, 1)),
+        names=("nominal",),
+        variation_kinds=(phx.particle_physics.WeightVariationKind.NOMINAL,),
+        correlation_groups=("nominal",),
+    )
+    return prepared.admit(
+        event_ids=identifiers,
+        subevent_ids=jnp.zeros((count,), dtype=jnp.int64),
+        event_active=jnp.ones((count,), dtype=jnp.bool_),
+        pdg_ids=jnp.zeros((count, 1), dtype=jnp.int32),
+        roles=jnp.zeros((count, 1), dtype=jnp.int32),
+        provider_status=jnp.zeros((count, 1), dtype=jnp.int32),
+        momenta=jnp.zeros((count, 1, 4)),
+        rest_energies=jnp.zeros((count, 1)),
+        particle_active=jnp.zeros((count, 1), dtype=jnp.bool_),
+        mother_indices=jnp.full((count, 1, 2), -1),
+        production_vertex_indices=jnp.full((count, 1), -1),
+        end_vertex_indices=jnp.full((count, 1), -1),
+        color_flow=jnp.zeros((count, 1, 2), dtype=jnp.int32),
+        production_vertices=jnp.zeros((count, 1, 4)),
+        vertex_active=jnp.zeros((count, 1), dtype=jnp.bool_),
+        weights=weights,
+        source_id="collision-test-events",
+    )
+
+
+def test_pileup_addressing_uses_all_event_id_bits():
+    primary = _empty_event_batch((1, 1 + 2**32))
+    pool = _empty_event_batch(tuple(range(8)))
+    plan = CollisionEnvironmentPlan(
+        20.0,
+        maximum_pileup=8,
+        instantaneous_luminosity=1.0,
+        bunch_spacing=1.0,
+        luminosity_unit="1/cm2/s",
+        time_unit="ns",
+        pileup_profile_id="full-event-id",
+    )
+    assigned = assign_collision_pileup(plan, primary, pool, jr.key(123))
+
+    assert not (
+        jnp.array_equal(assigned.requested_pileup[0], assigned.requested_pileup[1])
+        and jnp.array_equal(assigned.pileup_indices[0], assigned.pileup_indices[1])
+    )
 
 
 def test_lorentz_and_mass_shell_identities():

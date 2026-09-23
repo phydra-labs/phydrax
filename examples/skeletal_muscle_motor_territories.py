@@ -27,12 +27,14 @@ def main() -> None:
         jnp.asarray(((True,), (True,))),
         event_source_id="example-motor-unit-events",
     )
+    if not bool(territory.evidence.valid):
+        raise RuntimeError("Motor-unit territory evidence is invalid")
     payload = {
         "plan_id": territory.plan_id,
         "schedule_id": stimulus.schedule_id,
         "fiber_count_per_unit": territory.evidence.fiber_count_per_unit.tolist(),
         "current_at_1_08_ms_uA_per_cm2": stimulus.current(1.08).tolist(),
-        "valid": bool(territory.evidence.valid),
+        "valid": True,
         "claim_scope": "explicit event routing; no universal neuromuscular-junction law",
     }
     print(json.dumps(payload, indent=2, sort_keys=True))

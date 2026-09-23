@@ -179,7 +179,10 @@ def test_harmonic_mesh_motion_preserves_topology_and_has_shape_derivative():
     geometry, motion = _circle_motion()
     radius_index = geometry.schema.index(phx.geometry.ParameterId("circle", "radius"))
     state = geometry.state.replace_at(radius_index, jnp.asarray(1.1))
-    result = eqx.filter_jit(motion.realize)(state)
+    result = eqx.filter_jit(motion.realize)(
+        state,
+        numeric_version="accepted-radius-1.1",
+    )
 
     assert bool(result.accepted)
     assert result.runtime.topology_id == motion.topology_id
@@ -187,10 +190,21 @@ def test_harmonic_mesh_motion_preserves_topology_and_has_shape_derivative():
     assert jnp.allclose(result.coordinates[:4], 1.1 * motion.reference_coordinates[:4])
     assert jnp.allclose(result.coordinates[4], jnp.zeros((2,)), atol=1.0e-7)
     assert result.evidence.geometry.minimum_relative_jacobian > 1.0
+    other = motion.realize(
+        geometry.state.replace_at(radius_index, jnp.asarray(1.05)),
+        numeric_version="accepted-radius-1.05",
+    )
+    assert other.runtime.runtime_id != result.runtime.runtime_id
 
     def coordinate_sum(radius):
         design = geometry.state.replace_at(radius_index, radius)
-        return jnp.sum(motion.realize(design).proposed_coordinates ** 2)
+        return jnp.sum(
+            motion.realize(
+                design,
+                numeric_version="shape-derivative",
+            ).proposed_coordinates
+            ** 2
+        )
 
     derivative = jax.grad(coordinate_sum)(jnp.asarray(1.0))
     assert jnp.isfinite(derivative)
@@ -202,7 +216,10 @@ def test_invalid_boundary_motion_returns_base_runtime_and_rejected_evidence():
     radius_index = geometry.schema.index(phx.geometry.ParameterId("circle", "radius"))
     expired = geometry.state.replace_at(radius_index, jnp.asarray(1.8))
 
-    result = eqx.filter_jit(motion.realize)(expired)
+    result = eqx.filter_jit(motion.realize)(
+        expired,
+        numeric_version="rejected-radius-1.8",
+    )
 
     assert not bool(result.accepted)
     assert bool(result.refresh_required)
@@ -242,7 +259,7 @@ def test_signed_jacobian_rejects_orientation_reversal():
         ),
     )
 
-    result = motion.realize(jnp.asarray(0.0))
+    result = motion.realize(jnp.asarray(0.0), numeric_version="orientation-reversal")
 
     assert not bool(result.accepted)
     assert not bool(result.evidence.geometry.orientation_preserved)

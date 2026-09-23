@@ -112,6 +112,7 @@ def _record_manifest(record: OpenSystemCampaignRecord, /) -> dict[str, Any]:
             "closure_tolerance": _scalar(physicality.closure_tolerance),
         },
         "replay": {
+            "independently_replayed": bool(replay.independently_replayed),
             "variates_equal": bool(replay.variates_equal),
             "address_schema_equal": bool(replay.address_schema_equal),
             "event_time_difference": _scalar(replay.event_time_difference),
@@ -128,7 +129,6 @@ def _record_manifest(record: OpenSystemCampaignRecord, /) -> dict[str, Any]:
                 "name": capacity.name,
                 "used": capacity.used,
                 "limit": capacity.limit,
-                "saturated": bool(capacity.saturated),
             }
             for capacity in record.capacity_evidence
         ],
@@ -145,7 +145,12 @@ def _optional_scalar(value: Any, /) -> float | None:
     array = np.asarray(value)
     if array.shape != ():
         raise ValueError("Artifact physicality values must be scalar.")
-    return float(array) if np.isfinite(array) else None
+    scalar = float(array)
+    if np.isnan(scalar):
+        return None
+    if not np.isfinite(scalar):
+        raise ValueError("Infinite physicality evidence cannot be serialized.")
+    return scalar
 
 
 def _record_arrays(record: OpenSystemCampaignRecord, /) -> dict[str, np.ndarray]:
@@ -277,6 +282,7 @@ def _record_from_manifest(
         raise ValueError("Artifact approximation validity does not reproduce.")
     replay_payload = payload["replay"]
     replay = SemanticReplayEvidence(
+        independently_replayed=replay_payload["independently_replayed"],
         variates_equal=replay_payload["variates_equal"],
         address_schema_equal=replay_payload["address_schema_equal"],
         event_time_difference=replay_payload["event_time_difference"],
@@ -289,12 +295,7 @@ def _record_from_manifest(
         observable_tolerance=replay_payload["observable_tolerance"],
     )
     capacities = tuple(
-        CampaignCapacityEvidence(
-            value["name"],
-            value["used"],
-            value["limit"],
-            saturated=value["saturated"],
-        )
+        CampaignCapacityEvidence(value["name"], value["used"], value["limit"])
         for value in payload["capacity_evidence"]
     )
     return OpenSystemCampaignRecord(
@@ -325,6 +326,9 @@ def read_open_system_artifact(
     if missing:
         raise ValueError(f"Open-system artifact is missing fields: {sorted(missing)}")
     record = _record_from_manifest(manifest["record"], arrays)
+    if set(manifest) != _REQUIRED_FIELDS:
+        unexpected = sorted(set(manifest) - _REQUIRED_FIELDS)
+        raise ValueError(f"Open-system artifact contains unexpected fields: {unexpected}")
     if expected_campaign_id is not None and record.campaign_id != expected_campaign_id:
         raise ValueError("Open-system campaign identity mismatch.")
     if (

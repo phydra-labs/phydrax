@@ -149,13 +149,15 @@ def solve_smooth_dual_lp(
     if not isinstance(method, SmoothDualLP):
         raise TypeError("method must be SmoothDualLP.")
     graph = prepared.graph
-    evidence_values = (
-        pack_evidence(graph).values
-        if evidence is None
-        else evidence.values
-        if isinstance(evidence, VariableStateValues)
-        else pack_evidence(graph, evidence).values
-    )
+    if isinstance(evidence, VariableStateValues):
+        if evidence.structure_id != graph.structure_id:
+            raise ValueError("Evidence structure does not match the prepared graph.")
+        expected = (prepared.state_variable_indices.shape[0],)
+        if evidence.values.shape != expected:
+            raise ValueError(f"evidence values must have shape {expected}.")
+        evidence_values = evidence.values
+    else:
+        evidence_values = pack_evidence(graph, evidence).values
     messages = (
         jnp.zeros((prepared.message_count,), dtype=evidence_values.dtype)
         if initial_messages is None

@@ -23,9 +23,11 @@ result = plan.solve(freestream)
 wake = phx.discretization.VortexWakePlan(48, surface.panel_count, 0.03)
 unsteady = phx.solver.UnsteadyVortexLatticePlan(plan, wake)
 unsteady_result = unsteady.step(unsteady.initialize(), freestream, 0.01)
+if not bool(result.successful & unsteady_result.successful):
+    raise RuntimeError("Steady or unsteady vortex-lattice evaluation failed")
 
 print("circulation", result.circulation)
 print("residual", result.residual_norm)
 print("total force", result.total_force)
 print("wake remaining", unsteady_result.wake_capacity_remaining)
-print("successful", bool(result.successful & unsteady_result.successful))
+print("successful", True)

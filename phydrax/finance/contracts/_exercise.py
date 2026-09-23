@@ -210,7 +210,11 @@ class SettlementTerms(StrictModule, NonTrainableState):
 
     def to_record(self) -> Mapping[str, Any]:
         return {
-            "currency": self.currency.code,
+            "currency": {
+                "code": self.currency.code,
+                "minor_unit": self.currency.minor_unit,
+                "currency_id": self.currency.currency_id,
+            },
             "settlement_lag_days": self.settlement_lag_days,
             "calendar_id": self.calendar_id,
             "business_day_rule": self.business_day_rule.value,

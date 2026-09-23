@@ -17,6 +17,7 @@ from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, Key
 
 from phydrax._doc import DOC_KEY0
+from phydrax._model import register_artifact_value
 from phydrax._strict import StrictModule
 from phydrax.nn._dependency import OperatorDependencySupport
 from phydrax.nn._keys import EvalKey
@@ -1083,3 +1084,13 @@ __all__ = [
     "ConvolutionSupportPlan",
     "UNO",
 ]
+
+register_artifact_value("phydrax.operator.internal:CNOBlock", _CNOBlock)
+register_artifact_value(
+    "phydrax.operator.internal:ConvolutionSupportPlan",
+    ConvolutionSupportPlan,
+)
+register_artifact_value(
+    "phydrax.operator.internal:AntiAliasedConvND",
+    AntiAliasedConvND,
+)

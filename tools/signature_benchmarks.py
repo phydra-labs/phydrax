@@ -40,7 +40,12 @@ class BenchmarkResult:
 
 
 def _integers(value: str, /) -> tuple[int, ...]:
-    values = tuple(value.split(","))
+    try:
+        values = tuple(int(item.strip()) for item in value.split(",") if item.strip())
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "Expected comma-separated positive integers."
+        ) from error
     if not values or any(item <= 0 for item in values):
         raise argparse.ArgumentTypeError("Expected comma-separated positive integers.")
     return values

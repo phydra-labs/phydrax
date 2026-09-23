@@ -64,8 +64,9 @@ class ConservativeSubcellPlan(StrictModule, NonTrainableState):
         reconstruction = np.linalg.solve(projection, np.eye(nodes.shape[0]))
         constant = np.ones((nodes.shape[0],))
         constant_defect = float(np.max(np.abs(projection @ constant - volumes)))
+        reference_integrals = np.asarray(data.weights) @ basis
         conservation_defect = float(
-            np.max(np.abs(np.sum(projection, axis=0) - np.sum(projection, axis=0)))
+            np.max(np.abs(np.sum(projection, axis=0) - reference_integrals))
         )
         evidence_id = canonical_fingerprint(
             {
@@ -74,6 +75,7 @@ class ConservativeSubcellPlan(StrictModule, NonTrainableState):
                 "projection": array_tree_fingerprint(projection),
                 "volumes": array_tree_fingerprint(volumes),
                 "constant_defect": constant_defect,
+                "conservation_defect": conservation_defect,
             }
         )
         self.dg_to_subcell = jnp.asarray(projection)
@@ -197,8 +199,13 @@ class RobustnessSensorPlan(StrictModule, NonTrainableState):
             ),
         )
         troubled = active | (counter > 0)
-        strength = jnp.clip(
+        raw_strength = jnp.clip(
             (indicator - self.release) / (self.activation - self.release), 0.0, 1.0
+        )
+        strength = jnp.where(
+            counter > 0,
+            jnp.maximum(raw_strength, state.strength),
+            raw_strength,
         )
         return RobustnessSensorState(strength, troubled, counter)
 

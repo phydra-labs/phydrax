@@ -608,6 +608,7 @@ def _ragged_geometry_weight(
     time_indices: Array,
     selection: RaggedTimeSeriesSampling,
     measure: TrajectoryClassificationMeasure,
+    configured_observation_count: int,
     /,
 ) -> Array:
     if measure == "statistical":
@@ -626,8 +627,8 @@ def _ragged_geometry_weight(
         importance = domain.durations[case_grid]
     else:
         widths = _ragged_node_widths(domain, case_grid, time_indices)
-        if selection == "observation_uniform" and batch_times.ndim == 1:
-            importance = float(domain.total_observations) * widths / float(domain.size)
+        if selection == "observation_uniform":
+            importance = float(configured_observation_count) * widths / float(domain.size)
         else:
             importance = domain.lengths[case_grid].astype("float64") * widths
 
@@ -1289,6 +1290,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
                 time_indices,
                 self.selection,
                 self.measure,
+                self.observation_count,
             ),
             case_indices=case_indices,
             time_indices=time_indices,

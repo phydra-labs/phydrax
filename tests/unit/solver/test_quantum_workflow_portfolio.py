@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
+import phydrax as phx
 from phydrax.operators.quantum._operations import LocalUnitaryOperation, QuantumProgram
 from phydrax.operators.quantum._register import HilbertRegisterLayout
 from phydrax.solver._local_hamiltonian import (
@@ -39,6 +40,7 @@ from phydrax.solver._quantum_experiment import (
 from phydrax.solver._quantum_measurement import (
     apply_mps_quantum_instrument,
     QuantumInstrument,
+    QuantumPOVM,
 )
 from phydrax.solver._quantum_program import DenseQuantumProgramPolicy
 from phydrax.solver._quantum_service import (
@@ -264,6 +266,54 @@ def test_lpdo_channel_reports_cp_tp_psd_trace_and_truncation_separately():
     assert bool(hamiltonian.valid)
     assert bool(lindbladian.trace_preserving_generator)
     assert bool(lindbladian.valid)
+
+
+def test_lpdo_steady_state_applies_trace_tolerance_cumulatively():
+    lpdo = LocallyPurifiedDensity((jnp.asarray([[[[1]], [[0]]]], dtype=_C64),))
+    kraus = jnp.stack((jnp.sqrt(0.99) * _I, jnp.sqrt(0.01) * _X))
+    channel = LocalKrausChannel(0, kraus, channel_id="weak-bit-flip")
+    tolerance = 5.0e-3
+    result = phx.solver.solve_lpdo_steady_state(
+        lpdo,
+        (channel,),
+        maximum_iterations=6,
+        maximum_purification_dimension=1,
+        convergence_tolerance=1.0,
+        trace_tolerance=tolerance,
+        maximum_discarded_weight_per_sweep=0.1,
+    )
+    assert result.trace_residual > tolerance
+    assert not bool(result.valid)
+
+
+def test_measurement_and_process_identities_include_numerical_content():
+    projectors = jnp.stack((_P0, _P1))
+    swapped = jnp.stack((_P1, _P0))
+    assert QuantumPOVM(projectors).povm_id != QuantumPOVM(swapped).povm_id
+
+    mask = jnp.ones((2, 1), dtype=jnp.bool_)
+    instrument = QuantumInstrument(projectors[:, None, :, :], mask)
+    phased = QuantumInstrument(
+        projectors[:, None, :, :] * jnp.exp(0.2j),
+        mask,
+    )
+    assert instrument.instrument_id != phased.instrument_id
+
+    inputs = jnp.stack((_P0, _P1))
+    effects = jnp.broadcast_to(projectors, (2, 2, 2, 2))
+    counts = jnp.asarray(((10, 0), (0, 10)), dtype=jnp.int32)
+    changed_counts = jnp.asarray(((9, 1), (0, 10)), dtype=jnp.int32)
+    assert (
+        ProcessExperimentPlan(inputs, effects, counts).plan_id
+        != ProcessExperimentPlan(inputs, effects, changed_counts).plan_id
+    )
+    identity = StinespringProcessModel(_I, dimension=2, environment_dimension=1)
+    phased_model = StinespringProcessModel(
+        jnp.exp(0.2j) * _I,
+        dimension=2,
+        environment_dimension=1,
+    )
+    assert identity.model_id != phased_model.model_id
 
 
 def test_process_fit_holdout_checkpoint_and_service_refusal():

@@ -63,7 +63,9 @@ def main() -> None:
         float(jnp.max(block.evidence.affine_gradient_error))
         for block in discretization.default_runtime.bases
     )
-    print("successful", bool(result.successful))
+    if not bool(result.successful):
+        raise RuntimeError("Polygon H1 Neo-Hookean solve failed")
+    print("successful", True)
     print("residual_norm", float(jnp.sqrt(jnp.sum(residual * residual))))
     print("maximum_affine_gradient_error", maximum_basis_error)
 

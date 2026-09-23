@@ -232,6 +232,41 @@ def execute_taylor_exponential_action(
         norm_scale, alpha_scale, plan, action_factor
     )
     input_norm = jnp.sum(jnp.abs(coordinates))
+    bound_available = plan.norm_source != "estimated-block-1-norm"
+    if bound_available:
+        candidate_degrees = jnp.arange(
+            1,
+            plan.policy.resources.max_degree + 1,
+            dtype=jnp.int32,
+        )
+        candidate_bounds = jax.vmap(
+            lambda candidate_degree: _truncation_bound(
+                input_norm,
+                norm,
+                scale_value,
+                shift,
+                candidate_degree,
+                scaling_count,
+            )
+        )(candidate_degrees)
+        candidate_work = action_factor * scaling_count * (candidate_degrees + 1)
+        bound_eligible = (
+            (candidate_degrees >= degree)
+            & (
+                candidate_bounds
+                <= plan.policy.error_tolerance * jnp.maximum(input_norm, 1.0)
+            )
+            & (candidate_work <= plan.policy.resources.max_action_matvec_count)
+        )
+        selected_bound_degree = jnp.argmin(
+            jnp.where(
+                bound_eligible,
+                candidate_degrees,
+                jnp.iinfo(jnp.int32).max,
+            )
+        )
+        degree = candidate_degrees[selected_bound_degree]
+        admissible = admissible & jnp.any(bound_eligible)
     inputs_finite = (
         prepared.norm_finite
         & jnp.isfinite(scale_value)
@@ -260,7 +295,7 @@ def execute_taylor_exponential_action(
         )
 
     answer, observed_tail, action_finite = jax.lax.cond(execute, calculate, refuse, None)
-    bound_available = plan.norm_source != "estimated-block-1-norm"
+
     bound = (
         _truncation_bound(input_norm, norm, scale_value, shift, degree, scaling_count)
         if bound_available
@@ -270,8 +305,13 @@ def execute_taylor_exponential_action(
     comparison = jnp.maximum(comparison, jnp.asarray(1.0, dtype=comparison.dtype))
     error_estimate = observed_tail / comparison
     tolerance_met = observed_tail <= plan.policy.error_tolerance * comparison
+    bound_tolerance_met = (
+        bound <= plan.policy.error_tolerance * comparison
+        if bound_available
+        else jnp.asarray(True)
+    )
     finite = inputs_finite & action_finite & jnp.isfinite(observed_tail)
-    converged = execute & finite & tolerance_met
+    converged = execute & finite & tolerance_met & bound_tolerance_met
     status = _taylor_status(
         plan,
         prepared,

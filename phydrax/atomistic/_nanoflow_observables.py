@@ -501,6 +501,11 @@ class DiffusionTensorFitResult(StrictModule):
     stationarity_defect: Array
     header: AdmissibilityHeader
     plan_id: str = eqx.field(static=True)
+    source_observer_id: str = eqx.field(static=True)
+    support_id: str = eqx.field(static=True)
+    system_id: str = eqx.field(static=True)
+    force_field_id: str = eqx.field(static=True)
+    rollout_id: str = eqx.field(static=True)
 
 
 class DiffusionTensorFitPlan(StrictModule, NonTrainableState):
@@ -548,10 +553,23 @@ class DiffusionTensorFitPlan(StrictModule, NonTrainableState):
         return slope_weights, intercept_weights
 
     def evaluate(
-        self, correlation: MultiOriginCorrelationResult, /
+        self,
+        correlation: MultiOriginCorrelationResult,
+        /,
+        *,
+        support_id: str,
+        system_id: str,
+        force_field_id: str,
+        rollout_id: str,
     ) -> DiffusionTensorFitResult:
         if not isinstance(correlation, MultiOriginCorrelationResult):
             raise TypeError("correlation must be MultiOriginCorrelationResult.")
+        provenance = tuple(
+            str(value).strip()
+            for value in (support_id, system_id, force_field_id, rollout_id)
+        )
+        if any(not value for value in provenance):
+            raise ValueError("Diffusion fit provenance identities must be non-empty.")
         if self.fit_stop > correlation.lag_time.shape[0]:
             raise ValueError("Diffusion fit window exceeds available lags.")
         section = slice(self.fit_start, self.fit_stop)
@@ -630,6 +648,8 @@ class DiffusionTensorFitPlan(StrictModule, NonTrainableState):
             stationarity,
             header,
             self.plan_id,
+            correlation.observer_id,
+            *provenance,
         )
 
 
@@ -641,6 +661,11 @@ class DrivenSlipFitResult(StrictModule):
     residual_norm: Array
     header: AdmissibilityHeader
     plan_id: str = eqx.field(static=True)
+    source_observer_id: str = eqx.field(static=True)
+    support_id: str = eqx.field(static=True)
+    system_id: str = eqx.field(static=True)
+    force_field_id: str = eqx.field(static=True)
+    rollout_id: str = eqx.field(static=True)
 
 
 class DrivenSlipFitPlan(StrictModule, NonTrainableState):
@@ -699,9 +724,20 @@ class DrivenSlipFitPlan(StrictModule, NonTrainableState):
         upper_wall_velocity: Array,
         gap: Array,
         /,
+        *,
+        support_id: str,
+        system_id: str,
+        force_field_id: str,
+        rollout_id: str,
     ) -> DrivenSlipFitResult:
         if not isinstance(profile, PlanarWallProfileResult):
             raise TypeError("profile must be PlanarWallProfileResult.")
+        provenance = tuple(
+            str(value).strip()
+            for value in (support_id, system_id, force_field_id, rollout_id)
+        )
+        if any(not value for value in provenance):
+            raise ValueError("Slip fit provenance identities must be non-empty.")
         if (
             self.group_index >= profile.tangential_velocity.shape[0]
             or self.tangential_component >= profile.tangential_velocity.shape[-1]
@@ -796,6 +832,8 @@ class DrivenSlipFitPlan(StrictModule, NonTrainableState):
             jnp.sqrt(jnp.mean(residual**2)),
             header,
             self.plan_id,
+            profile.observer_id,
+            *provenance,
         )
 
 
@@ -808,6 +846,10 @@ class WallForceCorrelationResult(StrictModule):
     header: AdmissibilityHeader
     force_source_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    support_id: str = eqx.field(static=True)
+    system_id: str = eqx.field(static=True)
+    force_field_id: str = eqx.field(static=True)
+    rollout_id: str = eqx.field(static=True)
 
 
 class WallForceCorrelationPlan(StrictModule, NonTrainableState):
@@ -820,6 +862,10 @@ class WallForceCorrelationPlan(StrictModule, NonTrainableState):
     lag_count: int = eqx.field(static=True)
     minimum_pairs: int = eqx.field(static=True)
     force_source_id: str = eqx.field(static=True)
+    support_id: str = eqx.field(static=True)
+    system_id: str = eqx.field(static=True)
+    force_field_id: str = eqx.field(static=True)
+    rollout_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -832,6 +878,10 @@ class WallForceCorrelationPlan(StrictModule, NonTrainableState):
         lag_count: int,
         minimum_pairs: int,
         force_source_id: str,
+        support_id: str,
+        system_id: str,
+        force_field_id: str,
+        rollout_id: str,
     ) -> None:
         values = tuple(
             float(value) for value in (area, temperature, boltzmann_constant, time_step)
@@ -839,17 +889,23 @@ class WallForceCorrelationPlan(StrictModule, NonTrainableState):
         lags = int(lag_count)
         minimum = int(minimum_pairs)
         source = str(force_source_id)
+        provenance = tuple(
+            str(value).strip()
+            for value in (support_id, system_id, force_field_id, rollout_id)
+        )
         if (
             any(not np.isfinite(value) or value <= 0.0 for value in values)
             or lags <= 1
             or minimum < 2
             or not source
+            or any(not value for value in provenance)
         ):
             raise ValueError("Wall-force correlation controls are invalid.")
         self.area, self.temperature, self.boltzmann_constant, self.time_step = values
         self.lag_count = lags
         self.minimum_pairs = minimum
         self.force_source_id = source
+        self.support_id, self.system_id, self.force_field_id, self.rollout_id = provenance
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "wall-force-correlation",
@@ -857,6 +913,10 @@ class WallForceCorrelationPlan(StrictModule, NonTrainableState):
                 "lag_count": lags,
                 "minimum_pairs": minimum,
                 "force_source": source,
+                "support": provenance[0],
+                "system": provenance[1],
+                "force_field": provenance[2],
+                "rollout": provenance[3],
             }
         )
 
@@ -929,6 +989,10 @@ class WallForceCorrelationPlan(StrictModule, NonTrainableState):
             header,
             self.force_source_id,
             self.plan_id,
+            self.support_id,
+            self.system_id,
+            self.force_field_id,
+            self.rollout_id,
         )
 
 

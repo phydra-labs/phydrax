@@ -13,7 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from phydrax._model import AbstractArrayModel
+from phydrax._model import AbstractArrayModel, register_artifact_value
 from phydrax._strict import StrictModule
 from phydrax.ein import contract
 from phydrax.equations import (
@@ -483,6 +483,16 @@ class ChemicalConditionalAffineOperator(AbstractOperatorModel):
                 "ChemicalConditionalAffineOperator requires OperatorBatch input."
             )
         return self.__call_operator_batch__(x, key=key)
+
+
+register_artifact_value(
+    "phydrax.operator.internal:ChemicalConditionalAffineScaling",
+    ChemicalConditionalAffineScaling,
+)
+register_artifact_value(
+    "phydrax.operator.internal:StoichiometricRateCorrection",
+    StoichiometricRateCorrection,
+)
 
 
 __all__ = [

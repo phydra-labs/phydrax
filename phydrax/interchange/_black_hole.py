@@ -497,7 +497,7 @@ def map_black_hole_artifact(
     )
     source_manifest = _artifact_manifest(rights, artifact_kind)
     admission = admit_external_artifact(path, source_manifest, policy=security_policy)
-    data = read_admitted_artifact(admission, policy=security_policy)
+    data = read_admitted_artifact(admission, source_manifest, policy=security_policy)
     resource = bounded_resource_from_bytes(
         data, limits=limits, source_path=admission.relative_path
     )

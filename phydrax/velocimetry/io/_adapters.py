@@ -52,8 +52,8 @@ def piv_to_tensor_grid(
         ),
         preserved_fields=("positions_xy", f"{value}_xy", "valid", "transform_id"),
         assumptions=(
-            f"spatial_unit={field.spatial_unit}",
-            f"time_unit={field.time_unit}",
+            f"spatial_unit={field.spatial_unit.unit_id}",
+            f"time_unit={field.time_unit.unit_id}",
         ),
     )
     return grid, space, values, valid, report
@@ -84,6 +84,15 @@ def piv_to_observation_sequence(
     arrays = [(first_values, first_valid)]
     first_positions = np.asarray(fields_[0].positions_xy)
     for field in fields_[1:]:
+        if (
+            field.spatial_unit.unit_id != fields_[0].spatial_unit.unit_id
+            or field.time_unit.unit_id != fields_[0].time_unit.unit_id
+            or field.frame_id != fields_[0].frame_id
+        ):
+            raise AdapterError(
+                AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
+                "PIV observation sequences require identical spatial units, time units, and frames.",
+            )
         if not np.array_equal(np.asarray(field.positions_xy), first_positions):
             raise AdapterError(
                 AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
@@ -118,8 +127,8 @@ def piv_to_observation_sequence(
         coordinate_mapping=grid_report.coordinate_mapping,
         preserved_fields=(f"{value}_xy", "valid", "times", "transform_id"),
         assumptions=(
-            f"spatial_unit={fields_[0].spatial_unit}",
-            f"time_unit={fields_[0].time_unit}",
+            f"spatial_unit={fields_[0].spatial_unit.unit_id}",
+            f"time_unit={fields_[0].time_unit.unit_id}",
         ),
     )
     return sequence, grid, report

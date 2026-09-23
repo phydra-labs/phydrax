@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from numbers import Integral
 
 import equinox as eqx
 import jax
@@ -19,6 +20,7 @@ from phydrax._bvh import build_packed_bvh, ray_select_leaf_items
 from phydrax._interpolation import linear_interpolate
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry.simplicial import AffineSimplexMap
@@ -95,6 +97,7 @@ class VoxelXRayTransformPlan(StrictModule, NonTrainableState):
     segment_valid: Array
     projection_shape: tuple[int, ...] = eqx.field(static=True)
     volume_shape: tuple[int, int, int] = eqx.field(static=True)
+    coordinate_contract_id: str = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
     def __init__(
@@ -103,8 +106,20 @@ class VoxelXRayTransformPlan(StrictModule, NonTrainableState):
         volume_shape: tuple[int, int, int],
         origin: ArrayLike,
         spacing: ArrayLike,
+        volume_coordinate_contract: SpatialCoordinateContract,
         /,
     ):
+        if not isinstance(volume_coordinate_contract, SpatialCoordinateContract):
+            raise TypeError(
+                "volume_coordinate_contract must be SpatialCoordinateContract."
+            )
+        if (
+            volume_coordinate_contract.spatial_id
+            != support.rays.coordinate_contract.spatial_id
+        ):
+            raise ValueError(
+                "X-ray rays and voxel geometry must share one spatial coordinate contract."
+            )
         shape = tuple(volume_shape)
         origin_ = np.asarray(origin, dtype=np.float64)
         spacing_ = np.asarray(spacing, dtype=np.float64)
@@ -114,6 +129,8 @@ class VoxelXRayTransformPlan(StrictModule, NonTrainableState):
             or origin_.shape != (3,)
             or spacing_.shape != (3,)
             or np.any(spacing_ <= 0.0)
+            or not np.all(np.isfinite(origin_))
+            or not np.all(np.isfinite(spacing_))
         ):
             raise ValueError(
                 "Voxel geometry requires positive three-dimensional shape and spacing."
@@ -124,6 +141,7 @@ class VoxelXRayTransformPlan(StrictModule, NonTrainableState):
         self.segment_valid = jnp.asarray(valid)
         self.projection_shape = support.projection_shape
         self.volume_shape = shape
+        self.coordinate_contract_id = volume_coordinate_contract.spatial_id
         self.operator_id = canonical_fingerprint(
             {
                 "kind": "voxel-xray-transform",
@@ -131,6 +149,7 @@ class VoxelXRayTransformPlan(StrictModule, NonTrainableState):
                 "shape": list(shape),
                 "origin": origin_.tolist(),
                 "spacing": spacing_.tolist(),
+                "coordinate_contract": volume_coordinate_contract.spatial_id,
                 "routes": array_tree_fingerprint((indices, lengths, valid)),
             }
         )
@@ -239,6 +258,7 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
     projection_shape: tuple[int, ...] = eqx.field(static=True)
     cell_count: int = eqx.field(static=True)
     maximum_segments_per_ray: int = eqx.field(static=True)
+    coordinate_contract_id: str = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
     def __init__(
@@ -246,10 +266,17 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
         support: ProjectionSupport,
         vertices: ArrayLike,
         tetrahedra: ArrayLike,
+        coordinate_contract: SpatialCoordinateContract,
         /,
         *,
         maximum_segments_per_ray: int = 64,
     ):
+        if not isinstance(coordinate_contract, SpatialCoordinateContract):
+            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
+        if coordinate_contract.spatial_id != support.rays.coordinate_contract.spatial_id:
+            raise ValueError(
+                "X-ray rays and tetrahedral geometry must share one spatial coordinate contract."
+            )
         vertices_ = np.asarray(vertices, dtype=np.float64)
         cells_ = np.asarray(tetrahedra, dtype=np.int32)
         if (
@@ -260,6 +287,7 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
             or cells_.shape[0] < 1
             or np.any(cells_ < 0)
             or np.any(cells_ >= vertices_.shape[0])
+            or not np.all(np.isfinite(vertices_))
         ):
             raise ValueError(
                 "vertices and tetrahedra require shapes (V,3) and nonempty (C,4) with valid vertex indices."
@@ -356,6 +384,7 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
         self.route_complete = complete
         self.projection_shape = support.projection_shape
         self.cell_count = cells_.shape[0]
+        self.coordinate_contract_id = coordinate_contract.spatial_id
         self.maximum_segments_per_ray = capacity
         self.operator_id = canonical_fingerprint(
             {
@@ -363,6 +392,7 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
                 "support": support.support_id,
                 "vertices": array_tree_fingerprint(vertices_),
                 "cells": array_tree_fingerprint(cells_),
+                "coordinate_contract": coordinate_contract.spatial_id,
                 "maximum_segments_per_ray": capacity,
                 "routes": array_tree_fingerprint((lengths, selected_valid)),
             }
@@ -405,21 +435,31 @@ class BeerLambertPlan:
     incident_signal: np.ndarray
     dark_signal: float = 0.0
     gain: float = 1.0
-    saturation: float = np.inf
+    saturation: float = np.finfo(np.float64).max
 
     def __post_init__(self) -> None:
         incident = np.array(self.incident_signal, dtype=np.float64, copy=True)
+        dark = float(self.dark_signal)
+        gain = float(self.gain)
+        saturation = float(self.saturation)
         if (
             not np.all(np.isfinite(incident))
             or np.any(incident < 0.0)
-            or self.gain <= 0.0
-            or self.saturation <= 0.0
+            or not np.isfinite(dark)
+            or dark < 0.0
+            or not np.isfinite(gain)
+            or gain <= 0.0
+            or not np.isfinite(saturation)
+            or saturation <= 0.0
         ):
             raise ValueError(
                 "Detector parameters must be finite/nonnegative with positive gain and saturation."
             )
         incident.setflags(write=False)
         object.__setattr__(self, "incident_signal", incident)
+        object.__setattr__(self, "dark_signal", dark)
+        object.__setattr__(self, "gain", gain)
+        object.__setattr__(self, "saturation", saturation)
 
     def evaluate(
         self, line_integral: ArrayLike, /, *, scatter_signal: ArrayLike = 0.0
@@ -455,17 +495,32 @@ class FilteredBackprojectionPlan(StrictModule, NonTrainableState):
         output_y: ArrayLike,
         /,
     ):
-        self.angles = jnp.asarray(angles)
-        self.detector_coordinates = jnp.asarray(detector_coordinates)
-        self.output_x = jnp.asarray(output_x)
-        self.output_y = jnp.asarray(output_y)
+        angles_ = np.asarray(angles)
+        detector_ = np.asarray(detector_coordinates)
+        output_x_ = np.asarray(output_x)
+        output_y_ = np.asarray(output_y)
         if (
-            self.angles.ndim != 1
-            or self.detector_coordinates.ndim != 1
-            or self.output_x.ndim != 1
-            or self.output_y.ndim != 1
+            angles_.ndim != 1
+            or angles_.size < 1
+            or detector_.ndim != 1
+            or detector_.size < 2
+            or output_x_.ndim != 1
+            or output_x_.size < 1
+            or output_y_.ndim != 1
+            or output_y_.size < 1
+            or not all(
+                np.all(np.isfinite(value))
+                for value in (angles_, detector_, output_x_, output_y_)
+            )
+            or not np.all(np.diff(detector_) > 0.0)
         ):
-            raise ValueError("FBP coordinates must be rank-one arrays.")
+            raise ValueError(
+                "FBP coordinates must be finite nonempty rank-one arrays with at least two strictly increasing detector nodes."
+            )
+        self.angles = jnp.asarray(angles_)
+        self.detector_coordinates = jnp.asarray(detector_)
+        self.output_x = jnp.asarray(output_x_)
+        self.output_y = jnp.asarray(output_y_)
 
     def reconstruct(self, sinogram: ArrayLike, /) -> Array:
         values = jnp.asarray(sinogram)
@@ -509,6 +564,27 @@ class IterativeCTPlan:
     iteration_count: int
     nonnegative: bool = True
     l2_regularization: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.transform, VoxelXRayTransformPlan):
+            raise TypeError("transform must be VoxelXRayTransformPlan.")
+        if isinstance(self.iteration_count, bool) or not isinstance(
+            self.iteration_count, Integral
+        ):
+            raise TypeError("iteration_count must be an integer.")
+        regularization = float(self.l2_regularization)
+        if (
+            self.iteration_count < 1
+            or not np.isfinite(regularization)
+            or regularization < 0.0
+        ):
+            raise ValueError(
+                "iteration_count must be positive and l2_regularization finite and nonnegative."
+            )
+        if not isinstance(self.nonnegative, bool):
+            raise TypeError("nonnegative must be boolean.")
+        object.__setattr__(self, "iteration_count", int(self.iteration_count))
+        object.__setattr__(self, "l2_regularization", regularization)
 
     def solve(
         self, projections: ArrayLike, /, *, initial: ArrayLike | None = None

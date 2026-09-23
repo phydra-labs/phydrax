@@ -45,8 +45,10 @@ def run():
     result = runtime.advance(runtime.initialize_state(state, 0.0, step))
     updated = result.runtime_state.cell_average()
     observables = compiled.dynamics.shallow_water_observables(updated)
+    if not bool(result.accepted):
+        raise RuntimeError("Wet/dry shallow-water step was rejected")
     return {
-        "accepted": bool(result.accepted),
+        "accepted": True,
         "minimum_depth": float(jnp.min(observables.depth)),
         "mass_change": float(jnp.sum(observables.depth) - jnp.sum(depth)),
         "wet_cells": int(jnp.count_nonzero(observables.wet_mask)),

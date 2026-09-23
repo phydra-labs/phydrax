@@ -13,7 +13,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ._contraction import (
     ContractionExecutionEvidence,
@@ -85,6 +85,9 @@ class PEPS(StrictModule):
                     and tensor.shape[2] != arrays[(row + 1) * columns_ + column].shape[0]
                 ):
                     raise ValueError("Neighboring vertical PEPS bonds must match.")
+        version = jnp.asarray(numeric_version, dtype=jnp.int32)
+        if version.ndim != 0:
+            raise ValueError("numeric_version must be scalar.")
         self.tensors = arrays
         self.rows = rows_
         self.columns = columns_
@@ -94,14 +97,11 @@ class PEPS(StrictModule):
             {
                 "kind": "finite-obc-peps",
                 "shape": (rows_, columns_),
-                "tensor_shapes": tuple(array.shape for array in arrays),
-                "dtype": str(arrays[0].dtype),
+                "tensors": array_tree_fingerprint(arrays),
                 "precision": precision_.policy_id,
+                "numeric_version": int(version),
             }
         )
-        version = jnp.asarray(numeric_version, dtype=jnp.int32)
-        if version.ndim != 0:
-            raise ValueError("numeric_version must be scalar.")
         self.numeric_version = version
 
 
@@ -179,8 +179,7 @@ class PEPO(StrictModule):
             {
                 "kind": "finite-obc-pepo",
                 "shape": (rows_, columns_),
-                "tensor_shapes": tuple(array.shape for array in arrays),
-                "dtype": str(arrays[0].dtype),
+                "tensors": array_tree_fingerprint(arrays),
                 "precision": precision_.policy_id,
             }
         )

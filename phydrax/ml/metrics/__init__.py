@@ -95,7 +95,7 @@ from ._regression import (
     r2_score,
     root_mean_squared_error,
 )
-from ._scorer import AbstractScorer, FunctionScorer
+from ._scorer import AbstractScorer, FunctionScorer, ScorerResponse
 from ._selective import (
     selective_risk_curve,
     SelectiveRiskCurveResult,
@@ -109,6 +109,7 @@ __all__ = [
     "CalibrationNorm",
     "CalibrationResult",
     "FunctionScorer",
+    "ScorerResponse",
     "Gain",
     "METRIC_EMPTY",
     "METRIC_INVALID_INPUT",

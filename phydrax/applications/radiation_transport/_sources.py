@@ -20,6 +20,13 @@ from ...qualification import ReferenceArtifactManifest
 from ...units import conversion_factor, ELECTRONVOLT, UnitDefinition
 
 
+def _history_stream_key(key: Array, history_id: Array, stream: int, /) -> Array:
+    return jr.fold_in(
+        jr.fold_in(key, jnp.asarray(history_id, dtype=jnp.uint32)),
+        jnp.asarray(stream, dtype=jnp.uint32),
+    )
+
+
 class PhotonSourceBatch(StrictModule, NonTrainableState):
     history_ids: Array
     origins: Array
@@ -99,11 +106,19 @@ class AliasSpectrumPlan(StrictModule, NonTrainableState):
         )
 
     def sample(self, key: Array, history_ids: ArrayLike, /) -> Array:
-        history = jnp.asarray(history_ids, dtype=jnp.uint32)
+        raw_history = jnp.asarray(history_ids)
+        if not jnp.issubdtype(raw_history.dtype, jnp.integer):
+            raise TypeError("Photon history IDs must be integers.")
+        raw_history = eqx.error_if(
+            raw_history,
+            jnp.any(raw_history < 0) | jnp.any(raw_history > np.iinfo(np.uint32).max),
+            "Photon history IDs must fit uint32 exactly.",
+        )
+        history = raw_history.astype(jnp.uint32)
 
         def one(identifier):
-            first = jr.uniform(jr.fold_in(key, 2 * identifier))
-            second = jr.uniform(jr.fold_in(key, 2 * identifier + 1))
+            first = jr.uniform(_history_stream_key(key, identifier, 0))
+            second = jr.uniform(_history_stream_key(key, identifier, 1))
             column = jnp.minimum(
                 jnp.floor(first * self.energies.size).astype(jnp.int32),
                 self.energies.size - 1,
@@ -170,17 +185,23 @@ class DiagnosticXRaySourcePlan(StrictModule, NonTrainableState):
     ) -> PhotonSourceBatch:
         count = int(history_count)
         first = int(first_history_id)
-        if count < 1 or first < 0:
-            raise ValueError("Photon history count and first ID are invalid.")
+        maximum_history_id = int(np.iinfo(np.uint32).max)
+        if (
+            count < 1
+            or first < 0
+            or first > maximum_history_id
+            or count - 1 > maximum_history_id - first
+        ):
+            raise ValueError("Photon history count and first ID exceed uint32 support.")
         history = jnp.arange(first, first + count, dtype=jnp.uint32)
         energies = self.spectrum.sample(jr.fold_in(key, 0), history)
         cosine_minimum = jnp.cos(self.cone_half_angle)
 
         def direction(identifier):
             cosine = cosine_minimum + (1.0 - cosine_minimum) * jr.uniform(
-                jr.fold_in(key, 3 * identifier + 1)
+                _history_stream_key(key, identifier, 1)
             )
-            azimuth = 2.0 * jnp.pi * jr.uniform(jr.fold_in(key, 3 * identifier + 2))
+            azimuth = 2.0 * jnp.pi * jr.uniform(_history_stream_key(key, identifier, 2))
             z = self.axis
             reference = jnp.where(
                 jnp.abs(z[2]) < 0.9,

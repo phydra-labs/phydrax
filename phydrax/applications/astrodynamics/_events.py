@@ -189,7 +189,9 @@ class AstrodynamicsEventPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
-        direction_ = int(direction)
+        if isinstance(direction, bool) or not isinstance(direction, int):
+            raise TypeError("event direction must be an integer.")
+        direction_ = direction
         if direction_ not in (-1, 0, 1):
             raise ValueError("event direction must be -1, 0, or +1.")
         if not isinstance(terminal, bool):
@@ -357,14 +359,38 @@ def localize_astrodynamics_event(
         (jnp.asarray(plan.direction == 1) & (right_guard > left_guard))
         | (jnp.asarray(plan.direction == -1) & (right_guard < left_guard))
     )
-    valid = sensitivity.successful & direction_valid
+    finite = (
+        jnp.isfinite(left)
+        & jnp.isfinite(right)
+        & jnp.isfinite(left_guard)
+        & jnp.isfinite(right_guard)
+        & jnp.isfinite(sensitivity.event_time)
+        & jnp.all(jnp.isfinite(sensitivity.state_before))
+        & jnp.all(jnp.isfinite(sensitivity.state_after))
+        & jnp.isfinite(sensitivity.guard_residual)
+        & jnp.isfinite(sensitivity.transversality)
+    )
+    bracketed = (
+        (left_guard == 0.0)
+        | (right_guard == 0.0)
+        | (jnp.signbit(left_guard) != jnp.signbit(right_guard))
+    )
+    valid = sensitivity.successful & direction_valid & finite
     status = jnp.where(
-        valid,
-        int(AstrodynamicsStatus.SUCCESS),
+        ~finite,
+        int(AstrodynamicsStatus.NONFINITE_INPUT),
         jnp.where(
             sensitivity.grazing | sensitivity.simultaneous,
             int(AstrodynamicsStatus.SINGULAR_GEOMETRY),
-            int(AstrodynamicsStatus.NO_SOLUTION),
+            jnp.where(
+                ~bracketed | ~direction_valid,
+                int(AstrodynamicsStatus.NO_SOLUTION),
+                jnp.where(
+                    sensitivity.successful,
+                    int(AstrodynamicsStatus.SUCCESS),
+                    int(AstrodynamicsStatus.NONCONVERGED),
+                ),
+            ),
         ),
     ).astype(jnp.int32)
     return AstrodynamicsEventResult(

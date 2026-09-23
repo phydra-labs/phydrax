@@ -23,6 +23,7 @@ class FluxRegister(StrictModule):
     orientation: int = eqx.field(static=True)
     refinement_ratio: int = eqx.field(static=True)
     register_id: str = eqx.field(static=True)
+    owner_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -34,6 +35,7 @@ class FluxRegister(StrictModule):
         orientation: int = 1,
         refinement_ratio: int = 1,
         register_id: str | None = None,
+        owner_id: str | None = None,
     ):
         coarse = jnp.asarray(coarse_flux)
         fine = jnp.asarray(fine_flux)
@@ -57,6 +59,9 @@ class FluxRegister(StrictModule):
             ~jnp.isfinite(time) | (time <= 0.0),
             "Flux-register accumulation time must be finite and positive.",
         )
+        owner = None if owner_id is None else str(owner_id)
+        if owner == "":
+            raise ValueError("owner_id must be non-empty when supplied.")
         identifier = (
             canonical_fingerprint(
                 {
@@ -67,6 +72,7 @@ class FluxRegister(StrictModule):
                     "refinement_ratio": ratio,
                     "dtype": coarse.dtype.name,
                     "fine_dtype": fine.dtype.name,
+                    "owner": owner,
                 }
             )
             if register_id is None
@@ -80,6 +86,7 @@ class FluxRegister(StrictModule):
         self.accumulated_time = time
         self.orientation = orientation_
         self.refinement_ratio = ratio
+        self.owner_id = owner
         self.register_id = identifier
 
     def mismatch(self, /) -> Array:

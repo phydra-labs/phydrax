@@ -140,15 +140,20 @@ class NematicAnchoringPlan(StrictModule, NonTrainableState):
             molecular = -self.basis.encode(self.basis.project(derivative))
         energy = jnp.where(self.boundary_mask, energy, 0.0)
         molecular = jnp.where(self.boundary_mask[..., None], molecular, 0.0)
+        normal_required = self.kind in (
+            NematicAnchoringKind.HOMEOTROPIC,
+            NematicAnchoringKind.PLANAR_DEGENERATE,
+        )
+        normals_valid = jnp.all(
+            (~self.boundary_mask)
+            | (jnp.sqrt(jnp.sum(self.normals * self.normals, axis=-1)) > 0.0)
+        )
         successful = (
             jnp.isfinite(self.strength)
             & (self.strength >= 0.0)
             & jnp.all(jnp.isfinite(energy))
             & jnp.all(jnp.isfinite(molecular))
-            & jnp.all(
-                (~self.boundary_mask)
-                | (jnp.sqrt(jnp.sum(self.normals * self.normals, axis=-1)) > 0.0)
-            )
+            & ((not normal_required) | normals_valid)
         )
         return NematicAnchoringFields(
             energy,

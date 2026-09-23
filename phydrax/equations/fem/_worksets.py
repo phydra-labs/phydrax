@@ -30,6 +30,7 @@ from ._ir import (
 class WorksetSignature(StrictModule, NonTrainableState):
     region_kind: str = eqx.field(static=True)
     block_name: str = eqx.field(static=True)
+    neighbor_block_name: str | None = eqx.field(static=True)
     cell_kind: str = eqx.field(static=True)
     support_id: str = eqx.field(static=True)
     entity_set_id: str = eqx.field(static=True)
@@ -75,10 +76,12 @@ class WorksetSignature(StrictModule, NonTrainableState):
         neighbor_local_widths: Mapping[str, int]
         | Sequence[tuple[str, int]]
         | None = None,
+        neighbor_block_name: str | None = None,
         material_id: str | None = None,
     ):
         region = str(region_kind)
         block = str(block_name)
+        neighbor_block = None if neighbor_block_name is None else str(neighbor_block_name)
         cell = str(cell_kind)
         rule = str(rule_id)
         support = str(support_id)
@@ -143,6 +146,7 @@ class WorksetSignature(StrictModule, NonTrainableState):
             *references,
             *fields,
         )
+        has_neighbor = region in ("interior_facet", "interior-facet")
         if (
             any(not value for value in identities)
             or not references
@@ -152,6 +156,8 @@ class WorksetSignature(StrictModule, NonTrainableState):
             or any(not name or width <= 0 for name, width in widths)
             or set(name for name, _ in neighbor_widths) != set(name for name, _ in widths)
             or any(not name or width <= 0 for name, width in neighbor_widths)
+            or (has_neighbor and not neighbor_block)
+            or (not has_neighbor and neighbor_block is not None)
             or (
                 any(value is None for value in selection_values)
                 and any(value is not None for value in selection_values)
@@ -161,6 +167,7 @@ class WorksetSignature(StrictModule, NonTrainableState):
             raise ValueError("Workset signature identities and widths must be complete.")
         self.region_kind = region
         self.block_name = block
+        self.neighbor_block_name = neighbor_block
         self.cell_kind = cell
         self.support_id = support
         self.entity_set_id = entity_set
@@ -184,6 +191,7 @@ class WorksetSignature(StrictModule, NonTrainableState):
                 "kind": "local-workset-signature",
                 "region": region,
                 "block": block,
+                "neighbor_block": neighbor_block,
                 "cell": cell,
                 "support": support,
                 "entity_set": entity_set,

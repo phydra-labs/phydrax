@@ -199,6 +199,12 @@ class IRSpectrumPlan(StrictModule, NonTrainableState):
         _require_structure_matches_system(structure, self.system)
         if not bool(vibration.successful):
             raise ValueError("IR spectroscopy requires successful vibrational analysis.")
+        if (
+            vibration.source_system_id != self.system.system_id
+            or vibration.source_geometry_id != structure.structure_id
+            or vibration.units.unit_system_id != self.system.units.unit_system_id
+        ):
+            raise ValueError("IR vibration belongs to another system or geometry.")
         positions = np.asarray(
             structure.positions, dtype=np.dtype(self.system.coordinate_dtype)
         )

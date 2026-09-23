@@ -369,8 +369,8 @@ def test_trained_operator_preserves_multiple_named_outputs_and_queries():
 
     prediction = trained.predict(batch)
 
-    assert tuple(prediction.fields) == ("state", "flux")
-    assert tuple(prediction.queries) == ("spatial", "sensors")
+    assert tuple(prediction.fields) == ("flux", "state")
+    assert tuple(prediction.queries) == ("sensors", "spatial")
     assert prediction.field("state").values.shape == (3,)
     assert prediction.field("flux").values.shape == (2, 2)
 
@@ -517,7 +517,7 @@ def test_portable_operator_artifact_round_trips_inference_and_training_state(tmp
     assert manifest.execution_model_architecture_id == "phydrax.operator.architecture:FNO"
     recipe = json.dumps(manifest.execution_model_recipe, sort_keys=True)
     assert "phydrax.operator.architecture:FNO" in recipe
-    assert "phydrax.artifact:Linear" in recipe
+    assert "phydrax.nn.layer:Linear" in recipe
 
     restored = phx.nn.operator.training.load_trained_operator(destination)
     resume = phx.nn.operator.training.load_operator_training_state(destination)
@@ -855,6 +855,19 @@ def test_operator_artifact_checksum_and_task_fingerprint_fail_closed(tmp_path):
         phx.nn.operator.training.load_trained_operator(tmp_path)
 
 
+def test_operator_artifact_rejects_manifest_member_path_escape(tmp_path):
+    phx.nn.operator.training.save_operator_artifact(tmp_path / "artifact", _trained())
+    manifest_path = tmp_path / "artifact" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["execution_model_file"] = str(
+        (tmp_path / "artifact" / manifest["execution_model_file"]).resolve()
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="canonical basename"):
+        phx.nn.operator.training.load_trained_operator(tmp_path / "artifact")
+
+
 def test_external_checkpoint_enters_the_same_task_bound_runtime(tmp_path):
     checkpoint = tmp_path / "external.bin"
     checkpoint.write_bytes(b"verified-external-state")
@@ -939,4 +952,56 @@ def test_training_checkpoint_uses_only_current_manifest(tmp_path):
             model,
             optimizer_state,
             expected_schema=schema,
+        )
+
+
+def test_training_checkpoint_rejects_manifest_path_escape(tmp_path):
+    model = _trained().execution_model
+    optimizer_state = {"momentum": jnp.ones((2,), dtype="float64")}
+    checkpoint = phx.nn.operator.training.save_operator_training_checkpoint(
+        tmp_path / "checkpoint-path",
+        model,
+        optimizer_state,
+        step=1,
+        key=jr.key(3),
+    )
+    manifest_path = checkpoint / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    source_state = checkpoint / manifest["state_file"]
+    outside = tmp_path / "outside.eqx"
+    outside.write_bytes(source_state.read_bytes())
+    manifest["state_file"] = str(outside)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="state identity"):
+        phx.nn.operator.training.load_operator_training_checkpoint(
+            checkpoint,
+            model,
+            optimizer_state,
+        )
+
+
+def test_training_checkpoint_rejects_deep_manifest_before_state_read(tmp_path):
+    model = _trained().execution_model
+    optimizer_state = {"momentum": jnp.ones((2,), dtype="float64")}
+    checkpoint = phx.nn.operator.training.save_operator_training_checkpoint(
+        tmp_path / "checkpoint-depth",
+        model,
+        optimizer_state,
+        step=1,
+        key=jr.key(4),
+    )
+    manifest_path = checkpoint / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    nested = "leaf"
+    for _ in range(70):
+        nested = [nested]
+    manifest["metadata"] = {"nested": nested}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid JSON"):
+        phx.nn.operator.training.load_operator_training_checkpoint(
+            checkpoint,
+            model,
+            optimizer_state,
         )

@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -13,9 +15,17 @@ from jaxtyping import Array, ArrayLike
 def spatial_population_rate(
     flux_divergence: ArrayLike, internal_rate: ArrayLike, source: ArrayLike = 0.0, /
 ):
-    return (
-        -jnp.asarray(flux_divergence) + jnp.asarray(internal_rate) + jnp.asarray(source)
+    flux = jnp.asarray(flux_divergence)
+    internal = jnp.asarray(internal_rate)
+    source_ = jnp.asarray(source)
+    if flux.shape != internal.shape or source_.shape not in ((), flux.shape):
+        raise ValueError("Spatial population rates must be scalar or shape aligned.")
+    flux = eqx.error_if(
+        flux,
+        jnp.any(~jnp.isfinite(flux) | ~jnp.isfinite(internal) | ~jnp.isfinite(source_)),
+        "Spatial population rates must be finite.",
     )
+    return -flux + internal + source_
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +33,8 @@ class SpatialPopulationStep:
     cell_number: Array
     boundary_balance_residual: Array
     minimum_cell_number: Array
+    candidate_cell_number: Array
+    successful: Array
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,8 +46,15 @@ class SpatialPopulationTransport:
     @classmethod
     def create(cls, cell_volumes: ArrayLike, /) -> SpatialPopulationTransport:
         volumes = np.asarray(cell_volumes, dtype=np.float64)
-        if volumes.ndim != 1 or volumes.size == 0 or np.any(volumes <= 0):
-            raise ValueError("Population control volumes must be a positive vector.")
+        if (
+            volumes.ndim != 1
+            or volumes.size == 0
+            or not np.all(np.isfinite(volumes))
+            or np.any(volumes <= 0)
+        ):
+            raise ValueError(
+                "Population control volumes must be a finite positive vector."
+            )
         return cls(jnp.asarray(volumes))
 
     def face_number_flux(
@@ -53,12 +72,28 @@ class SpatialPopulationTransport:
             raise ValueError("Spatial population requires shape (cell, section).")
         if volume_flux.shape != (self.cell_volumes.size + 1,):
             raise ValueError("Volume flux requires one value per control-volume face.")
+        number = eqx.error_if(
+            number,
+            jnp.any(~jnp.isfinite(number) | (number < 0))
+            | jnp.any(~jnp.isfinite(volume_flux)),
+            "Population numbers must be finite/nonnegative and fluxes finite.",
+        )
         density = number / self.cell_volumes[:, None]
         left_boundary = jnp.broadcast_to(
             jnp.asarray(left_inflow_density), (number.shape[1],)
         )
         right_boundary = jnp.broadcast_to(
             jnp.asarray(right_inflow_density), (number.shape[1],)
+        )
+        number = eqx.error_if(
+            number,
+            jnp.any(
+                ~jnp.isfinite(left_boundary)
+                | ~jnp.isfinite(right_boundary)
+                | (left_boundary < 0)
+                | (right_boundary < 0)
+            ),
+            "Population inflow densities must be finite and nonnegative.",
         )
         interior = jnp.where(volume_flux[1:-1, None] >= 0, density[:-1], density[1:])
         left = jnp.where(volume_flux[0] >= 0, left_boundary, density[0])
@@ -76,8 +111,10 @@ class SpatialPopulationTransport:
         left_inflow_density: ArrayLike = 0.0,
         right_inflow_density: ArrayLike = 0.0,
     ) -> SpatialPopulationStep:
-        if step_size_s <= 0:
-            raise ValueError("Population transport step size must be positive.")
+        if not isfinite(step_size_s) or step_size_s <= 0:
+            raise ValueError(
+                "Population transport step size must be finite and positive."
+            )
         number = jnp.asarray(cell_number)
         flux = self.face_number_flux(
             number,
@@ -86,13 +123,26 @@ class SpatialPopulationTransport:
             right_inflow_density=right_inflow_density,
         )
         rate = flux[:-1] - flux[1:]
-        updated = number + float(step_size_s) * rate
-        if bool(jnp.any(updated < -1e-12)):
-            raise ValueError("Population transport CFL condition violated positivity.")
-        updated = jnp.maximum(updated, 0)
+        candidate = number + float(step_size_s) * rate
+        successful = jnp.all(jnp.isfinite(candidate)) & jnp.all(candidate >= -1e-12)
+        accepted = jnp.where(successful, jnp.maximum(candidate, 0), number)
         boundary_change = float(step_size_s) * (flux[0] - flux[-1])
-        balance = jnp.sum(updated - number, axis=0) - boundary_change
-        return SpatialPopulationStep(updated, balance, jnp.min(updated))
+        balance = jnp.sum(accepted - number, axis=0) - jnp.where(
+            successful, boundary_change, jnp.zeros_like(boundary_change)
+        )
+        successful = (
+            successful
+            & jnp.all(jnp.isfinite(balance))
+            & jnp.all(jnp.abs(balance) <= 1e-10)
+        )
+        accepted = jnp.where(successful, accepted, number)
+        return SpatialPopulationStep(
+            accepted,
+            balance,
+            jnp.min(accepted),
+            candidate,
+            successful,
+        )
 
 
 __all__ = [

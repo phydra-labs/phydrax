@@ -80,6 +80,7 @@ def _execute(root: Path, epochs: int) -> dict[str, float | int | str]:
     parent_work = None
     work_count = 0
     high_water = 0
+    expected_tip_manifest_id = None
     started = time.perf_counter()
     for epoch in range(epochs):
         state = coordinator.resume().state
@@ -111,12 +112,13 @@ def _execute(root: Path, epochs: int) -> dict[str, float | int | str]:
             backpressured=admitted.backpressured,
             evidence_ids=(f"benchmark-epoch-{epoch}",),
         )
-        coordinator.commit_epoch(
+        receipt = coordinator.commit_epoch(
             result,
             work_items=tuple(work_items),
             matrix_element_revision_id=_digest("matrix-element"),
             committed_at=epoch + 1,
         )
+        expected_tip_manifest_id = receipt.tip.epoch_manifest_id
         high_water = max(high_water, max(map(int, result.resident_high_water)))
     elapsed = time.perf_counter() - started
     byte_count = sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
@@ -142,6 +144,7 @@ def _execute(root: Path, epochs: int) -> dict[str, float | int | str]:
         "recovery_seconds": recovery_seconds,
         "recovered_epoch_sequence": resumed.state.epoch_sequence,
         "tip_manifest_id": resumed.state.parent_epoch_manifest_id,
+        "expected_tip_manifest_id": expected_tip_manifest_id,
     }
 
 
@@ -171,7 +174,7 @@ def main() -> None:
     successful = all(
         sample["recovered_epoch_sequence"] == arguments.epochs
         and sample["resident_high_water"] <= 1
-        and sample["tip_manifest_id"]
+        and sample["tip_manifest_id"] == sample["expected_tip_manifest_id"]
         for sample in samples
     )
     payload = {
@@ -195,11 +198,13 @@ def main() -> None:
         "samples": samples,
         "successful": successful,
     }
-    text = json.dumps(payload, indent=2, sort_keys=True)
+    text = json.dumps(payload, allow_nan=False, indent=2, sort_keys=True)
     if arguments.output is None:
         print(text)
     else:
-        arguments.output.write_text(text + "\n", encoding="utf-8")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
     if not successful:
         raise SystemExit(1)
 
