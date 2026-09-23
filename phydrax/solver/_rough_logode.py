@@ -527,14 +527,14 @@ class LinearLogODE(AbstractRoughSolver):
                 )
                 finite = (
                     jnp.all(jnp.isfinite(result.value))
-                    & jnp.all(jnp.isfinite(result.error_estimate))
-                    & jnp.all(jnp.isfinite(result.residual_estimate))
+                    & jnp.all(jnp.isfinite(result.diagnostics.error_estimate))
+                    & jnp.all(jnp.isfinite(result.diagnostics.residual_estimate))
                 )
                 admissible_breakdown = (
-                    (result.breakdown_status == int(KrylovBreakdownStatus.NONE))
-                    | (result.breakdown_status == int(KrylovBreakdownStatus.HAPPY))
+                    (result.diagnostics.breakdown_status == int(KrylovBreakdownStatus.NONE))
+                    | (result.diagnostics.breakdown_status == int(KrylovBreakdownStatus.HAPPY))
                     | (
-                        result.breakdown_status
+                        result.diagnostics.breakdown_status
                         == int(KrylovBreakdownStatus.RANK_DEFICIENT_START)
                     )
                 )
@@ -545,7 +545,7 @@ class LinearLogODE(AbstractRoughSolver):
                         ~admissible_breakdown,
                         _LINEAR_LOGODE_BREAKDOWN,
                         jnp.where(
-                            result.converged,
+                            result.successful,
                             _LINEAR_LOGODE_SUCCESS,
                             _LINEAR_LOGODE_UNCONVERGED,
                         ),

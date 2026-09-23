@@ -133,9 +133,9 @@ def test_bound_projection_is_reused_without_operator_actions_and_under_jit():
 
     expected = jax.scipy.linalg.expm(matrix) @ initial
     assert actions == []
-    assert eager.matvec_count == 0
-    assert compiled.matvec_count == 0
-    assert "reused bound arnoldi" in eager.provenance
+    assert eager.diagnostics.action_matvec_count == 0
+    assert compiled.diagnostics.action_matvec_count == 0
+    assert "reused bound arnoldi" in eager.provenance.description
     assert jnp.allclose(eager.value, expected, rtol=1e-11, atol=1e-11)
     assert jnp.allclose(compiled.value, expected, rtol=1e-11, atol=1e-11)
 

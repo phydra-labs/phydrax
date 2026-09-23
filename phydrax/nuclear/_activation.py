@@ -21,8 +21,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
     ArraySpace,
-    matrix_exponential_action,
-    matrix_phi1_action,
+    matrix_exponential_phi_combination_action,
     MatrixFunctionPolicy,
 )
 from ..sparse import EdgeRelation, SparseCoordinateOperator
@@ -226,8 +225,7 @@ class ActivationStepResult(StrictModule):
     decay_heat_w: Array
     transition_rates_s: Array
     ledger: ActivationLedger
-    exponential_error: Array
-    source_error: Array
+    action_error: Array
     finite: Array
     sensitivity_valid: Array
     successful: Array
@@ -434,32 +432,20 @@ class PreparedActivationNetwork(StrictModule, NonTrainableState):
         safe_flux = jnp.where(jnp.isfinite(flux) & (flux >= 0.0), flux, 0.0)
         safe_source = jnp.where(jnp.isfinite(source) & (source >= 0.0), source, 0.0)
         operator, rates = self.operator(safe_flux)
-        exponential = matrix_exponential_action(
+        action = matrix_exponential_phi_combination_action(
             operator,
-            inventory.amounts_mol,
+            (inventory.amounts_mol, safe_source),
             safe_dt,
             policy=self.matrix_function_policy,
         )
-        source_action = matrix_phi1_action(
-            operator,
-            safe_source,
-            safe_dt,
-            policy=self.matrix_function_policy,
-        )
-        candidate_amounts = exponential.value + safe_dt * source_action.value
+        candidate_amounts = action.value
         candidate = self.inventory(candidate_amounts, inventory.time_s + safe_dt)
         minimum = jnp.min(candidate_amounts)
         scale = jnp.maximum(1.0, jnp.max(jnp.abs(inventory.amounts_mol)))
         negativity_tolerance = 512.0 * jnp.finfo(candidate_amounts.dtype).eps * scale
         nonnegative = minimum >= -negativity_tolerance
         finite = jnp.all(jnp.isfinite(candidate_amounts))
-        successful = (
-            domain_valid
-            & exponential.converged
-            & source_action.converged
-            & finite
-            & nonnegative
-        )
+        successful = domain_valid & action.successful & finite & nonnegative
         accepted_amounts = jnp.where(successful, candidate_amounts, inventory.amounts_mol)
         accepted_time = jnp.where(successful, inventory.time_s + dt, inventory.time_s)
         accepted = self.inventory(accepted_amounts, accepted_time)
@@ -492,8 +478,7 @@ class PreparedActivationNetwork(StrictModule, NonTrainableState):
             decay_heat,
             rates,
             ledger,
-            exponential.error_estimate,
-            source_action.error_estimate,
+            action.diagnostics.error_estimate,
             finite,
             successful,
             successful,

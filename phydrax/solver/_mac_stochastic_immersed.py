@@ -268,7 +268,7 @@ class MACFluctuatingHydrodynamicsPlan(StrictModule, NonTrainableState):
             jnp.real(self.dissipation.source.inner(expected_action, expected_action))
         )
         finite = (
-            white.converged
+            white.successful
             & jnp.isfinite(dissipative_power)
             & jnp.isfinite(thermal_injection)
             & jnp.isfinite(covariance_residual)
@@ -545,9 +545,9 @@ class FIBOverdampedPlan(StrictModule, NonTrainableState):
             )
         )
         accepted = (
-            square_root.converged
-            & white_result.converged
-            & drift_result.converged
+            square_root.successful
+            & white_result.successful
+            & drift_result.successful
             & finite
         )
         return FIBOverdampedStepResult(
@@ -556,7 +556,7 @@ class FIBOverdampedPlan(StrictModule, NonTrainableState):
             brownian,
             stochastic_drift,
             replay_key,
-            square_root.converged,
+            square_root.successful,
             finite,
             accepted,
             self.plan_id,

@@ -709,3 +709,19 @@ Julia process provider. Macaulay2 is an independently installed GPL-licensed
 optional process provider. Phydrax distributes only independently authored
 fixed data-protocol workers and never installs, bundles, or falls back to either
 runtime. Users are responsible for obtaining and licensing those providers.
+
+Scaled-Taylor matrix exponential actions
+The scaled-Taylor action, block coordinate one-norm planning, and finite-series
+threshold-generation study considered sethaxen/expax at commit
+2f2249110a8ff308588378bd36312b6210815ae9 (BSD-3-Clause), together with
+Al-Mohy and Higham, “Computing the Action of the Matrix Exponential, with an
+Application to Exponential Integrators” (SIAM J. Sci. Comput. 2011), and Higham
+and Tisseur, “A Block Algorithm for Matrix 1-Norm Estimation, with an
+Application to 1-Norm Pseudospectra” (SIAM J. Matrix Anal. Appl. 2000).
+Phydrax adapts the numerical planning and generated finite-majorant thresholds
+into native operator, vector-space, plan, prepare, refresh, fixed-capacity,
+resource, differentiation, status, evidence, and augmented exponential/phi
+contracts. The generated thresholds enclose roots of a finite 1224-term
+majorant and do not claim certification of the unbounded series tail. Adapted
+source and generated data remain subject to the BSD-3-Clause terms reproduced
+in LICENSES/EXPAX-BSD-3-CLAUSE.txt. No upstream runtime dependency is bundled.

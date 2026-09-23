@@ -1308,16 +1308,56 @@ The spectral API provides:
   root, fractional power, and resolvent actions;
 - explicit spectral representations and reusable Krylov projections.
 
-`MatrixFunctionResult` contains `.value`, convergence, residual and omitted-mode
-error estimates, Krylov breakdown status, method, effective dimension, matvec
-count, and provenance. Convergence requires finite evidence and an admissible
-breakdown state; truncation is not reported as success. Logarithm, square root,
-inverse square root, and fractional actions require positive-definite evidence,
-explicit bounds, or an explicit spectral representation. Spectral
-representations and reusable projections are bound to numerical operator
-content, not only an `operator_id`. Explicit dense operator batches accept
-shared or exactly batched actions; stochastic samples use probe-first layout.
-No leading axis is guessed to be an action/RHS axis.
+`MatrixFunctionResult` exposes `.value`, a portable `.status`, nested
+`.diagnostics`, and typed `.provenance`. Diagnostics distinguish an error
+indicator from an available or certified bound and retain convergence,
+derivative validity, Krylov breakdown, effective dimension, Taylor
+degree/scaling, setup/action/transpose work, and retained/workspace bytes.
+`.successful` is true only for `MatrixFunctionStatus.SUCCESS`.
+
+`TaylorExponentialPolicy` selects the explicit scaled full-degree Taylor route
+for `matrix_exponential_action`. It is not selected by
+`MatrixFunctionPolicy("auto")`. Dense, diagonal, identity, and sparse-coordinate
+operators use native coordinate one-norm bounds without materialization.
+Opaque matrix-free operators use caller-keyed, fixed-capacity block one-norm and
+power-norm estimates and report that the error evidence is not certified.
+Generated theta values are downward-rounded roots of a finite 1224-term
+backward-error majorant; they do not certify the unbounded series tail.
+
+`prepare_taylor_exponential_action` binds an operator-only plan, so one
+preparation applies to different right-hand sides and scalar scales.
+`refresh_taylor_exponential_action` recomputes numerical norm and trace evidence
+for changed coefficients with the same declared operator and vector-space
+identity. The initial route supports float32, float64, complex64, and complex128
+coordinates. It rejects batched operators, half precision, unbounded time
+arrays, and mathematical differentiation without a Fréchet rule.
+
+`matrix_exponential_phi_combination_action` evaluates one matrix-free augmented
+exponential for `exp(hA)v0 + sum_k h^k phi_k(hA)vk`, through order three. The
+augmentation scales the physical operator, coefficient coupling, and nilpotent
+chain together, so zero scale returns `v0` exactly. Affine, activation, and
+semilinear exponential updates use this route instead of independent
+exponential and phi projections.
+
+Spectral representations and reusable Krylov projections remain bound to
+numerical operator content, not only an `operator_id`. Explicit dense operator
+batches accept shared or exactly batched actions; stochastic samples use
+probe-first layout. No leading axis is guessed to be an action/RHS or time
+axis.
+
+```python
+operator = phx.linalg.DenseLinearOperator(matrix, operator_id="generator")
+policy = phx.linalg.TaylorExponentialPolicy(error_tolerance=1e-9)
+prepared = phx.linalg.prepare_taylor_exponential_action(operator, policy)
+
+first = phx.linalg.matrix_exponential_action(prepared, state, 0.1)
+second = phx.linalg.matrix_exponential_action(prepared, another_state, 0.2)
+affine = phx.linalg.matrix_exponential_phi_combination_action(
+    operator,
+    (state, forcing),
+    0.1,
+)
+```
 
 ### Lanczos resolvent forms
 
@@ -2290,11 +2330,51 @@ runtime.
 
 ### Spectral and matrix-function APIs
 
+::: phydrax.linalg.MatrixFunctionStatus
+
+---
+
+::: phydrax.linalg.MatrixFunctionDiagnostics
+
+---
+
+::: phydrax.linalg.MatrixFunctionProvenance
+
+---
+
 ::: phydrax.linalg.MatrixFunctionPolicy
 
 ---
 
 ::: phydrax.linalg.MatrixFunctionResult
+
+---
+
+::: phydrax.linalg.TaylorExponentialResourcePolicy
+
+---
+
+::: phydrax.linalg.TaylorExponentialPolicy
+
+---
+
+::: phydrax.linalg.TaylorExponentialPlan
+
+---
+
+::: phydrax.linalg.PreparedTaylorExponentialAction
+
+---
+
+::: phydrax.linalg.plan_taylor_exponential_action
+
+---
+
+::: phydrax.linalg.prepare_taylor_exponential_action
+
+---
+
+::: phydrax.linalg.refresh_taylor_exponential_action
 
 ---
 
@@ -2307,6 +2387,10 @@ runtime.
 ---
 
 ::: phydrax.linalg.matrix_exponential_action
+
+---
+
+::: phydrax.linalg.matrix_exponential_phi_combination_action
 
 ---
 

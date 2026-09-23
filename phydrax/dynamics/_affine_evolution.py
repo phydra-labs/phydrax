@@ -11,7 +11,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..linalg import DenseLinearOperator, matrix_exponential_action, matrix_phi1_action
+from ..linalg import DenseLinearOperator, matrix_exponential_phi_combination_action
 
 
 class AffineLinearEvolutionResult(StrictModule):
@@ -45,13 +45,16 @@ class PreparedAffineLinearEvolution(StrictModule, NonTrainableState):
         if state_.shape != self.source.shape:
             raise ValueError("Affine evolution state has incompatible shape.")
         time = jnp.asarray(duration, dtype=state_.real.dtype)
-        homogeneous = matrix_exponential_action(self.operator, state_, time)
-        driven = matrix_phi1_action(self.operator, self.source, time)
-        value = homogeneous.value + time * driven.value
+        action = matrix_exponential_phi_combination_action(
+            self.operator,
+            (state_, self.source),
+            time,
+        )
+        value = action.value
         finite = jnp.all(jnp.isfinite(value))
         return AffineLinearEvolutionResult(
             value,
-            homogeneous.converged & driven.converged & finite,
+            action.successful & finite,
             finite,
         )
 

@@ -231,7 +231,7 @@ def _stationary_pairwise(
     )
     value = eqx.error_if(
         propagated.value,
-        ~propagated.converged,
+        ~propagated.successful,
         "Temporal-kernel matrix exponential action did not converge.",
     )
     return observation @ value

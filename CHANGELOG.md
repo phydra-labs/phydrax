@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+- Added a native resource-bounded scaled-Taylor exponential action with
+  operator-only plan/prepare/refresh reuse, fixed-capacity differentiable
+  execution, explicit norm and truncation evidence, and matrix-free augmented
+  exponential/phi combinations for affine and semilinear evolution.
+
 ### Changed
 - Public API inventory now follows canonical access paths rather than private
   implementation module names, traverses without a depth cutoff, and includes
@@ -18,6 +24,11 @@
   extraction no longer require Trimesh or Shapely; PyVista, ArviZ, and Manifold
   are explicit optional providers. Build123d was replaced by the directly
   consumed no-VTK OCCT binding.
+- Matrix-function results now expose portable status, nested diagnostics, and
+  typed method/operator/plan provenance. Affine, activation, and semilinear
+  exponential updates share one augmented action rather than constructing
+  independent exponential and phi projections.
+
 
 ### Fixed
 - Geometry domains now preserve exact, estimated, and unknown mass evidence,

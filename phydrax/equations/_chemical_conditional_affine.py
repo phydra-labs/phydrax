@@ -19,8 +19,11 @@ from ..linalg import (
     DenseLinearOperator,
     matrix_phi1_action,
     matrix_phi2_action,
+    MatrixFunctionDiagnostics,
     MatrixFunctionPolicy,
+    MatrixFunctionProvenance,
     MatrixFunctionResult,
+    MatrixFunctionStatus,
 )
 from ._chemical_mechanism import PreparedChemicalMechanism
 from ._chemical_rates import (
@@ -477,17 +480,43 @@ class PreparedChemicalConditionalAffine(StrictModule):
             )
         else:
             zero = jnp.zeros(batch_shape, dtype=state_.real.dtype)
+            integers = jnp.zeros(batch_shape, dtype=jnp.int32)
+            valid = jnp.ones(batch_shape, dtype=jnp.bool_)
             phi2_forcing = MatrixFunctionResult(
                 value=jnp.zeros_like(assembly.forcing),
-                error_estimate=zero,
-                residual_estimate=zero,
-                converged=jnp.ones(batch_shape, dtype=jnp.bool_),
-                effective_dimension=jnp.zeros(batch_shape, dtype=jnp.int32),
-                matvec_count=jnp.zeros(batch_shape, dtype=jnp.int32),
-                breakdown_status=jnp.zeros(batch_shape, dtype=jnp.int32),
-                method="not-required",
-                kind="phi2",
-                provenance="forcing is structurally zero",
+                status=jnp.full(
+                    batch_shape, int(MatrixFunctionStatus.SUCCESS), dtype=jnp.int32
+                ),
+                diagnostics=MatrixFunctionDiagnostics(
+                    error_estimate=zero,
+                    residual_estimate=zero,
+                    error_bound=zero,
+                    error_bound_available=valid,
+                    error_bound_certified=valid,
+                    finite=valid,
+                    converged=valid,
+                    derivative_valid=valid,
+                    effective_dimension=integers,
+                    selected_degree=jnp.full(batch_shape, -1, dtype=jnp.int32),
+                    scaling_count=integers,
+                    setup_matvec_count=integers,
+                    action_matvec_count=integers,
+                    transpose_matvec_count=integers,
+                    breakdown_status=integers,
+                    retained_storage_bytes=0,
+                    workspace_bytes=0,
+                ),
+                provenance=MatrixFunctionProvenance(
+                    method="not-required",
+                    kind="phi2",
+                    description="forcing is structurally zero",
+                    operator_id=operator.operator_id,
+                    plan_id=None,
+                    prepared_id=None,
+                    trace_source="not-applicable",
+                    norm_source="not-applicable",
+                    numeric_version=jnp.asarray(0, dtype=jnp.int32),
+                ),
             )
         safe_pivots = jnp.maximum(self.pivot_affine_indices, 0)
         pivot_mask = (self.pivot_affine_indices >= 0).astype(state_.dtype)
@@ -534,7 +563,7 @@ class PreparedChemicalConditionalAffine(StrictModule):
             & (duration_ >= 0.0)
             & assembly.input_valid
         )
-        actions_valid = phi1_state.converged & phi2_forcing.converged
+        actions_valid = phi1_state.successful & phi2_forcing.successful
         finite_state = jnp.all(jnp.isfinite(candidate), axis=-1)
         nonnegative = jnp.all(candidate >= 0.0, axis=-1)
         invariant_valid = (

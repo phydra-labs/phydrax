@@ -17,17 +17,29 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from phydrax.ein import contract
 
+from .._admissibility import guard_derivative_validity
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
 from ._certificates import _operator_numeric_fingerprint
+from ._exponential_taylor import (
+    execute_taylor_exponential_action,
+    PreparedTaylorExponentialAction,
+    TaylorExponentialPolicy,
+)
 from ._linear_transform import AbstractLinearTransform, DenseLinearTransform
+from ._matrix_function_contracts import (
+    MatrixFunctionDiagnostics,
+    MatrixFunctionProvenance,
+    MatrixFunctionResult,
+    MatrixFunctionStatus,
+)
 from ._operators import (
     AbstractLinearOperator,
     DenseLinearOperator,
     FunctionLinearOperator,
 )
-from ._policies import DifferentiationPolicy
+from ._policies import DifferentiationPolicy, FailurePolicy
 from ._spaces import PyTreeSpace, RHSLayout
 from .krylov import (
     arnoldi,
@@ -79,6 +91,7 @@ class MatrixFunctionPolicy(StrictModule):
     )
     error_tolerance: float = eqx.field(static=True)
     differentiation: DifferentiationPolicy
+    failure: FailurePolicy = eqx.field(static=True)
 
     def __init__(
         self,
@@ -91,6 +104,7 @@ class MatrixFunctionPolicy(StrictModule):
         ] = "selective",
         error_tolerance: float = 1e-8,
         differentiation: DifferentiationPolicy | None = None,
+        failure: FailurePolicy | None = None,
     ):
         if method not in (
             "auto",
@@ -111,13 +125,17 @@ class MatrixFunctionPolicy(StrictModule):
             if differentiation is None
             else differentiation
         )
+        failure_ = FailurePolicy() if failure is None else failure
         if not isinstance(differentiation_, DifferentiationPolicy):
             raise TypeError("differentiation must be a DifferentiationPolicy or None.")
+        if not isinstance(failure_, FailurePolicy):
+            raise TypeError("failure must be a FailurePolicy or None.")
         self.method = method
         self.max_dimension = dimension
         self.orthogonalization = orthogonalization
         self.error_tolerance = tolerance
         self.differentiation = differentiation_
+        self.failure = failure_
 
 
 class TransformDiagonalRepresentation(StrictModule):
@@ -235,17 +253,45 @@ class TransformDiagonalRepresentation(StrictModule):
         return self.transform.synthesize(value).reshape((-1,))
 
 
-class MatrixFunctionResult(StrictModule):
-    value: PyTree[Array]
-    error_estimate: Array
-    residual_estimate: Array
-    converged: Array
-    effective_dimension: Array
-    matvec_count: Array
-    breakdown_status: Array
-    method: str = eqx.field(static=True)
-    kind: str = eqx.field(static=True)
-    provenance: str = eqx.field(static=True)
+def _finalize_matrix_function_result(
+    value: PyTree[Array],
+    status: Array,
+    diagnostics: MatrixFunctionDiagnostics,
+    provenance: MatrixFunctionProvenance,
+    /,
+    *,
+    differentiation: DifferentiationPolicy,
+    failure: FailurePolicy,
+) -> MatrixFunctionResult:
+    failed = jnp.any(status != int(MatrixFunctionStatus.SUCCESS))
+    if failure.mode == "error":
+        value = jax.tree.map(
+            lambda leaf: eqx.error_if(
+                leaf,
+                failed,
+                "Matrix-function action did not satisfy its numerical contract.",
+            ),
+            value,
+        )
+    if differentiation.mode == "none":
+        value = jax.tree.map(jax.lax.stop_gradient, value)
+    else:
+        value = guard_derivative_validity(
+            value,
+            jnp.all(diagnostics.derivative_valid),
+            dependencies=(status, diagnostics.error_estimate),
+            failure=failure.mode,
+            message=(
+                "Matrix-function action has no valid derivative; inspect status-mode "
+                "diagnostics."
+            ),
+        )
+    return MatrixFunctionResult(
+        value=value,
+        status=status,
+        diagnostics=diagnostics,
+        provenance=provenance,
+    )
 
 
 def _coerce_matrix_operator(
@@ -474,23 +520,55 @@ def _batched_dense_matrix_function_action(
     finite = jnp.all(jnp.isfinite(result), axis=(-2, -1))
     zero = jnp.zeros(operator.batch_shape, dtype=result.real.dtype)
     dimension = jnp.full(operator.batch_shape, size, dtype=jnp.int32)
-    return MatrixFunctionResult(
-        value=_unpack_value(operator.source, result, layout),
+    value = _unpack_value(operator.source, result, layout)
+    status = jnp.where(
+        finite,
+        int(MatrixFunctionStatus.SUCCESS),
+        int(MatrixFunctionStatus.NONFINITE),
+    ).astype(jnp.int32)
+    zeros = jnp.zeros(operator.batch_shape, dtype=jnp.int32)
+    diagnostics = MatrixFunctionDiagnostics(
         error_estimate=zero,
         residual_estimate=zero,
+        error_bound=zero,
+        error_bound_available=finite,
+        error_bound_certified=finite,
+        finite=finite,
         converged=finite,
+        derivative_valid=finite & jnp.asarray(policy.differentiation.mode != "none"),
         effective_dimension=dimension,
-        matvec_count=jnp.zeros(operator.batch_shape, dtype=jnp.int32),
+        selected_degree=jnp.full(operator.batch_shape, -1, dtype=jnp.int32),
+        scaling_count=zeros,
+        setup_matvec_count=zeros,
+        action_matvec_count=zeros,
+        transpose_matvec_count=zeros,
         breakdown_status=jnp.full(
             operator.batch_shape,
             int(KrylovBreakdownStatus.NONE),
             dtype=jnp.int32,
         ),
-        method="batched-dense-exact",
-        kind=kind,
-        provenance=(
-            "exact independent dense matrix functions over a static leading batch"
+        retained_storage_bytes=0,
+        workspace_bytes=0,
+    )
+    return _finalize_matrix_function_result(
+        value,
+        status,
+        diagnostics,
+        MatrixFunctionProvenance(
+            method="batched-dense-exact",
+            kind=kind,
+            description=(
+                "exact independent dense matrix functions over a static leading batch"
+            ),
+            operator_id=operator.operator_id,
+            plan_id=None,
+            prepared_id=None,
+            trace_source="not-applicable",
+            norm_source="not-applicable",
+            numeric_version=jnp.asarray(0, dtype=jnp.int32),
         ),
+        differentiation=policy.differentiation,
+        failure=policy.failure,
     )
 
 
@@ -598,19 +676,52 @@ def matrix_function_action(
         )
         zero = jnp.asarray(0.0, dtype=coordinates.real.dtype)
         finite = jnp.all(jnp.isfinite(exact))
-        return MatrixFunctionResult(
-            value=_unflatten_promoted(validated_vector, exact),
+        value = _unflatten_promoted(validated_vector, exact)
+        status = jnp.where(
+            finite,
+            int(MatrixFunctionStatus.SUCCESS),
+            int(MatrixFunctionStatus.NONFINITE),
+        ).astype(jnp.int32)
+        scalar_zero = jnp.asarray(0, dtype=jnp.int32)
+        diagnostics = MatrixFunctionDiagnostics(
             error_estimate=zero,
             residual_estimate=zero,
+            error_bound=zero,
+            error_bound_available=finite,
+            error_bound_certified=finite,
+            finite=finite,
             converged=finite,
-            effective_dimension=jnp.asarray(0, dtype=jnp.int32),
-            matvec_count=jnp.asarray(0, dtype=jnp.int32),
+            derivative_valid=finite
+            & jnp.asarray(selected.differentiation.mode != "none"),
+            effective_dimension=scalar_zero,
+            selected_degree=jnp.asarray(-1, dtype=jnp.int32),
+            scaling_count=scalar_zero,
+            setup_matvec_count=scalar_zero,
+            action_matvec_count=scalar_zero,
+            transpose_matvec_count=scalar_zero,
             breakdown_status=jnp.asarray(
                 int(KrylovBreakdownStatus.NONE), dtype=jnp.int32
             ),
-            method=method,
-            kind=kind,
-            provenance="exact zero-scale matrix-function action",
+            retained_storage_bytes=0,
+            workspace_bytes=0,
+        )
+        return _finalize_matrix_function_result(
+            value,
+            status,
+            diagnostics,
+            MatrixFunctionProvenance(
+                method=method,
+                kind=kind,
+                description="exact zero-scale matrix-function action",
+                operator_id=operator.operator_id,
+                plan_id=None,
+                prepared_id=None,
+                trace_source="not-applicable",
+                norm_source="not-applicable",
+                numeric_version=jnp.asarray(0, dtype=jnp.int32),
+            ),
+            differentiation=selected.differentiation,
+            failure=selected.failure,
         )
 
     if method == "spectral":
@@ -638,23 +749,61 @@ def matrix_function_action(
             0.0 if complete else jnp.nan,
             dtype=coordinates.real.dtype,
         )
-        return MatrixFunctionResult(
-            value=_unflatten_promoted(validated_vector, value),
+        finite = jnp.all(jnp.isfinite(value))
+        converged = finite & jnp.asarray(complete)
+        status = jnp.where(
+            ~finite,
+            int(MatrixFunctionStatus.NONFINITE),
+            jnp.where(
+                jnp.asarray(complete),
+                int(MatrixFunctionStatus.SUCCESS),
+                int(MatrixFunctionStatus.TOLERANCE_NOT_MET),
+            ),
+        ).astype(jnp.int32)
+        integer_zero = jnp.asarray(0, dtype=jnp.int32)
+        diagnostics = MatrixFunctionDiagnostics(
             error_estimate=error,
             residual_estimate=error,
-            converged=jnp.all(jnp.isfinite(value)) & jnp.asarray(complete),
+            error_bound=jnp.where(complete, error, jnp.inf),
+            error_bound_available=jnp.asarray(complete),
+            error_bound_certified=jnp.asarray(complete),
+            finite=finite,
+            converged=converged,
+            derivative_valid=converged
+            & jnp.asarray(selected.differentiation.mode != "none"),
             effective_dimension=jnp.asarray(spectral.rank, dtype=jnp.int32),
-            matvec_count=jnp.asarray(0, dtype=jnp.int32),
+            selected_degree=jnp.asarray(-1, dtype=jnp.int32),
+            scaling_count=integer_zero,
+            setup_matvec_count=integer_zero,
+            action_matvec_count=integer_zero,
+            transpose_matvec_count=integer_zero,
             breakdown_status=jnp.asarray(
                 int(KrylovBreakdownStatus.NONE), dtype=jnp.int32
             ),
-            method="spectral",
-            kind=kind,
-            provenance=(
-                "explicit spectral representation"
-                if complete
-                else "truncated explicit spectral representation"
+            retained_storage_bytes=0,
+            workspace_bytes=0,
+        )
+        return _finalize_matrix_function_result(
+            _unflatten_promoted(validated_vector, value),
+            status,
+            diagnostics,
+            MatrixFunctionProvenance(
+                method="spectral",
+                kind=kind,
+                description=(
+                    "explicit spectral representation"
+                    if complete
+                    else "truncated explicit spectral representation"
+                ),
+                operator_id=operator.operator_id,
+                plan_id=None,
+                prepared_id=None,
+                trace_source="not-applicable",
+                norm_source="not-applicable",
+                numeric_version=jnp.asarray(0, dtype=jnp.int32),
             ),
+            differentiation=selected.differentiation,
+            failure=selected.failure,
         )
 
     def action(value):
@@ -682,21 +831,66 @@ def matrix_function_action(
         # convergence without such a bound.
         error_estimate = jnp.asarray(jnp.nan, dtype=coordinates.real.dtype)
         finite = jnp.all(jnp.isfinite(result))
-        return MatrixFunctionResult(
-            value=_unflatten_promoted(validated_vector, result),
+        converged = finite & (error_estimate <= selected.error_tolerance)
+        status = jnp.where(
+            ~finite,
+            int(MatrixFunctionStatus.NONFINITE),
+            int(MatrixFunctionStatus.TOLERANCE_NOT_MET),
+        ).astype(jnp.int32)
+        matvec_count = jnp.asarray(max(selected.max_dimension - 1, 0), dtype=jnp.int32)
+        integer_zero = jnp.asarray(0, dtype=jnp.int32)
+        diagnostics = MatrixFunctionDiagnostics(
             error_estimate=error_estimate,
             residual_estimate=error_estimate,
-            converged=finite & (error_estimate <= selected.error_tolerance),
+            error_bound=jnp.asarray(jnp.inf, dtype=coordinates.real.dtype),
+            error_bound_available=jnp.asarray(False),
+            error_bound_certified=jnp.asarray(False),
+            finite=finite,
+            converged=converged,
+            derivative_valid=jnp.asarray(False),
             effective_dimension=jnp.asarray(selected.max_dimension, dtype=jnp.int32),
-            matvec_count=jnp.asarray(max(selected.max_dimension - 1, 0), dtype=jnp.int32),
+            selected_degree=jnp.asarray(selected.max_dimension, dtype=jnp.int32),
+            scaling_count=integer_zero,
+            setup_matvec_count=integer_zero,
+            action_matvec_count=matvec_count,
+            transpose_matvec_count=integer_zero,
             breakdown_status=jnp.asarray(
                 int(KrylovBreakdownStatus.NONE), dtype=jnp.int32
             ),
-            method="chebyshev",
-            kind=kind,
-            provenance="Chebyshev interval approximation without a certified tail bound",
+            retained_storage_bytes=0,
+            workspace_bytes=0,
+        )
+        return _finalize_matrix_function_result(
+            _unflatten_promoted(validated_vector, result),
+            status,
+            diagnostics,
+            MatrixFunctionProvenance(
+                method="chebyshev",
+                kind=kind,
+                description=(
+                    "Chebyshev interval approximation without a certified tail bound"
+                ),
+                operator_id=operator.operator_id,
+                plan_id=None,
+                prepared_id=None,
+                trace_source="not-applicable",
+                norm_source="not-applicable",
+                numeric_version=jnp.asarray(0, dtype=jnp.int32),
+            ),
+            differentiation=selected.differentiation,
+            failure=selected.failure,
         )
 
+    projection_id = (
+        decomposition.projection_id
+        if isinstance(decomposition, PreparedKrylovProjection)
+        else None
+    )
+    projection_version = (
+        decomposition.numeric_version
+        if isinstance(decomposition, PreparedKrylovProjection)
+        else jnp.asarray(0, dtype=jnp.int32)
+    )
     reused_projection = isinstance(decomposition, PreparedKrylovProjection)
     if reused_projection:
         if selected.method not in ("auto", decomposition.method):
@@ -800,28 +994,114 @@ def matrix_function_action(
     converged = (
         finite & acceptable_status & (residual_estimate <= selected.error_tolerance)
     )
-    return MatrixFunctionResult(
-        value=_unflatten_promoted(validated_vector, result_coordinates),
+    status = jnp.where(
+        ~finite,
+        int(MatrixFunctionStatus.NONFINITE),
+        jnp.where(
+            ~acceptable_status,
+            int(MatrixFunctionStatus.BREAKDOWN),
+            jnp.where(
+                residual_estimate <= selected.error_tolerance,
+                int(MatrixFunctionStatus.SUCCESS),
+                int(MatrixFunctionStatus.TOLERANCE_NOT_MET),
+            ),
+        ),
+    ).astype(jnp.int32)
+    integer_zero = jnp.asarray(0, dtype=jnp.int32)
+    diagnostics = MatrixFunctionDiagnostics(
         error_estimate=residual_estimate,
         residual_estimate=residual_estimate,
+        error_bound=jnp.asarray(jnp.inf, dtype=coordinates.real.dtype),
+        error_bound_available=jnp.asarray(False),
+        error_bound_certified=jnp.asarray(False),
+        finite=finite,
         converged=converged,
+        derivative_valid=converged & jnp.asarray(selected.differentiation.mode != "none"),
         effective_dimension=dimension,
-        matvec_count=matvec_count,
+        selected_degree=integer_zero,
+        scaling_count=integer_zero,
+        setup_matvec_count=integer_zero,
+        action_matvec_count=matvec_count,
+        transpose_matvec_count=integer_zero,
         breakdown_status=decomposition.breakdown_status,
-        method=method,
-        kind=kind,
-        provenance=(
-            f"reused bound {method} projection with omitted-mode estimate"
-            if reused_projection
-            else f"phydrax-native {method} projection with omitted-mode estimate"
+        retained_storage_bytes=0,
+        workspace_bytes=0,
+    )
+    return _finalize_matrix_function_result(
+        _unflatten_promoted(validated_vector, result_coordinates),
+        status,
+        diagnostics,
+        MatrixFunctionProvenance(
+            method=method,
+            kind=kind,
+            description=(
+                f"reused bound {method} projection with omitted-mode estimate"
+                if reused_projection
+                else f"phydrax-native {method} projection with omitted-mode estimate"
+            ),
+            operator_id=operator.operator_id,
+            plan_id=None,
+            prepared_id=projection_id,
+            trace_source="not-applicable",
+            norm_source="not-applicable",
+            numeric_version=projection_version,
         ),
+        differentiation=selected.differentiation,
+        failure=selected.failure,
     )
 
 
 def matrix_exponential_action(
-    operator, vector, scale: ArrayLike = 1.0, /, **kwargs
+    operator,
+    vector,
+    scale: ArrayLike = 1.0,
+    /,
+    *,
+    policy: MatrixFunctionPolicy | TaylorExponentialPolicy | None = None,
+    key: Array | None = None,
+    trace: ArrayLike | None = None,
+    **kwargs,
 ) -> MatrixFunctionResult:
-    return matrix_function_action(operator, vector, scale, kind="exp", **kwargs)
+    if isinstance(operator, PreparedTaylorExponentialAction):
+        if policy is not None or key is not None or kwargs:
+            raise ValueError(
+                "Prepared Taylor actions already fix policy, planning key, and "
+                "numerical artifacts."
+            )
+        return execute_taylor_exponential_action(
+            operator,
+            vector,
+            scale,
+            trace=trace,
+        )
+    if isinstance(policy, TaylorExponentialPolicy):
+        if kwargs:
+            raise ValueError(
+                "Taylor exponential actions do not accept spectral or Krylov artifacts."
+            )
+        native_operator = _coerce_matrix_operator(operator, vector)
+        return execute_taylor_exponential_action(
+            native_operator,
+            vector,
+            scale,
+            policy=policy,
+            key=key,
+            trace=trace,
+        )
+    if key is not None or trace is not None:
+        raise ValueError("key and trace are available only for Taylor actions.")
+    if policy is not None and not isinstance(policy, MatrixFunctionPolicy):
+        raise TypeError(
+            "policy must be a MatrixFunctionPolicy, TaylorExponentialPolicy, or None."
+        )
+    return matrix_function_action(
+        operator,
+        vector,
+        scale,
+        kind="exp",
+        policy=policy,
+        **kwargs,
+    )
 
 
 def matrix_phi1_action(
@@ -1090,10 +1370,13 @@ def _chebyshev_action(
 
 
 __all__ = [
+    "MatrixFunctionDiagnostics",
     "MatrixFunctionKind",
     "MatrixFunctionMethod",
     "MatrixFunctionPolicy",
+    "MatrixFunctionProvenance",
     "MatrixFunctionResult",
+    "MatrixFunctionStatus",
     "TransformDiagonalRepresentation",
     "matrix_exponential_action",
     "matrix_function_action",

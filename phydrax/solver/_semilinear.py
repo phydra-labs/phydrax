@@ -25,9 +25,9 @@ from ..discretization import (
 from ..linalg import (
     AbstractLinearOperator,
     ArraySpace,
-    matrix_exponential_action,
-    matrix_phi1_action,
+    matrix_exponential_phi_combination_action,
     MatrixFunctionPolicy,
+    TaylorExponentialPolicy,
 )
 from ..stochastic._spatial_noise import SpatialNoiseBasis
 from ..stochastic._wiener import WienerRealization
@@ -408,7 +408,7 @@ def solve_semilinear_spde(
     realization: WienerRealization | None = None,
     dt: float,
     scheme: SemilinearSPDEScheme = "auto",
-    matrix_function_policy: MatrixFunctionPolicy | None = None,
+    matrix_function_policy: MatrixFunctionPolicy | TaylorExponentialPolicy | None = None,
     fallback: SemilinearFallback = "diffrax",
     diffrax_solver: Any | None = None,
     diffrax_stepsize_controller: Any | None = None,
@@ -448,8 +448,11 @@ def solve_semilinear_spde(
         if matrix_function_policy is None
         else matrix_function_policy
     )
-    if not isinstance(policy, MatrixFunctionPolicy):
-        raise TypeError("matrix_function_policy must be a MatrixFunctionPolicy.")
+    if not isinstance(policy, (MatrixFunctionPolicy, TaylorExponentialPolicy)):
+        raise TypeError(
+            "matrix_function_policy must be a MatrixFunctionPolicy or "
+            "TaylorExponentialPolicy."
+        )
     resolved_scheme, reason = _resolved_specialization(spde, realization, scheme)
     if reason is not None:
         if fallback == "error":
@@ -512,30 +515,11 @@ def solve_semilinear_spde(
     ):
         matrix_operator = drift.spectral_representation.operator
 
-    def exponential_action(value, step_value):
-        return matrix_exponential_action(
-            matrix_operator,
-            value,
-            step_value,
-            policy=policy,
-            spectral=drift.spectral_representation,
-            spectral_bounds=drift.spectral_bounds,
-        )
-
     def one_path(path_key, path_sign, wiener_increments):
         def advance(carry, item):
             time, state, path_valid = carry
             step_value, step_index, wiener_increment = item
             nonlinear = drift.nonlinear(time, state, spde.problem.args)
-            nonlinear_result = matrix_phi1_action(
-                matrix_operator,
-                nonlinear,
-                step_value,
-                policy=policy,
-                spectral=drift.spectral_representation,
-                spectral_bounds=drift.spectral_bounds,
-            )
-            nonlinear_update = step_value * nonlinear_result.value
             if exact_additive:
                 assert noise_basis is not None
                 assert noise_eigenvalues is not None
@@ -545,7 +529,7 @@ def solve_semilinear_spde(
                     (noise_basis.rank,),
                     dtype=state.real.dtype,
                 )
-                propagated_result = exponential_action(state, step_value)
+                action_input = state
                 noise_update = exact_modal_stochastic_convolution(
                     noise_basis,
                     noise_eigenvalues,
@@ -568,18 +552,24 @@ def solve_semilinear_spde(
                         wiener_increment,
                         diffusion,
                     )
-                propagated_result = exponential_action(
-                    state + local_noise,
-                    step_value,
-                )
+                action_input = state + local_noise
                 noise_update = jnp.zeros_like(state)
             else:
-                propagated_result = exponential_action(state, step_value)
+                action_input = state
                 noise_update = jnp.zeros_like(state)
-            next_state = propagated_result.value + nonlinear_update + noise_update
-            next_valid = (
-                path_valid & propagated_result.converged & nonlinear_result.converged
+            combined_result = matrix_exponential_phi_combination_action(
+                matrix_operator,
+                (action_input, nonlinear),
+                step_value,
+                policy=policy,
+                key=(
+                    jr.fold_in(path_key, step_index)
+                    if isinstance(policy, TaylorExponentialPolicy)
+                    else None
+                ),
             )
+            next_state = combined_result.value + noise_update
+            next_valid = path_valid & combined_result.successful
             return (
                 time + step_value,
                 next_state,
@@ -667,8 +657,14 @@ def solve_semilinear_spde(
         stats={
             "num_steps": stats_steps,
             "matrix_function_converged": jnp.all(matrix_valid, axis=-1),
-            "matrix_function_method": policy.method,
-            "matrix_function_orthogonalization": policy.orthogonalization,
+            "matrix_function_method": (
+                "taylor" if isinstance(policy, TaylorExponentialPolicy) else policy.method
+            ),
+            "matrix_function_orthogonalization": (
+                "not-applicable"
+                if isinstance(policy, TaylorExponentialPolicy)
+                else policy.orthogonalization
+            ),
             "scheme": resolved_scheme,
             "exact_stochastic_convolution": exact_additive,
             "uses_realization_increments": bool(stochastic and not exact_additive),
@@ -680,7 +676,11 @@ def solve_semilinear_spde(
         interpretation=spde.problem.interpretation,
         state_geometry_id=spde.problem.state_geometry_id,
         solver_id=f"solver:semilinear:{resolved_scheme}",
-        resolved_method=f"{resolved_scheme}:{policy.method}",
+        resolved_method=(
+            f"{resolved_scheme}:taylor"
+            if isinstance(policy, TaylorExponentialPolicy)
+            else f"{resolved_scheme}:{policy.method}"
+        ),
         discretization_bundle=_semilinear_solution_bundle(
             spde,
             realization,

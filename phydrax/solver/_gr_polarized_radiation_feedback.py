@@ -324,7 +324,7 @@ class GRPolarizedRadiationFeedbackPlan(StrictModule, NonTrainableState):
         )
         actions = la.matrix_exponential_action(operator, flat_initial, step)
         stokes_candidate = actions.value[..., :4].reshape(state.stokes.shape)
-        action_converged = actions.converged.reshape(state.stokes.shape[:-1])
+        action_converged = actions.successful.reshape(state.stokes.shape[:-1])
         weights = self.beam_weights.astype(state.stokes.dtype)
         intensity_change = stokes_candidate[..., 0] - state.stokes[..., 0]
         radiation_energy_change = jnp.sum(weights * intensity_change, axis=-1)

@@ -352,8 +352,8 @@ def finite_temperature_response(
                 policy=plan.matrix_function,
             )
             row.append(target_hamiltonian.source.inner(left, target_action.value))
-            flags.append(source_action.converged & target_action.converged)
-            errors.append(source_action.error_estimate + target_action.error_estimate)
+            flags.append(source_action.successful & target_action.successful)
+            errors.append(source_action.diagnostics.error_estimate + target_action.diagnostics.error_estimate)
         forward_rows.append(jnp.stack(row))
         forward_converged.append(jnp.stack(flags))
         forward_errors.append(jnp.stack(errors))
@@ -381,8 +381,8 @@ def finite_temperature_response(
                 policy=plan.matrix_function,
             )
             row.append(source_hamiltonian.source.inner(left, source_action.value))
-            flags.append(target_action.converged & source_action.converged)
-            errors.append(target_action.error_estimate + source_action.error_estimate)
+            flags.append(target_action.successful & source_action.successful)
+            errors.append(target_action.diagnostics.error_estimate + source_action.diagnostics.error_estimate)
         reverse_rows.append(jnp.stack(row))
         reverse_converged.append(jnp.stack(flags))
         reverse_errors.append(jnp.stack(errors))

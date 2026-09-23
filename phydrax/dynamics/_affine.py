@@ -15,9 +15,11 @@ from .._strict import StrictModule
 from ..linalg import (
     AbstractLinearOperator,
     matrix_exponential_action,
+    matrix_exponential_phi_combination_action,
     matrix_phi1_action,
     MatrixFunctionPolicy,
     MatrixFunctionResult,
+    TaylorExponentialPolicy,
 )
 
 
@@ -25,8 +27,7 @@ class AffineExponentialResult(StrictModule):
     """Value and numerical evidence for one frozen affine flow."""
 
     value: PyTree[Array]
-    exponential_action: MatrixFunctionResult
-    forcing_action: MatrixFunctionResult
+    actions: tuple[MatrixFunctionResult, ...]
     successful: Array
     residual_estimate: Array
     matvec_count: Array
@@ -114,9 +115,10 @@ def affine_exponential_step(
     duration: ArrayLike,
     /,
     *,
-    policy: MatrixFunctionPolicy | None = None,
+    policy: MatrixFunctionPolicy | TaylorExponentialPolicy | None = None,
     spectral: Any | None = None,
     spectral_bounds: tuple[float, float] | None = None,
+    key: Array | None = None,
 ) -> AffineExponentialResult:
     """Advance ``x' = A x + b`` with frozen ``A`` and ``b``.
 
@@ -129,41 +131,71 @@ def affine_exponential_step(
     if not operator.source.compatible(operator.target):
         raise ValueError("Affine exponential flow requires one endomorphism.")
     duration_ = _duration_array(duration, operator)
-    exponential = matrix_exponential_action(
-        operator,
-        initial_state,
-        duration_,
-        policy=policy,
-        spectral=spectral,
-        spectral_bounds=spectral_bounds,
-    )
-    forcing_action = matrix_phi1_action(
-        operator,
-        forcing,
-        duration_,
-        policy=policy,
-        spectral=spectral,
-        spectral_bounds=spectral_bounds,
-    )
-    batch_ndim = len(operator.batch_shape)
-    affine = _scale_tree(duration_, forcing_action.value, batch_ndim)
-    candidate = jax.tree.map(lambda left, right: left + right, exponential.value, affine)
-    value = _select_zero_duration(
-        duration_,
-        initial_state,
-        candidate,
-        batch_ndim,
-    )
+    if key is not None and not isinstance(policy, TaylorExponentialPolicy):
+        raise ValueError("key is available only for Taylor exponential policies.")
+    if isinstance(policy, TaylorExponentialPolicy) and (
+        operator.batch_shape or spectral is not None or spectral_bounds is not None
+    ):
+        raise ValueError(
+            "Taylor affine actions require an unbatched operator without "
+            "spectral artifacts."
+        )
+    if not operator.batch_shape and spectral is None and spectral_bounds is None:
+        combined = matrix_exponential_phi_combination_action(
+            operator,
+            (initial_state, forcing),
+            duration_,
+            policy=policy,
+            key=key,
+        )
+        value = combined.value
+        actions = (combined,)
+        residual_estimate = combined.diagnostics.error_estimate
+        matvec_count = combined.diagnostics.action_matvec_count
+        successful = combined.successful
+    else:
+        exponential = matrix_exponential_action(
+            operator,
+            initial_state,
+            duration_,
+            policy=policy,
+            spectral=spectral,
+            spectral_bounds=spectral_bounds,
+        )
+        forcing_action = matrix_phi1_action(
+            operator,
+            forcing,
+            duration_,
+            policy=policy,
+            spectral=spectral,
+            spectral_bounds=spectral_bounds,
+        )
+        batch_ndim = len(operator.batch_shape)
+        affine = _scale_tree(duration_, forcing_action.value, batch_ndim)
+        candidate = jax.tree.map(
+            lambda left, right: left + right, exponential.value, affine
+        )
+        value = _select_zero_duration(
+            duration_,
+            initial_state,
+            candidate,
+            batch_ndim,
+        )
+        actions = (exponential, forcing_action)
+        residual_estimate = (
+            exponential.diagnostics.error_estimate
+            + jnp.abs(duration_) * forcing_action.diagnostics.error_estimate
+        )
+        matvec_count = (
+            exponential.diagnostics.action_matvec_count
+            + forcing_action.diagnostics.action_matvec_count
+        )
+        successful = exponential.successful & forcing_action.successful
     finite = _finite_by_batch(value, operator.batch_shape)
-    successful = exponential.converged & forcing_action.converged & finite
-    residual_estimate = exponential.error_estimate + jnp.abs(duration_) * (
-        forcing_action.error_estimate
-    )
-    matvec_count = exponential.matvec_count + forcing_action.matvec_count
+    successful = successful & finite
     return AffineExponentialResult(
         value,
-        exponential,
-        forcing_action,
+        actions,
         successful,
         residual_estimate,
         matvec_count,
