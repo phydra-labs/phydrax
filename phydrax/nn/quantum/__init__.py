@@ -13,6 +13,7 @@ from ._ansatz import (
     TensorNetworkAmplitude,
 )
 from ._ferminet import FermiNet
+from ._monopole_attention import MonopoleAttentionAmplitude
 from ._periodic_features import PeriodicCellFeatureResult, PeriodicCellFeatures
 from ._periodic_ferminet import (
     periodic_ferminet_incremental_target,
@@ -33,6 +34,7 @@ __all__ = [
     "JastrowSpinAmplitude",
     "JastrowSpinCache",
     "jastrow_incremental_target",
+    "MonopoleAttentionAmplitude",
     "rbm_incremental_target",
     "periodic_ferminet_incremental_target",
     "PeriodicFermiNet",

@@ -16,12 +16,12 @@ from phydrax.chemistry.periodic._magnetism import (
     SpinorBasisConvention,
     SpinOrbitCouplingPlan,
 )
-from phydrax.chemistry.periodic._orbital_model import (
+from phydrax.discretization import PeriodicCell
+from phydrax.discretization._reciprocal import ReciprocalMeshPlan
+from phydrax.operators.periodic import (
     PeriodicBlochGauge,
     PeriodicOrbitalBasisPlan,
 )
-from phydrax.discretization import PeriodicCell
-from phydrax.discretization._reciprocal import ReciprocalMeshPlan
 from phydrax.operators.periodic._family import (
     PeriodicTranslationFamilyPlan,
     PeriodicTranslationFamilyState,

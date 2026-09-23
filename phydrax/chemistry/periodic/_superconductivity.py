@@ -27,6 +27,16 @@ from ...nonlinear import (
     NonlinearResult,
     NonlinearTermination,
 )
+from ...operators.periodic import (
+    PeriodicBandManifold,
+    PeriodicChernPlan,
+    PeriodicChernRefinementEvidence,
+    PeriodicChernResult,
+    PeriodicCrossKConnection,
+    PeriodicOverlapBundle,
+    PeriodicSpectrumResult,
+    PreparedPeriodicOrbitalPencil,
+)
 from ...operators.periodic._family import PreparedPeriodicTranslationFamily
 from ...operators.quantum._fermionic_fock import FermionModeOrder
 from ...operators.quantum._superconductivity import (
@@ -42,16 +52,6 @@ from ...operators.quantum._superconductivity import (
     PreparedFermionicBdG,
 )
 from ...units import UnitDefinition
-from ._orbital_model import PreparedPeriodicOrbitalPencil
-from ._spectrum import PeriodicSpectrumResult
-from ._topology import (
-    PeriodicBandManifold,
-    PeriodicChernPlan,
-    PeriodicChernRefinementEvidence,
-    PeriodicChernResult,
-    PeriodicCrossKConnection,
-    PeriodicOverlapBundle,
-)
 
 
 SuperconductingEnsemble = Literal["fixed-chemical-potential", "fixed-filling"]

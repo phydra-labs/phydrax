@@ -16,15 +16,17 @@ from ...lifecycle._array_artifact import (
     read_typed_array_artifact,
     write_typed_array_artifact,
 )
-from ...operators.periodic import PeriodicTranslationFamilyState
+from ...operators.periodic import (
+    PeriodicPencilEvaluation,
+    PeriodicSpectrumResult,
+    PeriodicTranslationFamilyState,
+)
 from ._embedding import SingleSiteDMFTResult
 from ._lattice_force_constants import (
     FiniteDisplacementIFC2Result,
     SecondOrderForceConstants,
     ThirdOrderForceConstants,
 )
-from ._orbital_model import PeriodicPencilEvaluation
-from ._spectrum import PeriodicSpectrumResult
 
 
 PeriodicArtifactKind = Literal[

@@ -182,6 +182,7 @@ nav:
             - Periodic models and topology: "guides_periodic_condensed_matter.md"
             - Periodic electronic methods: "domains/periodic_electronic.md"
             - Quantum lattices and response: "quantum_lattices.md"
+            - Quantum Hall workflows: "guides_quantum_hall.md"
             - Green functions and embedding: "domains/green_embedding.md"
             - Lattice materials: "guides_lattice_materials.md"
             - Electronic transport: "guides_electronic_transport.md"
@@ -549,6 +550,7 @@ nav:
             - Supersymmetric lattice theory: "api/applications/supersymmetric_lattice.md"
             - Conformal bootstrap: "api/applications/conformal_bootstrap.md"
             - Fuzzy-space quantum models: "api/applications/fuzzy_space.md"
+            - Quantum Hall: "api/applications/quantum_hall.md"
             - Canonical spin networks: "api/applications/spin_network.md"
             - Spin-foam research references: "api/applications/spin_foam.md"
             - Curved-spacetime QFT: "api/applications/curved_spacetime_qft.md"
@@ -757,6 +759,7 @@ nav:
             - Delay: "api/operators/delay.md"
             - Mechanics: "api/operators/mechanics.md"
             - Quantum: "api/operators/quantum.md"
+            - Periodic: "api/operators/periodic.md"
         - Conditions:
             - Overview: "api/conditions/index.md"
             - Core: "api/conditions/core.md"

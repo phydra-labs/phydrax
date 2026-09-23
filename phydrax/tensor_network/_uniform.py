@@ -16,7 +16,14 @@ import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..linalg._operators import DenseLinearOperator
+from ..linalg import (
+    AbstractLinearOperator,
+    ArraySpace,
+    DenseLinearOperator,
+    LinearCapabilityError,
+    OperatorCapabilities,
+    OperatorProperties,
+)
 from ..linalg.eigen import (
     DenseSchurQZ,
     general_eigensolve,
@@ -24,6 +31,7 @@ from ..linalg.eigen import (
     GeneralEigenResourcePolicy,
     GeneralEigenSelection,
     GeneralEigenSolvePolicy,
+    RestartedArnoldi,
 )
 from ._precision import TensorNetworkPrecisionPolicy
 
@@ -122,6 +130,81 @@ class UniformMatrixProductOperator(StrictModule):
         )
 
 
+class UniformTransferLinearOperator(AbstractLinearOperator):
+    """Matrix-free complete-unit-cell MPS transfer action."""
+
+    tensors: tuple[Array, ...]
+    bond_dimension: int = eqx.field(static=True)
+
+    def __init__(self, state: UniformMatrixProductState, /):
+        if not isinstance(state, UniformMatrixProductState):
+            raise TypeError("state must be UniformMatrixProductState.")
+        dimension = state.bond_dimension**2
+        space = ArraySpace(
+            (dimension,),
+            dtype=state.tensors[0].dtype,
+            space_id=f"uniform-transfer:{state.structure_id}",
+        )
+        self.tensors = state.tensors
+        self.bond_dimension = state.bond_dimension
+        self.source = space
+        self.target = space
+        self.properties = OperatorProperties()
+        self.capabilities = OperatorCapabilities(
+            transpose=True,
+            adjoint=True,
+            materialize=False,
+        )
+        self.batch_shape = ()
+        self.operator_id = canonical_fingerprint(
+            {"kind": "uniform-transfer-linear-operator", "state": state.structure_id}
+        )
+
+    def mv(self, vector: ArrayLike, /) -> Array:
+        value = self.source.validate(vector).reshape(
+            (self.bond_dimension, self.bond_dimension)
+        )
+        for tensor in reversed(self.tensors):
+            value = ein.contract(
+                "apr,rs,bps->ab",
+                jnp.conj(tensor),
+                value,
+                tensor,
+            )
+        return self.target.validate(value.reshape((-1,)))
+
+    def transpose_mv(self, vector: ArrayLike, /) -> Array:
+        value = self.target.validate(vector).reshape(
+            (self.bond_dimension, self.bond_dimension)
+        )
+        for tensor in self.tensors:
+            value = ein.contract(
+                "apr,ab,bps->rs",
+                jnp.conj(tensor),
+                value,
+                tensor,
+            )
+        return self.source.validate(value.reshape((-1,)))
+
+    def adjoint_mv(self, vector: ArrayLike, /) -> Array:
+        value = self.target.validate(vector).reshape(
+            (self.bond_dimension, self.bond_dimension)
+        )
+        for tensor in self.tensors:
+            value = ein.contract(
+                "apr,ab,bps->rs",
+                tensor,
+                value,
+                jnp.conj(tensor),
+            )
+        return self.source.validate(value.reshape((-1,)))
+
+    def _materialize(self, /) -> Array:
+        raise LinearCapabilityError(
+            "Uniform transfer operators intentionally forbid dense materialization."
+        )
+
+
 class UniformTransferStatus(IntEnum):
     SUCCESS = 0
     NONINJECTIVE = 1
@@ -212,23 +295,33 @@ def uniform_transfer_fixed_points(
     selected = UniformTransferPolicy() if policy is None else policy
     if not isinstance(selected, UniformTransferPolicy):
         raise TypeError("policy must be UniformTransferPolicy or None.")
-    transfer = uniform_cell_transfer_matrix(state)
-    if transfer.size > selected.maximum_transfer_elements:
-        raise MemoryError("Uniform transfer matrix exceeds maximum_transfer_elements.")
-    dimension = transfer.shape[0]
-    count = min(selected.maximum_modes, dimension)
+    dimension = state.bond_dimension**2
+    dense_route = dimension * dimension <= selected.maximum_transfer_elements
+    if dense_route:
+        operator = DenseLinearOperator(uniform_cell_transfer_matrix(state))
+        count = min(selected.maximum_modes, dimension)
+        method = DenseSchurQZ()
+    else:
+        operator = UniformTransferLinearOperator(state)
+        count = min(selected.maximum_modes, dimension - 2)
+        if count < 1:
+            raise ValueError(
+                "Matrix-free uniform transfer requires dimension at least three."
+            )
+        method = RestartedArnoldi(
+            subspace_dimension=min(dimension, max(2 * count + 4, 8)),
+        )
     eigen_policy = GeneralEigenSolvePolicy(
-        DenseSchurQZ(),
+        method,
         selection=GeneralEigenSelection("largest-magnitude", count=count),
         resources=GeneralEigenResourcePolicy(max_dimension=dimension),
+        max_steps=max(64, 8 * count),
     )
     solve = general_eigensolve(
-        GeneralEigenproblem(
-            DenseLinearOperator(transfer), problem_id="uniform-cell-transfer"
-        ),
+        GeneralEigenproblem(operator, problem_id="uniform-cell-transfer"),
         policy=eigen_policy,
     )
-    complex_dtype = jnp.result_type(transfer, jnp.complex64)
+    complex_dtype = jnp.result_type(state.tensors[0], jnp.complex64)
     eigenvalues = jnp.full((selected.maximum_modes,), jnp.nan + 0j, dtype=complex_dtype)
     active = jnp.arange(selected.maximum_modes) < count
     eigenvalues = eigenvalues.at[:count].set(solve.eigenvalues[:count])
@@ -248,9 +341,12 @@ def uniform_transfer_fixed_points(
     left = left / scale
     right = right / scale
     dominant = solve.eigenvalues[0]
-    residual = jnp.linalg.norm(
-        transfer @ right_vector - dominant * right_vector
-    ) / jnp.maximum(jnp.linalg.norm(right_vector), 1.0)
+    residual = jnp.sqrt(
+        jnp.sum(jnp.abs(operator.mv(right_vector) - dominant * right_vector) ** 2)
+    ) / jnp.maximum(
+        jnp.sqrt(jnp.sum(jnp.abs(right_vector) ** 2)),
+        1.0,
+    )
     if count > 1:
         gap = (jnp.abs(dominant) - jnp.abs(solve.eigenvalues[1])) / jnp.maximum(
             jnp.abs(dominant), jnp.finfo(right.real.dtype).tiny
@@ -325,6 +421,7 @@ __all__ = [
     "UniformTransferFixedPoints",
     "UniformTransferPolicy",
     "UniformTransferStatus",
+    "UniformTransferLinearOperator",
     "uniform_cell_transfer_matrix",
     "uniform_correlation_length",
     "uniform_transfer_fixed_points",

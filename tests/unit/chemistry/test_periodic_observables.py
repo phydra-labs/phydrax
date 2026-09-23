@@ -7,17 +7,15 @@ from phydrax.chemistry.periodic._observables import (
     PeriodicProjectorGroups,
     PeriodicVelocityPlan,
 )
-from phydrax.chemistry.periodic._orbital_model import (
+from phydrax.discretization import PeriodicCell, ReciprocalMeshPlan
+from phydrax.operators.periodic import (
+    ChebyshevMomentPlan,
+    periodic_translation_family_from_dense_blocks,
     PeriodicBlochGauge,
     PeriodicOrbitalBasisPlan,
     PeriodicOrbitalPencilPlan,
-)
-from phydrax.chemistry.periodic._spectrum import (
-    ChebyshevMomentPlan,
     PeriodicSpectrumPlan,
 )
-from phydrax.discretization import PeriodicCell, ReciprocalMeshPlan
-from phydrax.operators.periodic import periodic_translation_family_from_dense_blocks
 from phydrax.units import ANGSTROM, conversion_factor, ELECTRONVOLT, JOULE, METER
 
 

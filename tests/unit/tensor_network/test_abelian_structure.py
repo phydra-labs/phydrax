@@ -1,17 +1,18 @@
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax.operators.quantum import AbelianGroup
 
 
 tn = phx.tensor_network
 
 
 def test_abelian_group_leg_layout_and_product_state_dense_order():
-    group = tn.AbelianGroup((None, 2))
+    group = AbelianGroup((None, 2))
     assert group.add((2, 1), (-1, 1)) == (1, 0)
     assert group.negate((2, 1)) == (-2, 1)
 
-    u1 = tn.AbelianGroup((None,))
+    u1 = AbelianGroup((None,))
     physical = tn.AbelianLeg(u1, ((0,), (1,)), (1, 1), orientation=1)
     state = tn.abelian_product_mps(
         (
@@ -27,7 +28,7 @@ def test_abelian_group_leg_layout_and_product_state_dense_order():
 
 
 def test_one_site_abelian_mpo_dense_conversion_preserves_sector_order():
-    group = tn.AbelianGroup((2,))
+    group = AbelianGroup((2,))
     physical = tn.AbelianLeg(group, ((0,), (1,)), (1, 1), orientation=1)
     boundary_left = tn.AbelianLeg(group, ((0,),), (1,), orientation=1)
     boundary_right = tn.AbelianLeg(group, ((0,),), (1,), orientation=-1)

@@ -41,6 +41,7 @@ from ._process_compression import __all__ as _process_compression_all
 from ._process_sources import __all__ as _process_sources_all
 from ._process_tensor import __all__ as _process_tensor_all
 from ._quantum_lattice import __all__ as _quantum_lattice_all
+from ._quantum_lattice_abelian import __all__ as _quantum_lattice_abelian_all
 from ._representation_category import __all__ as _representation_category_all
 from ._schedule import __all__ as _schedule_all
 from ._slicing import __all__ as _slicing_all
@@ -53,6 +54,7 @@ from ._thermal import __all__ as _thermal_all
 from ._topology import __all__ as _topology_all
 from ._tree_network import __all__ as _tree_network_all
 from ._uniform import __all__ as _uniform_all
+from ._uniform_abelian import __all__ as _uniform_abelian_all
 from ._uniform_square import __all__ as _uniform_square_all
 
 
@@ -95,6 +97,7 @@ _FACADE_EXPORT_MODULES = (
     "._process_sources",
     "._process_tensor",
     "._quantum_lattice",
+    "._quantum_lattice_abelian",
     "._representation_category",
     "._schedule",
     "._slicing",
@@ -107,6 +110,7 @@ _FACADE_EXPORT_MODULES = (
     "._topology",
     "._tree_network",
     "._uniform",
+    "._uniform_abelian",
     "._uniform_square",
 )
 
@@ -129,6 +133,7 @@ __all__ = list(
     dict.fromkeys(
         [
             *_quantum_lattice_all,
+            *_quantum_lattice_abelian_all,
             *_anyon_all,
             *_gauge_models_all,
             *_abelian_all,
@@ -178,6 +183,7 @@ __all__ = list(
             *_topology_all,
             *_tree_network_all,
             *_uniform_all,
+            *_uniform_abelian_all,
             *_uniform_square_all,
         ]
     )

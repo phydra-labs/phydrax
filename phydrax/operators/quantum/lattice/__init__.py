@@ -83,6 +83,7 @@ from ._reduced_irrep import (
 )
 from ._sector import (
     AbstractSectorBasis,
+    FixedAbelianChargeBasis,
     FixedBosonNumberBasis,
     FixedCardinalityFermionBasis,
     FixedSpinProjectionBasis,
@@ -110,6 +111,7 @@ __all__ = [
     "FermionInteractionTerm",
     "FixedBosonNumberBasis",
     "FixedCardinalityFermionBasis",
+    "FixedAbelianChargeBasis",
     "FixedSpinProjectionBasis",
     "FiniteGroupActionPlan",
     "LocalOperatorPlan",

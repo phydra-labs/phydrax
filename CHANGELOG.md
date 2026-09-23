@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added native quantum Hall workflows spanning Haldane, Kane--Mele, and
+  Hofstadter lattices; Chern, time-reversal Z2, ribbon, and Bott topology;
+  matrix-free projected-sphere pseudopotential spectra and gaps; monopole-sphere
+  Landau-level-mixing VMC; conserved-charge cylinder DMRG; periodic-lead
+  multi-terminal transport; and finite-width Coulomb form factors.
 - Added a native resource-bounded scaled-Taylor exponential action with
   operator-only plan/prepare/refresh reuse, fixed-capacity differentiable
   execution, explicit norm and truncation evidence, and matrix-free augmented

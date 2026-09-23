@@ -1,13 +1,14 @@
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax.operators.quantum import AbelianGroup
 
 
 tn = phx.tensor_network
 
 
 def _charged_bell_state():
-    group = tn.AbelianGroup((None,))
+    group = AbelianGroup((None,))
     physical = tn.AbelianLeg(group, ((0,), (1,)), (1, 1), orientation=1)
     left_boundary = tn.AbelianLeg(group, ((0,),), (1,), orientation=1)
     middle_left = tn.AbelianLeg(group, ((0,), (1,)), (1, 1), orientation=-1)

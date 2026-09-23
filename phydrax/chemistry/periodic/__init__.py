@@ -11,7 +11,6 @@ from ._derivatives import __all__ as _derivatives_all
 from ._electrostatics import __all__ as _electrostatics_all
 from ._embedding import __all__ as _embedding_all
 from ._embedding_qualification import __all__ as _embedding_qualification_all
-from ._finite import __all__ as _finite_all
 from ._gamma import __all__ as _gamma_all
 from ._kubo import __all__ as _kubo_all
 from ._lattice_dynamics import __all__ as _lattice_dynamics_all
@@ -30,10 +29,8 @@ from ._orbital_model import __all__ as _orbital_model_all
 from ._properties import __all__ as _properties_all
 from ._qualification import __all__ as _qualification_all
 from ._source import __all__ as _source_all
-from ._spectrum import __all__ as _spectrum_all
 from ._spin import __all__ as _spin_all
 from ._superconductivity import __all__ as _superconductivity_all
-from ._topology import __all__ as _topology_all
 from ._transport_campaigns import __all__ as _transport_campaigns_all
 from ._transport_support import __all__ as _transport_support_all
 
@@ -44,7 +41,6 @@ _FACADE_EXPORT_MODULES = (
     "._electrostatics",
     "._embedding",
     "._embedding_qualification",
-    "._finite",
     "._gamma",
     "._kubo",
     "._lattice_dynamics",
@@ -63,10 +59,8 @@ _FACADE_EXPORT_MODULES = (
     "._properties",
     "._qualification",
     "._source",
-    "._spectrum",
     "._spin",
     "._superconductivity",
-    "._topology",
     "._transport_campaigns",
     "._transport_support",
 )
@@ -95,7 +89,6 @@ __all__ = [
     *_boltzmann_all,
     *_electrostatics_all,
     *_embedding_all,
-    *_finite_all,
     *_gamma_all,
     *_kubo_all,
     *_lattice_dynamics_all,
@@ -111,10 +104,8 @@ __all__ = [
     *_orbital_model_all,
     *_properties_all,
     *_source_all,
-    *_spectrum_all,
     *_spin_all,
     *_superconductivity_all,
-    *_topology_all,
     *_transport_campaigns_all,
     *_transport_support_all,
 ]

@@ -15,8 +15,8 @@ import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..operators.quantum._abelian_charge import AbelianGroup
 from ._abelian import (
-    AbelianGroup,
     AbelianLeg,
     AbelianTensor,
     AbelianTensorLayout,

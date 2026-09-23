@@ -1,27 +1,25 @@
 import numpy as np
 import pytest
 
-from phydrax.chemistry.periodic._orbital_model import (
-    PeriodicBlochGauge,
-    PeriodicOrbitalBasisPlan,
-    PeriodicOrbitalPencilPlan,
-)
-from phydrax.chemistry.periodic._spectrum import PeriodicSpectrumPlan
-from phydrax.chemistry.periodic._topology import (
-    identity_cross_k_connection,
-    PeriodicBandManifold,
-    PeriodicChernPlan,
-    PeriodicChernRefinementEvidence,
-    PeriodicCrossKConnection,
-    PeriodicOverlapBundle,
-    PeriodicWilsonPlan,
-)
 from phydrax.discretization import (
     PeriodicCell,
     ReciprocalConnectivityPlan,
     ReciprocalMeshPlan,
 )
-from phydrax.operators.periodic import periodic_translation_family_from_dense_blocks
+from phydrax.operators.periodic import (
+    identity_cross_k_connection,
+    periodic_translation_family_from_dense_blocks,
+    PeriodicBandManifold,
+    PeriodicBlochGauge,
+    PeriodicChernPlan,
+    PeriodicChernRefinementEvidence,
+    PeriodicCrossKConnection,
+    PeriodicOrbitalBasisPlan,
+    PeriodicOrbitalPencilPlan,
+    PeriodicOverlapBundle,
+    PeriodicSpectrumPlan,
+    PeriodicWilsonPlan,
+)
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 
 

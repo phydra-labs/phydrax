@@ -6,17 +6,10 @@ from phydrax.chemistry.interchange import (
     read_wannier90_hr,
     read_wannier90_mmn,
 )
-from phydrax.chemistry.periodic._orbital_model import (
-    PeriodicBlochGauge,
-    PeriodicOrbitalBasisPlan,
-    PeriodicOrbitalPencilPlan,
-)
 from phydrax.chemistry.periodic._source import (
     PeriodicProvenanceManifest,
     PeriodicSourceContext,
 )
-from phydrax.chemistry.periodic._spectrum import PeriodicSpectrumPlan
-from phydrax.chemistry.periodic._topology import PeriodicBandManifold
 from phydrax.discretization import (
     PeriodicCell,
     ReciprocalConnectivityPlan,
@@ -24,7 +17,12 @@ from phydrax.discretization import (
 )
 from phydrax.operators.periodic import (
     periodic_translation_family_from_dense_blocks,
+    PeriodicBandManifold,
+    PeriodicBlochGauge,
+    PeriodicOrbitalBasisPlan,
+    PeriodicOrbitalPencilPlan,
     PeriodicResourceError,
+    PeriodicSpectrumPlan,
 )
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 

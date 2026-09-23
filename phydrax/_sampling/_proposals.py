@@ -312,6 +312,140 @@ class GaussianRandomWalkProposal(AbstractProposal):
         return ()
 
 
+class SphereElectronProposalPayload(StrictModule):
+    index: Array
+    angular_displacement: Array
+
+
+class SingleElectronSphereProposal(AbstractProposal):
+    """Symmetric geodesic proposal for one uniformly selected sphere particle."""
+
+    electron_count: int = eqx.field(static=True)
+    maximum_angle: float = eqx.field(static=True)
+    proposal_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        electron_count: int,
+        maximum_angle: float,
+        /,
+        *,
+        proposal_id: str | None = None,
+    ):
+        count = int(electron_count)
+        angle = float(maximum_angle)
+        if count < 1 or not np.isfinite(angle) or angle <= 0.0 or angle > np.pi:
+            raise ValueError(
+                "Sphere proposal electron_count and maximum_angle are invalid."
+            )
+        self.electron_count = count
+        self.maximum_angle = angle
+        self.proposal_id = (
+            canonical_fingerprint(
+                {
+                    "kind": "single-electron-sphere-proposal",
+                    "electron_count": count,
+                    "maximum_angle": angle,
+                }
+            )
+            if proposal_id is None
+            else str(proposal_id)
+        )
+        if not self.proposal_id:
+            raise ValueError("proposal_id must be non-empty.")
+
+    def _coordinates(self, value: PyTree[Any], role: str, /) -> Array:
+        coordinates = _real_position(value, role)
+        if coordinates.shape != (self.electron_count, 2):
+            raise ValueError(
+                f"{role} sphere coordinates must have shape ({self.electron_count}, 2)."
+            )
+        return coordinates
+
+    @staticmethod
+    def _cartesian(coordinates: Array, /) -> Array:
+        theta, phi = coordinates[..., 0], coordinates[..., 1]
+        sine = jnp.sin(theta)
+        return jnp.stack(
+            (sine * jnp.cos(phi), sine * jnp.sin(phi), jnp.cos(theta)),
+            axis=-1,
+        )
+
+    def sample(self, key, current, /) -> Array:
+        coordinates = self._coordinates(current, "current")
+        index_key, tangent_key, angle_key = jr.split(key, 3)
+        index = jr.randint(index_key, (), 0, self.electron_count)
+        unit = self._cartesian(coordinates[index])
+        draw = jr.normal(tangent_key, (3,), dtype=coordinates.dtype)
+        tangent = draw - jnp.vdot(draw, unit) * unit
+        tangent_norm = jnp.linalg.norm(tangent)
+        fallback = jnp.cross(
+            unit,
+            jnp.where(
+                jnp.abs(unit[2]) < 0.9,
+                jnp.asarray((0.0, 0.0, 1.0)),
+                jnp.asarray((1.0, 0.0, 0.0)),
+            ),
+        )
+        tangent = jnp.where(
+            tangent_norm > jnp.finfo(coordinates.dtype).tiny,
+            tangent / jnp.maximum(tangent_norm, jnp.finfo(coordinates.dtype).tiny),
+            fallback / jnp.linalg.norm(fallback),
+        )
+        displacement = jr.uniform(
+            angle_key,
+            (),
+            minval=0.0,
+            maxval=self.maximum_angle,
+            dtype=coordinates.dtype,
+        )
+        proposed_unit = jnp.cos(displacement) * unit + jnp.sin(displacement) * tangent
+        theta = jnp.arccos(jnp.clip(proposed_unit[2], -1.0, 1.0))
+        phi = jnp.arctan2(proposed_unit[1], proposed_unit[0])
+        return coordinates.at[index].set(jnp.stack((theta, phi)))
+
+    def log_prob(self, proposed, current, /) -> Array:
+        proposed_coordinates = self._coordinates(proposed, "proposed")
+        current_coordinates = self._coordinates(current, "current")
+        proposed_unit = self._cartesian(proposed_coordinates)
+        current_unit = self._cartesian(current_coordinates)
+        cosine = jnp.sum(proposed_unit * current_unit, axis=-1)
+        angular = jnp.arccos(jnp.clip(cosine, -1.0, 1.0))
+        changed = angular > 32.0 * jnp.finfo(angular.dtype).eps
+        changed_count = jnp.sum(changed, dtype=jnp.int32)
+        displacement = jnp.max(angular)
+        sine = jnp.maximum(jnp.sin(displacement), jnp.finfo(angular.dtype).tiny)
+        density = -jnp.log(
+            jnp.asarray(
+                self.electron_count * 2.0 * np.pi * self.maximum_angle,
+                dtype=angular.dtype,
+            )
+            * sine
+        )
+        return jnp.where(
+            (changed_count == 1) & (displacement <= self.maximum_angle),
+            density,
+            -jnp.inf,
+        )
+
+    def payload(self, key, current, proposed, /) -> SphereElectronProposalPayload:
+        coordinates = self._coordinates(current, "current")
+        proposed_coordinates = self._coordinates(proposed, "proposed")
+        index_key, _, _ = jr.split(key, 3)
+        index = jr.randint(index_key, (), 0, self.electron_count)
+        angular = jnp.arccos(
+            jnp.clip(
+                jnp.vdot(
+                    self._cartesian(coordinates[index]),
+                    self._cartesian(proposed_coordinates[index]),
+                ),
+                -1.0,
+                1.0,
+            )
+        )
+        return SphereElectronProposalPayload(index, angular)
+
+
 class CallableProposal(AbstractProposal):
     """Normalized user-defined structure-preserving proposal."""
 
@@ -373,6 +507,8 @@ __all__ = [
     "GaussianRandomWalkProposal",
     "ProposalMove",
     "SingleCoordinateGaussianProposal",
+    "SingleElectronSphereProposal",
+    "SphereElectronProposalPayload",
     "SingleCoordinatePeriodicProposal",
     "SingleCoordinateProposalPayload",
 ]

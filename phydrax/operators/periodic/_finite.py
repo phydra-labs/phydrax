@@ -19,12 +19,12 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
-from ...operators.periodic._family import (
+from ._family import (
     PeriodicFiniteRealization,
     PeriodicResourceError,
     realize_periodic_translation_family,
 )
-from ._orbital_model import PreparedPeriodicOrbitalPencil
+from ._orbital import PreparedPeriodicOrbitalPencil
 
 
 BoundaryKind = Literal["open", "periodic", "twisted", "slab"]

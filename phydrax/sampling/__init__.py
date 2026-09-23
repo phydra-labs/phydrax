@@ -52,7 +52,9 @@ from .._sampling import (
     SingleCoordinateGaussianProposal,
     SingleCoordinatePeriodicProposal,
     SingleCoordinateProposalPayload,
+    SingleElectronSphereProposal,
     SobolDesign,
+    SphereElectronProposalPayload,
 )
 from . import collocation, conditional
 from ._compact_group_hamiltonian import (
@@ -139,6 +141,8 @@ __all__ = [
     "PreparedCompactGroupHamiltonianKernel",
     "ProposalMove",
     "SingleCoordinateGaussianProposal",
+    "SingleElectronSphereProposal",
+    "SphereElectronProposalPayload",
     "SingleCoordinatePeriodicProposal",
     "SingleCoordinateProposalPayload",
     "prepare_hamiltonian_kernel",

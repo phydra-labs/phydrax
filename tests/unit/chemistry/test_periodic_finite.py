@@ -1,18 +1,16 @@
 import numpy as np
 
-from phydrax.chemistry.periodic._finite import (
+from phydrax.discretization import PeriodicCell
+from phydrax.operators.periodic import (
     finite_layer_populations,
+    periodic_translation_family_from_dense_blocks,
+    PeriodicBlochGauge,
     PeriodicFiniteBoundaryPlan,
     PeriodicFiniteOrbitalPlan,
-    PrescribedPeriodicDisorder,
-)
-from phydrax.chemistry.periodic._orbital_model import (
-    PeriodicBlochGauge,
     PeriodicOrbitalBasisPlan,
     PeriodicOrbitalPencilPlan,
+    PrescribedPeriodicDisorder,
 )
-from phydrax.discretization import PeriodicCell
-from phydrax.operators.periodic import periodic_translation_family_from_dense_blocks
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 
 

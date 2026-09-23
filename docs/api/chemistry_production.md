@@ -89,11 +89,11 @@
 
 ::: phydrax.chemistry.PeriodicElectronicSectorPlan
 
-::: phydrax.chemistry.PeriodicBlochGauge
+::: phydrax.operators.periodic.PeriodicBlochGauge
 
-::: phydrax.chemistry.PeriodicOrbitalBasisPlan
+::: phydrax.operators.periodic.PeriodicOrbitalBasisPlan
 
-::: phydrax.chemistry.PeriodicOrbitalPencilPlan
+::: phydrax.operators.periodic.PeriodicOrbitalPencilPlan
 
 ::: phydrax.chemistry.PeriodicHubbardMeanFieldPlan
 

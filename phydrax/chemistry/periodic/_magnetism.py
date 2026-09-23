@@ -15,14 +15,14 @@ import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ...operators.periodic._family import (
+from ...operators.periodic import (
+    PeriodicOrbitalBasisPlan,
     PeriodicTranslationFamilyPlan,
     PeriodicTranslationFamilyState,
     prepare_periodic_translation_family,
     PreparedPeriodicTranslationFamily,
 )
 from ...sparse import EdgeRelation
-from ._orbital_model import PeriodicOrbitalBasisPlan
 
 
 class SpinorBasisConvention(StrictModule):

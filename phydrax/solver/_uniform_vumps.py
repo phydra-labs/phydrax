@@ -34,6 +34,10 @@ from ..tensor_network._uniform import (
     UniformTransferPolicy,
     UniformTransferStatus,
 )
+from ..tensor_network._uniform_abelian import (
+    UniformAbelianMatrixProductOperator,
+    UniformAbelianMatrixProductState,
+)
 
 
 class UniformVUMPSStatus(IntEnum):
@@ -48,10 +52,27 @@ class UniformVUMPSProblem(StrictModule):
     initial_state: UniformMatrixProductState
     hamiltonian: UniformMatrixProductOperator
     problem_id: str = eqx.field(static=True)
+    abelian_identity: str | None = eqx.field(static=True)
 
     def __init__(
         self, initial_state, hamiltonian, /, *, problem_id: str = "uniform-vumps"
     ):
+        abelian_identity = None
+        if isinstance(initial_state, UniformAbelianMatrixProductState):
+            if not isinstance(hamiltonian, UniformAbelianMatrixProductOperator):
+                raise TypeError("Abelian uniform states require an Abelian uniform MPO.")
+            if initial_state.group.group_id != hamiltonian.group.group_id:
+                raise ValueError(
+                    "Uniform Abelian state and operator charge groups differ."
+                )
+            abelian_identity = canonical_fingerprint(
+                {
+                    "state": initial_state.state_id,
+                    "operator": hamiltonian.operator_id,
+                }
+            )
+            initial_state = initial_state.state
+            hamiltonian = hamiltonian.operator
         if not isinstance(initial_state, UniformMatrixProductState) or not isinstance(
             hamiltonian, UniformMatrixProductOperator
         ):
@@ -70,11 +91,10 @@ class UniformVUMPSProblem(StrictModule):
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be nonempty.")
-        self.initial_state, self.hamiltonian, self.problem_id = (
-            initial_state,
-            hamiltonian,
-            identifier,
-        )
+        self.initial_state = initial_state
+        self.hamiltonian = hamiltonian
+        self.problem_id = identifier
+        self.abelian_identity = abelian_identity
 
 
 class UniformVUMPSPolicy(StrictModule):

@@ -85,6 +85,51 @@ def su2_clebsch_gordan(left: int, right: int, output: int, /) -> Array:
     return table
 
 
+def su2_wigner_3j(
+    first: int,
+    second: int,
+    third: int,
+    first_projection: int,
+    second_projection: int,
+    third_projection: int,
+    /,
+) -> float:
+    """Condon--Shortley Wigner 3j symbol with doubled spins/projections."""
+
+    a, b, c = map(_spin, (first, second, third))
+    ma, mb, mc = map(int, (first_projection, second_projection, third_projection))
+    if (
+        not _triangle(a, b, c)
+        or ma + mb + mc != 0
+        or any(abs(value) > spin for value, spin in ((ma, a), (mb, b), (mc, c)))
+        or any((value + spin) % 2 for value, spin in ((ma, a), (mb, b), (mc, c)))
+    ):
+        return 0.0
+    cg = su2_clebsch_gordan(a, b, c)
+    phase_exponent = (a - b - mc) // 2
+    return float(
+        ((-1.0) ** phase_exponent)
+        * cg[(ma + a) // 2, (mb + b) // 2, (-mc + c) // 2]
+        / math.sqrt(c + 1)
+    )
+
+
+def su2_wigner_3j_table(first: int, second: int, third: int, /) -> Array:
+    """Return all projection-resolved Wigner 3j values in the native gauge."""
+
+    a, b, c = map(_spin, (first, second, third))
+    return jnp.asarray(
+        tuple(
+            tuple(
+                tuple(su2_wigner_3j(a, b, c, ma, mb, mc) for mc in range(-c, c + 1, 2))
+                for mb in range(-b, b + 1, 2)
+            )
+            for ma in range(-a, a + 1, 2)
+        ),
+        dtype=jnp.float64,
+    )
+
+
 def _delta(first: int, second: int, third: int) -> float:
     if not _triangle(first, second, third):
         return 0.0
@@ -874,6 +919,8 @@ __all__ = [
     "su2_mps_tdvp",
     "su2_pentagon_residual",
     "su2_recoupling_matrix",
+    "su2_wigner_3j",
+    "su2_wigner_3j_table",
     "su2_wigner_6j",
     "su2_f_symbol",
     "truncate_su2_multiplets",

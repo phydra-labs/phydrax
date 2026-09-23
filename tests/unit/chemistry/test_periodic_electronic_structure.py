@@ -4,16 +4,14 @@ import pytest
 import phydrax as phx
 from phydrax.chemistry._state import PeriodicElectronicSectorPlan
 from phydrax.chemistry.periodic._model_scf import NativePeriodicSCFPlan
-from phydrax.chemistry.periodic._orbital_model import (
-    PeriodicBlochGauge,
-    PeriodicHubbardMeanFieldPlan,
-    PeriodicOrbitalBasisPlan,
-    PeriodicOrbitalPencilPlan,
-)
+from phydrax.chemistry.periodic._orbital_model import PeriodicHubbardMeanFieldPlan
 from phydrax.discretization import ReciprocalMeshPlan
 from phydrax.operators.periodic import (
     periodic_translation_family_from_dense_blocks,
+    PeriodicBlochGauge,
     PeriodicFourierConvention,
+    PeriodicOrbitalBasisPlan,
+    PeriodicOrbitalPencilPlan,
 )
 
 

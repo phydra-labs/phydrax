@@ -25,9 +25,9 @@ from ...linalg.eigen import (
     EigenSolvePolicy,
     GeneralizedEigenproblem,
 )
-from ...operators.periodic._family import PeriodicResourceError
 from ...units import UnitDefinition
-from ._orbital_model import PreparedPeriodicOrbitalPencil
+from ._family import PeriodicResourceError
+from ._orbital import PreparedPeriodicOrbitalPencil
 
 
 ReciprocalSupport = ReciprocalMeshPlan | ReciprocalPathPlan

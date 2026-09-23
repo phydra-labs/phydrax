@@ -30,6 +30,21 @@ from ..._limit_study import (
     ScientificLimitVariation,
 )
 from ..._strict import StrictModule
+from ...linalg import (
+    AbstractLinearOperator,
+    ArraySpace,
+    LinearCapabilityError,
+    OperatorCapabilities,
+    OperatorProperties,
+)
+from ...operators.quantum import AbelianGroup, FermionModeOrder
+from ...operators.quantum.lattice import (
+    AbstractSectorBasis,
+    FixedAbelianChargeBasis,
+    FixedBosonNumberBasis,
+    FixedCardinalityFermionBasis,
+    SectorBasisResourcePolicy,
+)
 from ...tensor_network import (
     MatrixProductOperator,
     MatrixProductState,
@@ -39,25 +54,6 @@ from ...tensor_network import (
 
 
 FuzzyManyBodyStatistics: TypeAlias = Literal["boson", "fermion"]
-
-
-def _occupations(orbital_count: int, particle_count: int, statistics: str):
-    if statistics == "fermion":
-        for occupied in itertools.combinations(range(orbital_count), particle_count):
-            value = [0] * orbital_count
-            for index in occupied:
-                value[index] = 1
-            yield tuple(value)
-        return
-
-    def recurse(site: int, remaining: int, prefix: tuple[int, ...]):
-        if site + 1 == orbital_count:
-            yield prefix + (remaining,)
-            return
-        for value in range(remaining + 1):
-            yield from recurse(site + 1, remaining - value, prefix + (value,))
-
-    yield from recurse(0, particle_count, ())
 
 
 def _apply_annihilation(
@@ -163,10 +159,12 @@ class FuzzySphereManyBodyPlan(StrictModule):
     twice_monopole_flux: int = eqx.field(static=True)
     particle_count: int = eqx.field(static=True)
     statistics: FuzzyManyBodyStatistics = eqx.field(static=True)
+    twice_projection: int | None = eqx.field(static=True)
     pseudopotentials: tuple[tuple[int, float], ...] = eqx.field(static=True)
     three_body_terms: tuple[FuzzyThreeBodyTerm, ...] = eqx.field(static=True)
     maximum_basis_dimension: int = eqx.field(static=True)
     maximum_nonzero_routes: int = eqx.field(static=True)
+    maximum_table_bytes: int = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -178,13 +176,16 @@ class FuzzySphereManyBodyPlan(StrictModule):
         pseudopotentials: Mapping[int, float],
         /,
         *,
+        twice_projection: int | None = None,
         three_body_terms: Sequence[FuzzyThreeBodyTerm] = (),
         maximum_basis_dimension: int = 100_000,
         maximum_nonzero_routes: int = 10_000_000,
+        maximum_table_bytes: int = 64 * 1024 * 1024,
         tolerance: float = 1e-12,
     ):
         flux = int(twice_monopole_flux)
         particles = int(particle_count)
+        projection = None if twice_projection is None else int(twice_projection)
         statistics_ = str(statistics)
         potentials = tuple(
             sorted((int(spin), float(value)) for spin, value in pseudopotentials.items())
@@ -192,6 +193,7 @@ class FuzzySphereManyBodyPlan(StrictModule):
         terms = tuple(three_body_terms)
         maximum_basis = int(maximum_basis_dimension)
         maximum_routes = int(maximum_nonzero_routes)
+        maximum_table = int(maximum_table_bytes)
         tolerance_ = float(tolerance)
         if flux < 1 or particles < 2 or statistics_ not in ("boson", "fermion"):
             raise ValueError(
@@ -199,6 +201,10 @@ class FuzzySphereManyBodyPlan(StrictModule):
             )
         if statistics_ == "fermion" and particles > flux + 1:
             raise ValueError("Fermion particle count exceeds the orbital count.")
+        if projection is not None and (
+            abs(projection) > particles * flux or (projection - particles * flux) % 2 != 0
+        ):
+            raise ValueError("twice_projection is incompatible with the sphere sector.")
         allowed = tuple(
             total
             for total in su2_fusion(flux, flux)
@@ -216,26 +222,35 @@ class FuzzySphereManyBodyPlan(StrictModule):
             for orbital in (*term.creators, *term.annihilators)
         ):
             raise ValueError("A three-body term references an unavailable orbital.")
-        if maximum_basis < 1 or maximum_routes < 1 or tolerance_ <= 0.0:
+        if (
+            maximum_basis < 1
+            or maximum_routes < 1
+            or maximum_table < 1
+            or tolerance_ <= 0.0
+        ):
             raise ValueError("Fuzzy many-body resource controls must be positive.")
         content = {
             "kind": "fuzzy-sphere-many-body-plan",
             "twice_monopole_flux": flux,
             "particle_count": particles,
             "statistics": statistics_,
+            "twice_projection": projection,
             "pseudopotentials": potentials,
             "three_body_terms": [value.term_id for value in terms],
             "maximum_basis_dimension": maximum_basis,
             "maximum_nonzero_routes": maximum_routes,
+            "maximum_table_bytes": maximum_table,
             "tolerance": tolerance_,
         }
         self.twice_monopole_flux = flux
         self.particle_count = particles
+        self.twice_projection = projection
         self.statistics = statistics_  # type: ignore[assignment]
         self.pseudopotentials = potentials
         self.three_body_terms = terms
         self.maximum_basis_dimension = maximum_basis
         self.maximum_nonzero_routes = maximum_routes
+        self.maximum_table_bytes = maximum_table
         self.tolerance = tolerance_
         self.plan_id = canonical_fingerprint(content)
 
@@ -254,13 +269,163 @@ class FuzzyManyBodyEvidence(StrictModule):
     evidence_id: str = eqx.field(static=True)
 
 
+class _FuzzyManyBodyLinearOperator(AbstractLinearOperator):
+    rows: Array
+    columns: Array
+    values: Array
+    dimension: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        rows: ArrayLike,
+        columns: ArrayLike,
+        values: ArrayLike,
+        dimension: int,
+        /,
+        *,
+        self_adjoint: bool,
+    ):
+        rows_ = jnp.asarray(rows, dtype=jnp.int32)
+        columns_ = jnp.asarray(columns, dtype=jnp.int32)
+        values_ = jnp.asarray(values, dtype=jnp.complex128)
+        dimension_ = int(dimension)
+        if (
+            rows_.shape != columns_.shape
+            or rows_.shape != values_.shape
+            or rows_.ndim != 1
+            or dimension_ < 1
+        ):
+            raise ValueError("Fuzzy sparse routes and dimension are incompatible.")
+        space = ArraySpace(
+            (dimension_,),
+            dtype=np.complex128,
+            space_id=f"fuzzy-many-body:{dimension_}",
+        )
+        self.rows = rows_
+        self.columns = columns_
+        self.values = values_
+        self.dimension = dimension_
+        self.source = space
+        self.target = space
+        self.properties = OperatorProperties(
+            self_adjoint=self_adjoint,
+            evidence={"self_adjoint": "verified"} if self_adjoint else None,
+        )
+        self.capabilities = OperatorCapabilities(
+            transpose=True,
+            adjoint=True,
+            materialize=False,
+        )
+        self.batch_shape = ()
+        self.operator_id = canonical_fingerprint(
+            {
+                "kind": "fuzzy-many-body-linear-operator",
+                "dimension": dimension_,
+                "rows": array_tree_fingerprint(np.asarray(rows_)),
+                "columns": array_tree_fingerprint(np.asarray(columns_)),
+                "values": array_tree_fingerprint(np.asarray(values_)),
+            }
+        )
+
+    def mv(self, vector: ArrayLike, /) -> Array:
+        value = self.source.validate(vector)
+        return self.target.validate(
+            jax.ops.segment_sum(
+                self.values * value[self.columns],
+                self.rows,
+                num_segments=self.dimension,
+            )
+        )
+
+    def transpose_mv(self, vector: ArrayLike, /) -> Array:
+        value = self.target.validate(vector)
+        return self.source.validate(
+            jax.ops.segment_sum(
+                self.values * value[self.rows],
+                self.columns,
+                num_segments=self.dimension,
+            )
+        )
+
+    def adjoint_mv(self, vector: ArrayLike, /) -> Array:
+        value = self.target.validate(vector)
+        return self.source.validate(
+            jax.ops.segment_sum(
+                jnp.conj(self.values) * value[self.rows],
+                self.columns,
+                num_segments=self.dimension,
+            )
+        )
+
+    def _materialize(self, /) -> Array:
+        raise LinearCapabilityError(
+            "Fuzzy many-body operators intentionally forbid dense materialization."
+        )
+
+
+def _route_hermiticity_residual(
+    transitions: Mapping[tuple[int, int], complex], /
+) -> float:
+    norm_squared = sum(abs(value) ** 2 for value in transitions.values())
+    residual_squared = sum(
+        abs(value - np.conj(transitions.get((column, row), 0.0j))) ** 2
+        for (row, column), value in transitions.items()
+    )
+    return float(math.sqrt(residual_squared / max(1.0, norm_squared)))
+
+
+def _direct_sector_basis(plan: FuzzySphereManyBodyPlan, /) -> AbstractSectorBasis:
+    resources = SectorBasisResourcePolicy(
+        maximum_dimension=plan.maximum_basis_dimension,
+        maximum_table_bytes=plan.maximum_table_bytes,
+    )
+    projections = tuple(
+        -plan.twice_monopole_flux + 2 * index for index in range(plan.orbital_count)
+    )
+    if plan.twice_projection is None:
+        if plan.statistics == "fermion":
+            return FixedCardinalityFermionBasis(
+                FermionModeOrder(
+                    tuple(f"orbital-{index}" for index in range(plan.orbital_count))
+                ),
+                plan.particle_count,
+                resources=resources,
+            )
+        return FixedBosonNumberBasis(
+            tuple(f"orbital-{index}" for index in range(plan.orbital_count)),
+            (plan.particle_count + 1,) * plan.orbital_count,
+            plan.particle_count,
+            resources=resources,
+        )
+    if plan.statistics == "fermion":
+        local = tuple(((0, 0), (1, projection)) for projection in projections)
+    else:
+        local = tuple(
+            tuple(
+                (occupation, occupation * projection)
+                for occupation in range(plan.particle_count + 1)
+            )
+            for projection in projections
+        )
+    return FixedAbelianChargeBasis(
+        tuple(f"orbital-{index}" for index in range(plan.orbital_count)),
+        local,
+        ("particle-number", "twice-projection"),
+        (plan.particle_count, plan.twice_projection),
+        AbelianGroup((None, None)),
+        resources=resources,
+    )
+
+
 class PreparedFuzzySphereManyBody(StrictModule):
     plan: FuzzySphereManyBodyPlan = eqx.field(static=True)
+    basis: AbstractSectorBasis
     occupations: Array
     rows: Array
     columns: Array
     values: Array
     twice_projections: Array
+    operator: _FuzzyManyBodyLinearOperator
     evidence: FuzzyManyBodyEvidence
     prepared_id: str = eqx.field(static=True)
 
@@ -269,14 +434,7 @@ class PreparedFuzzySphereManyBody(StrictModule):
         return self.occupations.shape[0]
 
     def mv(self, vector: ArrayLike, /) -> Array:
-        value = jnp.asarray(vector, dtype=self.values.dtype)
-        if value.shape != (self.dimension,):
-            raise ValueError("Fuzzy many-body vector has the wrong shape.")
-        return jax.ops.segment_sum(
-            self.values * value[self.columns],
-            self.rows,
-            num_segments=self.dimension,
-        )
+        return self.operator.mv(vector)
 
     def dense(self, /, *, maximum_elements: int = 4_000_000) -> Array:
         if self.dimension * self.dimension > int(maximum_elements):
@@ -314,11 +472,14 @@ def prepare_fuzzy_sphere_many_body(
 
     if not isinstance(plan, FuzzySphereManyBodyPlan):
         raise TypeError("plan must be FuzzySphereManyBodyPlan.")
-    occupations = tuple(
-        _occupations(plan.orbital_count, plan.particle_count, plan.statistics)
+    basis = _direct_sector_basis(plan)
+    occupation_array = np.asarray(
+        jax.vmap(basis._coordinate_unchecked)(
+            jnp.arange(basis.dimension, dtype=jnp.int64)
+        ),
+        dtype=np.int32,
     )
-    if not occupations or len(occupations) > plan.maximum_basis_dimension:
-        raise ValueError("Fuzzy many-body basis is empty or exceeds admission.")
+    occupations = tuple(tuple(int(value) for value in row) for row in occupation_array)
     rank = {value: index for index, value in enumerate(occupations)}
     pair = _pair_interaction(plan)
     transitions: dict[tuple[int, int], complex] = {}
@@ -334,7 +495,9 @@ def prepare_fuzzy_sphere_many_body(
             if applied is None:
                 continue
             target_occupation, factor = applied
-            target = rank[target_occupation]
+            target = rank.get(target_occupation)
+            if target is None:
+                raise ValueError("A pair interaction leaves the declared charge sector.")
             coefficient = 0.5 * pair[first, second, third, fourth] * factor
             transitions[target, source] = (
                 transitions.get((target, source), 0.0j) + coefficient
@@ -349,7 +512,9 @@ def prepare_fuzzy_sphere_many_body(
             if applied is None:
                 continue
             target_occupation, factor = applied
-            target = rank[target_occupation]
+            target = rank.get(target_occupation)
+            if target is None:
+                raise ValueError("A three-body term leaves the declared charge sector.")
             transitions[target, source] = (
                 transitions.get((target, source), 0.0j) + term.coefficient * factor
             )
@@ -362,11 +527,7 @@ def prepare_fuzzy_sphere_many_body(
     rows = np.asarray([key[0] for key, _ in ordered], dtype=np.int32)
     columns = np.asarray([key[1] for key, _ in ordered], dtype=np.int32)
     values = np.asarray([value for _, value in ordered], dtype=np.complex128)
-    dense = np.zeros((len(occupations), len(occupations)), dtype=np.complex128)
-    np.add.at(dense, (rows, columns), values)
-    hermiticity = float(
-        np.linalg.norm(dense - dense.conj().T) / max(1.0, np.linalg.norm(dense))
-    )
+    hermiticity = _route_hermiticity_residual(transitions)
     particle_residual = 0
     projections = np.asarray(
         [
@@ -417,6 +578,13 @@ def prepare_fuzzy_sphere_many_body(
         accepted=jnp.asarray(accepted),
         evidence_id=evidence_id,
     )
+    operator = _FuzzyManyBodyLinearOperator(
+        rows,
+        columns,
+        values,
+        basis.dimension,
+        self_adjoint=accepted,
+    )
     prepared_id = canonical_fingerprint(
         {
             "kind": "prepared-fuzzy-sphere-many-body",
@@ -426,11 +594,13 @@ def prepare_fuzzy_sphere_many_body(
     )
     return PreparedFuzzySphereManyBody(
         plan=plan,
+        basis=basis,
         occupations=jnp.asarray(occupations, dtype=jnp.int32),
         rows=jnp.asarray(rows),
         columns=jnp.asarray(columns),
         values=jnp.asarray(values),
         twice_projections=jnp.asarray(projections),
+        operator=operator,
         evidence=evidence,
         prepared_id=prepared_id,
     )
@@ -485,8 +655,11 @@ def evaluate_fuzzy_many_body_observables(
                 if created is None:
                     continue
                 target, second = created
+                target_index = rank.get(target)
+                if target_index is None:
+                    continue
                 density[creator, annihilator] += (
-                    np.conj(vector[rank[target]]) * first * second * vector[source]
+                    np.conj(vector[target_index]) * first * second * vector[source]
                 )
     cut = int(orbital_cut)
     if cut <= 0 or cut >= prepared.plan.orbital_count:
