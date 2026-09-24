@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .._fingerprint import canonical_fingerprint
+from .._identity import ArtifactBindingIdentity
 from .._training import (
     DelayedTargetPolicy,
     ExponentialMovingAverageTargetPolicy,
@@ -17,11 +19,31 @@ from .._training_checkpoint import (
     read_training_checkpoint_metadata,
     save_training_checkpoint,
 )
-from .._training_kernel import build_training_checkpoint, PreparedTrainingKernel
+from .._training_kernel import (
+    _structure_signature,
+    build_training_checkpoint,
+    parameter_binding_identity,
+    PreparedTrainingKernel,
+    require_binding_record,
+)
 from ._functional_training import FunctionalTrainingPlan, FunctionalTrainingState
 
 
 _FUNCTIONAL_CHECKPOINT_FORMAT = "phydrax-functional-training-checkpoint"
+_METADATA_FIELDS = frozenset(
+    {
+        "plan_id",
+        "run_id",
+        "gradient_accumulation",
+        "target_policy",
+        "enforcement_generation",
+        "enforcement_accepted_step",
+        "discretization_bundle_id",
+        "training_seconds",
+        "resumed_from_step",
+        "binding",
+    }
+)
 
 
 def _target_policy_contract(kernel: PreparedTrainingKernel, /) -> dict[str, Any] | None:
@@ -48,6 +70,34 @@ def _sharding_identity(plan: FunctionalTrainingPlan, /) -> str | None:
     return None if plan.sharding is None else plan.sharding.policy_id
 
 
+def _binding(
+    kernel: PreparedTrainingKernel,
+    solver: Any,
+    parameters: Any,
+    plan: FunctionalTrainingPlan,
+    /,
+) -> ArtifactBindingIdentity:
+    """Bind the solved functions to the kernel semantics and static executable.
+
+    The semantic identity is the kernel `checkpoint_id` (roles, objectives,
+    rule, authorities, lanes), so the numeric revision equals the kernel
+    manifest's `parameter_revision`. Model state and FIXED arrays are checkpoint
+    payload; their structure, the rule, the discretization, and the sharding
+    policy form the executable signature.
+    """
+    return parameter_binding_identity(
+        kernel.checkpoint_id,
+        parameters,
+        algorithm_facts={
+            "rule_id": kernel.rule.rule_id,
+            "model_state_signature": kernel.model_state_signature,
+            "fixed_structure": canonical_fingerprint(_structure_signature(kernel.fixed)),
+            "discretization_bundle_id": solver.discretization_bundle.bundle_id,
+        },
+        backend_facts={"sharding_identity": _sharding_identity(plan)},
+    )
+
+
 def _metadata(
     kernel: PreparedTrainingKernel,
     solver: Any,
@@ -68,6 +118,9 @@ def _metadata(
         "discretization_bundle_id": solver.discretization_bundle.bundle_id,
         "training_seconds": state.training_seconds,
         "resumed_from_step": state.resumed_from_step,
+        "binding": _binding(
+            kernel, solver, state.kernel_state.parameters, plan
+        ).to_record(),
     }
 
 
@@ -107,6 +160,7 @@ def save_functional_training_checkpoint(
 
     Periodic checkpoints are accepted-update boundaries. A `final` checkpoint may
     close a run on a rejected attempt; the kernel manifest records the boundary.
+    The metadata records the solved functions' `ArtifactBindingIdentity`.
     """
     if not isinstance(state, FunctionalTrainingState):
         raise TypeError("state must be a FunctionalTrainingState.")
@@ -144,7 +198,9 @@ def load_functional_training_checkpoint(
 
     The kernel payload fails closed on any role, objective, rule, authority,
     structure, key, boundary, or parameter-revision mismatch; the functional
-    metadata must match the plan, run, target policy, and discretization.
+    metadata must match the plan, run, target policy, and discretization, and
+    its binding identity must match the one recomputed from the restored
+    parameters.
     """
     if not isinstance(state_like, FunctionalTrainingState):
         raise TypeError("state_like must be a FunctionalTrainingState.")
@@ -153,7 +209,7 @@ def load_functional_training_checkpoint(
     metadata = read_training_checkpoint_metadata(
         path, format=_FUNCTIONAL_CHECKPOINT_FORMAT
     )
-    if set(metadata) != set(_metadata(kernel, solver_like, state_like, plan)):
+    if set(metadata) != _METADATA_FIELDS:
         raise ValueError("Functional checkpoint metadata fields are not canonical.")
     expected = {
         "plan_id": (plan.plan_id, "training-plan"),
@@ -185,6 +241,11 @@ def load_functional_training_checkpoint(
     if progress is None:
         raise ValueError("Functional checkpoint progress is missing.")
     kernel_state = loaded.restored.state
+    require_binding_record(
+        metadata["binding"],
+        _binding(kernel, solver_like, kernel_state.parameters, plan),
+        context="Functional checkpoint",
+    )
     if int(kernel_state.accepted_cursor) != progress.update_step:
         raise ValueError(
             "Functional checkpoint progress disagrees with its kernel state."

@@ -11,6 +11,7 @@ from jaxtyping import Array
 
 from phydrax._execution_pool import PoolExecutionSignature
 from phydrax._identity import (
+    ArtifactBindingIdentity,
     callable_payload,
     ExecutableSignature,
     NumericRevision,
@@ -164,13 +165,69 @@ def test_pool_signature_delegates_to_the_generic_executable_signature():
         precision_id="float32",
         backend_id="cpu",
         shard_count=4,
+        static_callables={"response": _AffineCallable([2.0])},
     )
     generic = ExecutableSignature(
         topology_ids={"pool": "pool-topology"},
-        capacities={"shards": 4},
+        capacities={"shards": 4, "processes": 1},
         algorithm_facts={"method_id": "pool-method"},
         backend_facts={"backend_id": "cpu", "precision_id": "float32"},
+        static_callables={"response": _AffineCallable([2.0])},
     )
 
     assert pool.signature_id == generic.signature_id
     assert pool.executable_signature.signature_id == generic.signature_id
+
+
+def test_static_held_weights_are_part_of_the_executable_signature():
+    def signature(**callables):
+        return ExecutableSignature(
+            shapes={"x": (2,)}, dtypes={"x": "float32"}, static_callables=callables
+        ).signature_id
+
+    baseline = signature(response=_AffineCallable([1.0, 2.0]))
+    assert signature(response=_AffineCallable([1.0, 2.0])) == baseline
+    assert signature(response=_AffineCallable([1.0, 3.0])) != baseline
+    assert signature(response=_ActivatedCallable(_square)) != signature(
+        response=_ActivatedCallable(_cube)
+    )
+    assert signature() != baseline
+    with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+        signature(response=lambda value: value)
+
+
+def test_artifact_binding_identity_binds_all_three_identities():
+    semantic = SemanticProvenance({"kind": "affine-response"})
+    revision = NumericRevision(semantic, {"weight": jnp.asarray([1.0, 2.0])})
+    signature = ExecutableSignature(shapes={"weight": (2,)})
+    binding = ArtifactBindingIdentity(semantic, revision, signature)
+
+    assert (binding.semantic_id, binding.numeric_revision_id) == (
+        semantic.semantic_id,
+        revision.revision_id,
+    )
+    assert binding.executable_signature_id == signature.signature_id
+    assert ArtifactBindingIdentity.from_record(binding.to_record()) == binding
+    assert (
+        ArtifactBindingIdentity(
+            semantic.semantic_id, revision.revision_id, signature.signature_id
+        )
+        == binding
+    )
+    retrained = NumericRevision(semantic, {"weight": jnp.asarray([1.0, 5.0])})
+    assert (
+        ArtifactBindingIdentity(semantic, retrained, signature).binding_id
+        != binding.binding_id
+    )
+    foreign = NumericRevision(SemanticProvenance({"kind": "other"}), {})
+    with pytest.raises(ValueError, match="another semantic provenance"):
+        ArtifactBindingIdentity(semantic, foreign, signature)
+    record = binding.to_record()
+    with pytest.raises(ValueError, match="corrupt"):
+        ArtifactBindingIdentity.from_record(
+            {**record, "numeric_revision_id": retrained.revision_id}
+        )
+    with pytest.raises(ValueError, match="fields do not match"):
+        ArtifactBindingIdentity.from_record(
+            {key: value for key, value in record.items() if key != "binding_id"}
+        )

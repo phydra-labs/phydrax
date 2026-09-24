@@ -134,6 +134,15 @@ shared. Without a layout every array leaf carries the item axis. Large or
 heterogeneous modules remain separate worksets rather than being forced through
 one unbounded vectorization.
 
+Identity follows how weights reach the executable. Callables compiled into a
+pooled method with statically held weights are passed as
+`PoolExecutionSignature(static_callables=...)` and enter its
+`ExecutableSignature` through `callable_payload`. Dynamic weights passed as
+arguments do not change the signature; an `ExecutionWorksetCheckpoint` records
+the `NumericRevision`s bound into its items (`numeric_revisions=()` declares
+none), and `restore_execution_workset_checkpoint` requires the same bound
+revisions.
+
 ```python
 import jax
 import jax.numpy as jnp

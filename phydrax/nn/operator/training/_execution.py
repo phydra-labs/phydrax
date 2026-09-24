@@ -16,7 +16,9 @@ import jax
 import jax.numpy as jnp
 
 from ...._doc import DOC_KEY0
+from ...._external_runtime import _require_execution
 from ...._frozendict import frozendict
+from ...._model._component import ExecutionCapabilities
 from ...._model._ports import (
     ModelPorts,
     PortBindingEvidence,
@@ -469,11 +471,17 @@ class OperatorExecutionPlan(StrictModule):
     port of each named model output and ``port_binding`` records their audited
     binding to task target field ports; model outputs are routed to task targets
     by those port IDs.
+
+    ``execution`` holds the model's declared `ExecutionCapabilities`, consulted
+    before casting, preparation, and dispatch: the ``"compiled"`` strategy
+    requires ``jit``, and every prediction is admitted against them before the
+    model is invoked.
     """
 
     execution_model: AbstractOperatorModel
     task: OperatorTask = fixed_field()
     contract: ConfiguredOperatorContract
+    execution: ExecutionCapabilities
     output_ports: frozendict[str, ValuePort]
     port_binding: PortBindingEvidence
     fixed_query_fingerprints: frozendict[str, str]
@@ -537,6 +545,12 @@ class OperatorExecutionPlan(StrictModule):
             raise ValueError("compilation_strategy must be 'eager' or 'compiled'.")
         if padding_policy != "explicit_mask":
             raise ValueError("padding_policy must be 'explicit_mask'.")
+        execution = execution_model.model_execution_contract().execution
+        if compilation_strategy == "compiled" and not execution.jit:
+            raise ValueError(
+                f"The compiled strategy requires jit; the {execution.tier!r} "
+                "execution model does not support it."
+            )
 
         cast_model = policy.cast_model(execution_model)
         contract = cast_model.operator_contract
@@ -577,6 +591,7 @@ class OperatorExecutionPlan(StrictModule):
         self.execution_model = cast_model
         self.task = task
         self.contract = contract
+        self.execution = execution
         self.output_ports = output_ports_
         self.port_binding = port_binding
         self.fixed_query_fingerprints = frozendict(resolved_fixed_queries)
@@ -778,6 +793,7 @@ class OperatorExecutionPlan(StrictModule):
             raise ValueError(
                 "Prepared operator input belongs to a different runtime contract."
             )
+        _require_execution(self.execution, prepared, key)
         _, prediction = _evaluate_operator_step(
             self.execution_model,
             prepared.execution_batch,

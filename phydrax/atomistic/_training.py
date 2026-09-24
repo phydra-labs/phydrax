@@ -44,11 +44,7 @@ from .._training_kernel import (
 )
 from .._training_objective import _ObjectiveContribution
 from ._graph import AtomisticGraphExecutionPlan, realize_atomistic_graph
-from ._potential import (
-    _with_atomistic_potential_identity,
-    AbstractAtomisticPotential,
-    checkpoint_atomistic_potential,
-)
+from ._potential import AbstractAtomisticPotential, atomistic_potential_revision
 from ._types import AtomisticBatch, AtomisticStatus
 
 
@@ -589,20 +585,6 @@ def _supervision_objective(parameters, model_state, fixed, payload, keys):
     return _ObjectiveContribution(total, 1.0), model_state, components
 
 
-def _synchronize_potential_identity(tree: Any, checkpoint: _AtomisticPotential, /) -> Any:
-    """Align potential-node metadata in `tree` without changing any leaf."""
-
-    return jax.tree_util.tree_map(
-        lambda node: (
-            _with_atomistic_potential_identity(node, checkpoint)
-            if isinstance(node, AbstractAtomisticPotential)
-            else node
-        ),
-        tree,
-        is_leaf=lambda node: isinstance(node, AbstractAtomisticPotential),
-    )
-
-
 def _training_kernel(
     potential: _AtomisticPotential, policy: AtomisticTrainingPolicy, /
 ) -> PreparedTrainingKernel:
@@ -856,8 +838,6 @@ def fit_atomistic_potential(
             termination = "selection_or_host_control_stop"
             break
 
-    current = checkpoint_atomistic_potential(current)
-    state = _synchronize_potential_identity(state, current)
     if not validation_history and terminal_status not in (
         AtomisticStatus.NEIGHBOR_OVERFLOW,
         AtomisticStatus.NONFINITE,
@@ -885,7 +865,6 @@ def fit_atomistic_potential(
         else float("nan")
     )
     best_potential = control.selected(current) if policy.select_best else current
-    best_potential = checkpoint_atomistic_potential(best_potential)
     control.emit(
         TrainingIterationKind.RUN_TERMINAL,
         metrics={"final_loss": final_loss, "best_loss": best_loss},
@@ -895,8 +874,8 @@ def fit_atomistic_potential(
             "kind": "atomistic-training-result",
             "problem": problem.problem_id,
             "policy": policy.policy_id,
-            "potential": current.potential_id,
-            "best_potential": best_potential.potential_id,
+            "potential": atomistic_potential_revision(current).revision_id,
+            "best_potential": atomistic_potential_revision(best_potential).revision_id,
             "normalization": normalization.normalization_id,
             "updates": control.progress.update_step,
             "iteration_session": control.progress.iteration_session_id,

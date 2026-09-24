@@ -15,7 +15,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._graph import AtomisticGraphExecutionPlan
-from ._potential import AbstractAtomisticPotential
+from ._potential import AbstractAtomisticPotential, atomistic_potential_revision
 from ._types import (
     AtomicStructure,
     AtomisticBatch,
@@ -31,8 +31,7 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
     """Identity and mathematical guarantees of one energy/force evaluation."""
 
     architecture_id: str = eqx.field(static=True)
-    parameter_state_id: str = eqx.field(static=True)
-    potential_id: str = eqx.field(static=True)
+    potential_revision_id: str = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
     atom_topology_id: str = eqx.field(static=True)
     graph_execution_id: str = eqx.field(static=True)
@@ -52,9 +51,9 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
         execution: AtomisticGraphExecutionPlan,
         /,
     ):
+        revision = atomistic_potential_revision(potential)
         self.architecture_id = potential.architecture_id
-        self.parameter_state_id = potential.parameter_state_id
-        self.potential_id = potential.potential_id
+        self.potential_revision_id = revision.revision_id
         self.batch_id = batch.batch_id
         self.atom_topology_id = batch.atom_topology_id
         self.graph_execution_id = execution.plan_id
@@ -69,8 +68,7 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
             {
                 "kind": "atomistic-prediction-provenance",
                 "architecture": potential.architecture_id,
-                "parameter_state": potential.parameter_state_id,
-                "potential": potential.potential_id,
+                "potential_revision": revision.revision_id,
                 "batch": batch.batch_id,
                 "atom_topology": batch.atom_topology_id,
                 "graph_execution": execution.plan_id,
@@ -111,11 +109,11 @@ def energy_and_forces(
 ) -> AtomisticPrediction:
     """Evaluate energy once and derive forces as its negative position gradient.
 
-    Provenance is supported for constructor-created models, native training
-    results, and models returned by
-    ``phydrax.atomistic.checkpoint_atomistic_potential``. External Equinox or
-    Optax tree updates must be checkpointed before prediction; otherwise their
-    preserved static identity is intentionally not a valid provenance claim.
+    Provenance names the canonical numeric revision of the potential's current
+    parameters (``phydrax.atomistic.atomistic_potential_revision``), so any
+    parameter update is reflected without a separate checkpoint step. The
+    revision is a host boundary: call this function with concrete parameters,
+    not on a potential traced by ``jit``, ``vmap``, or ``grad``.
     """
 
     if not isinstance(potential, AbstractAtomisticPotential):

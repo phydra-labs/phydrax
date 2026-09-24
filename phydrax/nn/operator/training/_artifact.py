@@ -17,10 +17,13 @@ import equinox as eqx
 from ...._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
 from ...._document_resource import decode_json_resource
 from ...._external_resource import bounded_resource_from_bytes, ResourceLimits
+from ...._fingerprint import canonical_fingerprint
+from ...._identity import ArtifactBindingIdentity, SemanticProvenance
 from ...._model import (
     operator_architecture_codec,
     operator_architecture_codec_for,
 )
+from ...._model._component import ExecutionCapabilities
 from ...._model._ports import PortMapping, ValuePort
 from ...._model._structure import (
     deserialize_model_leaf as _deserialize_leaf,
@@ -33,6 +36,12 @@ from ...._model._structure import (
 )
 from ...._publication import publish_resource_set
 from ...._resource_set import open_bounded_resource_set, ResourceSetLimits
+from ...._trainable import partition_parameters, resolve_array_roles
+from ...._training_kernel import (
+    parameter_binding_identity,
+    require_binding_record,
+    training_role_schema_id,
+)
 from ....privacy import PrivacyCertificate
 from ..capabilities import OperatorTrainingEvidence
 from ..data import OperatorBatch
@@ -137,6 +146,53 @@ def _restore_port_binding(
     )
 
 
+def _artifact_binding(
+    trained: TrainedOperator,
+    architecture_id: str,
+    factory_id: str,
+    recipe: Mapping[str, Any] | None,
+    /,
+) -> ArtifactBindingIdentity:
+    """Bind the published execution model and output pipeline.
+
+    Semantics are the task and instance-contract fingerprints, the execution
+    model's architecture codec or factory ID, its structure-recipe fingerprint,
+    its role schema, and the binding of an external checkpoint it adapts. The
+    numeric revision is the PARAMETER lane of `(execution_model,
+    output_pipeline)`; the dtype policy and normalization join the executable.
+    """
+    from ..adapters import ExternalOperatorAdapter
+
+    model = (trained.execution_model, trained.output_pipeline)
+    parameters, _, _ = partition_parameters(model)
+    external = trained.execution_model
+    semantic = SemanticProvenance(
+        {
+            "task_fingerprint": trained.task_fingerprint,
+            "contract_fingerprint": trained.contract_fingerprint,
+            "execution_model_architecture_id": architecture_id,
+            "execution_model_factory_id": factory_id,
+            "execution_model_recipe_id": (
+                None if recipe is None else canonical_fingerprint(recipe)
+            ),
+            "role_schema_id": training_role_schema_id(resolve_array_roles(model)),
+            "external_binding_id": (
+                external.binding.binding_id
+                if isinstance(external, ExternalOperatorAdapter)
+                else None
+            ),
+        }
+    )
+    return parameter_binding_identity(
+        semantic,
+        parameters,
+        algorithm_facts={
+            "dtype_policy": trained.dtype_policy.to_dict(),
+            "normalization_fingerprint": trained.normalization_fingerprint,
+        },
+    )
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class OperatorArtifactTrainingState:
     """Restored optional optimizer/loop state and its immutable metadata."""
@@ -177,6 +233,7 @@ class OperatorArtifactManifest:
     privacy_certificate: Mapping[str, Any] | None
     privacy_classification: Literal["restricted", "public"] | None
     external_manifest: Mapping[str, Any] | None
+    binding: Mapping[str, str]
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any], /) -> "OperatorArtifactManifest":
@@ -209,6 +266,7 @@ class OperatorArtifactManifest:
             "privacy_certificate",
             "privacy_classification",
             "external_manifest",
+            "binding",
         }
         missing = expected - set(value)
         unknown = set(value) - expected
@@ -342,6 +400,7 @@ class OperatorArtifactManifest:
             raise ValueError(
                 "Nonportable operator artifacts cannot contain portable recipes."
             )
+        ArtifactBindingIdentity.from_record(value["binding"])
         return cls(
             format=value["format"],
             artifact_id=value["artifact_id"],
@@ -371,6 +430,7 @@ class OperatorArtifactManifest:
             privacy_certificate=privacy_certificate,
             privacy_classification=privacy_classification,
             external_manifest=value["external_manifest"],
+            binding=value["binding"],
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -594,6 +654,9 @@ def save_operator_artifact(
             else ("public" if public_release else "restricted")
         ),
         external_manifest=external_manifest,
+        binding=_artifact_binding(
+            trained, architecture_id, factory_id, execution_model_recipe
+        ).to_record(),
     )
     members = {
         model_name: model_bytes,
@@ -620,7 +683,11 @@ def load_trained_operator(
     execution_model_like: OperatorModel | None = None,
     output_pipeline_like: OperatorOutputPipeline | None = None,
 ) -> TrainedOperator:
-    """Verify and restore a task-bound operator without templates when portable."""
+    """Verify and restore a task-bound operator without templates when portable.
+
+    The manifest's `ArtifactBindingIdentity` is recomputed from the restored
+    model and must match exactly.
+    """
     manifest, members = _read_operator_artifact(path)
     if manifest.execution_model_portable:
         if manifest.execution_model_recipe is None:
@@ -774,6 +841,16 @@ def load_trained_operator(
         raise ValueError("Operator artifact instance-contract fingerprint mismatch.")
     if trained.precision_evidence != precision_evidence:
         raise ValueError("Operator artifact effective precision mismatch.")
+    require_binding_record(
+        manifest.binding,
+        _artifact_binding(
+            trained,
+            manifest.execution_model_architecture_id,
+            manifest.execution_model_factory_id,
+            manifest.execution_model_recipe,
+        ),
+        context="Operator artifact",
+    )
     return trained
 
 
@@ -855,6 +932,7 @@ def load_external_trained_operator(
     *,
     input_adapter: Any,
     output_adapter: Any,
+    capabilities: ExecutionCapabilities,
     in_size: int | tuple[int, ...] | Literal["scalar"],
     out_size: int | tuple[int, ...] | Literal["scalar"],
     dtype_policy: OperatorDTypePolicy | None = None,
@@ -863,7 +941,10 @@ def load_external_trained_operator(
     fixed_query_batch: OperatorBatch | None = None,
     output_pipeline: OperatorOutputPipeline | None = None,
 ) -> TrainedOperator:
-    """Verify an external checkpoint and place it behind the task-bound runtime."""
+    """Verify an external checkpoint and place it behind the task-bound runtime.
+
+    The runner executes under the declared `capabilities`.
+    """
     from ..adapters import load_external_operator_adapter
 
     adapter = load_external_operator_adapter(
@@ -872,6 +953,7 @@ def load_external_trained_operator(
         loader,
         input_adapter=input_adapter,
         output_adapter=output_adapter,
+        capabilities=capabilities,
         in_size=in_size,
         out_size=out_size,
     )

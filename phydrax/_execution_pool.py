@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import equinox as eqx
@@ -19,7 +19,13 @@ from ._strict import StrictModule
 
 
 class PoolExecutionSignature(StrictModule):
-    """Pool-specific view of the generic static executable identity."""
+    """Pool-specific view of the generic static executable identity.
+
+    `static_callables` names callables compiled into the pooled method. Weights
+    they hold statically are part of the executable, so they enter the
+    signature through `callable_payload`; dynamic weights passed as arguments do
+    not, and are identified by `NumericRevision` where they are checkpointed.
+    """
 
     topology_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
@@ -42,6 +48,8 @@ class PoolExecutionSignature(StrictModule):
         shard_count: int | None = None,
         execution_plan_id: str | None = None,
         execution_group: ExecutionGroupSpec | None = None,
+        static_callables: Mapping[str, Callable[..., Any]]
+        | Sequence[tuple[str, Callable[..., Any]]] = (),
     ):
         values = tuple(
             str(value) for value in (topology_id, method_id, precision_id, backend_id)
@@ -100,6 +108,7 @@ class PoolExecutionSignature(StrictModule):
                     else {"execution_plan_id": self.execution_plan_id}
                 ),
             },
+            static_callables=static_callables,
         )
         self.signature_id = self.executable_signature.signature_id
 

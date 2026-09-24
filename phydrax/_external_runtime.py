@@ -1,7 +1,10 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Host-only, pinned external energy execution. This is not a security sandbox."""
+"""Host-only external execution: pinned engines, host inference, staged adjoints.
+
+This is not a security sandbox.
+"""
 
 from __future__ import annotations
 
@@ -16,13 +19,16 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
 
 import jax
 import jax.core
+import jax.numpy as jnp
+import numpy as np
 
 from ._external_resource import read_bounded_resource, ResourceLimits
 from ._external_worker import (
@@ -34,6 +40,8 @@ from ._external_worker import (
 )
 from ._fingerprint import canonical_fingerprint, canonical_json
 from ._host_io import open_regular_file
+from ._identity import ArtifactBindingIdentity
+from ._model._component import ExecutionCapabilities
 from .artifacts import ScientificArtifactEnvelope
 from .backends._types import BackendUnavailableError
 from .logging import emit
@@ -50,6 +58,27 @@ def _host_only(*values: Any) -> None:
         isinstance(leaf, jax.core.Tracer) for leaf in jax.tree_util.tree_leaves(values)
     ):
         raise TypeError("External energy operations require concrete host values.")
+
+
+def _require_execution(capabilities: ExecutionCapabilities, /, *values: Any) -> None:
+    """Admit one external invocation before anything reaches the runtime.
+
+    The declared capabilities are checked first. A host-only model then refuses
+    every active JAX transformation (`jit`, `vmap`, `grad`, `jvp`, `vjp`) and,
+    through `_host_only`, traced values, so a refused call never invokes the
+    runner.
+    """
+    if not isinstance(capabilities, ExecutionCapabilities):
+        raise TypeError("External execution requires declared ExecutionCapabilities.")
+    if not capabilities.host_only:
+        return
+    if not jax.core.trace_ctx.is_top_level():
+        raise TypeError(
+            f"Host-only {capabilities.tier!r} execution cannot run inside JAX "
+            "transformations (jit, vmap, grad, jvp, vjp); call it eagerly with "
+            "concrete values."
+        )
+    _host_only(*values)
 
 
 def _positive_timeout(value: float) -> float:
@@ -955,17 +984,538 @@ def run_opendss(
         worker.close()
 
 
+# External model tiers ---------------------------------------------------------------
+
+ExternalTransport: type = Literal["copy", "dlpack"]
+ExternalDerivativeRoute: type = Literal["external-adjoint", "none"]
+
+# Phydrax methods that need only function values. A provider without an adjoint
+# reports them; none is ever selected on the caller's behalf.
+_DERIVATIVE_FREE_ALTERNATIVES = (
+    "phydrax.optim.OpenEvolutionStrategy",
+    "phydrax.optim.POUNDERS",
+    "phydrax.optim.search_differential_evolution",
+    "phydrax.uq.fit_eki",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalDerivativeSupport:
+    """Derivative route of one external provider; nothing is selected implicitly.
+
+    `route="external-adjoint"` means the provider applies staged adjoint actions
+    (`ExternalAdjointAction`). `route="none"` means it has no adjoint:
+    `alternatives` then lists the Phydrax derivative-free methods that can drive
+    it through eager function values. Phydrax never switches to one silently.
+    """
+
+    route: ExternalDerivativeRoute
+    alternatives: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        match self.route:
+            case "external-adjoint":
+                if self.alternatives:
+                    raise ValueError("An adjoint provider reports no alternatives.")
+            case "none":
+                if not self.alternatives:
+                    raise ValueError(
+                        "A provider without an adjoint reports derivative-free "
+                        "alternatives."
+                    )
+            case _:
+                raise ValueError(f"Unknown external derivative route {self.route!r}.")
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalTensorSpec:
+    """Declared name, exact shape, and exact dtype of one host tensor.
+
+    Values are never cast or reshaped to fit: a mismatch is refused. `dtype`
+    accepts any NumPy dtype specification and is stored as its canonical
+    `numpy.dtype.str`.
+    """
+
+    name: str
+    shape: tuple[int, ...]
+    dtype: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("Tensor spec names must be non-empty strings.")
+        if isinstance(self.shape, (str, bytes)) or not isinstance(self.shape, Sequence):
+            raise TypeError("Tensor spec shapes must be integer sequences.")
+        shape = tuple(self.shape)
+        if any(
+            isinstance(size, bool) or not isinstance(size, (int, np.integer))
+            for size in shape
+        ):
+            raise TypeError("Tensor spec shape dimensions must be integers.")
+        if any(size < 0 for size in shape):
+            raise ValueError("Tensor spec shape dimensions must be nonnegative.")
+        dtype = np.dtype(self.dtype)
+        if dtype.hasobject:
+            raise TypeError("Tensor specs require a numeric dtype.")
+        object.__setattr__(self, "shape", tuple(int(size) for size in shape))
+        object.__setattr__(self, "dtype", dtype.str)
+
+    def check(self, array: np.ndarray, role: str, /) -> np.ndarray:
+        """Return `array` after refusing any shape or dtype mismatch."""
+        if tuple(array.shape) != self.shape:
+            raise ValueError(
+                f"{role} {self.name!r} must have shape {self.shape}; got {array.shape}."
+            )
+        if array.dtype.str != self.dtype:
+            raise TypeError(
+                f"{role} {self.name!r} must have dtype {self.dtype}; "
+                f"got {array.dtype.str}."
+            )
+        return array
+
+
+def _tensor_schema(
+    specs: Sequence[ExternalTensorSpec], name: str, /
+) -> tuple[ExternalTensorSpec, ...]:
+    if isinstance(specs, (str, bytes)) or not isinstance(specs, Sequence):
+        raise TypeError(f"{name} must be a sequence of ExternalTensorSpec.")
+    schema = tuple(specs)
+    if not schema or any(not isinstance(spec, ExternalTensorSpec) for spec in schema):
+        raise TypeError(f"{name} must be a non-empty sequence of ExternalTensorSpec.")
+    if len({spec.name for spec in schema}) != len(schema):
+        raise ValueError(f"{name} names must be unique.")
+    return schema
+
+
+def _schema_record(schema: tuple[ExternalTensorSpec, ...], /) -> list[list[Any]]:
+    return [[spec.name, list(spec.shape), spec.dtype] for spec in schema]
+
+
+def _require_finite(array: np.ndarray, role: str, name: str, /) -> np.ndarray:
+    if array.dtype.kind in "fc" and not np.all(np.isfinite(array)):
+        raise RuntimeError(f"{role} {name!r} contains non-finite values.")
+    return array
+
+
+def _read_only(value: Any, /) -> np.ndarray:
+    # An owned read-only array is already detached; anything else is copied.
+    if isinstance(value, np.ndarray) and value.base is None and not value.flags.writeable:
+        return value
+    array = np.array(value, copy=True)
+    array.setflags(write=False)
+    return array
+
+
+def _detached(value: Any, spec: ExternalTensorSpec, role: str, /) -> np.ndarray:
+    """Return a read-only host copy of `value` checked against `spec`."""
+    return spec.check(_read_only(value), role)
+
+
+def _array_record(array: np.ndarray, /) -> list[Any]:
+    contiguous = np.ascontiguousarray(array)
+    return [
+        list(array.shape),
+        array.dtype.str,
+        hashlib.sha256(contiguous.tobytes(order="C")).hexdigest(),
+    ]
+
+
+def _host_transport_input(
+    value: Any, spec: ExternalTensorSpec, transport: ExternalTransport, /
+) -> np.ndarray:
+    match transport:
+        case "copy":
+            array = np.array(value, copy=True)
+        case "dlpack":
+            if not hasattr(value, "__dlpack__"):
+                raise TypeError(
+                    f"DLPack transport requires input {spec.name!r} to export __dlpack__."
+                )
+            array = np.from_dlpack(value)
+        case _:
+            raise ValueError(f"Unknown host transport {transport!r}.")
+    return spec.check(array, "Host inference input")
+
+
+def _host_transport_output(
+    value: Any, spec: ExternalTensorSpec, transport: ExternalTransport, /
+) -> jax.Array:
+    role = "Host inference output"
+    match transport:
+        case "copy":
+            host = _require_finite(spec.check(np.asarray(value), role), role, spec.name)
+            return jnp.array(host, copy=True)
+        case "dlpack":
+            host = _require_finite(
+                spec.check(np.from_dlpack(value), role), role, spec.name
+            )
+            return jnp.from_dlpack(host)
+        case _:
+            raise ValueError(f"Unknown host transport {transport!r}.")
+
+
+_HOST_INFERENCE_CAPABILITIES = ExecutionCapabilities("host-inference", host_only=True)
+_EXTERNAL_ADJOINT_CAPABILITIES = ExecutionCapabilities("external-adjoint", host_only=True)
+
+
+# A weak-reference slot lets `jax.jit(adapter)` trace far enough to be refused
+# by the capability guard instead of failing on the callable itself.
+@dataclass(frozen=True, slots=True, eq=False, weakref_slot=True)
+class HostInferenceAdapter:
+    """Eager inference through a host runtime outside JAX.
+
+    `runner` receives one host NumPy array per `input_schema` entry, in schema
+    order, and returns one array per `output_schema` entry. Both sides are checked
+    exactly against the schemas and outputs must be finite. Results are detached
+    concrete JAX arrays: they carry no derivative relation to the inputs.
+
+    `transport="copy"` copies across the host boundary. `transport="dlpack"`
+    exchanges buffers without copying through DLPack: inputs must export
+    `__dlpack__` and outputs alias the buffers the runtime returned.
+
+    The adapter is host-only (`capabilities.tier == "host-inference"`): `jit`,
+    `vmap`, `grad`, `jvp`, and `vjp` are refused before the runtime is invoked.
+    It offers no adjoint, so `derivative_support` reports derivative-free
+    alternatives without selecting one. `binding` is the artifact binding
+    identity of the loaded model.
+    """
+
+    runner: Callable[[tuple[np.ndarray, ...]], Sequence[Any]]
+    input_schema: tuple[ExternalTensorSpec, ...]
+    output_schema: tuple[ExternalTensorSpec, ...]
+    binding: ArtifactBindingIdentity
+    transport: ExternalTransport = "copy"
+
+    def __post_init__(self) -> None:
+        if not callable(self.runner):
+            raise TypeError("runner must be callable.")
+        object.__setattr__(
+            self, "input_schema", _tensor_schema(self.input_schema, "input_schema")
+        )
+        object.__setattr__(
+            self, "output_schema", _tensor_schema(self.output_schema, "output_schema")
+        )
+        if not isinstance(self.binding, ArtifactBindingIdentity):
+            raise TypeError("binding must be an ArtifactBindingIdentity.")
+        if self.transport not in ("copy", "dlpack"):
+            raise ValueError("transport must be 'copy' or 'dlpack'.")
+
+    @property
+    def capabilities(self) -> ExecutionCapabilities:
+        """Host-only `"host-inference"` execution capabilities."""
+        return _HOST_INFERENCE_CAPABILITIES
+
+    @property
+    def derivative_support(self) -> ExternalDerivativeSupport:
+        """No adjoint; the derivative-free alternatives, none selected."""
+        return ExternalDerivativeSupport("none", _DERIVATIVE_FREE_ALTERNATIVES)
+
+    def __call__(self, *inputs: Any) -> jax.Array | tuple[jax.Array, ...]:
+        _require_execution(self.capabilities, inputs)
+        if len(inputs) != len(self.input_schema):
+            raise ValueError(
+                f"Host inference expects {len(self.input_schema)} inputs; "
+                f"got {len(inputs)}."
+            )
+        host = tuple(
+            _host_transport_input(value, spec, self.transport)
+            for value, spec in zip(inputs, self.input_schema, strict=True)
+        )
+        raw = self.runner(host)
+        if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
+            raise TypeError("Host inference runners must return a sequence of arrays.")
+        if len(raw) != len(self.output_schema):
+            raise RuntimeError(
+                f"Host inference returned {len(raw)} outputs; the output schema "
+                f"declares {len(self.output_schema)}."
+            )
+        outputs = tuple(
+            _host_transport_output(value, spec, self.transport)
+            for value, spec in zip(raw, self.output_schema, strict=True)
+        )
+        return outputs[0] if len(outputs) == 1 else outputs
+
+
+def _record_pairs(value: Any, name: str, /) -> tuple[tuple[str, Any], ...]:
+    items = tuple(value.items()) if isinstance(value, Mapping) else tuple(value)
+    if any(
+        not isinstance(item, tuple) or len(item) != 2 or not isinstance(item[0], str)
+        for item in items
+    ):
+        raise TypeError(f"{name} must be a mapping or a sequence of (name, value).")
+    keys = [key for key, _ in items]
+    if len(set(keys)) != len(keys):
+        raise ValueError(f"{name} names must be unique.")
+    return tuple(sorted(items, key=lambda item: item[0]))
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class ExternalPrimalStage:
+    """One detached external primal evaluation staged for its adjoint.
+
+    `inputs` and `outputs` are read-only host copies; a failed primal
+    (`failure_reason` non-empty) exposes no outputs and no replay data.
+    `realization_id` names the provider realization the primal produced (for
+    example state, mesh, and design digests); `replay_data` holds the
+    provider's detached arrays its adjoint replays against; `evidence` names
+    artifact and convergence evidence IDs. `replay_id` content-addresses all of
+    it together with the owning action's `action_id`.
+    """
+
+    action_id: str
+    inputs: tuple[np.ndarray, ...]
+    outputs: tuple[np.ndarray, ...]
+    realization_id: str
+    replay_data: tuple[tuple[str, np.ndarray], ...] = ()
+    evidence: tuple[tuple[str, str], ...] = ()
+    failure_reason: str = ""
+    replay_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.action_id, str) or not self.action_id:
+            raise ValueError("action_id must be a non-empty string.")
+        if not isinstance(self.failure_reason, str):
+            raise TypeError("failure_reason must be a string.")
+        if not isinstance(self.realization_id, str):
+            raise TypeError("realization_id must be a string.")
+        inputs = tuple(_read_only(value) for value in self.inputs)
+        outputs = tuple(_read_only(value) for value in self.outputs)
+        replay_data = tuple(
+            (name, _read_only(value))
+            for name, value in _record_pairs(self.replay_data, "replay_data")
+        )
+        evidence = _record_pairs(self.evidence, "evidence")
+        if any(not isinstance(value, str) for _, value in evidence):
+            raise TypeError("evidence values must be identifier strings.")
+        if self.failure_reason:
+            if outputs or replay_data:
+                raise ValueError(
+                    "A failed external primal exposes no outputs or replay data."
+                )
+        elif not self.realization_id:
+            raise ValueError("An accepted external primal names its realization.")
+        object.__setattr__(self, "inputs", inputs)
+        object.__setattr__(self, "outputs", outputs)
+        object.__setattr__(self, "replay_data", replay_data)
+        object.__setattr__(self, "evidence", evidence)
+        object.__setattr__(
+            self,
+            "replay_id",
+            canonical_fingerprint(
+                {
+                    "kind": "external-primal-stage",
+                    "action_id": self.action_id,
+                    "inputs": [_array_record(value) for value in inputs],
+                    "outputs": [_array_record(value) for value in outputs],
+                    "realization_id": self.realization_id,
+                    "replay_data": [
+                        [name, _array_record(value)] for name, value in replay_data
+                    ],
+                    "evidence": [list(record) for record in evidence],
+                    "failure_reason": self.failure_reason,
+                }
+            ),
+        )
+
+    @property
+    def accepted(self) -> bool:
+        """Whether the provider accepted the primal."""
+        return not self.failure_reason
+
+    def replay(self, name: str, /) -> np.ndarray:
+        """Return one named replay array."""
+        for key, value in self.replay_data:
+            if key == name:
+                return value
+        raise KeyError(name)
+
+
+class ExternalAdjointAction(ABC):
+    """Staged host-boundary VJP of one external provider (no `pure_callback`).
+
+    `stage_primal(*inputs)` evaluates the provider eagerly on concrete values
+    checked against `input_schema` and returns an `ExternalPrimalStage`.
+    Downstream JAX code differentiates with respect to the stage outputs, and
+    `apply_adjoint(stage, *output_cotangents)` returns the input cotangents
+    `Jᵀȳ` formed at exactly that staged realization; upstream JAX code continues
+    the chain with its own VJP. Both calls are host-only and refuse every JAX
+    transformation before reaching the provider.
+
+    Providers implement `_primal(inputs)`, returning the stage built with this
+    action's `action_id`, and `_adjoint(stage, output_cotangents)`, returning
+    `(input_cotangents, realization_id)` where `realization_id` names the
+    realization the adjoint was formed at. A realization that differs from the
+    staged one is a replay mismatch and is refused; so is a stage of another
+    action or a failed primal. `action_id` content-addresses the provider,
+    version, schemas, and `configuration_id`.
+    """
+
+    provider: str
+    version: str
+    input_schema: tuple[ExternalTensorSpec, ...]
+    output_schema: tuple[ExternalTensorSpec, ...]
+    configuration_id: str
+    action_id: str
+
+    def __init__(
+        self,
+        *,
+        provider: str,
+        version: str,
+        input_schema: Sequence[ExternalTensorSpec],
+        output_schema: Sequence[ExternalTensorSpec],
+        configuration_id: str,
+    ):
+        identifiers = {
+            "provider": provider,
+            "version": version,
+            "configuration_id": configuration_id,
+        }
+        for name, value in identifiers.items():
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a non-empty string.")
+        inputs = _tensor_schema(input_schema, "input_schema")
+        outputs = _tensor_schema(output_schema, "output_schema")
+        self.provider = provider
+        self.version = version
+        self.input_schema = inputs
+        self.output_schema = outputs
+        self.configuration_id = configuration_id
+        self.action_id = canonical_fingerprint(
+            {
+                "kind": "external-adjoint-action",
+                "provider": provider,
+                "version": version,
+                "input_schema": _schema_record(inputs),
+                "output_schema": _schema_record(outputs),
+                "configuration_id": configuration_id,
+            }
+        )
+
+    @property
+    def capabilities(self) -> ExecutionCapabilities:
+        """Host-only `"external-adjoint"` execution capabilities."""
+        return _EXTERNAL_ADJOINT_CAPABILITIES
+
+    @property
+    def derivative_support(self) -> ExternalDerivativeSupport:
+        """Staged external adjoint; no derivative-free alternative is needed."""
+        return ExternalDerivativeSupport("external-adjoint", ())
+
+    @abstractmethod
+    def _primal(self, inputs: tuple[np.ndarray, ...], /) -> ExternalPrimalStage:
+        raise NotImplementedError
+
+    @abstractmethod
+    def _adjoint(
+        self,
+        stage: ExternalPrimalStage,
+        output_cotangents: tuple[np.ndarray, ...],
+        /,
+    ) -> tuple[Sequence[Any], str]:
+        raise NotImplementedError
+
+    def stage_primal(self, *inputs: Any) -> ExternalPrimalStage:
+        """Evaluate the provider once and stage the detached primal."""
+        _require_execution(self.capabilities, inputs)
+        if len(inputs) != len(self.input_schema):
+            raise ValueError(
+                f"{self.provider} expects {len(self.input_schema)} inputs; "
+                f"got {len(inputs)}."
+            )
+        host = tuple(
+            _detached(value, spec, "External input")
+            for value, spec in zip(inputs, self.input_schema, strict=True)
+        )
+        stage = self._primal(host)
+        if not isinstance(stage, ExternalPrimalStage):
+            raise TypeError(f"{self.provider} did not return an ExternalPrimalStage.")
+        if stage.action_id != self.action_id:
+            raise ValueError(f"{self.provider} staged a primal of another action.")
+        if len(stage.inputs) != len(host) or any(
+            staged.dtype != given.dtype or not np.array_equal(staged, given)
+            for staged, given in zip(stage.inputs, host, strict=True)
+        ):
+            raise ValueError(f"{self.provider} staged different inputs.")
+        if stage.accepted:
+            if len(stage.outputs) != len(self.output_schema):
+                raise RuntimeError(
+                    f"{self.provider} staged {len(stage.outputs)} outputs; the "
+                    f"output schema declares {len(self.output_schema)}."
+                )
+            for output, spec in zip(stage.outputs, self.output_schema, strict=True):
+                _require_finite(
+                    spec.check(output, "External output"), "Output", spec.name
+                )
+        return stage
+
+    def apply_adjoint(
+        self, stage: ExternalPrimalStage, /, *output_cotangents: Any
+    ) -> tuple[np.ndarray, ...]:
+        """Return the input cotangents `Jᵀȳ` at the staged realization."""
+        _require_execution(self.capabilities, output_cotangents)
+        if not isinstance(stage, ExternalPrimalStage):
+            raise TypeError("stage must be an ExternalPrimalStage.")
+        if stage.action_id != self.action_id:
+            raise ValueError(
+                f"Replay mismatch: the stage belongs to another action, not this "
+                f"{self.provider} action."
+            )
+        if not stage.accepted:
+            raise ValueError(
+                f"The staged {self.provider} primal was not accepted "
+                f"({stage.failure_reason}); it has no adjoint."
+            )
+        if len(output_cotangents) != len(self.output_schema):
+            raise ValueError(
+                f"{self.provider} expects {len(self.output_schema)} output "
+                f"cotangents; got {len(output_cotangents)}."
+            )
+        cotangents = tuple(
+            _detached(value, spec, "Output cotangent")
+            for value, spec in zip(output_cotangents, self.output_schema, strict=True)
+        )
+        result = self._adjoint(stage, cotangents)
+        if not isinstance(result, tuple) or len(result) != 2:
+            raise TypeError(
+                f"{self.provider} adjoint must return (input_cotangents, realization_id)."
+            )
+        values, realization_id = result
+        if realization_id != stage.realization_id:
+            raise ValueError(
+                f"Replay mismatch: the {self.provider} adjoint was formed at "
+                f"realization {realization_id!r}, not the staged "
+                f"{stage.realization_id!r}."
+            )
+        if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+            raise TypeError(f"{self.provider} adjoint must return a sequence.")
+        if len(values) != len(self.input_schema):
+            raise RuntimeError(
+                f"{self.provider} adjoint returned {len(values)} cotangents; the "
+                f"input schema declares {len(self.input_schema)}."
+            )
+        return tuple(
+            _require_finite(
+                _detached(value, spec, "Input cotangent"), "Input cotangent", spec.name
+            )
+            for value, spec in zip(values, self.input_schema, strict=True)
+        )
+
+
 __all__ = [
-    "ExternalExecutionPolicy",
-    "ExternalIsolation",
-    "PinnedExecutable",
     "EnergyOutput",
     "EnergyRunResult",
     "EnergyRuntimeError",
+    "ExternalAdjointAction",
+    "ExternalDerivativeSupport",
+    "ExternalExecutionPolicy",
+    "ExternalIsolation",
+    "ExternalPrimalStage",
+    "ExternalTensorSpec",
     "OpenDSSRunResult",
+    "PinnedExecutable",
     "pin_energy_executable",
     "run_energy_command",
     "run_energyplus",
-    "run_radiance_command",
     "run_opendss",
+    "run_radiance_command",
 ]

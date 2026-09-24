@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
 import equinox as eqx
@@ -26,6 +26,7 @@ from ._execution_runtime import (
 )
 from ._execution_tasks import HostTaskExecutor, InlineTaskExecutor
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ._identity import NumericRevision
 from ._sampling._addressing import SampleAddress
 from ._strict import StrictModule
 from ._trainable import LaneLayout, NonTrainableState
@@ -527,12 +528,19 @@ def evaluate_execution_worksets_filter_vmap(
 
 
 class ExecutionWorksetCheckpoint(StrictModule, NonTrainableState):
-    """Content-addressed host checkpoint for canonical item state and RNG counters."""
+    """Content-addressed host checkpoint for canonical item state and RNG counters.
+
+    `numeric_revisions` are the `NumericRevision`s of the dynamic numeric content
+    (for example learned weights) bound into the evaluated items; `()` declares
+    that no such content was bound. Their sorted revision IDs enter the
+    checkpoint identity, and restoring requires the same bound revisions.
+    """
 
     state: Any
     rng_counters: Array
     prepared_id: str = eqx.field(static=True)
     semantic_ids: tuple[str, ...] = eqx.field(static=True)
+    numeric_revision_ids: tuple[str, ...] = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
     def __init__(
@@ -541,6 +549,8 @@ class ExecutionWorksetCheckpoint(StrictModule, NonTrainableState):
         state: PyTree[ArrayLike],
         rng_counters: ArrayLike,
         /,
+        *,
+        numeric_revisions: Sequence[NumericRevision],
     ):
         if not isinstance(prepared, PreparedExecutionWorksets):
             raise TypeError("prepared must be PreparedExecutionWorksets.")
@@ -548,21 +558,37 @@ class ExecutionWorksetCheckpoint(StrictModule, NonTrainableState):
         counters = jnp.asarray(rng_counters, dtype=jnp.uint32)
         if counters.shape != (prepared.item_count,):
             raise ValueError("rng_counters must contain one scalar counter per item.")
+        revision_ids = _numeric_revision_ids(numeric_revisions)
         self.state = arrays
         self.rng_counters = counters
         self.prepared_id = prepared.prepared_id
         self.semantic_ids = prepared.plan.semantic_ids
+        self.numeric_revision_ids = revision_ids
         self.checkpoint_id = _checkpoint_id(
             prepared.prepared_id,
             prepared.plan.semantic_ids,
+            revision_ids,
             arrays,
             counters,
         )
 
 
+def _numeric_revision_ids(
+    numeric_revisions: Sequence[NumericRevision], /
+) -> tuple[str, ...]:
+    revisions = tuple(numeric_revisions)
+    if any(not isinstance(revision, NumericRevision) for revision in revisions):
+        raise TypeError("numeric_revisions must contain NumericRevision values.")
+    revision_ids = tuple(sorted(revision.revision_id for revision in revisions))
+    if len(set(revision_ids)) != len(revision_ids):
+        raise ValueError("numeric_revisions must be distinct.")
+    return revision_ids
+
+
 def _checkpoint_id(
     prepared_id: str,
     semantic_ids: tuple[str, ...],
+    numeric_revision_ids: tuple[str, ...],
     state: PyTree[Array],
     counters: Array,
     /,
@@ -572,6 +598,7 @@ def _checkpoint_id(
             "kind": "execution-workset-checkpoint",
             "prepared": prepared_id,
             "semantic_ids": list(semantic_ids),
+            "numeric_revision_ids": list(numeric_revision_ids),
             "state": array_tree_fingerprint(state),
             "rng_counters": array_tree_fingerprint(counters),
         }
@@ -675,8 +702,14 @@ def restore_execution_workset_checkpoint(
     prepared: PreparedExecutionWorksets,
     checkpoint: ExecutionWorksetCheckpoint,
     /,
+    *,
+    numeric_revisions: Sequence[NumericRevision],
 ) -> tuple[PyTree[Array], Array]:
-    """Validate topology and payload identity before returning checkpoint state."""
+    """Validate topology, bound numeric revisions, and payload identity.
+
+    `numeric_revisions` are the revisions currently bound into the items; they
+    must be exactly the revisions the checkpoint was produced with.
+    """
     if not isinstance(prepared, PreparedExecutionWorksets):
         raise TypeError("prepared must be PreparedExecutionWorksets.")
     if not isinstance(checkpoint, ExecutionWorksetCheckpoint):
@@ -686,9 +719,14 @@ def restore_execution_workset_checkpoint(
         or checkpoint.semantic_ids != prepared.plan.semantic_ids
     ):
         raise ValueError("Execution workset checkpoint belongs to another runtime.")
+    if _numeric_revision_ids(numeric_revisions) != checkpoint.numeric_revision_ids:
+        raise ValueError(
+            "Execution workset checkpoint was produced with other bound numeric revisions."
+        )
     observed = _checkpoint_id(
         checkpoint.prepared_id,
         checkpoint.semantic_ids,
+        checkpoint.numeric_revision_ids,
         checkpoint.state,
         checkpoint.rng_counters,
     )

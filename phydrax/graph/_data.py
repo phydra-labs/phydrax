@@ -7,6 +7,9 @@ import jax.numpy as jnp
 from phydrax._strict import StrictModule
 
 from ._ir import batch_graphs, GraphIR, unbatch_graph
+
+# PyG-style batch conversion counts nodes and edges per graph once while
+# building `GraphIR` layout; a one-off segment count needs no prepared relation.
 from ._kernels import segment_sum
 
 

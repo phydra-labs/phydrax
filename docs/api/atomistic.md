@@ -41,7 +41,7 @@ distributed execution are documented on the split
 
 ::: phydrax.atomistic.AbstractAtomisticPotential
 
-::: phydrax.atomistic.checkpoint_atomistic_potential
+::: phydrax.atomistic.atomistic_potential_revision
 
 ::: phydrax.nn.atomistic.PaiNNPotential
 

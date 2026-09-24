@@ -141,11 +141,12 @@ def test_verified_signed_provider_force_routes_identically_through_worksets() ->
     )
     assert jnp.array_equal(serial.values, vectorized.values)
     assert jnp.array_equal(vectorized.values[:, 0], jnp.asarray([10.0, 20.0, 30.0]))
+    # No learned numeric content is bound into these items.
     checkpoint = ExecutionWorksetCheckpoint(
-        worksets, vectorized.values, vectorized.next_rng_counters
+        worksets, vectorized.values, vectorized.next_rng_counters, numeric_revisions=()
     )
     restarted, restarted_counters = restore_execution_workset_checkpoint(
-        worksets, checkpoint
+        worksets, checkpoint, numeric_revisions=()
     )
     assert jnp.array_equal(restarted, vectorized.values)
     assert jnp.array_equal(restarted_counters, vectorized.next_rng_counters)

@@ -12,6 +12,11 @@ import jax.tree_util as jtu
 from phydrax._strict import StrictModule
 
 from ._graph import ensure_graph, GraphIR
+
+# The jraph-compatible model family exposes pluggable aggregators with the jraph
+# callback contract `(data, segment_ids, num_segments)`, so `segment_sum` stays
+# its default aggregator. Phydrax-native fixed-topology layers reduce over
+# `GraphIR.edge_relation()` with `phydrax.sparse.route_reduce` instead.
 from ._kernels import segment_softmax, segment_sum
 
 

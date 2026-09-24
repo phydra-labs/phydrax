@@ -314,6 +314,31 @@ JSON/UBJSON artifacts. Conversion is one-time and fail-closed:
 Unsupported options raise `UnsupportedConversionError`; there is no fallback to
 source prediction and no per-call NumPy conversion.
 
+Models that stay in another framework are placed on an explicit execution tier
+(`phydrax.ExecutionCapabilities`) rather than converted:
+
+- **functional JAX**: `phydrax.nn.models.FunctionalJAXAdapter` wraps
+  `apply(parameters, model_state, input, key, *, inference) -> (output,
+  next_model_state)` (the form of Haiku `transform_with_state`, Flax
+  `apply(..., mutable=...)`, and Equinox `make_with_state`; none of these
+  packages is required). `parameters` are PARAMETER, `model_state` is
+  MODEL_STATE; inference mode is explicit (`phydrax.nn.layers.inference_mode`),
+  evaluation never advances the state, and `transition` proposes the next state
+  that the training kernel commits only with an accepted update. `EquinoxModel`
+  rejects `eqx.nn.StateIndex` state and names this adapter.
+- **host inference**: `phydrax.export.HostInferenceAdapter` and
+  `phydrax.export.load_onnx` (`phydrax[onnx-inference]`) run a host runtime
+  eagerly with exact schemas, detached outputs, an artifact binding identity,
+  and optional DLPack transport. `jit`, `vmap`, `grad`, `jvp`, and `vjp` are
+  refused before the runtime runs.
+- **external adjoint**: `phydrax.interchange.ExternalAdjointAction` stages a
+  provider's primal and applies its adjoint at the same realization; a provider
+  without an adjoint reports derivative-free alternatives without selecting one.
+
+`ExternalOperatorAdapter` requires the runner's `capabilities` and artifact
+`binding`; a host-only runner is refused under transformations and cannot use
+the compiled `OperatorExecutionPlan` strategy.
+
 ## Numerical policies
 
 Recipes make the following choices explicit:

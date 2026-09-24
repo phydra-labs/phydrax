@@ -5,17 +5,21 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Literal
+from collections.abc import Callable
+from typing import Any, final, Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 
 from ...._callable import _ensure_special_kwonly_args, _KeyIterAdapter
 from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0
 from ...._model import AbstractArrayModel
+from ...._model._array import value_derivative_contract
+from ...._model._component import ExecutionCapabilities, ModelExecutionContract
+from ...._trainable import model_state_field, parameter_field
 from ..._base import _AbstractBaseModel, _AbstractStructuredInputModel
 from ..._contracts import AFFINE, compose_regularity, model_regularity, SMOOTH
 from ..._keys import EvalKey
@@ -120,8 +124,9 @@ def _stateless_module(module: Any, /, *, wrapper: str) -> Any:
         )
     ):
         raise TypeError(
-            f"stateful Equinox modules are not supported by {wrapper}; "
-            "declare model state explicitly"
+            f"stateful Equinox modules are not supported by {wrapper}; wrap the "
+            "module in FunctionalJAXAdapter, whose apply(parameters, model_state, "
+            "input, key, *, inference) returns (output, next_model_state)"
         )
     return _ensure_special_kwonly_args(module)
 
@@ -279,4 +284,99 @@ class EquinoxStructuredModel(_AbstractStructuredInputModel):
         return _module_regularity(self.module)
 
 
-__all__ = ["EquinoxModel", "EquinoxStructuredModel"]
+_FUNCTIONAL_CAPABILITIES = ExecutionCapabilities("functional-jax", stateful=True)
+
+
+@final
+class FunctionalJAXAdapter(_AbstractBaseModel):
+    """Stateful functional JAX model with explicit parameter and state lanes.
+
+    `apply(parameters, model_state, input, key, *, inference)` returns
+    `(output, next_model_state)` with `next_model_state` congruent to
+    `model_state`. It is the functional form of Haiku `transform_with_state`,
+    Flax `apply(..., mutable=...)`, and Equinox `make_with_state` models; no
+    such framework is required. `parameters` are PARAMETER and `model_state` is
+    MODEL_STATE (for example running statistics).
+
+    Inference mode is explicit: `inference` is passed to every `apply` call and
+    is switched with `phydrax.nn.layers.inference_mode`. Evaluation (`__call__`)
+    returns the output only and never changes the model. `transition` returns
+    the output together with the adapter holding the candidate next state; the
+    training kernel commits that state only with an accepted update and keeps
+    the committed state on rejection.
+    """
+
+    apply: Callable[..., tuple[Any, PyTree[Any]]] = eqx.field(static=True)
+    parameters: PyTree[Any] = parameter_field()
+    model_state: PyTree[Any] = model_state_field()
+    inference: bool
+    in_size: int | tuple[int, ...] | Literal["scalar"]
+    out_size: int | tuple[int, ...] | Literal["scalar"]
+
+    def __init__(
+        self,
+        apply: Callable[..., tuple[Any, PyTree[Any]]],
+        parameters: PyTree[Any],
+        model_state: PyTree[Any],
+        /,
+        *,
+        in_size: SizeLike,
+        out_size: SizeLike,
+        inference: bool,
+    ):
+        if not callable(apply):
+            raise TypeError("apply must be callable.")
+        if not isinstance(inference, bool):
+            raise TypeError("inference must be bool.")
+        self.apply = apply
+        self.parameters = parameters
+        self.model_state = model_state
+        self.inference = inference
+        self.in_size = _canonical_size(in_size)
+        self.out_size = _canonical_size(out_size)
+
+    def _apply(self, x: Any, key: EvalKey, /) -> tuple[Any, PyTree[Any]]:
+        result = self.apply(
+            self.parameters, self.model_state, x, key, inference=self.inference
+        )
+        if not isinstance(result, tuple) or len(result) != 2:
+            raise TypeError("apply must return (output, next_model_state).")
+        output, next_state = result
+        if jax.tree_util.tree_structure(next_state) != jax.tree_util.tree_structure(
+            self.model_state
+        ) or any(
+            jnp.shape(new) != jnp.shape(old)
+            or jnp.result_type(new) != jnp.result_type(old)
+            for new, old in zip(
+                jax.tree_util.tree_leaves(next_state),
+                jax.tree_util.tree_leaves(self.model_state),
+                strict=True,
+            )
+        ):
+            raise ValueError(
+                "apply returned a next_model_state that differs from model_state in "
+                "structure, shape, or dtype."
+            )
+        return output, next_state
+
+    def __call__(self, x: Any, /, *, key: EvalKey = DOC_KEY0) -> Array:
+        """Evaluate the output; the model state is read, never advanced."""
+        return jnp.asarray(self._apply(x, key)[0])
+
+    def transition(
+        self, x: Any, /, *, key: EvalKey = DOC_KEY0
+    ) -> tuple[Array, FunctionalJAXAdapter]:
+        """Return the output and this adapter holding the candidate next state."""
+        output, next_state = self._apply(x, key)
+        return jnp.asarray(output), eqx.tree_at(
+            lambda adapter: adapter.model_state, self, next_state
+        )
+
+    def model_execution_contract(self) -> ModelExecutionContract:
+        """Undeclared regularity under stateful `"functional-jax"` execution."""
+        return self._execution_contract(
+            value_derivative_contract(None), execution=_FUNCTIONAL_CAPABILITIES
+        )
+
+
+__all__ = ["EquinoxModel", "EquinoxStructuredModel", "FunctionalJAXAdapter"]

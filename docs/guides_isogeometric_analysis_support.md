@@ -83,7 +83,7 @@ a second implementation stack or deprecated public aliases.
 | trace/interface preparation | Periodic traces have incompatible coefficient layouts or orientation. | Make the identified traces compatible and rebuild the constraint/trace route. Do not truncate or pad coefficients. |
 | transfer preparation | Source/target lineage or preservation gates fail. | Rebuild the `TransferPlan`/`RefinementTransaction` from the actual source topology; retain the old field until the transaction commits. |
 | execution | Plan, prepared, numeric, or execution identity differs from the manifest. | Prepare and execute the exact declared plan/revision, then produce new evidence. IDs are evidence, not user-editable labels. |
-| restart | Checkpoint is incomplete, a shard digest differs, or analysis/execution identity mismatches. | Reject the checkpoint, recover an intact ancestor, and emit a new immutable `NumericRevision` and child checkpoint. Never patch a prior manifest. |
+| restart | Checkpoint is incomplete, a shard digest differs, or analysis/execution identity mismatches. | Reject the checkpoint, recover an intact ancestor, and emit a new canonical `phx.NumericRevision` whose `lifecycle.RevisionLineage` names the ancestor, plus a child checkpoint. Never patch a prior manifest. |
 | release gate | Any case/gate is failed, missing, stale, unsigned, or from an unlisted environment. | Keep the profile unreleased, run the deterministic producer for every required tuple, review diagnostics, and let the release pipeline sign assembled evidence. |
 
 ## Evidence and release discipline

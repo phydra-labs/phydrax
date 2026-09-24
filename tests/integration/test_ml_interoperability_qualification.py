@@ -14,6 +14,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import optax
 import pytest
 
@@ -22,9 +23,14 @@ from phydrax import model_state_field, parameter_field
 from phydrax._training import ExponentialMovingAverageTargetPolicy
 from phydrax._training_kernel import (
     BacktrackingLineSearchRule,
+    build_training_checkpoint,
     KernelObjective,
     OptaxUpdateRule,
     prepare_training_kernel,
+    restore_training_checkpoint,
+    run_training_attempt,
+    TrainingAttemptOutcome,
+    TrainingCheckpointPayload,
     TrainingKernelSpec,
 )
 from phydrax._training_objective import _ObjectiveContribution
@@ -1361,3 +1367,412 @@ def test_g24_policy_decides_whether_a_valid_step_survives_a_training_rejection()
         assert int(result.evidence.training.outcome) == 0
         assert float(result.kernel_state.parameters.rate) > 0.0
         assert jnp.array_equal(result.plant_state.payload["x"], jnp.asarray([2.0, 2.0]))
+
+
+# G22: identity stability -------------------------------------------------------
+
+
+class _GainResponse(phx.StrictModule):
+    weight: jax.Array = parameter_field()
+    offset: jax.Array = phx.fixed_field()
+
+    def __call__(self, x):
+        return self.weight * x + self.offset
+
+
+def _gain_error(parameters, model_state, fixed, payload, keys):
+    del keys
+    model = phx.combine_parameters(parameters, model_state, fixed)
+    residual = model(payload["x"]) - payload["y"]
+    return _ObjectiveContribution(jnp.sum(residual**2), residual.size), model_state, {}
+
+
+_G22_SEMANTIC = phx.SemanticProvenance({"kind": "g22-gain-response"})
+
+
+def _g22_binding(model):
+    parameters, _, _ = phx.partition_parameters(model)
+    return phx.ArtifactBindingIdentity(
+        _G22_SEMANTIC,
+        phx.NumericRevision(_G22_SEMANTIC, parameters),
+        phx.ExecutableSignature(
+            shapes={"weight": model.weight.shape},
+            dtypes={"weight": model.weight.dtype},
+            algorithm_facts={"response": "affine"},
+        ),
+    )
+
+
+def _g22_pool(**options):
+    return phx.execution.PoolExecutionSignature(
+        topology_id="g22-cases",
+        method_id="gain-map",
+        precision_id="float32",
+        backend_id="jax-cpu",
+        **options,
+    )
+
+
+def test_g22_dynamic_weight_update_changes_numeric_revision_not_executable_identity():
+    model = _GainResponse(jnp.asarray(0.5), jnp.asarray(1.0))
+    kernel = prepare_training_kernel(
+        model,
+        (
+            KernelObjective(
+                objective_id="gain",
+                kind=phx.ObjectiveKind.DATA_FIT,
+                route=phx.DerivativeRoute.DIRECT,
+                fn=_gain_error,
+            ),
+        ),
+        TrainingKernelSpec(
+            OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd"),
+            context="G22 identity",
+            rejection_budget=1,
+        ),
+        root_authority=phx.ComponentAuthority.MODEL,
+    )
+    state = kernel.init(model, jr.key(0))
+    x = jnp.linspace(0.0, 1.0, 8)
+    updated, evidence = run_training_attempt(
+        kernel, state, {"x": x, "y": 2.0 * x + 1.0}
+    )
+    assert int(evidence.outcome) == TrainingAttemptOutcome.ACCEPTED
+    trained = phx.combine_parameters(updated.parameters, updated.model_state, kernel.fixed)
+    assert float(trained.weight) != float(model.weight)
+
+    # The accepted update is a new numeric revision of the same executable.
+    before = build_training_checkpoint(kernel, state)
+    after = build_training_checkpoint(kernel, updated)
+    assert after.manifest["parameter_revision"] != before.manifest["parameter_revision"]
+    for name in ("checkpoint_id", "role_schema_id", "rule_id", "fixed_structure"):
+        assert after.manifest[name] == before.manifest[name]
+    assert after.manifest["structures"] == before.manifest["structures"]
+    initial, current = _g22_binding(model), _g22_binding(trained)
+    assert current.numeric_revision_id != initial.numeric_revision_id
+    assert current.executable_signature_id == initial.executable_signature_id
+    assert current.binding_id != initial.binding_id
+    assert _g22_binding(eqx.tree_at(lambda m: m.offset, trained, 7.0)) == current
+
+    # The revision is verified on load: other weights under the same structure fail.
+    tampered = dict(after.arrays)
+    tampered["parameters"] = eqx.tree_at(
+        lambda p: p.weight, updated.parameters, updated.parameters.weight + 1.0
+    )
+    with pytest.raises(ValueError, match="parameter revision"):
+        restore_training_checkpoint(
+            kernel, TrainingCheckpointPayload(after.manifest, tampered)
+        )
+
+    # Dynamic weights passed as arguments never touch the pooled executable;
+    # weights compiled in statically are part of it.
+    assert _g22_pool().signature_id == _g22_pool().signature_id
+    static_initial = _g22_pool(static_callables={"response": model})
+    static_trained = _g22_pool(static_callables={"response": trained})
+    assert static_trained.signature_id != static_initial.signature_id
+    rebuilt = _GainResponse(jnp.asarray(0.5), jnp.asarray(1.0))
+    assert (
+        _g22_pool(static_callables={"response": rebuilt}).signature_id
+        == static_initial.signature_id
+    )
+
+
+# G6: external host refusal -----------------------------------------------------
+
+
+def _host_binding(kind):
+    semantic = phx.SemanticProvenance({"kind": kind})
+    return phx.ArtifactBindingIdentity(
+        semantic,
+        phx.NumericRevision(semantic, {"scale": 2.0}),
+        phx.ExecutableSignature(shapes={"x": (3,)}, dtypes={"x": jnp.float64}),
+    )
+
+
+def _host_transforms(function, x):
+    return {
+        "jit": lambda: jax.jit(function)(x),
+        "vmap": lambda: jax.vmap(function)(jnp.stack((x, x))),
+        "grad": lambda: jax.grad(lambda value: jnp.sum(function(value)))(x),
+        "jvp": lambda: jax.jvp(function, (x,), (x,)),
+        "vjp": lambda: jax.vjp(function, x),
+    }
+
+
+def _query_batch(values):
+    axis = phx.nn.operator.OperatorAxis(
+        "x",
+        jnp.linspace(0.0, 1.0, 3),
+        quadrature_weights=jnp.full((3,), 1.0 / 3.0),
+        basis="uniform",
+        periodic=False,
+    )
+    return phx.nn.operator.OperatorBatch(
+        inputs={"u": phx.nn.operator.FunctionSamples(values=values, axes=(axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
+        case_axes=(),
+    )
+
+
+def _checkpoint_manifest():
+    return phx.nn.operator.adapters.OperatorCheckpointManifest(
+        architecture="host-doubling",
+        model_version="1.0.0",
+        source_uri="https://example.test/source",
+        checkpoint_uri="https://example.test/checkpoint",
+        revision="immutable",
+        input_schema={"u": "x"},
+        output_schema={"y": "x"},
+        preprocessing={"layout": "native"},
+        normalization={"kind": "none"},
+        dataset_provenance=("analytic",),
+        code_license="test-only",
+        weights_license="test-only",
+        checkpoint_sha256="0" * 64,
+    )
+
+
+def test_g6_host_only_models_run_eagerly_and_refuse_transforms_before_invocation():
+    calls = []
+
+    def runtime(values):
+        calls.append(values)
+        return [2.0 * values[0]]
+
+    host = phx.export.HostInferenceAdapter(
+        runtime,
+        (phx.interchange.ExternalTensorSpec("x", (3,), jnp.float64),),
+        (phx.interchange.ExternalTensorSpec("y", (3,), jnp.float64),),
+        _host_binding("doubling-runtime"),
+    )
+    operator = phx.nn.operator.adapters.ExternalOperatorAdapter(
+        runner=lambda payload, key: host(payload),
+        input_adapter=lambda batch, manifest: batch.input("u").values,
+        output_adapter=lambda output, batch, manifest: output,
+        manifest=_checkpoint_manifest(),
+        capabilities=host.capabilities,
+        binding=host.binding,
+        in_size="scalar",
+        out_size="scalar",
+    )
+    x = jnp.asarray([1.0, 2.0, 3.0])
+
+    # Eager execution works on both surfaces.
+    assert jnp.array_equal(host(x), 2.0 * x)
+    assert jnp.array_equal(operator(_query_batch(x)), 2.0 * x)
+    assert len(calls) == 2
+
+    # Every transformation is refused before the runtime is invoked.
+    for function in (host, lambda values: operator(_query_batch(values))):
+        for name, transform in _host_transforms(function, x).items():
+            with pytest.raises(TypeError, match="JAX transformations"):
+                transform()
+    assert len(calls) == 2
+
+    # The host-only contract offers no JAX derivative, and no derivative-free
+    # method is chosen on the caller's behalf.
+    contract = operator.model_execution_contract()
+    assert contract.execution.host_only
+    assert contract.derivative.route is phx.DerivativeRoute.STOPPED
+    assert not contract.derivative.supported_surfaces
+    support = host.derivative_support
+    assert support.route == "none"
+    assert "phydrax.uq.fit_eki" in support.alternatives
+
+
+# G7: stateful functional model --------------------------------------------------
+
+
+def _normalizing_apply(parameters, model_state, x, key, *, inference):
+    """Scaled centering with a running mean; inference uses the committed mean."""
+    del key
+    if inference:
+        return parameters["scale"] * (x - model_state["mean"]), model_state
+    mean = jnp.mean(x)
+    next_state = {
+        "mean": 0.5 * model_state["mean"] + 0.5 * mean,
+        "count": model_state["count"] + 1.0,
+    }
+    return parameters["scale"] * (x - mean), next_state
+
+
+def _stateful_fit(parameters, model_state, fixed, payload, keys):
+    model = phx.combine_parameters(parameters, model_state, fixed)
+    output, advanced = model.transition(payload["x"], key=keys.attempt_key("model"))
+    residual = output - payload["y"]
+    contribution = _ObjectiveContribution(jnp.sum(residual**2), residual.size)
+    return contribution, phx.partition_parameters(advanced)[1], {}
+
+
+def _stateful_kernel(rule):
+    model = phx.nn.models.FunctionalJAXAdapter(
+        _normalizing_apply,
+        {"scale": jnp.asarray(1.0)},
+        {"mean": jnp.asarray(0.0), "count": jnp.asarray(0.0)},
+        in_size=4,
+        out_size=4,
+        inference=False,
+    )
+    kernel = prepare_training_kernel(
+        model,
+        (
+            KernelObjective(
+                objective_id="stateful-fit",
+                kind=phx.ObjectiveKind.DATA_FIT,
+                route=phx.DerivativeRoute.DIRECT,
+                fn=_stateful_fit,
+            ),
+        ),
+        TrainingKernelSpec(rule, context="G7 stateful model", rejection_budget=4),
+        root_authority=phx.ComponentAuthority.MODEL,
+    )
+    return kernel, kernel.init(model, jr.key(0))
+
+
+_G7_X = jnp.asarray([1.0, 2.0, 3.0, 6.0])
+_G7_PAYLOAD = {"x": _G7_X, "y": 2.0 * (_G7_X - 3.0)}
+
+
+def test_g7_stateful_model_state_commits_only_with_accepted_updates():
+    # A rejected update commits neither parameters nor model state.
+    kernel, state = _stateful_kernel(
+        BacktrackingLineSearchRule(initial_step=100.0, max_trials=1)
+    )
+    rejected, evidence = run_training_attempt(kernel, state, _G7_PAYLOAD)
+    assert int(evidence.outcome) == TrainingAttemptOutcome.REJECTED_FINITE
+    _assert_bitwise(rejected.parameters, state.parameters)
+    _assert_bitwise(rejected.model_state, state.model_state)
+    assert int(rejected.attempt_cursor) == 1 and int(rejected.accepted_cursor) == 0
+
+    # An accepted update commits both lanes together.
+    kernel, state = _stateful_kernel(OptaxUpdateRule(optax.sgd(0.01), rule_id="sgd"))
+    accepted, evidence = run_training_attempt(kernel, state, _G7_PAYLOAD)
+    assert int(evidence.outcome) == TrainingAttemptOutcome.ACCEPTED
+    model = kernel.tree(accepted)
+    assert float(model.parameters["scale"]) > 1.0
+    assert float(model.model_state["mean"]) == 1.5
+    assert float(model.model_state["count"]) == 1.0
+
+    # The accepted checkpoint restores both lanes exactly.
+    restored = restore_training_checkpoint(
+        kernel, build_training_checkpoint(kernel, accepted)
+    ).state
+    _assert_bitwise(restored.parameters, accepted.parameters)
+    _assert_bitwise(restored.model_state, accepted.model_state)
+
+    # Evaluation never advances the committed state; inference is explicit.
+    first = model(_G7_X)
+    assert jnp.array_equal(model(_G7_X), first)
+    _assert_bitwise(phx.partition_parameters(model)[1], accepted.model_state)
+    evaluated = phx.nn.layers.inference_mode(model)
+    assert jnp.allclose(evaluated(_G7_X), model.parameters["scale"] * (_G7_X - 1.5))
+
+
+# G13: staged external adjoint ---------------------------------------------------
+
+
+def _upstream(theta):
+    return jnp.stack((theta[0], theta[0] * theta[1], jnp.exp(theta[1])))
+
+
+def _provider_reference(x):
+    """The mock provider's primal written in JAX: the all-JAX reference."""
+    return jnp.sum(jnp.sin(x) * x), jnp.prod(1.0 + 0.1 * x)
+
+
+def _downstream(energy, volume):
+    return energy**2 + 3.0 * volume
+
+
+class _MockProvider(phx.interchange.ExternalAdjointAction):
+    """Host provider with a hand-written adjoint and an optional replay drift."""
+
+    def __init__(self, *, drift=False, configuration="mock"):
+        super().__init__(
+            provider="mock-provider",
+            version="1.0",
+            input_schema=(phx.interchange.ExternalTensorSpec("x", (3,), jnp.float64),),
+            output_schema=(
+                phx.interchange.ExternalTensorSpec("energy", (), jnp.float64),
+                phx.interchange.ExternalTensorSpec("volume", (), jnp.float64),
+            ),
+            configuration_id=configuration,
+        )
+        self.drift = drift
+        self.calls = []
+
+    def _primal(self, inputs):
+        self.calls.append("primal")
+        (x,) = inputs
+        return phx.interchange.ExternalPrimalStage(
+            self.action_id,
+            inputs,
+            (np.sum(np.sin(x) * x), np.prod(1.0 + 0.1 * x)),
+            realization_id="state-" + x.tobytes().hex(),
+        )
+
+    def _adjoint(self, stage, output_cotangents):
+        self.calls.append("adjoint")
+        (x,) = stage.inputs
+        energy_bar, volume_bar = output_cotangents
+        volume = np.prod(1.0 + 0.1 * x)
+        x_bar = energy_bar * (np.sin(x) + x * np.cos(x)) + volume_bar * (
+            0.1 * volume / (1.0 + 0.1 * x)
+        )
+        realization = "drifted-state" if self.drift else stage.realization_id
+        return (x_bar,), realization
+
+
+def _staged_gradient(provider, theta):
+    x, pullback = jax.vjp(_upstream, theta)
+    stage = provider.stage_primal(x)
+    outputs = tuple(jnp.asarray(value) for value in stage.outputs)
+    loss, output_cotangents = jax.value_and_grad(_downstream, argnums=(0, 1))(*outputs)
+    (x_bar,) = provider.apply_adjoint(stage, *output_cotangents)
+    (theta_bar,) = pullback(jnp.asarray(x_bar))
+    return loss, theta_bar, stage
+
+
+def test_g13_staged_external_vjp_matches_the_all_jax_reference_and_differences():
+    provider = _MockProvider()
+    theta = jnp.asarray([0.7, -0.4])
+    loss, theta_bar, stage = _staged_gradient(provider, theta)
+
+    def reference(value):
+        return _downstream(*_provider_reference(_upstream(value)))
+
+    assert jnp.allclose(loss, reference(theta), rtol=1e-12)
+    assert jnp.allclose(theta_bar, jax.grad(reference)(theta), rtol=1e-12)
+    step = 1e-6
+    differences = [
+        (
+            _staged_gradient(provider, theta + step * direction)[0]
+            - _staged_gradient(provider, theta - step * direction)[0]
+        )
+        / (2.0 * step)
+        for direction in jnp.eye(2)
+    ]
+    assert jnp.allclose(theta_bar, jnp.asarray(differences), rtol=1e-6)
+    assert stage.accepted and provider.derivative_support.route == "external-adjoint"
+
+    # Transformations are refused before the provider runs.
+    calls = len(provider.calls)
+    with pytest.raises(TypeError, match="JAX transformations"):
+        jax.jit(provider.stage_primal)(_upstream(theta))
+    with pytest.raises(TypeError, match="JAX transformations"):
+        jax.grad(lambda x: jnp.sum(provider.stage_primal(x).outputs[0]))(_upstream(theta))
+    assert len(provider.calls) == calls
+
+
+def test_g13_replay_mismatch_is_refused():
+    x = _upstream(jnp.asarray([0.7, -0.4]))
+    drifting = _MockProvider(drift=True)
+    stage = drifting.stage_primal(x)
+    with pytest.raises(ValueError, match="Replay mismatch"):
+        drifting.apply_adjoint(stage, 1.0, 1.0)
+
+    provider, other = _MockProvider(), _MockProvider(configuration="other-case")
+    calls = len(provider.calls)
+    with pytest.raises(ValueError, match="Replay mismatch"):
+        provider.apply_adjoint(other.stage_primal(x), 1.0, 1.0)
+    assert len(provider.calls) == calls

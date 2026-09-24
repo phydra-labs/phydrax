@@ -205,17 +205,50 @@ def test_checkpoint_validates_runtime_and_payload_identity() -> None:
     prepared = _plan().prepare()
     state = jnp.arange(10, dtype=jnp.float32).reshape((5, 2))
     counters = jnp.arange(5, dtype=jnp.uint32)
-    checkpoint = ExecutionWorksetCheckpoint(prepared, state, counters)
+    checkpoint = ExecutionWorksetCheckpoint(
+        prepared, state, counters, numeric_revisions=()
+    )
     restored_state, restored_counters = restore_execution_workset_checkpoint(
-        prepared, checkpoint
+        prepared, checkpoint, numeric_revisions=()
     )
     assert jnp.array_equal(restored_state, state)
     assert jnp.array_equal(restored_counters, counters)
     corrupt = eqx.tree_at(lambda value: value.state, checkpoint, state.at[0, 0].set(-1.0))
     with pytest.raises(ValueError, match="content identity"):
-        restore_execution_workset_checkpoint(prepared, corrupt)
+        restore_execution_workset_checkpoint(prepared, corrupt, numeric_revisions=())
     with pytest.raises(ValueError, match="another runtime"):
-        restore_execution_workset_checkpoint(_plan(capacity=4).prepare(), checkpoint)
+        restore_execution_workset_checkpoint(
+            _plan(capacity=4).prepare(), checkpoint, numeric_revisions=()
+        )
+
+
+def test_checkpoint_binds_the_numeric_revisions_of_bound_weights() -> None:
+    prepared = _plan().prepare()
+    state = jnp.ones((5, 2), dtype=jnp.float32)
+    counters = jnp.zeros((5,), dtype=jnp.uint32)
+    semantic = phx.SemanticProvenance({"kind": "workset-gain"})
+    trained = phx.NumericRevision(semantic, {"gain": jnp.asarray(2.0)})
+    updated = phx.NumericRevision(semantic, {"gain": jnp.asarray(3.0)})
+    checkpoint = ExecutionWorksetCheckpoint(
+        prepared, state, counters, numeric_revisions=(trained,)
+    )
+    unbound = ExecutionWorksetCheckpoint(prepared, state, counters, numeric_revisions=())
+
+    # The same item state produced by other weights is another checkpoint.
+    assert checkpoint.checkpoint_id != unbound.checkpoint_id
+    restored, _ = restore_execution_workset_checkpoint(
+        prepared, checkpoint, numeric_revisions=(trained,)
+    )
+    assert jnp.array_equal(restored, state)
+    for bound in ((updated,), (), (trained, updated)):
+        with pytest.raises(ValueError, match="other bound numeric revisions"):
+            restore_execution_workset_checkpoint(
+                prepared, checkpoint, numeric_revisions=bound
+            )
+    with pytest.raises(ValueError, match="distinct"):
+        ExecutionWorksetCheckpoint(
+            prepared, state, counters, numeric_revisions=(trained, trained)
+        )
 
 
 @pytest.mark.parametrize(

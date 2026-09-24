@@ -12,8 +12,11 @@ from jaxtyping import Array
 
 from phydrax.domain import Domain, DomainFunction
 
-from ...._differentiation import DerivativeRegularity
+from ...._differentiation import DerivativeContract, DerivativeRegularity, DerivativeRoute
 from ...._doc import DOC_KEY0
+from ...._external_runtime import _require_execution
+from ...._model._array import AbstractArrayModel
+from ...._model._component import ExecutionCapabilities, ModelExecutionContract
 from ...._model._ports import (
     ModelPorts,
     PortBindingEvidence,
@@ -87,6 +90,9 @@ class OperatorContextModel(_AbstractBaseModel):
     Scalar coordinate arguments and already-stacked coordinate arrays are both accepted,
     so the resulting callable composes directly with PhydraX differential operators.
     The source ``batch`` is FIXED data; only the operator's parameters train.
+    ``execution`` holds the operator's declared `ExecutionCapabilities`; every
+    prediction is admitted against them before the operator is invoked, and a
+    host-only operator makes the context host-only with no derivative route.
     """
 
     operator: Any
@@ -94,6 +100,7 @@ class OperatorContextModel(_AbstractBaseModel):
     query_name: str
     field_name: str | None
     port_binding: PortBindingEvidence | None
+    execution: ExecutionCapabilities
     coord_dim: int
     in_size: int
     out_size: int | tuple[int, ...] | Literal["scalar"]
@@ -156,6 +163,7 @@ class OperatorContextModel(_AbstractBaseModel):
         if isinstance(base_operator, TrainedOperator):
             resolved_field = field_name
             out_size = base_operator.task.field_by_name[resolved_field].channels
+            execution = base_operator.execution_plan.execution
         elif isinstance(base_operator, AbstractOperatorModel):
             declared = base_operator.operator_output_specs
             available = tuple(declared)
@@ -165,17 +173,24 @@ class OperatorContextModel(_AbstractBaseModel):
             if resolved_field is None or resolved_field not in declared:
                 raise ValueError("field_name is required for a multi-output operator.")
             out_size = declared[str(resolved_field)].channels
+            execution = base_operator.model_execution_contract().execution
         else:
             if not callable(base_operator):
                 raise TypeError("operator must be callable.")
             resolved_field = field_name
             out_size = base_operator.out_size
+            execution = (
+                base_operator.model_execution_contract().execution
+                if isinstance(base_operator, AbstractArrayModel)
+                else ExecutionCapabilities("native-jax")
+            )
 
         self.operator = base_operator
         self.batch = batch
         self.query_name = resolved_query
         self.field_name = None if resolved_field is None else str(resolved_field)
         self.port_binding = port_binding
+        self.execution = execution
         self.coord_dim = dimension
         self.in_size = dimension
         self.out_size = out_size
@@ -205,6 +220,8 @@ class OperatorContextModel(_AbstractBaseModel):
         key: EvalKey,
     ) -> Array:
         from ..training._trained_operator import TrainedOperator
+
+        _require_execution(self.execution, operator_batch, key)
 
         if isinstance(self.operator, TrainedOperator):
             prepared = self.operator.prepare_prevalidated(operator_batch)
@@ -246,6 +263,15 @@ class OperatorContextModel(_AbstractBaseModel):
         # The fixed sources and the replaced query layout are data; the coordinates
         # enter the operator's own declared map.
         return model_regularity(self.operator)
+
+    def model_execution_contract(self) -> ModelExecutionContract:
+        """Return the context contract under the operator's capabilities."""
+        if self.execution.host_only:
+            return self._execution_contract(
+                DerivativeContract(route=DerivativeRoute.STOPPED),
+                execution=self.execution,
+            )
+        return super().model_execution_contract()
 
     def domain_function(
         self,

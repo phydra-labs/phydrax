@@ -352,7 +352,14 @@ def main():
                     "seconds": result.run.elapsed_seconds,
                     "artifact_id": result.artifact.artifact_id,
                     "functions": dict(result.functions),
-                    "totals": [asdict(t) for t in result.total_derivatives],
+                    "totals": [
+                        {
+                            "function": t.function,
+                            "design_variable": t.design_variable,
+                            "values": t.values.tolist(),
+                        }
+                        for t in result.total_derivatives
+                    ],
                     "adjoints": [asdict(a) for a in result.adjoints],
                 },
                 indent=2,
@@ -378,7 +385,7 @@ def main():
             fd = (perturbed[1][total.function] - perturbed[0][total.function]) / (
                 2 * args.fd_step
             )
-            adjoint = total.values[1]
+            adjoint = float(total.values[1])
             errors[total.function] = {
                 "adjoint_alpha": adjoint,
                 "central_fd_alpha": fd,

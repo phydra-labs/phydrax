@@ -588,6 +588,10 @@ physics-informed graph operator.
 Graph topology and geometry carried by `GraphIR` values, including query graphs
 stored inside graph operators, are treated as fixed solver state. Trainable
 Equinox/JAX arrays in the surrounding graph model remain optimizer parameters.
+Custom blocks gather and reduce over `graph.edge_relation()` with
+`phx.sparse.gather_routes` and `phx.sparse.route_reduce`, the same fixed-topology
+relation the native graph layers use, so padded routes (`edge_mask=False`) stay
+inert.
 
 !!! example
     ```python
@@ -598,12 +602,15 @@ Equinox/JAX arrays in the surrounding graph model remain optimizer parameters.
     class WeightedDiffusion:
         def __call__(self, graph):
             nodes = dict(graph.nodes)
+            relation = graph.edge_relation()
             u = nodes["u"]
             k = graph.edges["k"]
             scale = jnp.squeeze(graph.globals["scale"])
-            flux = scale * k * (u[graph.receivers] - u[graph.senders])
-            incoming = phx.graph.segment_sum(flux, graph.receivers, graph.num_nodes)
-            outgoing = phx.graph.segment_sum(flux, graph.senders, graph.num_nodes)
+            u_sender = phx.sparse.gather_routes(relation, u)
+            u_receiver = phx.sparse.gather_routes(relation.transpose(), u)
+            flux = scale * k * (u_receiver - u_sender)
+            incoming = phx.sparse.route_reduce(relation, flux)
+            outgoing = phx.sparse.route_reduce(relation.transpose(), flux)
             nodes["residual"] = incoming - outgoing
             return graph.replace(nodes=nodes, validate=False)
 
@@ -1108,6 +1115,56 @@ operators, and physics residuals on one execution path.
     )
     lifted = multiscale(graph)
     assert lifted.nodes.shape == graph.nodes.shape
+    ```
+
+### Mesh discretizations as graphs
+
+`phx.graph.facet_adjacency` turns a prepared unstructured finite-volume or
+finite-element discretization into one owner-to-neighbor route per facet.
+Boundary facets keep their slot with `valid=False`, so face payloads such as
+fluxes stay aligned with the routes and never contribute. Building the learned
+simulator graph with `GraphIR.from_edge_relation` makes the network and the
+physical residual reduce over the same relation and validity mask, and
+`adjacency.topology_id` is shared by FV and FE discretizations of one mesh.
+
+!!! example
+    ```python
+    import jax.numpy as jnp
+    import jax.random as jr
+    import numpy as np
+    import phydrax as phx
+
+    finite_volume = phx.discretization.UnstructuredFiniteVolumePlan(
+        np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]),
+        triangles=np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32),
+    ).prepare()
+    adjacency = phx.graph.facet_adjacency(finite_volume)
+    face_flux = jnp.linspace(-1.0, 1.0, adjacency.relation.capacity)
+
+    residual_graph = phx.graph.GraphIR.from_edge_relation(
+        adjacency.relation,
+        nodes={"centers": finite_volume.cell_centers},
+        edges={"flux": face_flux},
+    )
+    residual = phx.graph.GraphFiniteVolumeDivergence(normalize_by_volume=False)(
+        residual_graph
+    )
+    assert jnp.allclose(jnp.sum(residual.nodes["divergence"]), 0.0)
+
+    simulator_graph = phx.graph.GraphIR.from_edge_relation(
+        adjacency.relation,
+        nodes=finite_volume.cell_centers,
+        edges=finite_volume.face_centers,
+    )
+    simulator = phx.graph.MeshGraphNet(
+        node_in_size=2,
+        edge_in_size=2,
+        node_out_size=1,
+        latent_size=8,
+        processor_steps=2,
+        key=jr.key(0),
+    )
+    assert simulator(simulator_graph).nodes.shape == (finite_volume.cell_count, 1)
     ```
 
 ## Graph families

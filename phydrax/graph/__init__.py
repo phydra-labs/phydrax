@@ -95,6 +95,7 @@ from ._equivariant import (
     euclidean_edge_features,
     gaussian_radial_basis,
 )
+from ._facet_adjacency import facet_adjacency, FacetAdjacency
 from ._gauge_transport import __all__ as _gauge_transport_all
 from ._generators import (
     get_fully_connected_graph,
@@ -356,6 +357,8 @@ __all__ = [
     "MeshDualGraph",
     "line_graph",
     "mesh_to_dual_graph",
+    "FacetAdjacency",
+    "facet_adjacency",
     "EquivariantGraphConvolution",
     "euclidean_edge_features",
     "gaussian_radial_basis",

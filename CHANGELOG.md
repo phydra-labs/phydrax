@@ -94,8 +94,71 @@
   worksets and storage policies, AMR/mapped/moving-geometry contracts,
   species/radiation/ablation coupling, checkpoints, IREE export, VTK output,
   and bounded rendering/video adapters.
+- Added `ArtifactBindingIdentity`, the one binding identity of a frozen or
+  published model: its `SemanticProvenance`, the `NumericRevision` of its
+  dynamic content, and its `ExecutableSignature`, recorded together. Functional
+  checkpoints, operator training checkpoints, and native operator artifacts
+  record it at publication and recompute it on load, failing closed on any
+  mismatch; `ScientificArtifactEnvelope` and lifecycle `ModelManifest` accept
+  it whole. `ExecutableSignature(static_callables=...)` and
+  `PoolExecutionSignature(static_callables=...)` identify callables compiled into
+  an executable through `callable_payload`, so statically held weights are part
+  of the executable while dynamic weights change only the numeric revision
+  (qualification gate G22).
+- Plugin registration is public once at the root: `OperatorArchitectureCodec`,
+  `register_operator_architecture_codec`, `operator_architecture_codec`,
+  `operator_architecture_codec_for`, `register_artifact_value`,
+  `artifact_value`, and `artifact_value_id`. Lookups are exact type or object
+  identity with no base-class, name, or entry-point fallback.
+- External model tiers: every external invocation is admitted against declared
+  `ExecutionCapabilities` before it runs (host-only refuses jit/vmap/grad/jvp/vjp)
+  at `ExternalOperatorAdapter` (now requiring capabilities and an
+  `ArtifactBindingIdentity`), `OperatorExecutionPlan` (a compiled strategy
+  requires jit), `OperatorContextModel`, `IREEExecutable`, and the new
+  `phydrax.export.HostInferenceAdapter` and `load_onnx` (`phydrax[onnx-inference]`,
+  optional DLPack transport). `phydrax.nn.models.FunctionalJAXAdapter` holds
+  PARAMETER and MODEL_STATE lanes with an explicit inference mode; the
+  `EquinoxModel` `StateIndex` error names it. Staged external adjoints
+  `ExternalPrimalStage`/`ExternalAdjointAction` refuse replay mismatches;
+  `DAFoamAdjointAction` adds `DAFoamDesignVariableKind`, canonical ordering,
+  shape-preserving totals, and `replay_id`; providers without an adjoint report
+  derivative-free alternatives (gates G6, G7, G13).
+- Added the `phydrax.graph.facet_adjacency` bridge (`FacetAdjacency`): finite-volume
+  owner/neighbor cells and finite-element interior facets become an
+  `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- `phydrax.lifecycle.NumericRevision` is removed; `phydrax.NumericRevision` is the
+  one numeric-content identity. Lifecycle ancestry is the new
+  `lifecycle.RevisionLineage`, which references canonical semantic and revision
+  IDs plus a label, metadata, and one parent lineage. Lineage archives store the
+  revision's numeric content and recompute it on open; archives with the old
+  numeric-revision record are refused. ROM models and archives, IGA compatible
+  qualification and transfer plans, Fourier-modal revisions, and atomistic label
+  sets use canonical revisions (`fourier_modal_numeric_revision` drops `label`,
+  `qualify_compatible_complex` recomputes the complex revision,
+  `ReducedBasisArtifact` drops `numeric_revision`, and IGA transfer plans record
+  `source_content_id`/`target_content_id`).
+- Atomistic potential identity derives from the current PARAMETER lane:
+  `atomistic_potential_revision` replaces `checkpoint_atomistic_potential`, and
+  `parameter_state_tree`, the patched `parameter_state_id`/`potential_id` fields,
+  and `AtomisticProvenance.parameter_state_id`/`potential_id` are removed
+  (provenance records `potential_revision_id`).
+- `ExecutionWorksetCheckpoint` and `restore_execution_workset_checkpoint` require
+  the `numeric_revisions` bound into the items and refuse a restore under other
+  revisions. Operator training checkpoints require declared array roles and take
+  `static_callables`.
+- `OperatorArchitectureCodec` and `register_operator_architecture_codec` are no
+  longer re-exported from `phydrax.nn.operator.training`.
+- Phydrax-native fixed-topology message passing (MeshGraphNet, attention,
+  kernel and neural operators, equivariant, relational, hypergraph, simplicial,
+  DEC harmonic projection, cluster pooling, GCN/SAGE/GIN, `MessagePassing`)
+  gathers and reduces over sparse `EdgeRelation` routes with inert masked
+  routes; the jraph-compatible family keeps segment aggregators.
+  `GraphKernelIntegral` and `GraphNeuralOperator` take `reduction=` instead of
+  `aggregate_fn`, and `MessagePassing.aggregate` is removed.
+- `DAFoamTotalDerivative.values` is a read-only array in the design variable's
+  shape, and `run_dafoam` request identity includes design shapes.
 - Every native trainer (functional solvers including KFAC, evolution, windows,
   decomposition, variational Monte Carlo and Calabi-Yau; operator fitting;
   discrete, variational, and neural-CDE identification; kinetic rollout

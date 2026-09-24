@@ -7,11 +7,25 @@ They are host-only, non-differentiable boundaries: call them outside `jit`, `vma
 into native Phydrax arrays/series. Even argument-free calls inside a traced
 function are rejected.
 
+Host-only execution is one tier of the external-model capabilities
+(`phydrax.ExecutionCapabilities`). Learned host runtimes use
+`phydrax.export.HostInferenceAdapter` (eager only, detached values, declared
+schemas and binding identity). Providers that supply adjoints use a staged
+host-boundary VJP: `ExternalAdjointAction.stage_primal` evaluates the provider
+once and returns an `ExternalPrimalStage`, and `apply_adjoint(stage, *ȳ)` returns
+`Jᵀȳ` at exactly that staged realization, refusing any replay mismatch (see
+`phydrax.interchange.dafoam.DAFoamAdjointAction`). A provider without an adjoint
+reports its derivative-free alternatives through `ExternalDerivativeSupport` and
+Phydrax never selects one for you. No external call runs inside a JAX
+transformation.
+
 ## Ownership, identity, and limits
 
 `phydrax.interchange.external_runtime` provides `PinnedExecutable`,
 `pin_energy_executable`, `run_energy_command`, `run_energyplus`,
-`run_radiance_command`, and `run_opendss`.
+`run_radiance_command`, and `run_opendss`, together with the staged-adjoint
+types `ExternalTensorSpec`, `ExternalPrimalStage`, `ExternalAdjointAction`, and
+`ExternalDerivativeSupport`.
 
 - Commands receive an argv sequence, never a shell command. Input files are exact
   bytes keyed by relative POSIX paths. Traversal, absolute paths, special output

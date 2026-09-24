@@ -13,10 +13,10 @@ from jaxtyping import Array, ArrayLike, PyTree
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._identity import NumericRevision, SemanticProvenance
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..dynamics import DAEStructure, DifferentialAlgebraicSystem
-from ..lifecycle import NumericRevision
 from ..linalg import AbstractLinearOperator, DualSpace
 from ._reduction import TrialTestReduction
 
@@ -254,8 +254,16 @@ def prepare_affine_evolution_rom(
         "operator_lift": operator_lift,
         "lift": lift_coordinates,
     }
-    digest = array_tree_fingerprint(content)["sha256"]
-    revision = NumericRevision(digest, label="affine-evolution-rom")
+    revision = NumericRevision(
+        SemanticProvenance(
+            {
+                "kind": "affine-evolution-rom",
+                "family": problem.family_id,
+                "reduction": reduction.reduction_id,
+            }
+        ),
+        content,
+    )
     model_id = canonical_fingerprint(
         {
             "kind": "prepared-affine-evolution-rom",

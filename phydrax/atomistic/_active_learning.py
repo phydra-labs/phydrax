@@ -13,13 +13,14 @@ from jaxtyping import Array, Key
 
 from .._execution_plan import ExecutionPlan
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._identity import NumericRevision, SemanticProvenance
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..lifecycle import (
     AnalysisPlan,
     ModelManifest,
-    NumericRevision,
     ResultManifest,
+    RevisionLineage,
     RunRecord,
 )
 from ._committee import (
@@ -32,7 +33,7 @@ from ._committee import (
 from ._frame import AtomisticFrame, AtomisticSiteDomain
 from ._graph import AtomisticGraphExecutionPlan
 from ._hybrid import AbstractExternalAtomisticProvider, ExternalAtomisticEvaluation
-from ._potential import AbstractAtomisticPotential
+from ._potential import AbstractAtomisticPotential, atomistic_potential_revision
 from ._potential_program import AtomisticPotentialProgram, LearnedGraphPotentialTerm
 from ._qualification import AtomisticDynamicsQualificationResult
 from ._system import PreparedAtomisticSystem
@@ -60,13 +61,14 @@ class AtomisticLabelRecord(StrictModule, NonTrainableState):
 
 
 class AtomisticLabelSet(StrictModule, NonTrainableState):
+    """Append-only label records with a canonical revision and parent lineage."""
+
     records: tuple[AtomisticLabelRecord, ...]
     revision: NumericRevision
+    lineage: RevisionLineage
     system_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     units: AtomisticUnitSystem
-    parent_label_set_id: str | None = eqx.field(static=True)
-    parent_revision_id: str | None = eqx.field(static=True)
     label_set_id: str = eqx.field(static=True)
 
     def __init__(
@@ -116,50 +118,34 @@ class AtomisticLabelSet(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Label-set revisions must extend the exact current parent record."
                 )
-        digest = canonical_fingerprint(
-            {
-                "kind": "atomistic-label-content",
-                "labels": [value.label_id for value in values],
-            }
-        )
-        parent_digest = None if parent is None else parent.revision.content_digest
-        parent_label_set_id = None if parent is None else parent.label_set_id
-        parent_revision_id = None if parent is None else parent.revision.revision_id
-        self.records = values
-        revision_metadata = {
-            "system_id": first.system_id,
-            "topology_id": first.topology_id,
-            "unit_system_id": first.units.unit_system_id,
-            "record_count": str(len(values)),
-        }
-        if parent is not None:
-            revision_metadata.update(
+        revision = NumericRevision(
+            SemanticProvenance(
                 {
-                    "parent_label_set_id": parent_label_set_id,
-                    "parent_revision_id": parent_revision_id,
+                    "kind": "atomistic-label-set",
+                    "system_id": first.system_id,
+                    "topology_id": first.topology_id,
+                    "unit_system_id": first.units.unit_system_id,
                 }
-            )
-        self.revision = NumericRevision(
-            digest,
-            label=f"atomistic-labels-{len(values)}",
-            parent_digest=parent_digest,
-            parent_revision_id=parent_revision_id,
-            metadata=revision_metadata,
+            ),
+            {"labels": tuple(value.label_id for value in values)},
         )
+        lineage = RevisionLineage(
+            revision,
+            label=f"atomistic-labels-{len(values)}",
+            parent_revision_id=None if parent is None else parent.revision.revision_id,
+            parent_lineage_id=None if parent is None else parent.lineage.lineage_id,
+        )
+        self.records = values
+        self.revision = revision
+        self.lineage = lineage
         self.system_id = first.system_id
         self.topology_id = first.topology_id
         self.units = first.units
-        self.parent_label_set_id = parent_label_set_id
-        self.parent_revision_id = parent_revision_id
         self.label_set_id = canonical_fingerprint(
             {
                 "kind": "atomistic-label-set",
-                "revision": self.revision.revision_id,
-                "system": first.system_id,
-                "topology": first.topology_id,
-                "parent_label_set": parent_label_set_id,
-                "parent_revision": parent_revision_id,
-                "units": first.units.unit_system_id,
+                "revision": revision.revision_id,
+                "lineage": lineage.lineage_id,
             }
         )
 
@@ -464,16 +450,23 @@ def _campaign_lifecycle(
         plan.training.policy_id,
         reduction_policy_id=plan.committee_reduction.policy_id,
     )
+    revisions = tuple(
+        atomistic_potential_revision(result.best_potential) for result in training_results
+    )
     manifests = tuple(
         ModelManifest(
-            result.best_potential.potential_id,
+            revision.semantic_id,
             analysis.analysis_plan_id,
-            state.labels.revision.revision_id,
-            {"parameter_state": result.best_potential.parameter_state_id},
+            revision.revision_id,
+            {"parameters": revision.content_id},
             unit_contract_id=plan.system.plan.units.unit_system_id,
-            association_ids=(result.problem_id, result.policy_id),
+            association_ids=(
+                state.labels.label_set_id,
+                result.problem_id,
+                result.policy_id,
+            ),
         )
-        for result in training_results
+        for result, revision in zip(training_results, revisions, strict=True)
     )
     run_id = canonical_fingerprint(
         {

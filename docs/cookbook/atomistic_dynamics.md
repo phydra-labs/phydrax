@@ -78,7 +78,7 @@ rejected counts plus route, image, and stochastic digests. Persist exact continu
 with `AtomisticCheckpointPlan`, `write_atomistic_checkpoint`, and
 `read_atomistic_checkpoint`.
 
-For trained PaiNN or NequIP dynamics, wrap the checkpointed model in
+For trained PaiNN or NequIP dynamics, wrap the trained model in
 `LearnedGraphPotentialTerm` and supply a particle `AtomisticGraphExecutionPlan` while
 preparing the potential program. `allow_periodic=True` only enables periodic graph geometry;
 it does not certify a fitted model's rollout stability.

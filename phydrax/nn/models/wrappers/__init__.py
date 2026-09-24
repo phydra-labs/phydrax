@@ -12,7 +12,7 @@ from ._differential_output import (
     DifferentialNormalization,
     LinearDifferentialTransform,
 )
-from ._equinox import EquinoxModel, EquinoxStructuredModel
+from ._equinox import EquinoxModel, EquinoxStructuredModel, FunctionalJAXAdapter
 from ._implicit_modal import (
     DecayAggregation,
     ExponentialSpectralEnvelope,
@@ -57,6 +57,7 @@ __all__ = [
     "ImplicitModalField",
     "EquinoxStructuredModel",
     "FixedSubspaceOnsagerModel",
+    "FunctionalJAXAdapter",
     "FixedSubspaceProjectionReport",
     "LatentContractionModel",
     "LatentExecutionPolicy",

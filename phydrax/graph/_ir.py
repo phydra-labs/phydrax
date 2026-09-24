@@ -207,6 +207,43 @@ class GraphIR(StrictModule, NonTrainableState):
             valid=self.edge_mask,
         )
 
+    @classmethod
+    def from_edge_relation(
+        cls,
+        relation: EdgeRelation,
+        /,
+        *,
+        nodes: Any = None,
+        edges: Any = None,
+        globals: Any = None,
+        node_mask: Any | None = None,
+        validate: bool = True,
+    ) -> "GraphIR":
+        """Return a one-graph view whose `edge_relation()` reproduces `relation`.
+
+        Every route keeps its slot, so route payloads remain edge payloads.
+        Invalid routes carry node `0` as a safe endpoint and `edge_mask=False`;
+        the relation validity array becomes the graph edge mask unchanged.
+        """
+        if not isinstance(relation, EdgeRelation):
+            raise TypeError("relation must be an EdgeRelation.")
+        if relation.source_size != relation.target_size:
+            raise ValueError(
+                "A GraphIR view requires a relation from one node space onto itself."
+            )
+        return cls(
+            nodes=nodes,
+            edges=edges,
+            senders=jnp.where(relation.valid, relation.source_indices, 0),
+            receivers=jnp.where(relation.valid, relation.target_indices, 0),
+            globals=globals,
+            n_node=jnp.asarray([relation.source_size], dtype=jnp.int32),
+            n_edge=jnp.asarray([relation.capacity], dtype=jnp.int32),
+            node_mask=node_mask,
+            edge_mask=relation.valid,
+            validate=validate,
+        )
+
     def validate(self, *, strict: bool = True) -> None:
         if self.n_node.shape != self.n_edge.shape:
             raise ValueError("`n_node` and `n_edge` must have identical shapes.")

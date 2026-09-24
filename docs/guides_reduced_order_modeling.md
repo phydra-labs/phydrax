@@ -175,6 +175,11 @@ then prepare empirical interpolation. This path does not require a dynamical ROM
 ## Persistence
 
 ROM archives use the bounded pickle-free array archive and lifecycle `ModelManifest`.
+Basis artifacts, prepared affine and evolution models, index-one descriptor
+reductions, and residual dual-norm artifacts carry the canonical `phx.NumericRevision`
+of their arrays, and the manifest's numeric revision is that revision ID. Restoring an
+empirical-interpolation archive recomputes the canonical revision from the archived
+arrays and rejects a mismatch.
 Prepared affine-model restoration is template-bound so that vector-space,
 coefficient-map, solver, unit, support, and build identities cannot be substituted.
 

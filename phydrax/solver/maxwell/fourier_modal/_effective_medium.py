@@ -15,17 +15,21 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ...._identity import NumericRevision
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....circuit import ModalWaveReference
-from ....lifecycle import NumericRevision
 from ._contracts import (
     ContinuousFourierModalLayer,
     FourierModalLayer,
     FourierModalSourcePlane,
 )
 from ._loss import FourierModalLossConvergenceEvidence, FourierModalLossEvidence
-from ._numeric_revision import require_fourier_modal_numeric_revision
+from ._numeric_revision import (
+    fourier_modal_physical_stack_digest,
+    fourier_modal_physical_state_digest,
+    require_fourier_modal_numeric_revision,
+)
 from ._runtime import _canonical_material_samples, PreparedFourierModalMaxwell
 from ._scattering import HomogeneousPortModes
 
@@ -402,8 +406,7 @@ def prepare_maxwell_modal_sweep(
         if not isinstance(case, PreparedFourierModalMaxwell):
             raise TypeError("prepared_cases must contain PreparedFourierModalMaxwell.")
         require_fourier_modal_numeric_revision(case, revision)
-        revision_metadata = dict(revision.metadata)
-        case_stack_digest = revision_metadata["physical_stack_digest"]
+        case_stack_digest = fourier_modal_physical_stack_digest(case)
         if physical_stack_digests and case_stack_digest != physical_stack_digests[0]:
             raise ValueError("A modal sweep requires one content-bound physical stack.")
         physical_stack_digests.append(case_stack_digest)
@@ -558,7 +561,7 @@ def prepare_maxwell_modal_sweep(
         )
         preparation_ids.append(case.preparation_id)
         revision_ids.append(revision.revision_id)
-        physical_digests.append(revision_metadata["physical_state_digest"])
+        physical_digests.append(fourier_modal_physical_state_digest(case))
         harmonic_ids.append(case.problem.harmonics.preparation_id)
     frequency_values = np.asarray(jnp.stack(tuple(angular_frequencies)))
     if (
