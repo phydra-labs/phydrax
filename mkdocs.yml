@@ -483,6 +483,7 @@ nav:
         - Probabilistic graphical models: "guides_probabilistic_graphical_models.md"
         - Optimal transport: "guides_transport.md"
         - Native machine learning: "guides/ml.md"
+        - Machine learning interoperability: "guides_ml_interoperability.md"
         - Lagrangian and Hamiltonian mechanics: "guides_mechanics.md"
         - Quantum operators and dynamics: "guides_quantum.md"
         - Local quantum programs: "guides_quantum_programs.md"

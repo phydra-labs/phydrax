@@ -17,6 +17,7 @@ import jax.random as jr
 import numpy as np
 import optax
 import pytest
+from jax.flatten_util import ravel_pytree
 
 import phydrax as phx
 from phydrax import model_state_field, parameter_field
@@ -49,6 +50,7 @@ from phydrax.kernels import SquaredExponentialKernel
 from phydrax.ml.kernel_methods import KernelRidgeRecipe
 from phydrax.ml.linear import RidgeRecipe
 from phydrax.ml.preprocessing import StandardScaler
+from tests._reactive_systems import reactive_fluid_sample, reactive_problem
 
 
 # G1: statistical closure -> PDE ------------------------------------------------
@@ -855,7 +857,7 @@ def test_g16_frozen_realization_reproduces_primal_and_derivative():
     assert not jnp.allclose(_implicit_state(redrawn, target).state, first.state)
 
 
-# G8 / G9 / G18: learned face closures in finite-volume owners -----------------
+# G8 / G9 / G18: learned face closures in finite-volume owners and field views ---
 
 
 class _FaceGenerator(phx.StrictModule):
@@ -1085,6 +1087,200 @@ def test_g9_one_face_closure_serves_cartesian_mapped_and_unstructured_owners():
         jnp.swapaxes(contributions["cartesian"], 0, 1).reshape((-1, 4)),
         atol=1e-12,
     )
+
+
+def _triangulated_unit_square(resolution):
+    """Vertices and diagonal-split triangles of a uniform unit-square mesh."""
+    vertices = [
+        (i / resolution, j / resolution)
+        for j in range(resolution + 1)
+        for i in range(resolution + 1)
+    ]
+    triangles = []
+    for j in range(resolution):
+        for i in range(resolution):
+            corner = j * (resolution + 1) + i
+            triangles.append((corner, corner + 1, corner + resolution + 2))
+            triangles.append((corner, corner + resolution + 2, corner + resolution + 1))
+    return jnp.asarray(vertices), jnp.asarray(triangles, dtype=jnp.int32)
+
+
+def _triangle_mesh(vertices, triangles):
+    return phx.discretization.CellMesh(
+        vertices, (phx.discretization.CellBlock("cells", "triangle", triangles),)
+    )
+
+
+def _euler_state_port(frame_id="global"):
+    """Typed conserved Euler state: component identities, units, and frame."""
+    density = phx.units.DimensionSignature({"mass": 1, "length": -3})
+    momentum = phx.units.DimensionSignature({"mass": 1, "length": -2, "time": -1})
+    energy = phx.units.DimensionSignature({"mass": 1, "length": -1, "time": -2})
+    return phx.ValuePort(
+        "g9-euler-conserved-state",
+        event_shape=(4,),
+        component_ids=phx.equations.EulerSystem(2).component_names,
+        representation="conserved-state",
+        dimensions=(density, momentum, momentum, energy),
+        frame_id=frame_id,
+    )
+
+
+def _triangle_euler(discretization, closure):
+    boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
+        discretization.boundary_patch_names,
+        {name: _extrapolation() for name in discretization.boundary_patch_names},
+    )
+    method = phx.discretization.UnstructuredFiniteVolumeMethodPlan(
+        phx.discretization.PiecewiseConstantReconstruction(),
+        phx.discretization.RusanovFluxPlan(),
+        closure=closure,
+    )
+    problem = phx.equations.ConservationProblemIR(
+        "g9-closure-triangles", "state", phx.equations.EulerSystem(2), boundaries
+    )
+    return phx.equations.compile_conservation_problem(
+        problem, discretization, method
+    ).dynamics
+
+
+def _one_sided_facet_groups(owners, neighbors):
+    """Facet groups in which no side's cells also hold another facet's other side.
+
+    A one-sided trace binds its sites to the union of the side cells, so a group
+    must never place a facet's opposite cell among those cells.
+    """
+    groups = []
+    for facet in range(len(owners)):
+        for group in groups:
+            if all(
+                owners[facet] != neighbors[other] and neighbors[facet] != owners[other]
+                for other in group
+            ):
+                group.append(facet)
+                break
+        else:
+            groups.append([facet])
+    return groups
+
+
+def _facet_traces(view, sites, owners, neighbors):
+    """Owner- and neighbor-side traces of a field view at interior facet sites."""
+    left = jnp.zeros((len(owners),) + view.reconstruction.value_shape)
+    right = jnp.zeros_like(left)
+    for group in _one_sided_facet_groups(owners, neighbors):
+        index = np.asarray(group)
+        points = sites[index]
+        owner = view.trace(points, side="owner", cell_ids=jnp.asarray(owners[index]))
+        neighbor = view.trace(
+            points, side="neighbor", cell_ids=jnp.asarray(neighbors[index])
+        )
+        left = left.at[index].set(owner.func(points))
+        right = right.at[index].set(neighbor.func(points))
+    return left, right
+
+
+_G9_RESOLUTION = 2
+
+
+def test_g9_finite_element_field_view_feeds_the_same_closure_and_ports_must_match():
+    closure = _learned_face_closure(2)
+    system = phx.equations.EulerSystem(2)
+    vertices, triangles = _triangulated_unit_square(_G9_RESOLUTION)
+    finite_volume = phx.discretization.UnstructuredFiniteVolumePlan(
+        vertices, triangles=triangles, component_names=system.component_names
+    ).prepare()
+    x = finite_volume.cell_centers[:, 0] + 0.7 * finite_volume.cell_centers[:, 1]
+    state = system.primitive_to_conserved(
+        jnp.stack(
+            (1.0 + 0.2 * jnp.sin(3.0 * x), 0.2 * x, -0.1 * x**2, 1.0 + 0.1 * x),
+            axis=-1,
+        )
+    )
+    contribution = _triangle_euler(finite_volume, closure)(0.0, state) - (
+        _triangle_euler(finite_volume, None)(0.0, state)
+    )
+
+    # The same state as a typed, discontinuous finite-element field.
+    finite_element = phx.discretization.FiniteElementPlan(
+        _triangle_mesh(vertices, triangles),
+        phx.discretization.FiniteElementFieldSpec(
+            "state",
+            phx.discretization.discontinuous_element("triangle", 0),
+            component_shape=(4,),
+        ),
+    ).prepare()
+    reconstruction = phx.discretization.fem.prepare_finite_element_field_reconstruction(
+        finite_element, "state", value_port=_euler_state_port()
+    )
+    domain = phx.domain.GeometryDomain(reconstruction.support_geometry, label="x")
+    cell_dofs = finite_element.dof_maps[0].cell_dofs[0][:, 0]
+    view = phx.discretization.DiscreteFieldFunctionView(
+        reconstruction,
+        jnp.zeros(reconstruction.coefficient_shape).at[cell_dofs].set(state),
+        domain,
+        variable="x",
+        field_name="state",
+    )
+
+    # Owner/neighbor facet traces read through the view feed the closure, which
+    # reproduces the finite-volume owner's closure contribution cell by cell.
+    owners = np.asarray(finite_volume.owner_cells)
+    neighbors = np.asarray(finite_volume.neighbor_cells)
+    interior = np.flatnonzero(neighbors >= 0)
+    owners, neighbors = owners[interior], neighbors[interior]
+    left, right = _facet_traces(
+        view, finite_volume.face_centers[interior], owners, neighbors
+    )
+    measures = finite_volume.face_measures[interior]
+    normals = finite_volume.area_vectors[interior] / measures[:, None]
+    baseline = (
+        phx.discretization.RusanovFluxPlan()
+        .normal_face_flux(system, left, right, normals)
+        .normal_flux
+    )
+    context = phx.discretization.FaceFluxContext(
+        normals, measures, geometry_id="g9-finite-element-facets"
+    )
+    flux = measures[:, None] * (
+        closure.apply(system, left, right, baseline, context) - baseline
+    )
+    divergence = (
+        jnp.zeros_like(state).at[owners].add(-flux).at[neighbors].add(flux)
+        / finite_volume.cell_volumes[:, None]
+    )
+    assert float(jnp.max(jnp.abs(contribution))) > 1e-5
+    assert jnp.allclose(divergence, contribution, rtol=0.0, atol=1e-12)
+
+    # Finite-volume averages and the finite-element field of one typed port agree.
+    averages = phx.discretization.DiscreteFieldFunctionView(
+        phx.discretization.finite_volume.prepare_finite_volume_field_reconstruction(
+            finite_volume,
+            phx.discretization.PiecewiseConstantReconstruction(),
+            support_geometry=reconstruction.support_geometry,
+            value_port=_euler_state_port(),
+        ),
+        state,
+        domain,
+        variable="x",
+        field_name="state",
+    ).as_domain_function()
+    difference = view.as_domain_function() - averages
+    assert jnp.allclose(
+        jax.vmap(difference.func)(finite_volume.cell_centers), 0.0, atol=1e-14
+    )
+    # A field declared in another frame is refused before anything evaluates.
+    rotated = phx.discretization.DiscreteFieldFunctionView(
+        phx.discretization.fem.prepare_finite_element_field_reconstruction(
+            finite_element, "state", value_port=_euler_state_port("face-normal")
+        ),
+        view.coefficients,
+        domain,
+        variable="x",
+        field_name="state",
+    ).as_domain_function()
+    with pytest.raises(ValueError, match="value ports are incompatible: frame_id"):
+        rotated - averages
 
 
 class _RecordingClosure(phx.StrictModule):
@@ -1764,7 +1960,105 @@ def test_g5_operator_proposals_stay_inspectable_beside_native_corrections():
     assert not jnp.allclose(before.aux["proposal"], before.aux["corrected"], atol=1e-3)
 
 
-# G4: neural dynamics -> control (MPC sensitivity through a learned linearization) -
+# G5 (corrector with views): a finite-element answer owned by native Newton ------
+
+
+class _ReactionDiffusionResidual(eqx.Module):
+    """Native P1 residual of `-lap u + u^3 = f` with homogeneous Dirichlet rows."""
+
+    stiffness: Any
+    mass: Any
+    boundary: jax.Array
+
+    def __call__(self, dofs, source):
+        interior = self.stiffness.mv(dofs) + self.mass.mv(dofs**3) - self.mass.mv(source)
+        return jnp.where(self.boundary, dofs, interior)
+
+
+_G5_FIELD_PORT = phx.ValuePort(
+    "g5-reaction-diffusion-field",
+    event_shape=(),
+    component_ids=("u",),
+    representation="scalar-field",
+    dimensions=(phx.units.DIMENSIONLESS,),
+)
+
+
+def test_g5_native_corrector_owns_the_answer_and_exposes_both_fields_as_views():
+    discretization = phx.discretization.FiniteElementPlan(
+        _triangle_mesh(*_triangulated_unit_square(4)),
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 1)
+        ),
+    ).prepare()
+    residual = _ReactionDiffusionResidual(
+        discretization.stiffness,
+        discretization.mass,
+        discretization.boundary_dof_mask,
+    )
+    nodes = discretization.dof_maps[0].dof_coordinates
+    source = 30.0 * jnp.sin(jnp.pi * nodes[:, 0]) * jnp.sin(jnp.pi * nodes[:, 1])
+    problem = phx.nonlinear.NonlinearSystemProblem(residual)
+    termination = phx.nonlinear.NonlinearTermination(
+        absolute_residual=1e-9, relative_residual=0.0, maximum_steps=50
+    )
+    reconstruction = phx.discretization.fem.prepare_finite_element_field_reconstruction(
+        discretization, "u", value_port=_G5_FIELD_PORT
+    )
+    domain = phx.domain.GeometryDomain(reconstruction.support_geometry, label="x")
+
+    def field(coefficients, name):
+        return phx.discretization.DiscreteFieldFunctionView(
+            reconstruction, coefficients, domain, variable="x", field_name=name
+        ).as_domain_function()
+
+    size = nodes.shape[0]
+    probes = jnp.asarray(((0.3, 0.2), (0.6, 0.8), (0.9, 0.1)))
+    answers = []
+    for seed in (0, 1):
+        # Two neural operators of different quality propose the same field.
+        operator = phx.bind_component(
+            phx.nn.models.MLP(
+                in_size=size, out_size=size, width_size=16, depth=1, key=jr.key(seed)
+            ),
+            phx.ComponentAuthority.SURROGATE,
+        )
+        proposal = operator.model(source)
+        result = phx.nonlinear.NewtonKrylov().solve(
+            problem, proposal, termination=termination, args=source
+        )
+        assert bool(result.successful)
+        # The corrector's reported residual is the native residual of its answer;
+        # the proposal alone is far from satisfying it.
+        native = residual(result.state, source)
+        assert jnp.allclose(result.residual, native, rtol=0.0, atol=1e-13)
+        assert float(jnp.max(jnp.abs(native))) <= 1e-9
+        assert float(jnp.max(jnp.abs(residual(proposal, source)))) > 1.0
+        answers.append(result.state)
+
+        # Proposal and answer stay separately inspectable as typed FE fields.
+        proposed, corrected = field(proposal, "proposal"), field(result.state, "answer")
+        correction = corrected - proposed
+        assert jnp.allclose(
+            jax.vmap(correction.func)(probes),
+            jax.vmap(field(result.state - proposal, "correction").func)(probes),
+            atol=1e-12,
+        )
+        assert not jnp.allclose(
+            jax.vmap(proposed.func)(probes), jax.vmap(corrected.func)(probes), atol=1e-2
+        )
+        assert abs(float(corrected.func(jnp.asarray((0.0, 0.5))))) <= 1e-9
+
+    # The answer does not depend on the proposal's quality.
+    assert jnp.allclose(answers[0], answers[1], rtol=0.0, atol=1e-9)
+    # A proposal that is not a number never becomes an answer.
+    refused = phx.nonlinear.NewtonKrylov().solve(
+        problem, jnp.full((size,), jnp.nan), termination=termination, args=source
+    )
+    assert not bool(refused.successful)
+
+
+# G4: neural dynamics -> control ---------------------------------------------------
 
 
 class _LearnedDiscreteDynamics(phx.AbstractArrayModel):
@@ -1928,6 +2222,244 @@ def test_g4_mpc_sensitivity_through_the_learned_linearization():
     )
     assert bool(jnp.all(jnp.isfinite(model_gradient.drift)))
     assert bool(jnp.all(jnp.isfinite(model_gradient.coupling)))
+
+
+class _LearnedVectorField(phx.AbstractArrayModel):
+    """Learned controlled vector field `W x + tanh(V x) + g u` on (state, control)."""
+
+    drift: jax.Array
+    coupling: jax.Array
+    input_gain: jax.Array
+    in_size: tuple[int, int] = eqx.field(static=True)
+    out_size: int = eqx.field(static=True)
+
+    _input_binding = phx.domain.ModelBinding.pointwise("structured")
+
+    def __init__(self, drift, coupling, input_gain):
+        self.drift = jnp.asarray(drift)
+        self.coupling = jnp.asarray(coupling)
+        self.input_gain = jnp.asarray(input_gain)
+        self.in_size = (2, 1)
+        self.out_size = 2
+
+    def __call__(self, values, /, *, key=None):
+        state, control = values
+        return (
+            self.drift @ state
+            + jnp.tanh(self.coupling @ state)
+            + self.input_gain * control[0]
+        )
+
+    def model_execution_contract(self):
+        return phx.ModelExecutionContract(
+            derivative=_smooth_derivative(),
+            execution=phx.ExecutionCapabilities("native-jax"),
+            precision=phx.ComponentPrecisionContract.native("float64"),
+            randomness=phx.RandomnessContract("deterministic"),
+        )
+
+
+_G4_STATE = phx.dynamics.StateLayout((2,))
+_G4_CONTROL = phx.dynamics.InputLayout((1,), roles="control")
+_G4_GRID = phx.dynamics.TimeGrid(
+    0.1 * jnp.arange(9, dtype=jnp.float64), time_id="g4-rollout-time"
+)
+
+
+def _g4_vector_field(input_gain=(0.0, 1.0)):
+    return _LearnedVectorField(
+        [[0.0, 1.0], [-0.5, -0.1]], [[0.3, 0.0], [0.0, 0.2]], input_gain
+    )
+
+
+def _g4_bound_field(model):
+    """The learned vector field bound once as a canonical continuous system."""
+    return phx.dynamics.continuous_model_system(
+        model,
+        state_layout=_G4_STATE,
+        input_layout=_G4_CONTROL,
+        system_id="g4-learned-field",
+    )
+
+
+class _HeldControlField(phx.StrictModule):
+    """The bound continuous system with one interval's control held fixed."""
+
+    system: phx.dynamics.ContinuousSystem
+
+    def __call__(self, time, state, control):
+        return self.system(time, state, inputs=control)
+
+
+class _FixedStepTransition(phx.StrictModule):
+    """`substeps` fourth-order SSPRK steps of the bound system per control interval."""
+
+    method: phx.solver.SSPRK54FixedStepMethod
+    substeps: int = eqx.field(static=True)
+
+    def __init__(self, system, substeps):
+        self.method = phx.solver.SSPRK54FixedStepMethod(_HeldControlField(system))
+        self.substeps = substeps
+
+    def __call__(self, context, state, control, args):
+        del args
+        step = context.duration / self.substeps
+        for index in range(self.substeps):
+            state = self.method.step(
+                index, context.source + index * step, state, step, control
+            ).accepted_state
+        return state
+
+
+def _g4_fixed_step_plant(system, substeps):
+    return phx.control.DiscreteControlDynamics(
+        phx.dynamics.DiscreteSystem(
+            _FixedStepTransition(system, substeps),
+            state_layout=_G4_STATE,
+            input_layout=_G4_CONTROL,
+            system_id=f"g4-fixed-step-{substeps}",
+        )
+    )
+
+
+def _g4_open_loop_rollout(dynamics, controls, **options):
+    return phx.control.ControlProblem(
+        dynamics, _G4_GRID, _G4_INITIAL, problem_id="g4-open-loop"
+    ).rollout(
+        phx.control.PiecewiseConstantControlParameterization(
+            _G4_GRID, (1,), parameterization_id="g4-open-loop"
+        ),
+        controls,
+        **options,
+    )
+
+
+_G4_CONTROLS = jnp.sin(jnp.arange(8.0))[:, None]
+_G4_TIGHT = {"rtol": 1e-12, "atol": 1e-12}
+
+
+def test_g4_one_bound_model_drives_continuous_and_fixed_step_discrete_dynamics():
+    model = _g4_vector_field()
+    system = _g4_bound_field(model)
+    continuous = phx.control.DifferentialControlDynamics(system)
+    reference = _g4_open_loop_rollout(continuous, _G4_CONTROLS, **_G4_TIGHT)
+    assert int(reference.status) == phx.control.CONTROL_SUCCESS
+
+    # Both owners hold the one bound model: their PARAMETER leaves are its leaves.
+    model_leaves = jax.tree.leaves(phx.partition_parameters(model)[0])
+    for dynamics in (continuous, _g4_fixed_step_plant(system, 1)):
+        leaves = jax.tree.leaves(phx.partition_parameters(dynamics)[0])
+        assert len(leaves) == len(model_leaves)
+        assert all(
+            leaf is expected for leaf, expected in zip(leaves, model_leaves, strict=True)
+        )
+
+    # Fixed-step discrete dynamics of the same model converge to its continuous
+    # flow at high order.
+    errors = [
+        float(
+            jnp.max(
+                jnp.abs(
+                    _g4_open_loop_rollout(
+                        _g4_fixed_step_plant(system, substeps), _G4_CONTROLS
+                    ).states
+                    - reference.states
+                )
+            )
+        )
+        for substeps in (1, 2, 4)
+    ]
+    assert errors[2] < 1e-9
+    assert errors[0] > 8.0 * errors[1]
+    assert errors[1] > 4.0 * errors[2]
+
+    # One parameter derivative: both owners differentiate the same model.
+    def terminal_energy(input_gain, owner):
+        dynamics = owner(_g4_bound_field(_g4_vector_field(input_gain)))
+        options = _G4_TIGHT if owner is phx.control.DifferentialControlDynamics else {}
+        states = _g4_open_loop_rollout(dynamics, _G4_CONTROLS, **options).states
+        return jnp.sum(states[-1] ** 2)
+
+    gain = jnp.asarray([0.0, 1.0])
+    continuous_gradient = jax.grad(terminal_energy)(
+        gain, phx.control.DifferentialControlDynamics
+    )
+    discrete_gradient = jax.grad(terminal_energy)(
+        gain, lambda bound: _g4_fixed_step_plant(bound, 4)
+    )
+    assert bool(jnp.all(continuous_gradient != 0.0))
+    assert jnp.allclose(discrete_gradient, continuous_gradient, rtol=1e-7, atol=1e-10)
+
+
+def _g4_policy_cost(owner, initial):
+    plant, policy = owner
+    result = phx.control.ControlProblem(
+        plant,
+        _G4_GRID,
+        initial,
+        running_cost=lambda time, state, control, args: (
+            jnp.sum(state**2) + 0.1 * jnp.sum(control**2)
+        ),
+        terminal_cost=lambda time, state, args: 5.0 * jnp.sum(state**2),
+        problem_id="g4-feedback",
+    ).evaluate(policy, jnp.asarray(0.0))
+    return phx.solver.SolverCaseResult(
+        value=result.sampled_loss.total,
+        accepted=result.trajectory.status == phx.control.CONTROL_SUCCESS,
+    )
+
+
+def test_g4_neural_feedback_policy_gradient_is_valid_and_trains_through_the_rollout():
+    # The learned dynamics is FIXED inside the objective; the policy is the
+    # DECISION component trained through the differentiable rollout.
+    plant = _g4_fixed_step_plant(_g4_bound_field(_g4_vector_field()), 1)
+    policy = phx.control.NeuralFeedbackPolicy(
+        phx.nn.models.MLP(
+            in_size=2,
+            out_size=1,
+            width_size=4,
+            depth=1,
+            activation=jnp.tanh,
+            key=jr.key(3),
+        ),
+        state_shape=(2,),
+        control_shape=(1,),
+        policy_id="g4-feedback",
+    )
+    objective = phx.solver.RolloutObjective(
+        plant,
+        lambda plant, policy: (plant, policy),
+        _g4_policy_cost,
+        objective_id="g4-feedback-rollout",
+        cases=jnp.asarray([[1.0, -0.5], [-0.8, 0.4], [0.3, 0.9]]),
+    )
+    before = objective.evaluate(policy)
+    assert bool(jnp.all(before.accepted))
+    assert {authority for _, authority in before.trained} == {"decision"}
+
+    parameters, model_state, fixed = phx.partition_parameters(policy)
+    flat, unravel = ravel_pytree(parameters)
+
+    def loss(vector):
+        candidate = phx.combine_parameters(unravel(vector), model_state, fixed)
+        return objective.evaluate(candidate).value
+
+    gradient = jax.grad(loss)(flat)
+    step = 1e-6
+    for seed in range(3):
+        direction = jr.normal(jr.key(seed), flat.shape)
+        difference = (loss(flat + step * direction) - loss(flat - step * direction)) / (
+            2.0 * step
+        )
+        assert jnp.allclose(gradient @ direction, difference, rtol=1e-6)
+
+    result = phx.solver.train_components(
+        policy, (objective,), optimizer=optax.adam(5e-2), steps=40, key=jr.key(4)
+    )
+    after = objective.evaluate(result.tree)
+    assert result.accepted_updates == 40
+    assert float(after.value) < 0.5 * float(before.value)
+    assert {authority for _, authority in result.authorities} == {"decision"}
 
 
 # G19: differentiable MPC --------------------------------------------------------
@@ -2448,6 +2980,172 @@ def test_g13_replay_mismatch_is_refused():
     with pytest.raises(ValueError, match="Replay mismatch"):
         provider.apply_adjoint(other.stage_primal(x), 1.0, 1.0)
     assert len(provider.calls) == calls
+
+
+# G21: replay derivative ----------------------------------------------------------
+
+
+def _inexact_leaves(tree):
+    return [
+        leaf for leaf in jax.tree_util.tree_leaves(tree) if eqx.is_inexact_array(leaf)
+    ]
+
+
+def _assert_replay_mismatch_poisons_only_the_cotangent(drifted, clean, loss_state):
+    # A matched replay returns a usable cotangent for the state the loss reads.
+    assert bool(clean.replay_matched)
+    sensitivity = loss_state(clean.initial_state_cotangent)
+    assert bool(jnp.all(jnp.isfinite(sensitivity)))
+    assert bool(jnp.any(sensitivity != 0.0))
+
+    assert not bool(drifted.replay_matched)
+    # The primal and the forward replay evidence survive bitwise ...
+    assert drifted.primal == clean.primal
+    _assert_bitwise(drifted.replay, clean.replay)
+    # ... while the returned cotangent itself is invalid.
+    assert all(
+        bool(jnp.all(jnp.isnan(leaf)))
+        for leaf in _inexact_leaves(drifted.initial_state_cotangent)
+    )
+
+
+class _ReplayDriftingLoad:
+    """Host external load that drifts on one chosen evaluation.
+
+    Each rollout trace evaluates the load once; the drifting evaluation pushes
+    the first sphere hard enough to open a contact the forward pass never saw.
+    """
+
+    def __init__(self):
+        self.evaluations = 0
+        self.drift_on = None
+
+    def __call__(self, time, position, velocity, angular_velocity, args):
+        del time, velocity, args
+        self.evaluations += 1
+        push = 1.0e5 if self.evaluations == self.drift_on else 0.0
+        return phx.discretization.DEMExternalLoad(
+            jnp.zeros_like(position).at[0, 0].set(push),
+            jnp.zeros_like(angular_velocity),
+        )
+
+
+def _g21_dem_vjp(*, drift_on_replay):
+    load = _ReplayDriftingLoad()
+    compiled = phx.equations.compile_discrete_element_problem(
+        phx.equations.DiscreteElementProblemIR(
+            "g21-dem",
+            phx.equations.DEMMaterialTable(
+                jnp.asarray([1.0e5]),
+                jnp.asarray([0.25]),
+                jnp.asarray([[0.9]]),
+                jnp.asarray([[0.0]]),
+            ),
+            gravity=jnp.zeros((2,)),
+            external_load=load,
+            external_load_id="g21-host-load",
+        ),
+        phx.discretization.ParticleSetPlan(
+            jnp.asarray([10, 20]), jnp.ones((2,)), ambient_dimension=2
+        ).prepare(),
+        phx.discretization.RigidSphereSetPlan(
+            jnp.asarray([0.5, 0.5]), jnp.asarray([0, 0])
+        ),
+        phx.discretization.SoftSphereDEMMethodPlan(
+            phx.discretization.DEMContactModelPlan(
+                phx.discretization.LinearSpringDashpotNormalPlan(1.0e4)
+            )
+        ),
+        neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(1),
+    )
+    # Two approaching spheres that stay out of contact over the window.
+    state = compiled.initialize_state(
+        0.0,
+        jnp.asarray([[0.0, 0.0], [1.02, 0.0]]),
+        jnp.asarray([[0.1, 0.0], [-0.1, 0.0]]),
+    )
+    # The VJP evaluates the forward rollout, its replay, then the differentiated
+    # terminal map; only the replay drifts.
+    first = load.evaluations
+    if drift_on_replay:
+        load.drift_on = first + 2
+    result = phx.discretization.checkpointed_dem_vjp(
+        lambda final: jnp.sum(final.kinematics.position**2),
+        compiled.dynamics,
+        state,
+        jnp.asarray(1.0),
+        t0=0.0,
+        step_size=1.0e-3,
+        step_count=4,
+        checkpoint=phx.discretization.DEMCheckpointPolicy(1),
+    )
+    assert load.evaluations == first + 3
+    return result
+
+
+def test_g21_dem_replay_mismatch_invalidates_the_cotangent_and_keeps_evidence():
+    clean = _g21_dem_vjp(drift_on_replay=False)
+    assert not bool(jnp.any(clean.replay.active_contacts))
+    _assert_replay_mismatch_poisons_only_the_cotangent(
+        _g21_dem_vjp(drift_on_replay=True),
+        clean,
+        lambda cotangent: cotangent.kinematics.position,
+    )
+
+
+class _ReplayDriftingWindow:
+    """Reactive macro window whose fluid update drifts on one chosen evaluation."""
+
+    def __init__(self, drift_on):
+        self.plan, self.initial, self.boundary, self.schedule = reactive_problem()
+        self.evaluations = 0
+        self.drift_on = drift_on
+
+    def __call__(self, coupling_state, index):
+        self.evaluations += 1
+        drift = 1.0e-3 if self.evaluations == self.drift_on else 0.0
+
+        def update(fluid, momentum, energy, species, step_size):
+            del momentum, step_size
+            return fluid[0] + energy + drift, fluid[1] + species
+
+        return phx.solver.advance_reactive_cfd_dem_window(
+            self.plan,
+            self.schedule,
+            coupling_state,
+            reactive_fluid_sample,
+            update,
+            (self.boundary,),
+            jnp.zeros((0,)),
+            jnp.asarray([0.001]),
+            index * jnp.asarray(1.0e-5),
+            jnp.asarray(1.0e-5),
+        )
+
+
+def _g21_reactive_vjp(*, drift_on_replay):
+    # Forward rollout, replay, then the differentiated terminal map.
+    window = _ReplayDriftingWindow(2 if drift_on_replay else None)
+    result = phx.solver.checkpointed_reactive_vjp(
+        lambda final: jnp.sum(final.fluid_state[0]),
+        window,
+        window.initial,
+        jnp.asarray(1.0),
+        step_count=2,
+        checkpoint=phx.solver.ReactiveCheckpointPolicy(1),
+    )
+    assert window.evaluations == 3
+    return result
+
+
+def test_g21_reactive_replay_mismatch_invalidates_the_cotangent_and_keeps_evidence():
+    clean = _g21_reactive_vjp(drift_on_replay=False)
+    assert bool(jnp.all(clean.replay.successful))
+    _assert_replay_mismatch_poisons_only_the_cotangent(
+        _g21_reactive_vjp(drift_on_replay=True),
+        clean,
+        lambda cotangent: cotangent.fluid_state[0],
+    )
 
 
 # G23: field validity -------------------------------------------------------------

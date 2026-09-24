@@ -2289,6 +2289,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Control workflows](cookbook/control.md)
 - [Control API](api/control.md)
 - [Solvers and training](guides_solver.md)
+- [Machine learning interoperability](guides_ml_interoperability.md)
 - [API reference](api/phydrax.md)
 - `phydrax.domain` for geometry, time, and sampling.
 - `phydrax.sampling` for typed reference designs and capability inspection.

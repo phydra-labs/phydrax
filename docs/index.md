@@ -175,4 +175,7 @@ Domain guides: [Dark-matter simulation](guides_dark_matter_simulation.md),
 [off-shell/coherent transport](guides_off_shell_coherent_transport.md), and
 [dark-radiation transport](guides_dark_radiation_transport.md).
 
+Learned components inside native owners:
+[Machine learning interoperability](guides_ml_interoperability.md).
+
 Next: [All of Phydrax](all-of-phydrax.md)

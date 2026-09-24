@@ -3,6 +3,28 @@
 ## Unreleased
 
 ### Added
+- Added the machine-learning interoperability qualification runner
+  `tools/ml_interoperability_qualification.py`. It runs the scenarios of the 24
+  gates in `tests/integration/test_ml_interoperability_qualification.py` (all gates
+  or a `--gate` subset, optionally in parallel) and binds each gate's outcome into
+  one content-addressed `phydrax.qualification` record chain: support tuple,
+  zero-unqualified-scenario criterion, campaign start, raw observation, campaign
+  observation, and evidence, validated for causality. The report uses a logical
+  clock, so an unchanged build, environment, and outcome set reproduce it byte for
+  byte.
+- Completed the machine-learning interoperability gates. G4 drives continuous and
+  fixed-step discrete dynamics from one bound learned vector field and trains a
+  `NeuralFeedbackPolicy` through a differentiable rollout whose gradient matches
+  finite differences. G5 exposes a neural operator's proposal and the native
+  Newton correction of a finite-element problem as field views. G9 feeds one
+  learned face closure the finite-element facet traces of a field view and refuses
+  a field with a mismatched port. The new G21 shows DEM and reactive CFD-DEM replay
+  mismatches invalidating cotangents while preserving the primal and the forward
+  replay evidence.
+- Added the guide `docs/guides_ml_interoperability.md`: array roles, explicit
+  freeze, model state, lanes, intrinsic execution contracts versus bound authority,
+  ports, regularity, precision, randomness, objective admission, proposals versus
+  authoritative results, external tiers, and the qualification gates.
 - Added solver objectives in `phydrax.solver`: `SolverObjective` (implicit
   solution maps), `RolloutObjective` (unrolled rollouts), and
   `AlgorithmicWorkObjective` (fixed-work solver iterations with the
