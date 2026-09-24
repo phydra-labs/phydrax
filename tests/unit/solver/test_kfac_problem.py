@@ -217,7 +217,7 @@ def test_streamed_block_observations_match_dense_jacobian_oracle(approximation):
     streamed_flat, observations = term_block_curvature_observations(
         params,
         non_trainable,
-        solver,
+        solver.enforcement,
         residual_map.terms,
         layout,
         approximation=approximation,

@@ -251,33 +251,6 @@ class _GradientAccumulationState:
             accumulation_dtype=self.accumulation_dtype,
         )
 
-    @property
-    def has_positive_support(self) -> Array:
-        return self.support > 0.0
-
-    @property
-    def is_empty(self) -> bool:
-        return self.microsteps == 0
-
-    def normalized_gradient(self, like: Any, /) -> Any:
-        support = eqx.error_if(
-            self.support,
-            self.support <= 0.0,
-            "Cannot normalize a zero-support gradient accumulation window.",
-        )
-
-        def normalize(value: Any, reference: Any) -> Any:
-            if value is None:
-                return None
-            return (value / support).astype(reference.dtype)
-
-        return jax.tree_util.tree_map(
-            normalize,
-            self.gradient_numerator,
-            like,
-            is_leaf=lambda value: value is None,
-        )
-
 
 @dataclass(frozen=True, slots=True)
 class _ObjectiveAccumulator:

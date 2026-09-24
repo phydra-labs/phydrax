@@ -185,6 +185,22 @@ def test_semantic_rng_keys_survive_a_bucket_capacity_change() -> None:
     assert jnp.array_equal(first_keys, second_keys)
 
 
+def test_semantic_rng_keys_do_not_depend_on_the_other_items() -> None:
+    full = _plan().prepare()
+    fast = _signature("fast-fiber")
+    subset = ExecutionWorksetPlan(("unit-4", "unit-1"), (fast, fast)).prepare()
+    key = jax.random.key(19)
+    full_keys = full.scatter(
+        jax.random.key_data(full.semantic_keys(key, jnp.full((5,), 3, jnp.uint32)))
+    )
+    subset_keys = subset.scatter(
+        jax.random.key_data(subset.semantic_keys(key, jnp.full((2,), 3, jnp.uint32)))
+    )
+    by_id = dict(zip(full.plan.semantic_ids, full_keys, strict=True))
+    for semantic_id, key_words in zip(subset.plan.semantic_ids, subset_keys, strict=True):
+        assert jnp.array_equal(key_words, by_id[semantic_id])
+
+
 def test_checkpoint_validates_runtime_and_payload_identity() -> None:
     prepared = _plan().prepare()
     state = jnp.arange(10, dtype=jnp.float32).reshape((5, 2))

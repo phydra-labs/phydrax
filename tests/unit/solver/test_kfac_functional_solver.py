@@ -188,6 +188,39 @@ def test_kfac_keep_best_includes_initial_parameters():
     assert jnp.array_equal(trained_model.layers[0].bias, initial_model.layers[0].bias)
 
 
+def test_kfac_finite_rejection_keeps_parameters_and_retains_curvature():
+    solver = _linear_solver()
+    # The only Armijo candidate overflows the loss, so the attempt is a finite
+    # rejection: parameters stay put while the observed curvature is committed.
+    trained = solver.solve(
+        num_iter=1,
+        optim=phx.optim.kfac(
+            damping=1e-2,
+            learning_rate=1e200,
+            line_search_max_steps=1,
+        ),
+        seed=21,
+        jit=False,
+        keep_best=False,
+        log_every=0,
+        training=phx.solver.FunctionalTrainingPlan(),
+    )
+
+    initial_model = solver.functions["u"].func.raw_model
+    trained_model = trained.functions["u"].func.raw_model
+    assert jnp.array_equal(trained_model.layers[0].weight, initial_model.layers[0].weight)
+    assert jnp.array_equal(trained_model.layers[0].bias, initial_model.layers[0].bias)
+    diagnostics = trained.training_diagnostics
+    assert diagnostics["optimizer/kfac/finite_rejections"] == 1
+    assert diagnostics["optimizer/kfac/nonfinite_rejections"] == 0
+    assert diagnostics["optimizer/kfac/factor_updates"] == 1
+    state = trained.training_state
+    assert state.progress.update_step == 0
+    assert state.kernel_state.rule_state.step == 0
+    curvature = jax.tree.leaves(state.kernel_state.rule_state.curvature)
+    assert any(jnp.any(leaf != 0.0) for leaf in curvature)
+
+
 def test_kfac_quadratic_norm_clip_enforces_requested_bound():
     clipped, norm = _quadratic_norm_and_clip(
         jnp.asarray([4.0]),

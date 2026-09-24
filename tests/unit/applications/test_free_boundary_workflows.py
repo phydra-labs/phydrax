@@ -7,8 +7,10 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
+import pytest
 
 import phydrax as phx
+from phydrax._training_kernel import TrainingRejectionBudgetError
 
 
 class _TrainableFront(eqx.Module):
@@ -62,6 +64,28 @@ def test_stefan_fit_optimizes_a_trainable_representation_end_to_end():
     assert fitted.loss_history.shape == (8,)
     assert fitted.final_loss.total < initial
     assert abs(float(fitted.model.front.offset) - 0.5) < 0.1
+
+
+def test_stefan_fit_refuses_a_nonfinite_update_instead_of_committing_it():
+    model = phx.applications.free_boundary.ExplicitFrontStefanPINN(
+        lambda point: point[0],
+        _TrainableFront(jnp.asarray(0.4)),
+    )
+
+    def loss(candidate):
+        offset = candidate.front.offset
+        return phx.applications.free_boundary.StefanLoss(
+            pde=jnp.sqrt(offset - 0.5),
+            initial=0.0,
+            fixed_boundary=0.0,
+            interface_temperature=0.0,
+            stefan_balance=0.0,
+        )
+
+    with pytest.raises(TrainingRejectionBudgetError, match="nonfinite"):
+        phx.applications.free_boundary.fit_stefan_pinn(
+            model, loss, steps=2, optimizer=optax.sgd(0.1)
+        )
 
 
 def test_relaxed_first_passage_weights_form_one_stopping_law():

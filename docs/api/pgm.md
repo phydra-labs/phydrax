@@ -316,6 +316,13 @@ Gibbs-family samplers, MAP bounds, checkpointing, and composable training object
 
 ---
 
+`PersistentFactorGraphTrainingState` holds the committed graph, the shared
+training-kernel state (`training`: parameters, optimizer state, and cursors;
+`step_index` is its attempt cursor), and the persistent negative chains. Each
+persistent-CD/SML step is one kernel attempt with `MODEL` root authority. A
+nonfinite update rolls back and raises `FloatingPointError`, so the
+caller keeps the previous state and the chains do not advance.
+
 ::: phydrax.pgm.initialize_persistent_training
 
 ---

@@ -4,8 +4,6 @@ import jax.random as jr
 import numpy as np
 import pytest
 
-import phydrax.atomistic._training as atomistic_training
-from phydrax import partition_parameters
 from phydrax._training import TrainingIterationKind
 from phydrax.atomistic import (
     AtomisticBatch,
@@ -80,25 +78,6 @@ def _assert_trees_bitwise_equal(observed, expected):
             assert bool(jnp.array_equal(observed_leaf, expected_leaf))
         else:
             assert observed_leaf == expected_leaf
-
-
-def _assert_optimizer_state_matches_checkpoint(result):
-    def is_potential(node):
-        return isinstance(node, atomistic_training.AbstractAtomisticPotential)
-
-    optimizer_leaves = jax.tree_util.tree_leaves(
-        result.optimizer_state, is_leaf=is_potential
-    )
-    optimizer_potentials = tuple(leaf for leaf in optimizer_leaves if is_potential(leaf))
-    assert optimizer_potentials
-    trainable, _, _ = partition_parameters(result.potential)
-    expected_structure = jax.tree_util.tree_structure(trainable)
-    for optimizer_potential in optimizer_potentials:
-        assert jax.tree_util.tree_structure(optimizer_potential) == expected_structure
-        assert (
-            optimizer_potential.parameter_state_id == result.potential.parameter_state_id
-        )
-        assert optimizer_potential.potential_id == result.potential.potential_id
 
 
 @pytest.mark.parametrize("target_kind", ["energy", "force", "joint"])
@@ -187,8 +166,6 @@ def test_deterministic_continuation_matches_uninterrupted_training_and_selection
     )
 
     _assert_trees_bitwise_equal(continued, uninterrupted)
-    _assert_optimizer_state_matches_checkpoint(first)
-    _assert_optimizer_state_matches_checkpoint(continued)
     assert first.progress.update_step == 2
     assert continued.progress.update_step == 5
     assert continued.progress == uninterrupted.progress

@@ -14,13 +14,21 @@ import jax.numpy as jnp
 import optax
 from jaxtyping import Array
 
-from ..._differentiation import DerivativeContract, DerivativeRoute
-from ..._strict import StrictModule
-from ..._trainable import (
-    combine_parameters,
-    partition_parameters,
-    require_parameter_roles,
+from ..._differentiation import (
+    ComponentAuthority,
+    DerivativeContract,
+    DerivativeRoute,
+    ObjectiveKind,
 )
+from ..._strict import StrictModule
+from ..._trainable import combine_parameters, partition_parameters
+from ..._training_kernel import (
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    TrainingKernelSpec,
+)
+from ..._training_objective import _ObjectiveContribution
 from ..._tree_math import tree_allfinite, tree_inner, tree_norm
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
@@ -193,6 +201,19 @@ class CircuitFitDiagnostics(StrictModule):
     gradient_method: str = eqx.field(static=True)
 
 
+def _classifier_objective(parameters, model_state, fixed, payload, keys, /):
+    """Weighted logistic data fit plus L2 penalty of the circuit classifier."""
+    del keys
+    features, encoded, weights, mass, l2_strength = payload
+    candidate = combine_parameters(parameters, model_state, fixed)
+    logits = jax.vmap(candidate.decision_function)(features)
+    losses = jax.nn.softplus(logits) - encoded * logits
+    value = jnp.sum(weights * losses) / mass + l2_strength * tree_inner(
+        parameters, parameters
+    )
+    return _ObjectiveContribution(value, 1.0, 0.0), model_state, ()
+
+
 class VariationalCircuitClassifierRecipe(AbstractRecipe):
     """Full-batch exact binary fit over one initialized circuit feature model."""
 
@@ -311,19 +332,36 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
             self.negative_label,
             self.positive_label,
         )
-        require_parameter_roles(
-            classifier, context="VariationalCircuitClassifierRecipe.fit_batch"
+        # The recipe stays a pure fitting algorithm: it runs the training
+        # kernel's preflight (roles, MODEL authority, data-fit admission) but
+        # not the kernel's accepted-update lifecycle.
+        optimizer = optax.adam(self.learning_rate)
+        prepare_training_kernel(
+            classifier,
+            (
+                KernelObjective(
+                    objective_id="variational-circuit-classifier",
+                    kind=ObjectiveKind.DATA_FIT,
+                    route=DerivativeRoute.DIRECT,
+                    fn=_classifier_objective,
+                ),
+            ),
+            TrainingKernelSpec(
+                OptaxUpdateRule(optimizer, rule_id="variational-circuit-adam"),
+                context="VariationalCircuitClassifierRecipe.fit_batch",
+                rejection_budget=0,
+            ),
+            root_authority=ComponentAuthority.MODEL,
         )
         trainable, model_state, fixed = partition_parameters(classifier)
-        optimizer = optax.adam(self.learning_rate)
         optimizer_state = optimizer.init(trainable)
+        payload = (safe_features, encoded, safe_weights, mass, self.l2_strength)
 
         def objective(parameters):
-            candidate = combine_parameters(parameters, model_state, fixed)
-            logits = jax.vmap(candidate.decision_function)(safe_features)
-            losses = jax.nn.softplus(logits) - encoded * logits
-            data_loss = jnp.sum(safe_weights * losses) / mass
-            return data_loss + self.l2_strength * tree_inner(parameters, parameters)
+            contribution, _, _ = _classifier_objective(
+                parameters, model_state, fixed, payload, None
+            )
+            return contribution.numerator
 
         value_and_grad = eqx.filter_value_and_grad(objective)
 

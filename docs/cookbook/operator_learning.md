@@ -1859,19 +1859,31 @@ defined on normalized execution values. `OperatorLossContext` exposes paired
 execution and physical predictions, batches, and targets.
 
 `gradient_accumulation=K` holds parameters, optimizer state, target parameters,
-and the loss-schedule step fixed while evaluating `K` independently keyed
-microbatches. Case log masses and active masks are merged in the log domain, so
-the result equals the corresponding pooled weighted mean even for uneven final
-batches. The optimizer, validation, callbacks, history, and checkpoints advance
-only after a positive-support window flushes. Case-axis sums, nonlinear
-batch-risk reductions, and scalar custom losses are intentionally rejected when
-`K > 1`; write custom accumulated terms with
-`OperatorLossTerm(case_reduction="per_case")`.
+and the loss-schedule step fixed while evaluating `K` microbatches, each under
+its own attempt-addressed key. Case log masses and active masks are merged in
+the log domain, so the result equals the corresponding pooled weighted mean
+even for uneven final batches. Case-axis sums, nonlinear batch-risk reductions,
+and scalar custom losses are intentionally rejected when `K > 1`; write custom
+accumulated terms with `OperatorLossTerm(case_reduction="per_case")`.
+
+`fit_operator` trains through PhydraX's accepted-update training kernel with
+surrogate authority: the operator loss is one data-fit objective, or one
+unrolled rollout objective when rollout terms are present. Each window closes
+in one attempt with three outcomes. An accepted update commits parameters,
+optimizer state, target parameters, and the accepted-update cursor; only then
+do the loss scale, validation, callbacks, history, and checkpoints advance. A
+window without positive support is skipped and commits nothing. A nonfinite
+loss or gradient rolls every training quantity back and raises
+`FloatingPointError`, and so does a nonfinite optimizer update from finite
+gradients.
 
 Use `OperatorDTypePolicy` for parameter/compute/reduction placement. Gradient
 numerators accumulate in `reduction_dtype` and are cast back to parameter dtype
 at the optimizer boundary. Float16 compute additionally requires an explicit
-`OperatorLossScalePolicy`; any nonfinite microstep discards the pending window.
+`OperatorLossScalePolicy`. Under dynamic scaling a nonfinite window is rolled
+back and discarded, the scale backs off, and training continues with the next
+window; a nonfinite window that persists at the minimum scale still raises
+`FloatingPointError`.
 `OperatorShardingPolicy` shards a named case dimension, pads only physical tail
 capacity, and masks the padding from every reduction.
 
@@ -2055,15 +2067,21 @@ The final chunk is padded and masked internally, so padding contributes neither
 output nor physical measure. Use `NpyPredictionSink` when the assembled output
 must remain off device and outside process memory.
 
-`save_operator_training_checkpoint` persists the model, optimizer and
-gradient-accumulation state, exact PRNG key, normalization, dtype policy,
-semantic fit schema, logical epoch/batch cursor, loader identity, and user
-metadata in the current versioned format. Resume validates the manifest,
-version, state checksum, source content, ordering algorithm, and fit contract
-before case I/O. It then reads the exact next batch once and uses it for the
-first resumed update. A successful save publishes the new manifest atomically
-and prunes superseded state blobs, so periodic validation retains one resumable
-state per trial. Old checkpoint formats are rejected rather than migrated.
+`save_operator_training_checkpoint` persists a model, an optimizer state, and a
+PRNG key for custom loops, together with normalization, dtype policy, semantic
+schema, and user metadata. `fit_operator` checkpoints are a separate format:
+the training kernel's committed state (parameters, model state, optimizer
+state, target parameters, root key, attempt and accepted-update cursors), its
+role-schema, objective, update-rule, and sharding identities, plus the best
+model, loss scale, logical epoch/batch cursor, loader identity, fit contract,
+and learning curves. FIXED leaves come from the model passed on resume. They
+are published only at accepted-update boundaries. Resume validates the
+manifest, state checksum, kernel identities and structures, source content,
+ordering algorithm, and fit contract before case I/O. It then reads the exact
+next batch once and uses it for the first resumed update. A successful save
+publishes the new manifest atomically and prunes superseded state blobs, so
+periodic validation retains one resumable state per trial. Old checkpoint
+formats are rejected rather than migrated.
 
 `save_operator_artifact` stores the execution model, physical output pipeline and
 fingerprint, fixed-query geometry fingerprints, normalization, dtype, evidence,

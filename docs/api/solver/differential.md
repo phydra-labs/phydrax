@@ -397,10 +397,15 @@ than imputed. Stable `case_ids` and `data_id` retain data provenance.
 `neural_cde_loss` solves each selected case through `solve_diffrax_cde` at its
 own valid physical observation times and returns mean squared error over valid
 state scalars. `solve_options` cannot override those save times.
-`train_neural_cde` applies deterministic Optax mini-batches and returns
-`NeuralCDETrainingState`, including the vector field, optimizer state, last
-loss, exact epoch/batch/update position, ordering algorithm, and data,
-optimizer, solver-configuration, and dynamics IDs.
+`train_neural_cde` applies deterministic Optax mini-batches through PhydraX's
+internal training kernel. It uses MODEL authority and one unrolled rollout
+objective. It returns `NeuralCDETrainingState`: the vector field, the kernel
+`training` state (`optimizer_state` reads its Optax state), the last loss, the
+exact epoch/batch/update position, the ordering algorithm, and the data,
+optimizer, solver-configuration, and dynamics IDs. A nonfinite loss or gradient
+rolls the update back and raises `TrainingRejectionBudgetError`, so no
+nonfinite parameters or optimizer state are ever committed. A failed solve still
+raises before the optimizer runs.
 
 Start training with `vector_field=...` and no `state`. Resume with
 `state=previous_state` and no `vector_field`; changing batch size, seed,

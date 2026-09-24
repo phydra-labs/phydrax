@@ -22,6 +22,7 @@ from ..optim._kfac._blocks import initialize_block_state
 from ..optim._kfac._config import KFAC
 from ..optim._kfac._types import (
     AffineBlockSpec,
+    KFACMetrics,
     KFACState,
     ParameterLayout,
     UncoveredBlockSpec,
@@ -42,14 +43,24 @@ class KFACPlan:
         flat, _ = ravel_pytree(parameters)
         if flat.size != self.layout.parameter_count:
             raise ValueError("KFAC parameter structure changed after plan construction.")
+        count = jnp.asarray(0, dtype=jnp.int32)
+        real = jnp.zeros((), dtype=self.dtype)
         return KFACState(
-            step=jnp.asarray(0, dtype=jnp.int32),
+            step=count,
             curvature=initialize_block_state(
                 self.layout,
                 num_terms=self.num_terms,
                 dtype=self.dtype,
             ),
-            factor_updates=jnp.asarray(0, dtype=jnp.int32),
+            factor_updates=count,
+            metrics=KFACMetrics(
+                cg_iterations_max=count,
+                cg_relative_residual_max=real,
+                quadratic_update_norm=real,
+                accepted_step_size=real,
+                line_search_steps=count,
+                candidate_value=real,
+            ),
         )
 
 

@@ -18,7 +18,27 @@ import optax
 import pytest
 
 import phydrax as phx
+from phydrax import model_state_field, parameter_field
+from phydrax._training import ExponentialMovingAverageTargetPolicy
+from phydrax._training_kernel import (
+    BacktrackingLineSearchRule,
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    TrainingKernelSpec,
+)
+from phydrax._training_objective import _ObjectiveContribution
 from phydrax.domain import SampleLayout
+from phydrax.dynamics import (
+    AbstractDiscretePlant,
+    ArrayPyTreeSchema,
+    ExecutableSignature,
+    NumericRevision,
+    PlantParameters,
+    PlantProposal,
+    PlantStepContext,
+    SemanticProvenance,
+)
 from phydrax.kernels import SquaredExponentialKernel
 from phydrax.ml.kernel_methods import KernelRidgeRecipe
 from phydrax.ml.linear import RidgeRecipe
@@ -1135,3 +1155,209 @@ def test_g18_ale_closure_receives_exact_geometry_and_cartesian_parity():
             context.face_measure, cartesian.discretization.face_measures[axis]
         )
         assert not bool(jnp.any(context.grid_normal_velocity))
+
+
+# G12 / G24: in-situ coupled training --------------------------------------------
+
+
+class _DriftPlant(AbstractDiscretePlant):
+    """x <- x + gain * command; a negative command is a physical rejection."""
+
+    state_schema: ArrayPyTreeSchema
+    control_schema: ArrayPyTreeSchema
+    parameter_schema: ArrayPyTreeSchema
+    reset_fallback: dict
+    semantic_provenance: SemanticProvenance
+    numeric_revision: NumericRevision
+    execution_signature: ExecutableSignature
+    require_finite_state: bool = eqx.field(static=True)
+    require_finite_controls: bool = eqx.field(static=True)
+    require_finite_parameters: bool = eqx.field(static=True)
+
+    def __init__(self):
+        semantic = SemanticProvenance({"kind": "g12-drift-plant"})
+        self.state_schema = ArrayPyTreeSchema.from_tree(
+            {"x": jnp.zeros((1,))}, case_ndim=1
+        )
+        self.control_schema = ArrayPyTreeSchema.from_tree(jnp.zeros((1,)), case_ndim=1)
+        self.parameter_schema = ArrayPyTreeSchema.from_tree(
+            {"gain": jnp.asarray(1.0)}, case_ndim=0
+        )
+        self.reset_fallback = {"x": jnp.asarray(0.0)}
+        self.semantic_provenance = semantic
+        self.numeric_revision = NumericRevision(semantic, {"gain": jnp.asarray(2.0)})
+        self.execution_signature = ExecutableSignature(
+            shapes={"x": ()}, algorithm_facts={"method": "drift"}
+        )
+        self.require_finite_state = True
+        self.require_finite_controls = True
+        self.require_finite_parameters = True
+
+    def propose_reset(self, keys, parameters, /, *, case_shape, initial_time):
+        del keys, parameters, initial_time
+        state = {"x": jnp.zeros(case_shape)}
+        ok = jnp.ones(case_shape, dtype=jnp.bool_)
+        status = jnp.zeros(case_shape, dtype=jnp.int32)
+        return PlantProposal(state, state, ok, ok, status, status, None)
+
+    def propose_step(self, context, source, commands, parameters, keys, /):
+        del context, keys
+        successful = commands >= 0.0
+        status = jnp.where(successful, 0, 37).astype(jnp.int32)
+        candidate = {"x": source["x"] + parameters["gain"] * commands}
+        attempted = jnp.ones(successful.shape, dtype=jnp.bool_)
+        return PlantProposal(
+            candidate, candidate, attempted, successful, status, status, None
+        )
+
+
+class _DriftEstimator(phx.StrictModule):
+    rate: jax.Array = parameter_field()
+    updates: jax.Array = model_state_field()
+
+
+def _drift_error(parameters, model_state, fixed, payload, keys):
+    del fixed, keys
+    residual = payload["delta"] - parameters.rate
+    next_state = eqx.tree_at(
+        lambda state: state.updates, model_state, model_state.updates + 1.0
+    )
+    contribution = _ObjectiveContribution(jnp.sum(residual**2), residual.size)
+    return contribution, next_state, {}
+
+
+def _observed_drift(source, step):
+    return {"delta": step.candidate_state.payload["x"] - source.payload["x"]}
+
+
+def _drift_setup(rule, **spec_options):
+    plant = _DriftPlant()
+    parameters = PlantParameters(
+        {"gain": jnp.asarray(2.0)},
+        plant.parameter_schema.schema_id,
+        plant.numeric_revision,
+    )
+    plant_state = plant.reset(
+        jr.split(jr.key(1), 2), parameters, case_shape=(2,)
+    ).accepted_state
+    tree = _DriftEstimator(jnp.asarray(0.0), jnp.asarray(0.0))
+    kernel = prepare_training_kernel(
+        tree,
+        (
+            KernelObjective(
+                objective_id="drift",
+                kind=phx.ObjectiveKind.DATA_FIT,
+                route=phx.DerivativeRoute.DIRECT,
+                fn=_drift_error,
+            ),
+        ),
+        TrainingKernelSpec(
+            rule, context="in-situ drift", rejection_budget=4, **spec_options
+        ),
+        root_authority=phx.ComponentAuthority.MODEL,
+    )
+    return plant, parameters, plant_state, kernel, kernel.init(tree, jr.key(0))
+
+
+def _coupled(setup, plant_state, kernel_state, commands, policy, hooks=()):
+    plant, parameters, _, kernel, _ = setup
+    return phx.lifecycle.coupled_training_step(
+        plant,
+        plant_state,
+        kernel,
+        kernel_state,
+        _observed_drift,
+        policy,
+        context=PlantStepContext(
+            plant_state.time, plant_state.time + 1.0, plant_state.step_index
+        ),
+        commands=jnp.asarray(commands),
+        plant_parameters=parameters,
+        hooks=hooks,
+    )
+
+
+def _assert_bitwise(actual, expected):
+    def data(leaf):
+        if jax.dtypes.issubdtype(leaf.dtype, jax.dtypes.prng_key):
+            return jr.key_data(leaf)
+        return leaf
+
+    assert jax.tree_util.tree_structure(actual) == jax.tree_util.tree_structure(expected)
+    for left, right in zip(
+        jax.tree_util.tree_leaves(actual),
+        jax.tree_util.tree_leaves(expected),
+        strict=True,
+    ):
+        assert jnp.array_equal(data(left), data(right))
+
+
+@pytest.mark.parametrize("policy", list(phx.lifecycle.CoupledTrainingPolicy))
+def test_g12_physical_rejection_restores_every_training_quantity_exactly(policy):
+    setup = _drift_setup(
+        OptaxUpdateRule(optax.adam(0.1), rule_id="adam"),
+        target_policy=ExponentialMovingAverageTargetPolicy(decay=0.5),
+    )
+    _, _, plant_state, _, kernel_state = setup
+    # One committed joint step makes optimizer moments, targets, model state,
+    # and cursors nontrivial before the rejected step.
+    warm = _coupled(setup, plant_state, kernel_state, [1.0, 1.0], policy)
+    assert int(warm.kernel_state.accepted_cursor) == 1
+
+    hooks = []
+    rejected = _coupled(
+        setup,
+        warm.plant_state,
+        warm.kernel_state,
+        [1.0, -1.0],
+        policy,
+        hooks=(lambda *args: hooks.append(args),),
+    )
+    # The derived update was acceptable on its own, yet it was discarded with
+    # the rejected physical step: nothing of the attempt survives.
+    assert int(rejected.evidence.training.outcome) == 0
+    assert not bool(rejected.evidence.training_committed)
+    _assert_bitwise(rejected.kernel_state, warm.kernel_state)
+    assert hooks == []
+    x = rejected.plant_state.payload["x"]
+    assert float(x[1]) == float(warm.plant_state.payload["x"][1])
+    if policy is phx.lifecycle.CoupledTrainingPolicy.JOINTLY_REQUIRED:
+        _assert_bitwise(rejected.plant_state, warm.plant_state)
+    else:
+        assert float(x[0]) == float(warm.plant_state.payload["x"][0]) + 2.0
+
+
+def test_g24_policy_decides_whether_a_valid_step_survives_a_training_rejection():
+    # One huge trial step: the line search rejects finitely and is authorized to
+    # commit only its shrunken step size.
+    setup = _drift_setup(BacktrackingLineSearchRule(initial_step=100.0, max_trials=1))
+    _, _, plant_state, _, kernel_state = setup
+    outcomes = {}
+    for policy in phx.lifecycle.CoupledTrainingPolicy:
+        result = _coupled(setup, plant_state, kernel_state, [1.0, 1.0], policy)
+        outcomes[policy] = result
+        assert int(result.evidence.training.outcome) == 1
+        assert bool(result.evidence.training_committed)
+        _assert_bitwise(result.kernel_state.parameters, kernel_state.parameters)
+        _assert_bitwise(result.kernel_state.model_state, kernel_state.model_state)
+        assert float(result.kernel_state.rule_state.step_size) == 50.0
+        assert int(result.kernel_state.accepted_cursor) == 0
+        assert int(result.kernel_state.attempt_cursor) == 1
+
+    may_commit = outcomes[phx.lifecycle.CoupledTrainingPolicy.PHYSICAL_MAY_COMMIT]
+    jointly = outcomes[phx.lifecycle.CoupledTrainingPolicy.JOINTLY_REQUIRED]
+    assert jnp.array_equal(may_commit.plant_state.payload["x"], jnp.asarray([2.0, 2.0]))
+    assert jnp.array_equal(
+        may_commit.evidence.physical_committed, jnp.asarray([True, True])
+    )
+    _assert_bitwise(jointly.plant_state, plant_state)
+    assert not bool(jnp.any(jointly.evidence.physical_committed))
+
+    # With an acceptable update both policies commit plant and parameters together.
+    accepting = _drift_setup(BacktrackingLineSearchRule(initial_step=0.5, max_trials=4))
+    _, _, plant_state, _, kernel_state = accepting
+    for policy in phx.lifecycle.CoupledTrainingPolicy:
+        result = _coupled(accepting, plant_state, kernel_state, [1.0, 1.0], policy)
+        assert int(result.evidence.training.outcome) == 0
+        assert float(result.kernel_state.parameters.rate) > 0.0
+        assert jnp.array_equal(result.plant_state.payload["x"], jnp.asarray([2.0, 2.0]))

@@ -10,10 +10,20 @@ import equinox as eqx
 import jax.random as jr
 import optax
 
+from ..._sampling._addressing import derive_key, SampleAddress
 from ..._strict import StrictModule
 from ..._trainable import require_parameter_roles
 from ...terms import AugmentedInterfaceEvidence, AugmentedValueConstraint
 from .._functional_solver import FunctionalSolver
+
+
+# Collocation of the rebuilt solver after multiplier update `outer`.
+_OUTER_COLLOCATION_ADDRESS = SampleAddress(
+    "functional-decomposition",
+    "augmented-interface",
+    target=("collocation",),
+    role="outer",
+)
 
 
 class AugmentedInterfacePlan(StrictModule):
@@ -116,7 +126,7 @@ def solve_augmented_interface(
             terms=tuple(terms),
             evaluation_terms=current.evaluation_terms,
             enforcement=current.enforcement,
-            collocation_key=jr.key(seed + outer + 1),
+            collocation_key=derive_key(jr.key(seed), _OUTER_COLLOCATION_ADDRESS, outer),
             regularity_policy=current.regularity_policy,
         )
         if (

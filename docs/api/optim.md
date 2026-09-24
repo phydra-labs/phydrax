@@ -2202,7 +2202,12 @@ mirror, Riemannian, scalar, least-squares, and composite backends reject it
 rather than silently optimizing the complete ambient PyTree.
 
 `OpenEvolutionStrategy` is the native antithetic distribution-search method
-accepted by `FunctionalSolver`. Population methods requiring an explicit finite
+accepted by `FunctionalSolver`. One training step is one accepted generation:
+the population and the proposed mean are scored on one prepared objective
+payload. A generation with no finite member fitness, or with a nonfinite mean,
+mean value, or method state, commits nothing and is retried with a fresh
+population; more than 64 consecutive rejected generations raise
+`TrainingRejectionBudgetError`. Population methods requiring an explicit finite
 search-space contract remain owned by `DesignConstraintSystem.search(...)`.
 Optimistix interoperation remains explicit through `OptimistixMethod`.
 

@@ -2,11 +2,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from .._functional_update_kernel import (
-    FunctionalUpdateEvidence,
-    FunctionalUpdateKernel,
-    FunctionalUpdateState,
-)
 from ._adaptive import (
     AdaptiveRefinementPlan,
     AdaptiveTopologyEvidence,
@@ -147,14 +142,11 @@ __all__ = [
     "FunctionalDecompositionState",
     "FunctionalHierarchyPlan",
     "FunctionalHierarchyResult",
-    "FunctionalUpdateEvidence",
     "FunctionalPatchParticipant",
-    "FunctionalUpdateKernel",
     "LocalCurvaturePlan",
     "LocalCurvatureResult",
     "MatrixFreeGaussNewtonPlan",
     "MatrixFreeGaussNewtonResult",
-    "FunctionalUpdateState",
     "GlobalScope",
     "HybridFunctionalDecomposition",
     "JointDecompositionTraining",

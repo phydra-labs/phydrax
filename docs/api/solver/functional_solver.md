@@ -69,10 +69,18 @@ time-window behavior is covered by
       retaining the authored physical objective. `loss(...)` never changes meaning.
     - Stateful or causal training with best-model selection requires independent
       fixed `evaluation_terms` and `FunctionalSelectionPolicy`.
-    - Accepted-update checkpoints retain current and best fields, optimizer state,
-      previous pseudo-time fields, adaptive coefficients, collocation state, PRNG
-      state, and progress. `resume=True` rejects mismatched plan or
-      discretization identities.
+    - Every optimizer route runs through Phydrax's internal training kernel:
+      each step is one attempt that is accepted, rejected with only the
+      optimizer's declared state committed (for example damping or KFAC
+      curvature), or rolled back when nonfinite. More than 64 consecutive
+      rejections raise `TrainingRejectionBudgetError`. Randomness is addressed
+      by named site, attempt cursor, and microstep.
+    - Accepted-update checkpoints retain the kernel state (parameters,
+      optimizer state, targets, root key, cursors, role/objective/rule
+      identities), current and best fields, previous pseudo-time fields,
+      adaptive coefficients, collocation state, and progress. `resume=True`
+      rejects mismatched plan, discretization, role, objective, or update-rule
+      identities; pre-kernel checkpoints fail closed.
     - `FunctionalShardingPolicy` maps named native sample axes to a caller-owned
       JAX mesh. Placement follows array roles: parameter and model-state lanes are
       replicated, and fixed data shards its named sample axes. Global

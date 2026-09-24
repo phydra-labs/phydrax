@@ -8,10 +8,10 @@ from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-import jax.random as jr
 from jaxtyping import Array, Key, PyTree
 
 from .._doc import DOC_KEY0
+from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from ..linalg import ArraySpace, LinearizationPolicy
 from ..nn.neural_tangent import (
@@ -33,6 +33,13 @@ if TYPE_CHECKING:
 
 
 FunctionalNTKView = Literal["physical", "surrogate"]
+
+_NTK_EVALUATION_ADDRESS = SampleAddress(
+    "functional", "ntk-residual", target="objective", role="evaluation"
+)
+_NTK_SAMPLING_ADDRESS = SampleAddress(
+    "functional", "ntk-residual", target="objective", role="sampling"
+)
 
 
 class PreparedFunctionalNTK(StrictModule):
@@ -164,8 +171,8 @@ def prepare_functional_ntk(
         physical = solver.objective.prepare_training(
             indices,
             scale=1.0,
-            evaluation_key=key,
-            sampling_key=jr.fold_in(key, 1),
+            evaluation_key=derive_key(key, _NTK_EVALUATION_ADDRESS),
+            sampling_key=derive_key(key, _NTK_SAMPLING_ADDRESS),
             iteration=step,
         )
         residual = prepare_functional_residual(

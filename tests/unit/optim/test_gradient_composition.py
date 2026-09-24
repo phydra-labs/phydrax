@@ -215,7 +215,7 @@ def test_functional_solver_aligns_the_applied_optimizer_proposal():
 
     np.testing.assert_allclose(trained.functions["u"].func(), (1.0,), atol=1e-10)
     assert trained.training_state is not None
-    statistics = trained.training_state.update_alignment_statistics
+    statistics = trained.training_state.kernel_state.rule_state.statistics
     assert statistics is not None
     assert float(statistics.proposal_conflict_rate) == 1.0
     assert float(statistics.applied_conflict_rate) == 0.0

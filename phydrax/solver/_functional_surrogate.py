@@ -10,11 +10,11 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jr
 from jaxtyping import Array, PyTree
 
 import phydrax.axes as cx
 
+from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from ..domain import BatchEvaluator, DomainFunction, GridBatch, PointBatch
 from ..integration import (
@@ -592,7 +592,7 @@ def _updated_balance_multipliers(
     else:
         traces = []
         errors = []
-        for index, reference in enumerate(policy.blocks):
+        for reference in policy.blocks:
             indices = _residual_reference_indices(residual.layout, reference)
 
             def block_roots(candidate, _indices=indices):
@@ -609,7 +609,18 @@ def _updated_balance_multipliers(
             )
             estimate = stochastic_trace(
                 ntk.kernel,
-                key=jr.fold_in(key, index),
+                key=derive_key(
+                    key,
+                    SampleAddress(
+                        "functional",
+                        "balance-ntk-trace",
+                        target=(
+                            f"term={reference.term_index}",
+                            f"block={reference.block_name or '*'}",
+                        ),
+                        role="probe",
+                    ),
+                ),
                 num_probes=policy.ntk_probes,
                 max_dimension=1,
             )

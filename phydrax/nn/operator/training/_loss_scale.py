@@ -135,14 +135,6 @@ class OperatorLossScalePolicy:
         )
 
 
-def tree_all_finite(tree: Any, /) -> Array:
-    """Return one scalar JAX predicate over every numeric PyTree leaf."""
-    leaves = jax.tree_util.tree_leaves(tree)
-    if not leaves:
-        return jnp.asarray(True)
-    return jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(leaf)) for leaf in leaves)))
-
-
 __all__ = [
     "OperatorLossScalePolicy",
     "OperatorLossScaleState",

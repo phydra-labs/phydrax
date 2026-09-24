@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import isfinite
-from typing import Any, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, final, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -26,7 +26,9 @@ from .._sampling import (
     sample_markov,
 )
 from .._strict import StrictModule
-from .._trainable import ArrayRole, require_parameter_roles
+from .._trainable import ArrayRole, combine_parameters, require_parameter_roles
+from .._training_kernel import training_site_key, TrainingAttemptOutcome
+from .._training_objective import _ObjectiveContribution
 from ..linalg import (
     ArraySpace,
     EmpiricalGramLinearOperator,
@@ -48,7 +50,14 @@ from ..operators.quantum import (
     ComplexParameterMode,
     LogAmplitude,
 )
-from ._variational_monte_carlo import VariationalMonteCarloPolicy
+from ._variational_monte_carlo import (
+    _clipped_direction,
+    _FrozenVMCRun,
+    _prepare_sr_kernel,
+    _run_sr_attempt,
+    _SRStep,
+    VariationalMonteCarloPolicy,
+)
 
 
 if TYPE_CHECKING:
@@ -62,6 +71,7 @@ VMC_SUBSPACE_NONFINITE: VMCSubspaceStatus = 2
 VMC_SUBSPACE_SINGULAR_SPAN: VMCSubspaceStatus = 3
 VMC_SUBSPACE_RITZ_FAILURE: VMCSubspaceStatus = 4
 VMC_SUBSPACE_LINEAR_FAILURE: VMCSubspaceStatus = 5
+_SUBSPACE_OBJECTIVE_ID = "variational-monte-carlo-subspace"
 
 
 def vmc_subspace_status_name(status: int | Array, /) -> str:
@@ -382,12 +392,18 @@ class VariationalMonteCarloSubspaceProblem(StrictModule):
 
 
 class VariationalMonteCarloSubspaceState(StrictModule):
-    """Joint model coordinates and one persistent mixture Markov ensemble."""
+    """Joint model coordinates and one persistent mixture Markov ensemble.
+
+    `iteration` counts accepted block updates and `attempt_cursor` training
+    attempts (accepted or rejected); omitting it declares a state without
+    rejected attempts.
+    """
 
     models: tuple[Any, ...]
     parameter_coordinates: tuple[Array, ...]
     markov_state: MarkovState
     iteration: Array
+    attempt_cursor: Array
     root_key: Array
 
     def __init__(
@@ -398,6 +414,7 @@ class VariationalMonteCarloSubspaceState(StrictModule):
         markov_state: MarkovState,
         iteration: int | Array,
         root_key: Key[Array, ""],
+        attempt_cursor: int | Array | None = None,
     ):
         models_ = tuple(models)
         coordinates = tuple(jnp.asarray(value) for value in parameter_coordinates)
@@ -412,12 +429,20 @@ class VariationalMonteCarloSubspaceState(StrictModule):
         iteration_ = jnp.asarray(iteration, dtype=jnp.int32)
         if iteration_.shape != ():
             raise ValueError("iteration must be scalar.")
+        attempt_ = (
+            iteration_
+            if attempt_cursor is None
+            else jnp.asarray(attempt_cursor, dtype=jnp.int32)
+        )
+        if attempt_.shape != ():
+            raise ValueError("attempt_cursor must be scalar.")
         if jnp.asarray(root_key).shape != ():
             raise ValueError("root_key must be one scalar PRNG key.")
         self.models = models_
         self.parameter_coordinates = coordinates
         self.markov_state = markov_state
         self.iteration = iteration_
+        self.attempt_cursor = attempt_
         self.root_key = root_key
 
 
@@ -895,6 +920,92 @@ def _validate_state(
             )
     if int(state.iteration) < 0:
         raise ValueError("Subspace VMC state iteration must be non-negative.")
+    if int(state.attempt_cursor) < int(state.iteration):
+        raise ValueError(
+            "Subspace VMC state attempt cursor must not precede its iteration."
+        )
+
+
+@final
+class _SubspaceAttemptPayload(StrictModule):
+    """Host-drawn mixture samples and the host estimate's per-model weights."""
+
+    configurations: Array
+    responsibilities: Array
+    estimated: Array
+
+
+@final
+class _SubspaceAttemptDiagnostics(StrictModule):
+    linear: tuple[LinearSolveResult | None, ...]
+    step: _SRStep
+
+
+def _subspace_objective(
+    parameters: Any,
+    model_state: Any,
+    fixed: Any,
+    payload: _SubspaceAttemptPayload,
+    keys: Any,
+    /,
+) -> tuple[_ObjectiveContribution, Any, _SubspaceAttemptDiagnostics]:
+    """Score-corrected block objective plus its block-diagonal SR direction."""
+    del keys
+    tree = combine_parameters(parameters, model_state, fixed)
+    problem = tree.run.problem
+    policy = tree.run.policy
+    value, objective_gradient = jax.value_and_grad(
+        _score_corrected_objective,
+        argnums=1,
+    )(
+        problem,
+        tree.coordinates,
+        payload.configurations,
+        ritz_tolerance=tree.run.ritz_tolerance,
+    )
+    directions: list[Array] = []
+    linear_results: list[LinearSolveResult | None] = []
+    successful = payload.estimated
+    for model_index, (coordinates, gradient) in enumerate(
+        zip(tree.coordinates, objective_gradient, strict=True)
+    ):
+        if coordinates.size == 0:
+            directions.append(jnp.empty((0,), dtype=coordinates.dtype))
+            linear_results.append(None)
+            continue
+        metric = _score_geometry(
+            problem,
+            model_index,
+            coordinates,
+            payload.configurations,
+            payload.responsibilities[:, model_index],
+            damping=policy.damping,
+        )
+        force = jnp.conj(gradient) if jnp.iscomplexobj(coordinates) else gradient
+        linear = solve(
+            LinearSystem(metric, nullspace_policy=policy.nullspace_policy),
+            force,
+            policy=policy.linear_policy,
+        )
+        direction = jnp.asarray(linear.value)
+        linear_results.append(linear)
+        directions.append(direction)
+        successful = (
+            successful & jnp.all(linear.successful) & jnp.all(jnp.isfinite(direction))
+        )
+    step = _SRStep(
+        eqx.tree_at(lambda lane: lane.coordinates, parameters, tuple(directions)),
+        successful,
+    )
+    value = jnp.real(value)
+    contribution = _ObjectiveContribution(
+        value, jnp.ones((), value.dtype), jnp.zeros((), value.dtype)
+    )
+    return (
+        contribution,
+        model_state,
+        _SubspaceAttemptDiagnostics(tuple(linear_results), step),
+    )
 
 
 def _raise_subspace_vmc(status: Array, role: str, /) -> None:
@@ -912,7 +1023,15 @@ def solve_variational_monte_carlo_subspace(
     state: VariationalMonteCarloSubspaceState | None = None,
     ritz_tolerance: float = 1e-10,
 ) -> VariationalMonteCarloSubspaceResult:
-    """Optimize a discrete model block with score-corrected, block-diagonal SR."""
+    """Optimize a discrete model block with score-corrected, block-diagonal SR.
+
+    Each iteration samples and estimates on the host at the attempt's semantic
+    key and runs one training-kernel attempt whose objective forms the
+    score-corrected gradient and per-model metric solves; the shared stateless SR
+    rule steps. An invalid estimate or failed solve is a rejected attempt that
+    rolls the coordinates back (the chains keep their advanced state) and stops
+    the run (`failure_mode="raise"` raises, `"record"` returns).
+    """
     if not isinstance(problem, VariationalMonteCarloSubspaceProblem):
         raise TypeError("problem must be a VariationalMonteCarloSubspaceProblem.")
     if not isinstance(policy, VariationalMonteCarloPolicy):
@@ -945,17 +1064,32 @@ def solve_variational_monte_carlo_subspace(
     statuses: list[Array] = []
     all_linear_results: list[tuple[LinearSolveResult | None, ...]] = []
 
+    if policy.num_iterations > 0:
+        kernel, training = _prepare_sr_kernel(
+            current.parameter_coordinates,
+            _FrozenVMCRun(problem, policy, tolerance),
+            _subspace_objective,
+            objective_id=_SUBSPACE_OBJECTIVE_ID,
+            root_key=current.root_key,
+            iteration=current.iteration,
+            attempt_cursor=current.attempt_cursor,
+        )
     for _ in range(policy.num_iterations):
-        iteration = int(current.iteration)
-        iteration_key = jr.fold_in(resolved_key, iteration)
+        first_attempt = int(training.attempt_cursor) == 0
         estimate, samples = evaluate_variational_monte_carlo_subspace(
             problem,
             current.models,
             current.markov_state,
-            key=iteration_key,
+            key=training_site_key(
+                training.root_key,
+                objective_id=_SUBSPACE_OBJECTIVE_ID,
+                site="samples",
+                attempt=training.attempt_cursor,
+                microstep=training.microstep,
+            ),
             num_draws=policy.draws_per_iteration,
             steps_per_draw=policy.steps_per_draw,
-            warmup_steps=policy.warmup_steps if iteration == 0 else 0,
+            warmup_steps=policy.warmup_steps if first_attempt else 0,
             ritz_tolerance=tolerance,
         )
         objectives.append(estimate.objective)
@@ -964,114 +1098,65 @@ def solve_variational_monte_carlo_subspace(
         overlap_defects.append(estimate.overlap_hermiticity_residual)
         hamiltonian_defects.append(estimate.hamiltonian_hermiticity_residual)
         acceptances.append(estimate.acceptance_rate)
-        if not bool(estimate.successful):
-            statuses.append(estimate.status)
-            update_norms.append(jnp.asarray(jnp.nan))
-            current = VariationalMonteCarloSubspaceState(
-                models=current.models,
-                parameter_coordinates=current.parameter_coordinates,
-                markov_state=samples.final_state,
-                iteration=iteration,
-                root_key=resolved_key,
-            )
-            if policy.failure_mode == "raise":
-                _raise_subspace_vmc(estimate.status, "Subspace VMC estimation")
-            break
-
-        flat = jnp.asarray(samples.samples).reshape(
-            (-1,) + problem.operator.configuration_shape
+        estimated = bool(estimate.successful)
+        payload = _SubspaceAttemptPayload(
+            jnp.asarray(samples.samples).reshape(
+                (-1,) + problem.operator.configuration_shape
+            ),
+            jnp.abs(estimate.relative_amplitudes) ** 2,
+            jnp.asarray(estimated),
         )
-        objective_gradient = jax.grad(
-            _score_corrected_objective,
-            argnums=1,
-        )(
-            problem,
-            current.parameter_coordinates,
-            flat,
-            ritz_tolerance=tolerance,
-        )
-        directions: list[Array] = []
-        iteration_linear_results: list[LinearSolveResult | None] = []
-        linear_success = True
-        for model_index, (coordinates, gradient) in enumerate(
-            zip(
-                current.parameter_coordinates,
-                objective_gradient,
-                strict=True,
-            )
-        ):
-            if coordinates.size == 0:
-                directions.append(jnp.empty((0,), dtype=coordinates.dtype))
-                iteration_linear_results.append(None)
-                continue
-            responsibilities = jnp.abs(estimate.relative_amplitudes[:, model_index]) ** 2
-            metric = _score_geometry(
-                problem,
-                model_index,
-                coordinates,
-                flat,
-                responsibilities,
-                damping=policy.damping,
-            )
-            force = jnp.conj(gradient) if jnp.iscomplexobj(coordinates) else gradient
-            linear = solve(
-                LinearSystem(metric, nullspace_policy=policy.nullspace_policy),
-                force,
-                policy=policy.linear_policy,
-            )
-            direction = jnp.asarray(linear.value)
-            iteration_linear_results.append(linear)
-            directions.append(direction)
-            linear_success = linear_success and bool(
-                jnp.all(linear.successful) & jnp.all(jnp.isfinite(direction))
-            )
-        linear_tuple = tuple(iteration_linear_results)
-        all_linear_results.append(linear_tuple)
-        if not linear_success:
-            status = jnp.asarray(VMC_SUBSPACE_LINEAR_FAILURE, dtype=jnp.int32)
+        training, evidence, accepted = _run_sr_attempt(kernel, training, payload)
+        diagnostics: _SubspaceAttemptDiagnostics = evidence.diagnostics[0]
+        if estimated:
+            all_linear_results.append(diagnostics.linear)
+        if not accepted:
+            if not estimated:
+                status, role = estimate.status, "Subspace VMC estimation"
+            else:
+                status = jnp.asarray(
+                    VMC_SUBSPACE_NONFINITE
+                    if int(evidence.outcome) == TrainingAttemptOutcome.NONFINITE
+                    else VMC_SUBSPACE_LINEAR_FAILURE,
+                    dtype=jnp.int32,
+                )
+                role = "Subspace VMC metric solve"
             statuses.append(status)
             update_norms.append(jnp.asarray(jnp.nan))
             current = VariationalMonteCarloSubspaceState(
                 models=current.models,
                 parameter_coordinates=current.parameter_coordinates,
                 markov_state=samples.final_state,
-                iteration=iteration,
-                root_key=resolved_key,
+                iteration=training.accepted_cursor,
+                attempt_cursor=training.attempt_cursor,
+                root_key=training.root_key,
             )
             if policy.failure_mode == "raise":
-                _raise_subspace_vmc(status, "Subspace VMC metric solve")
+                _raise_subspace_vmc(status, role)
             break
-        norm = jnp.sqrt(
-            sum(jnp.real(jnp.vdot(direction, direction)) for direction in directions)
+        next_coordinates = training.parameters.coordinates
+        _direction, update_norm = _clipped_direction(
+            diagnostics.step.direction, policy.max_update_norm
         )
-        scale = jnp.asarray(1.0)
-        if policy.max_update_norm is not None:
-            scale = jnp.minimum(
-                1.0,
-                policy.max_update_norm / jnp.maximum(norm, 1e-30),
-            )
-        scaled_directions = tuple(scale * direction for direction in directions)
-        update_norm = scale * norm
-        next_coordinates = tuple(
-            coordinates - policy.learning_rate * direction
-            for coordinates, direction in zip(
-                current.parameter_coordinates,
-                scaled_directions,
-                strict=True,
-            )
-        )
-        next_models = problem.models_from_coordinates(next_coordinates)
         statuses.append(jnp.asarray(VMC_SUBSPACE_SUCCESS, dtype=jnp.int32))
         update_norms.append(update_norm)
         current = VariationalMonteCarloSubspaceState(
-            models=next_models,
+            models=problem.models_from_coordinates(next_coordinates),
             parameter_coordinates=next_coordinates,
             markov_state=samples.final_state,
-            iteration=iteration + 1,
-            root_key=resolved_key,
+            iteration=training.accepted_cursor,
+            attempt_cursor=training.attempt_cursor,
+            root_key=training.root_key,
         )
 
-    final_key = jr.fold_in(resolved_key, 0x5B5A)
+    # Continuation boundaries close every accumulation window (microstep 0).
+    final_key = training_site_key(
+        current.root_key,
+        objective_id=_SUBSPACE_OBJECTIVE_ID,
+        site="final-estimate",
+        attempt=current.attempt_cursor,
+        microstep=0,
+    )
     final_estimate, _final_samples = evaluate_variational_monte_carlo_subspace(
         problem,
         current.models,
@@ -1105,7 +1190,7 @@ def solve_variational_monte_carlo_subspace(
         if statuses
         else jnp.empty((0,), dtype=jnp.int32),
         linear_results=tuple(all_linear_results),
-        root_key=resolved_key,
+        root_key=current.root_key,
         problem_id=problem.problem_id,
         completed_iterations=int(current.iteration),
     )

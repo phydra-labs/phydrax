@@ -11,18 +11,28 @@ import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.random as jr
 import numpy as np
 import optax
 from jaxtyping import Array, ArrayLike
 
 from .._data_plane import EPOCH_ORDER_ALGORITHM, IndexEpochPlan
+from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import (
-    combine_parameters,
-    partition_parameters,
-    require_parameter_roles,
+from .._trainable import combine_parameters, require_parameter_roles
+from .._training_kernel import (
+    build_training_checkpoint,
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    PreparedTrainingKernel,
+    restore_training_checkpoint,
+    run_training_attempt,
+    TrainingKernelSpec,
+    TrainingKernelState,
 )
+from .._training_objective import _ObjectiveContribution
 from ._diffrax_cde import solve_diffrax_cde
 from ._driving_path import AbstractDifferentiableDrivingPath
 from ._rough import RoughDifferentialProblem
@@ -226,10 +236,10 @@ class NeuralCDETrainingData(StrictModule):
 
 
 class NeuralCDETrainingState(StrictModule):
-    """Exactly resumable Optax state at a deterministic mini-batch boundary."""
+    """Exactly resumable training-kernel state at a deterministic mini-batch boundary."""
 
     vector_field: Any
-    optimizer_state: Any
+    training: TrainingKernelState
     last_loss: Array
     epoch: int = eqx.field(static=True)
     batch_index: int = eqx.field(static=True)
@@ -247,13 +257,12 @@ class NeuralCDETrainingState(StrictModule):
     def __init__(
         self,
         vector_field: Any,
-        optimizer_state: Any,
+        training: TrainingKernelState,
         last_loss: ArrayLike,
         /,
         *,
         epoch: int,
         batch_index: int,
-        update_step: int,
         training_id: str,
         data_id: str,
         optimizer_id: str,
@@ -265,7 +274,10 @@ class NeuralCDETrainingState(StrictModule):
     ):
         if not callable(vector_field):
             raise TypeError("vector_field must be callable.")
-        if min(int(epoch), int(batch_index), int(update_step), int(seed)) < 0:
+        if not isinstance(training, TrainingKernelState):
+            raise TypeError("training must be a TrainingKernelState.")
+        update_step = int(jax.device_get(training.accepted_cursor))
+        if min(int(epoch), int(batch_index), update_step, int(seed)) < 0:
             raise ValueError("Training progress and seed must be nonnegative.")
         if int(batch_size) <= 0:
             raise ValueError("batch_size must be positive.")
@@ -282,11 +294,11 @@ class NeuralCDETrainingState(StrictModule):
         if loss.shape != ():
             raise ValueError("last_loss must be scalar.")
         self.vector_field = vector_field
-        self.optimizer_state = optimizer_state
+        self.training = training
         self.last_loss = loss
         self.epoch = int(epoch)
         self.batch_index = int(batch_index)
-        self.update_step = int(update_step)
+        self.update_step = update_step
         (
             self.training_id,
             self.data_id,
@@ -298,6 +310,11 @@ class NeuralCDETrainingState(StrictModule):
         self.seed = int(seed)
         self.shuffle = bool(shuffle)
         self.ordering = EPOCH_ORDER_ALGORITHM
+
+    @property
+    def optimizer_state(self) -> Any:
+        """Committed Optax state of the training kernel."""
+        return self.training.rule_state
 
 
 def neural_cde_loss(
@@ -441,12 +458,9 @@ def train_neural_cde(
     if state is None:
         if vector_field is None or not callable(vector_field):
             raise TypeError("An initial callable vector_field is required without state.")
-        require_parameter_roles(vector_field, context="train_neural_cde")
-        parameters, model_state, fixed = partition_parameters(vector_field)
-        optimizer_state = optimizer.init(parameters)
+        tree = vector_field
         epoch = 0
         batch_index = 0
-        update_step = 0
         last_loss = jnp.asarray(jnp.nan)
     else:
         if not isinstance(state, NeuralCDETrainingState):
@@ -457,26 +471,34 @@ def train_neural_cde(
             raise ValueError(
                 "Training state provenance does not match this run configuration."
             )
-        require_parameter_roles(state.vector_field, context="train_neural_cde")
-        parameters, model_state, fixed = partition_parameters(state.vector_field)
-        optimizer_state = state.optimizer_state
+        tree = state.vector_field
         epoch = state.epoch
         batch_index = state.batch_index
-        update_step = state.update_step
         last_loss = state.last_loss
+    require_parameter_roles(tree, context="train_neural_cde")
 
-    def objective(trainable, model_state_tree, fixed_tree, batch_indices):
-        model = combine_parameters(trainable, model_state_tree, fixed_tree)
-        return neural_cde_loss(
-            model,
-            data,
-            indices=batch_indices,
-            drift=drift,
-            args=args,
-            solve_options=solve_options,
-        )
-
-    value_and_grad = eqx.filter_value_and_grad(objective)
+    kernel = prepare_training_kernel(
+        tree,
+        (
+            KernelObjective(
+                objective_id="neural-cde-observations",
+                kind=ObjectiveKind.ROLLOUT,
+                route=DerivativeRoute.UNROLLED,
+                fn=_observation_objective,
+            ),
+        ),
+        TrainingKernelSpec(
+            OptaxUpdateRule(optimizer, rule_id=optimizer_name),
+            context="train_neural_cde",
+            rejection_budget=0,
+        ),
+        root_authority=ComponentAuthority.MODEL,
+    )
+    training = (
+        kernel.init(tree, jr.key(random_seed))
+        if state is None
+        else _verified_training_state(kernel, state.training)
+    )
     for _ in range(steps):
         plan = IndexEpochPlan(
             data.num_cases,
@@ -497,29 +519,28 @@ def train_neural_cde(
                 epoch,
                 False,
             )
-        batch_indices = plan.batch(batch_index)
-        last_loss, gradients = value_and_grad(
-            parameters, model_state, fixed, batch_indices
+        batch_indices = tuple(int(index) for index in plan.batch(batch_index))
+        # Eager: case selection is static per batch, and a failed solve raises
+        # before the optimizer runs. A nonfinite loss rolls back and raises
+        # TrainingRejectionBudgetError (budget 0).
+        training, evidence = run_training_attempt(
+            kernel,
+            training,
+            (data, batch_indices, drift, args, solve_options),
+            jit=False,
         )
-        last_loss = jax.block_until_ready(last_loss)
-        updates, optimizer_state = optimizer.update(
-            gradients, optimizer_state, parameters
-        )
-        parameters = eqx.apply_updates(parameters, updates)
-        update_step += 1
+        last_loss = evidence.value
         batch_index += 1
         if batch_index == plan.batch_count:
             epoch += 1
             batch_index = 0
 
-    trained = combine_parameters(parameters, model_state, fixed)
     return NeuralCDETrainingState(
-        trained,
-        optimizer_state,
+        kernel.tree(training),
+        training,
         last_loss,
         epoch=epoch,
         batch_index=batch_index,
-        update_step=update_step,
         training_id=training_id,
         data_id=data.data_id,
         optimizer_id=optimizer_name,
@@ -529,6 +550,29 @@ def train_neural_cde(
         seed=random_seed,
         shuffle=bool(shuffle),
     )
+
+
+def _observation_objective(parameters, model_state, fixed, payload, keys, /):
+    del keys
+    data, batch_indices, drift, args, solve_options = payload
+    loss = neural_cde_loss(
+        combine_parameters(parameters, model_state, fixed),
+        data,
+        indices=batch_indices,
+        drift=drift,
+        args=args,
+        solve_options=solve_options,
+    )
+    return _ObjectiveContribution(loss, jnp.ones_like(loss)), model_state, ()
+
+
+def _verified_training_state(
+    kernel: PreparedTrainingKernel, training: TrainingKernelState, /
+) -> TrainingKernelState:
+    """Fail closed unless `training` is a committed state of `kernel`."""
+    return restore_training_checkpoint(
+        kernel, build_training_checkpoint(kernel, training)
+    ).state
 
 
 __all__ = [

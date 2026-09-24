@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.ein import contract
 
+from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
@@ -22,14 +23,21 @@ from ..._trainable import (
     combine_parameters,
     fixed_field,
     NonTrainableState,
-    partition_parameters,
-    require_parameter_roles,
 )
 from ..._training import (
     TrainingController,
     TrainingIterationKind,
     TrainingProgress,
 )
+from ..._training_kernel import (
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    run_training_attempt,
+    TrainingKernelSpec,
+    TrainingRejectionBudgetError,
+)
+from ..._training_objective import _ObjectiveContribution
 from .._dynamics import PreparedAtomisticDynamics
 from ._bias import (
     AbstractAtomisticBiasPlan,
@@ -337,6 +345,25 @@ def _free_energy_loss(
     return loss, valid
 
 
+_validation_loss = eqx.filter_jit(_free_energy_loss)
+
+
+def _free_energy_objective(parameters, model_state, fixed, data, keys):
+    """Mean-force data fit whose invalid evaluations carry no support.
+
+    An evaluation without active windows or with nonfinite predictions has zero
+    support, so the kernel rejects it instead of committing the update.
+    """
+    del keys
+    loss, valid = _free_energy_loss(
+        combine_parameters(parameters, model_state, fixed), data
+    )
+    contribution = _ObjectiveContribution(
+        jnp.where(valid, loss, jnp.zeros_like(loss)), valid.astype(loss.dtype)
+    )
+    return contribution, model_state, (loss, valid)
+
+
 def fit_free_energy_model(
     model: AbstractArrayModel,
     data: MeanForceData,
@@ -348,9 +375,15 @@ def fit_free_energy_model(
     validation_data: MeanForceData | None = None,
     optimizer: optax.GradientTransformation | None = None,
 ) -> FreeEnergyFitResult:
+    """Fit a scalar free-energy model to mean-force data.
+
+    Every update is one attempt of the shared training kernel (`MODEL` root
+    authority, one data-fit objective). An invalid or nonfinite training
+    evaluation is rejected, never committed: training stops with a `FAILURE`
+    event and `valid=False`, and the selected model is the last accepted one.
+    """
     if not isinstance(model, AbstractArrayModel) or not isinstance(data, MeanForceData):
         raise TypeError("model and data must satisfy free-energy training contracts.")
-    require_parameter_roles(model, context="fit_free_energy_model")
     if model.in_size != data.centers.shape[1] or model.out_size != 1:
         raise ValueError("Free-energy model must map CV coordinates to one scalar.")
     identifier = str(model_id).strip()
@@ -362,40 +395,44 @@ def fit_free_energy_model(
     validation = data if validation_data is None else validation_data
     if validation.centers.shape[1] != data.centers.shape[1]:
         raise ValueError("Training and validation CV dimensions differ.")
-    optimizer_ = optax.adam(policy_.learning_rate) if optimizer is None else optimizer
-    state = optimizer_.init(partition_parameters(model)[0])
+    if optimizer is None:
+        optimizer_ = optax.adam(policy_.learning_rate)
+        rule_id = canonical_fingerprint(
+            {
+                "kind": "free-energy-training-adam",
+                "learning_rate": policy_.learning_rate.hex(),
+            }
+        )
+    else:
+        optimizer_ = optimizer
+        rule_id = "free-energy-training-caller-optimizer"
+    kernel = prepare_training_kernel(
+        model,
+        (
+            KernelObjective(
+                objective_id="free-energy-mean-force",
+                kind=ObjectiveKind.DATA_FIT,
+                route=DerivativeRoute.DIRECT,
+                fn=_free_energy_objective,
+            ),
+        ),
+        TrainingKernelSpec(
+            OptaxUpdateRule(optimizer_, rule_id=rule_id),
+            context="fit_free_energy_model",
+            rejection_budget=0,
+        ),
+        root_authority=ComponentAuthority.MODEL,
+    )
+    state = kernel.init(model, key)
     controller = TrainingController(
         total_steps=policy_.maximum_steps,
-        key=key,
         algorithm_id="free-energy-training",
     )
-
-    @eqx.filter_jit
-    def update(current, optimizer_state):
-        parameters, model_state, fixed = partition_parameters(current)
-
-        def objective(candidate):
-            return _free_energy_loss(
-                combine_parameters(candidate, model_state, fixed), data
-            )
-
-        (loss, valid), gradient = eqx.filter_value_and_grad(objective, has_aux=True)(
-            parameters
-        )
-        updates, next_state = optimizer_.update(gradient, optimizer_state, parameters)
-        return (
-            combine_parameters(
-                eqx.apply_updates(parameters, updates), model_state, fixed
-            ),
-            next_state,
-            loss,
-            valid,
-        )
 
     current = model
     training_history: list[Array] = []
     validation_history: list[Array] = []
-    initial_validation, initial_valid = _free_energy_loss(current, validation)
+    initial_validation, initial_valid = _validation_loss(current, validation)
     controller.select(
         float(initial_validation), current, step=0, mode="min", patience=policy_.patience
     )
@@ -405,10 +442,22 @@ def fit_free_energy_model(
     )
     valid = initial_valid
     for step in range(1, policy_.maximum_steps + 1):
-        current, state, training_loss, step_valid = update(current, state)
+        try:
+            state, evidence = run_training_attempt(kernel, state, data)
+            accepted = bool(evidence.supported)
+        except TrainingRejectionBudgetError:
+            accepted = False
+        if not accepted:
+            # An invalid evaluation carries no support and a nonfinite one
+            # rolls back: either way the update was rejected, not committed.
+            valid = jnp.asarray(False)
+            controller.emit(TrainingIterationKind.FAILURE, metrics={"step": step})
+            break
+        training_loss, step_valid = evidence.diagnostics[0]
+        current = kernel.tree(state)
         controller.complete_update(step)
         if step % policy_.validation_interval == 0 or step == policy_.maximum_steps:
-            validation_loss, validation_valid = _free_energy_loss(current, validation)
+            validation_loss, validation_valid = _validation_loss(current, validation)
             valid = step_valid & validation_valid
             training_history.append(training_loss)
             validation_history.append(validation_loss)

@@ -241,3 +241,11 @@ def test_failed_local_and_linear_actions_record_without_applying_updates():
     assert linear_result.status_history[0] == phx.solver.VMC_LINEAR_FAILURE
     assert linear_result.completed_iterations == 0
     assert linear_result.linear_results
+    # The rejected attempt rolls the parameters back but consumes its attempt,
+    # so a continuation never replays the rejected attempt's sample key.
+    assert jnp.array_equal(
+        linear_result.final_state.parameter_coordinates,
+        failed_linear.initial_coordinates,
+    )
+    assert int(linear_result.final_state.iteration) == 0
+    assert int(linear_result.final_state.attempt_cursor) == 1

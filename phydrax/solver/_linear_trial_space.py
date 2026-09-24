@@ -10,12 +10,12 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jr
 import numpy as np
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
+from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from .._trainable import (
     combine_parameters,
@@ -39,6 +39,14 @@ from ._functional_residual import (
     prepared_term_residual_vector,
 )
 from ._functional_run import require_empty_model_state
+
+
+_EVALUATION_ADDRESS = SampleAddress(
+    "functional", "linear-trial-space", target="objective", role="evaluation"
+)
+_SAMPLING_ADDRESS = SampleAddress(
+    "functional", "linear-trial-space", target="objective", role="sampling"
+)
 
 
 class LinearTrialSpaceResult(StrictModule):
@@ -140,12 +148,11 @@ def solve_linear_trial_space(
     if jnp.iscomplexobj(flat_params):
         raise TypeError("Linear trial-space coefficients must be real-valued.")
 
-    evaluation_key, sampling_key = jr.split(key)
     prepared = solver.objective.prepare_training(
         range(len(solver.terms)),
         scale=1.0,
-        evaluation_key=evaluation_key,
-        sampling_key=sampling_key,
+        evaluation_key=derive_key(key, _EVALUATION_ADDRESS),
+        sampling_key=derive_key(key, _SAMPLING_ADDRESS),
         iteration=jnp.asarray(0, dtype=jnp.int32),
     )
     residual_terms = materialize_prepared_residual_terms(prepared, require_all=True)

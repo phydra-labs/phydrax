@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -11,8 +12,9 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import SpooledTemporaryFile
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, TYPE_CHECKING
 
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -23,6 +25,15 @@ from ._document_resource import decode_json_resource
 from ._external_resource import read_bounded_resource, ResourceLimits
 from ._host_io import open_regular_beneath
 from ._publication import publish_bytes, publish_file
+
+
+if TYPE_CHECKING:
+    from ._training_kernel import (
+        PreparedTrainingKernel,
+        RestoredTrainingCheckpoint,
+        TrainingCheckpointPayload,
+        TrainingKernelState,
+    )
 
 
 def _publish_state(
@@ -179,4 +190,146 @@ def _deserialize_root_key(
     return jr.wrap_key_data(jnp.asarray(key_data, dtype=jnp.uint32), impl=key_impl)
 
 
-__all__: list[str] = []
+_KERNEL_CHECKPOINT_FIELDS = frozenset(
+    {"format", "kernel", "metadata", "state_file", "state_sha256"}
+)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class LoadedTrainingCheckpoint:
+    """Restored kernel state, the frontend's extra tree, and its JSON metadata."""
+
+    restored: RestoredTrainingCheckpoint
+    extra: Any
+    metadata: dict[str, Any]
+
+
+def _checkpoint_format(value: str, /) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Training checkpoint format must be a non-empty string.")
+    return value.strip()
+
+
+def save_training_checkpoint(
+    path: str | Path,
+    payload: TrainingCheckpointPayload,
+    extra: Any,
+    /,
+    *,
+    format: str,
+    metadata: Mapping[str, Any],
+) -> None:
+    """Publish one kernel checkpoint payload plus a frontend extra tree.
+
+    The directory holds a content-addressed state file with the kernel arrays and
+    `extra` (equinox leaf serialization through the pickle-free, bounded
+    `serialize_model_leaf` codec, which also encodes typed PRNG keys) and a
+    canonical JSON manifest `{"format", "kernel", "metadata", "state_file",
+    "state_sha256"}` in which `kernel` is the payload manifest and `metadata` is
+    the frontend's JSON object. Frontend fields never enter the kernel manifest.
+    """
+    from ._model._structure import serialize_model_leaf
+    from ._training_kernel import TrainingCheckpointPayload
+
+    if not isinstance(payload, TrainingCheckpointPayload):
+        raise TypeError("payload must be a TrainingCheckpointPayload.")
+    if not isinstance(metadata, Mapping):
+        raise TypeError("metadata must be a JSON object.")
+    directory = Path(path)
+    state_path, checksum = _publish_state(
+        directory,
+        lambda target: eqx.tree_serialise_leaves(
+            target, (dict(payload.arrays), extra), filter_spec=serialize_model_leaf
+        ),
+    )
+    _publish_manifest(
+        directory / "manifest.json",
+        {
+            "format": _checkpoint_format(format),
+            "kernel": dict(payload.manifest),
+            "metadata": dict(metadata),
+            "state_file": state_path.name,
+            "state_sha256": checksum,
+        },
+    )
+    _prune_state_files(directory, state_path.name)
+
+
+def read_training_checkpoint_metadata(
+    path: str | Path, /, *, format: str
+) -> dict[str, Any]:
+    """Read and validate the manifest envelope; return the frontend metadata."""
+    return _read_kernel_envelope(Path(path), _checkpoint_format(format))["metadata"]
+
+
+def _read_kernel_envelope(directory: Path, format: str, /) -> dict[str, Any]:
+    manifest = _read_manifest(directory / "manifest.json")
+    if not isinstance(manifest, dict) or set(manifest) != _KERNEL_CHECKPOINT_FIELDS:
+        raise ValueError(
+            "Training checkpoint manifest must hold exactly the fields "
+            f"{sorted(_KERNEL_CHECKPOINT_FIELDS)!r}."
+        )
+    if manifest["format"] != format:
+        raise ValueError(f"File is not a {format!r} training checkpoint.")
+    if not isinstance(manifest["kernel"], dict) or not isinstance(
+        manifest["metadata"], dict
+    ):
+        raise ValueError("Training checkpoint kernel manifest and metadata are objects.")
+    return manifest
+
+
+def load_training_checkpoint(
+    path: str | Path,
+    kernel: PreparedTrainingKernel,
+    template: TrainingKernelState,
+    extra_like: Any,
+    /,
+    *,
+    format: str,
+    sharding_identity: str | None = None,
+) -> LoadedTrainingCheckpoint:
+    """Load, verify, and restore a checkpoint written by `save_training_checkpoint`.
+
+    `template` is any state of `kernel` (usually `kernel.init(tree, key)`) and
+    `extra_like` the extra tree's template. The kernel payload is verified by
+    `restore_training_checkpoint`, so every identity or structure mismatch fails
+    closed with `ValueError`.
+    """
+    from ._model._structure import deserialize_model_leaf
+    from ._training_kernel import (
+        _checkpoint_arrays,
+        restore_training_checkpoint,
+        TrainingCheckpointPayload,
+    )
+
+    directory = Path(path)
+    manifest = _read_kernel_envelope(directory, _checkpoint_format(format))
+    state_name = manifest["state_file"]
+    with _open_verified_state(directory, state_name, manifest["state_sha256"]) as stream:
+        try:
+            arrays, extra = eqx.tree_deserialise_leaves(
+                stream,
+                (_checkpoint_arrays(template), extra_like),
+                filter_spec=deserialize_model_leaf,
+            )
+        except (TypeError, ValueError, RuntimeError) as error:
+            raise ValueError(
+                "Training checkpoint state does not match this run's structure."
+            ) from error
+        if stream.read(1):
+            raise ValueError("Training checkpoint state has trailing payload.")
+    _prune_state_files(directory, state_name)
+    restored = restore_training_checkpoint(
+        kernel,
+        TrainingCheckpointPayload(manifest["kernel"], arrays),
+        sharding_identity=sharding_identity,
+    )
+    return LoadedTrainingCheckpoint(restored, extra, manifest["metadata"])
+
+
+__all__: list[str] = [
+    "load_training_checkpoint",
+    "LoadedTrainingCheckpoint",
+    "read_training_checkpoint_metadata",
+    "save_training_checkpoint",
+]

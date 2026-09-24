@@ -21,12 +21,15 @@ from ..._iteration import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, require_parameter_roles
+from ..._training_kernel import TrainingKernelState
 from ...domain import LocalFieldFamily
 from .._functional_solver import FunctionalSolver
 from ._prepare import PreparedFunctionalDecomposition
 from ._schwarz import capture_schwarz_trace_state, SchwarzTraceState
 from ._solve import (
     _decomposition_iteration_record,
+    _local_steps,
+    _patch_kernel_states,
     _result_family,
     _solve_local,
     FunctionalDecompositionIterationMetrics,
@@ -68,9 +71,11 @@ class AsynchronousSchwarzPlan(StrictModule, NonTrainableState):
 
 
 class AsynchronousSchwarzState(StrictModule):
+    """Asynchronous Schwarz progress; `kernel_states` as in `FunctionalDecompositionState`."""
+
     functions: Any
-    optimizer_states: tuple[Any | None, ...]
-    local_steps: tuple[int, ...] = eqx.field(static=True)
+    kernel_states: tuple[TrainingKernelState | None, ...]
+    kernel_checkpoint_ids: tuple[str | None, ...] = eqx.field(static=True)
     patch_revisions: tuple[int, ...] = eqx.field(static=True)
     trace_history: tuple[SchwarzTraceState, ...]
     completed_updates: int = eqx.field(static=True)
@@ -80,20 +85,26 @@ class AsynchronousSchwarzState(StrictModule):
         self,
         *,
         functions: Any,
-        optimizer_states: tuple[Any | None, ...],
-        local_steps: tuple[int, ...],
+        kernel_states: Sequence[TrainingKernelState | None],
+        kernel_checkpoint_ids: Sequence[str | None],
         patch_revisions: tuple[int, ...],
         trace_history: tuple[SchwarzTraceState, ...],
         completed_updates: int,
         maximum_observed_staleness: int,
     ):
+        states, identities = _patch_kernel_states(kernel_states, kernel_checkpoint_ids)
         self.functions = frozendict(functions)
-        self.optimizer_states = tuple(optimizer_states)
-        self.local_steps = tuple(local_steps)
+        self.kernel_states = states
+        self.kernel_checkpoint_ids = identities
         self.patch_revisions = tuple(patch_revisions)
         self.trace_history = tuple(trace_history)
         self.completed_updates = int(completed_updates)
         self.maximum_observed_staleness = int(maximum_observed_staleness)
+
+    @property
+    def local_steps(self) -> tuple[int, ...]:
+        """Accepted local updates per patch."""
+        return _local_steps(self.kernel_states)
 
 
 class AsynchronousSchwarzResult(StrictModule):
@@ -142,8 +153,8 @@ def solve_asynchronous_schwarz(
     patch_count = len(patch_ids)
     if state is None:
         functions = frozendict(prepared.solver.functions)
-        optimizer_states: list[Any | None] = [None] * patch_count
-        local_steps = [0] * patch_count
+        kernel_states: list[TrainingKernelState | None] = [None] * patch_count
+        checkpoint_ids: list[str | None] = [None] * patch_count
         revisions = [0] * patch_count
         trace_history = [
             capture_schwarz_trace_state(
@@ -156,13 +167,17 @@ def solve_asynchronous_schwarz(
         completed = 0
         maximum_observed = 0
     else:
+        if len(state.kernel_states) != patch_count:
+            raise ValueError("Resume state kernel-state count does not match the cover.")
         functions = frozendict(state.functions)
-        optimizer_states = list(state.optimizer_states)
-        local_steps = list(state.local_steps)
+        kernel_states = list(state.kernel_states)
+        checkpoint_ids = list(state.kernel_checkpoint_ids)
         revisions = list(state.patch_revisions)
         trace_history = list(state.trace_history)
         completed = state.completed_updates
         maximum_observed = state.maximum_observed_staleness
+    # Kernel states handed in by the caller are verified at their first use.
+    unverified = {index for index, value in enumerate(kernel_states) if value is not None}
     require_parameter_roles(functions, context="solve_asynchronous_schwarz")
     iteration_scope = None
     stopped = False
@@ -183,7 +198,7 @@ def solve_asynchronous_schwarz(
                 IterationPhase.START,
                 FunctionalDecompositionIterationMetrics(
                     completed,
-                    tuple(local_steps),
+                    _local_steps(kernel_states),
                     trace_history[-1].maximum_defect,
                     jnp.asarray(jnp.nan),
                 ),
@@ -199,20 +214,20 @@ def solve_asynchronous_schwarz(
         available_staleness = min(requested_staleness, len(trace_history) - 1)
         trace_state = trace_history[-1 - available_staleness]
         maximum_observed = max(maximum_observed, available_staleness)
-        functions, optimizer_state, local_step = _solve_local(
+        functions, kernel_states[patch_index], checkpoint_ids[patch_index] = _solve_local(
             prepared,
             functions,
-            optimizer_states[patch_index],
+            kernel_states[patch_index],
+            checkpoint_ids[patch_index],
             patch_index,
             inner_iterations=plan.inner_iterations,
             optim=optimizer,
             seed=seed,
-            start_step=local_steps[patch_index],
             jit=jit,
             trace_state=trace_state,
+            resumed=patch_index in unverified,
         )
-        optimizer_states[patch_index] = optimizer_state
-        local_steps[patch_index] = local_step
+        unverified.discard(patch_index)
         revisions[patch_index] += 1
         trace_history.append(
             capture_schwarz_trace_state(
@@ -233,7 +248,7 @@ def solve_asynchronous_schwarz(
                     IterationPhase.COMMIT,
                     FunctionalDecompositionIterationMetrics(
                         completed,
-                        tuple(local_steps),
+                        _local_steps(kernel_states),
                         trace_history[-1].maximum_defect,
                         jnp.asarray(jnp.nan),
                     ),
@@ -248,8 +263,8 @@ def solve_asynchronous_schwarz(
     family, _, _ = _result_family(prepared, solver)
     result_state = AsynchronousSchwarzState(
         functions=functions,
-        optimizer_states=tuple(optimizer_states),
-        local_steps=tuple(local_steps),
+        kernel_states=tuple(kernel_states),
+        kernel_checkpoint_ids=tuple(checkpoint_ids),
         patch_revisions=tuple(revisions),
         trace_history=tuple(trace_history),
         completed_updates=completed,
@@ -263,7 +278,7 @@ def solve_asynchronous_schwarz(
                 IterationPhase.TERMINAL,
                 FunctionalDecompositionIterationMetrics(
                     completed,
-                    tuple(local_steps),
+                    _local_steps(kernel_states),
                     trace_history[-1].maximum_defect,
                     jnp.asarray(jnp.nan),
                 ),

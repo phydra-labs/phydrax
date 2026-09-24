@@ -9,7 +9,7 @@ import os
 from collections.abc import Callable, Mapping
 from math import isfinite
 from pathlib import Path
-from typing import Any, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, ClassVar, final, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,6 +20,7 @@ from jaxtyping import Array, Key
 
 import phydrax.axes as cx
 
+from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import array_tree_signature, canonical_fingerprint
 from .._identity import callable_payload
 from .._sampling import (
@@ -31,8 +32,30 @@ from .._sampling import (
     sample_markov,
 )
 from .._strict import StrictModule
-from .._trainable import ArrayRole, require_parameter_roles
+from .._trainable import (
+    ArrayRole,
+    combine_parameters,
+    ExplicitFreeze,
+    parameter_field,
+    require_parameter_roles,
+)
 from .._training import TrainingController, TrainingIterationKind, TrainingProgress
+from .._training_kernel import (
+    AbstractKernelUpdateRule,
+    KernelObjective,
+    KernelUpdateContext,
+    prepare_training_kernel,
+    PreparedTrainingKernel,
+    run_training_attempt,
+    training_site_key,
+    TrainingAttemptEvidence,
+    TrainingAttemptOutcome,
+    TrainingKernelSpec,
+    TrainingKernelState,
+    TrainingRejectionBudgetError,
+)
+from .._training_objective import _ObjectiveContribution
+from .._tree_math import tree_norm
 from ..integration import integrate, markov_chain_measure
 from ..linalg import (
     ArraySpace,
@@ -69,6 +92,19 @@ VMC_LINEAR_FAILURE: VMCStatus = 4
 FailureMode: TypeAlias = Literal["raise", "record"]
 
 _VMC_CHECKPOINT_KIND = "variational-monte-carlo-state"
+_VMC_CHECKPOINT_STATE_FIELDS = frozenset(
+    {
+        "iteration",
+        "attempt_cursor",
+        "model_tree",
+        "position_tree",
+        "parameter_coordinates_array",
+        "markov_step_index_array",
+        "root_key_data_array",
+        "markov_valid_array",
+    }
+)
+_VMC_OBJECTIVE_ID = "variational-monte-carlo"
 
 
 def vmc_status_name(status: int | Array, /) -> str:
@@ -415,12 +451,19 @@ class VariationalMonteCarloPolicy(StrictModule):
 
 
 class VariationalMonteCarloState(StrictModule):
-    """Restartable model coordinates and persistent Markov state."""
+    """Restartable model coordinates and persistent Markov state.
+
+    `iteration` counts accepted parameter updates and `attempt_cursor` counts
+    training attempts (accepted or rejected); together with `root_key` they
+    address every training sample key, so a continuation never repeats one.
+    Omitting `attempt_cursor` declares a state without rejected attempts.
+    """
 
     model: Any
     parameter_coordinates: Array
     markov_state: MarkovState
     iteration: Array
+    attempt_cursor: Array
     root_key: Array
 
     def __init__(
@@ -431,18 +474,27 @@ class VariationalMonteCarloState(StrictModule):
         markov_state: MarkovState,
         iteration: int | Array,
         root_key: Key[Array, ""],
+        attempt_cursor: int | Array | None = None,
     ):
         if not isinstance(markov_state, MarkovState):
             raise TypeError("markov_state must be a MarkovState.")
         iteration_ = jnp.asarray(iteration, dtype=jnp.int32)
         if iteration_.shape != ():
             raise ValueError("iteration must be scalar.")
+        attempt_ = (
+            iteration_
+            if attempt_cursor is None
+            else jnp.asarray(attempt_cursor, dtype=jnp.int32)
+        )
+        if attempt_.shape != ():
+            raise ValueError("attempt_cursor must be scalar.")
         if jnp.asarray(root_key).shape != ():
             raise ValueError("root_key must be one scalar PRNG key.")
         self.model = model
         self.parameter_coordinates = jnp.asarray(parameter_coordinates)
         self.markov_state = markov_state
         self.iteration = iteration_
+        self.attempt_cursor = attempt_
         self.root_key = root_key
 
 
@@ -555,6 +607,30 @@ def _estimate_from_samples(
     )
 
 
+def _sample_frozen_model(
+    problem: VariationalMonteCarloProblem,
+    model: Any,
+    markov_state: MarkovState,
+    /,
+    *,
+    key: Key[Array, ""],
+    num_draws: int,
+    steps_per_draw: int,
+    warmup_steps: int,
+) -> MarkovSampleResult:
+    target = problem.target_for_model(model)
+    rebound = problem.kernel.rebind(target, markov_state)
+    return sample_markov(
+        target,
+        problem.kernel,
+        rebound,
+        key=key,
+        num_draws=num_draws,
+        steps_per_draw=steps_per_draw,
+        warmup_steps=warmup_steps,
+    )
+
+
 def evaluate_variational_monte_carlo(
     problem: VariationalMonteCarloProblem,
     model: Any,
@@ -571,12 +647,10 @@ def evaluate_variational_monte_carlo(
     """Sample and evaluate one fixed amplitude model without updating parameters."""
     if not isinstance(problem, VariationalMonteCarloProblem):
         raise TypeError("problem must be a VariationalMonteCarloProblem.")
-    target = problem.target_for_model(model)
-    rebound = problem.kernel.rebind(target, markov_state)
-    samples = sample_markov(
-        target,
-        problem.kernel,
-        rebound,
+    samples = _sample_frozen_model(
+        problem,
+        model,
+        markov_state,
         key=key,
         num_draws=num_draws,
         steps_per_draw=steps_per_draw,
@@ -654,6 +728,219 @@ def _energy_force(
             (jnp.real(residual), jnp.imag(residual)), axis=-1
         )
     return jnp.asarray(score.adjoint_mv(cotangent))
+
+
+# Training-kernel lowering ----------------------------------------------------------
+
+
+@final
+class _FrozenVMCRun(StrictModule, ExplicitFreeze):
+    """Problem and policy of one VMC run, FIXED in the kernel tree."""
+
+    problem: Any
+    policy: VariationalMonteCarloPolicy
+    ritz_tolerance: float | None = eqx.field(static=True, default=None)
+
+
+@final
+class _VMCCoordinateTree(StrictModule):
+    """Kernel tree training the VMC parameter coordinates (array or tuple)."""
+
+    coordinates: Any = parameter_field()
+    run: _FrozenVMCRun
+
+
+@final
+class _SRStep(StrictModule):
+    """Stochastic-reconfiguration direction formed at the current parameters.
+
+    `direction` is congruent with the kernel's PARAMETER lane; `successful`
+    holds when the estimate is valid and every metric solve succeeded with a
+    finite direction.
+    """
+
+    direction: Any
+    successful: Array
+
+
+def _clipped_direction(
+    direction: Any, max_update_norm: float | None, /
+) -> tuple[Any, Array]:
+    """Scale a direction onto the update-norm ball; return it and its norm."""
+    norm = tree_norm(direction)
+    if max_update_norm is None:
+        return direction, norm
+    scale = jnp.minimum(1.0, max_update_norm / jnp.maximum(norm, 1e-30))
+    scaled = jax.tree.map(lambda value: (scale * value).astype(value.dtype), direction)
+    return scaled, scale * norm
+
+
+@final
+class _StochasticReconfigurationRule(AbstractKernelUpdateRule):
+    """Fixed-rate SR step along the objective's sample-formed metric solve.
+
+    The VMC objectives form the SR direction from their frozen Monte Carlo
+    samples (score geometry and metric solve) and emit it as `_SRStep`
+    diagnostics, so the kernel skips autodiff (`forms_own_derivatives`). The rule
+    clips the direction to `max_update_norm`, steps by `learning_rate`, and
+    accepts exactly when the step is successful. The rule is stateless: a finite
+    rejection commits nothing.
+    """
+
+    rejection_commit_policy: ClassVar[tuple[str, ...]] = ()
+    learning_rate: float = eqx.field(static=True)
+    max_update_norm: float | None = eqx.field(static=True)
+    rule_id: str = eqx.field(static=True)
+
+    def __init__(self, policy: VariationalMonteCarloPolicy, /):
+        self.learning_rate = policy.learning_rate
+        self.max_update_norm = policy.max_update_norm
+        self.rule_id = canonical_fingerprint(
+            {
+                "kind": "variational-monte-carlo-stochastic-reconfiguration",
+                "learning_rate": policy.learning_rate,
+                "max_update_norm": policy.max_update_norm,
+            }
+        )
+
+    @property
+    def forms_own_derivatives(self) -> bool:
+        return True
+
+    def init(self, parameters: Any, /) -> None:
+        del parameters
+        return None
+
+    def propose(
+        self,
+        parameters: Any,
+        gradients: Any,
+        value: Array,
+        rule_state: None,
+        context: KernelUpdateContext,
+        /,
+    ) -> tuple[Any, None, None, Array]:
+        del gradients, value
+        step = context.diagnostics[0].step
+        direction, _norm = _clipped_direction(step.direction, self.max_update_norm)
+        candidate = jax.tree.map(
+            lambda current, delta: current - self.learning_rate * delta,
+            parameters,
+            direction,
+        )
+        return candidate, rule_state, rule_state, step.successful
+
+
+def _prepare_sr_kernel(
+    coordinates: Any,
+    run: _FrozenVMCRun,
+    objective: Callable[..., Any],
+    /,
+    *,
+    objective_id: str,
+    root_key: Key[Array, ""],
+    iteration: Array,
+    attempt_cursor: Array,
+) -> tuple[PreparedTrainingKernel, TrainingKernelState]:
+    """Prepare the SR kernel and rebuild the continuation's kernel state.
+
+    The SR rule is stateless and the budget is zero, so a continuation is fully
+    described by its coordinates, root key, and accepted and attempt cursors.
+    """
+    tree = _VMCCoordinateTree(coordinates=coordinates, run=run)
+    kernel = prepare_training_kernel(
+        tree,
+        (
+            KernelObjective(
+                objective_id=objective_id,
+                kind=ObjectiveKind.PHYSICAL_RESIDUAL,
+                route=DerivativeRoute.DIRECT,
+                fn=objective,
+            ),
+        ),
+        # Every rejected attempt stops the run (raised or recorded).
+        TrainingKernelSpec(
+            _StochasticReconfigurationRule(run.policy),
+            context=objective_id,
+            rejection_budget=0,
+        ),
+        root_authority=ComponentAuthority.SURROGATE,
+    )
+    state = dataclasses.replace(
+        kernel.init(tree, root_key),
+        accepted_cursor=jnp.asarray(iteration, dtype=jnp.int32),
+        attempt_cursor=jnp.asarray(attempt_cursor, dtype=jnp.int32),
+    )
+    return kernel, state
+
+
+def _run_sr_attempt(
+    kernel: PreparedTrainingKernel, state: TrainingKernelState, payload: Any, /
+) -> tuple[TrainingKernelState, TrainingAttemptEvidence, bool]:
+    """One kernel attempt; returns the committed state, evidence, and acceptance.
+
+    With a zero budget every rejection raises; the error carries the rolled-back
+    state and the attempt evidence the frontend records.
+    """
+    try:
+        next_state, evidence = run_training_attempt(kernel, state, payload)
+    except TrainingRejectionBudgetError as error:
+        return error.state, error.evidence, False
+    return next_state, evidence, True
+
+
+@final
+class _VMCAttemptDiagnostics(StrictModule):
+    estimate: VariationalMonteCarloEstimate
+    linear: LinearSolveResult
+    step: _SRStep
+
+
+def _vmc_objective(
+    parameters: Any,
+    model_state: Any,
+    fixed: Any,
+    samples: MarkovSampleResult,
+    keys: Any,
+    /,
+) -> tuple[_ObjectiveContribution, Any, _VMCAttemptDiagnostics]:
+    """Frozen-sample energy at the parameters plus its SR direction."""
+    del keys
+    tree = combine_parameters(parameters, model_state, fixed)
+    problem = tree.run.problem
+    policy = tree.run.policy
+    coordinates = tree.coordinates
+    model = problem.model_from_coordinates(coordinates)
+    estimate = _estimate_from_samples(
+        problem,
+        model,
+        samples,
+        energy_imag_tolerance=policy.energy_imag_tolerance,
+        compute_chain_diagnostics=False,
+    )
+    score, metric = _score_geometry(
+        problem, coordinates, samples.samples, damping=policy.damping
+    )
+    force = _energy_force(
+        score, estimate.local.value, estimate.energy, problem.complex_parameter_mode
+    )
+    linear = solve(
+        LinearSystem(metric, nullspace_policy=policy.nullspace_policy),
+        force,
+        policy=policy.linear_policy,
+    )
+    direction = jnp.asarray(linear.value)
+    step = _SRStep(
+        eqx.tree_at(lambda lane: lane.coordinates, parameters, direction),
+        estimate.successful
+        & jnp.all(linear.successful)
+        & jnp.all(jnp.isfinite(direction)),
+    )
+    value = jnp.real(estimate.energy)
+    contribution = _ObjectiveContribution(
+        value, jnp.ones((), value.dtype), jnp.zeros((), value.dtype)
+    )
+    return contribution, model_state, _VMCAttemptDiagnostics(estimate, linear, step)
 
 
 def _raise_vmc(status: Array, role: str, /) -> None:
@@ -788,6 +1075,8 @@ def _validate_state_compatibility(
         raise ValueError("VMC state model static structure is incompatible.")
     if int(state.iteration) < 0:
         raise ValueError("VMC state iteration must be non-negative.")
+    if int(state.attempt_cursor) < int(state.iteration):
+        raise ValueError("VMC state attempt cursor must not precede its iteration.")
 
 
 def _validate_model_coordinates(
@@ -831,6 +1120,7 @@ def write_variational_monte_carlo_checkpoint(
     }
     checkpoint_state = {
         "iteration": int(state.iteration),
+        "attempt_cursor": int(state.attempt_cursor),
         "model_tree": pack_array_tree("model", state.model, arrays),
         "position_tree": pack_array_tree(
             "markov_position", state.markov_state.position, arrays
@@ -882,9 +1172,14 @@ def read_variational_monte_carlo_checkpoint(
         kind=_VMC_CHECKPOINT_KIND,
         compatibility=_checkpoint_compatibility(problem, policy),
     )
-    iteration = checkpoint_state.get("iteration")
+    if set(checkpoint_state) != _VMC_CHECKPOINT_STATE_FIELDS:
+        raise ValueError("VMC checkpoint state must use the current canonical fields.")
+    iteration = checkpoint_state["iteration"]
     if isinstance(iteration, bool) or not isinstance(iteration, int) or iteration < 0:
         raise ValueError("VMC checkpoint iteration is invalid.")
+    attempt = checkpoint_state["attempt_cursor"]
+    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < iteration:
+        raise ValueError("VMC checkpoint attempt cursor is invalid.")
     model_spec = checkpoint_state.get("model_tree")
     position_spec = checkpoint_state.get("position_tree")
     if not isinstance(model_spec, dict) or not isinstance(position_spec, dict):
@@ -930,6 +1225,7 @@ def read_variational_monte_carlo_checkpoint(
             target_id=rebuilt_markov.target_id,
         ),
         iteration=iteration,
+        attempt_cursor=attempt,
         root_key=jr.wrap_key_data(key_data),
     )
     _validate_state_compatibility(problem, state)
@@ -945,7 +1241,15 @@ def solve_variational_monte_carlo(
     key: Key[Array, ""] | None = None,
     state: VariationalMonteCarloState | None = None,
 ) -> VariationalMonteCarloResult:
-    """Optimize a local-operator amplitude model with persistent-chain SR updates."""
+    """Optimize a local-operator amplitude model with persistent-chain SR updates.
+
+    Each iteration samples the persistent chains on the host at the attempt's
+    semantic key and runs one training-kernel attempt: the objective estimates the
+    frozen-sample energy and forms the SR direction; the stateless SR rule steps.
+    An invalid estimate or a failed metric solve is a rejected attempt that
+    rolls the parameters back; the chains keep their advanced state. Every
+    rejection stops the run (`failure_mode="raise"` raises, `"record"` returns).
+    """
     if not isinstance(problem, VariationalMonteCarloProblem):
         raise TypeError("problem must be a VariationalMonteCarloProblem.")
     if not isinstance(policy, VariationalMonteCarloPolicy):
@@ -964,6 +1268,15 @@ def solve_variational_monte_carlo(
         current = state
     _validate_state_compatibility(problem, current)
     _validate_model_coordinates(problem, current)
+    kernel, training = _prepare_sr_kernel(
+        current.parameter_coordinates,
+        _FrozenVMCRun(problem, policy),
+        _vmc_objective,
+        objective_id=_VMC_OBJECTIVE_ID,
+        root_key=current.root_key,
+        iteration=current.iteration,
+        attempt_cursor=current.attempt_cursor,
+    )
     energies: list[Array] = []
     variances: list[Array] = []
     acceptances: list[Array] = []
@@ -972,7 +1285,6 @@ def solve_variational_monte_carlo(
     linear_results: list[LinearSolveResult] = []
     control = TrainingController(
         total_steps=int(current.iteration) + policy.num_iterations,
-        key=resolved_key,
         algorithm_id="variational-monte-carlo-training",
         progress=TrainingProgress(update_step=int(current.iteration)),
     )
@@ -985,99 +1297,78 @@ def solve_variational_monte_carlo(
     )
 
     for _ in range(policy.num_iterations):
-        iteration = int(current.iteration)
-        iteration_key = jr.fold_in(resolved_key, iteration)
-        estimate, samples = evaluate_variational_monte_carlo(
+        first_attempt = int(training.attempt_cursor) == 0
+        samples = _sample_frozen_model(
             problem,
             current.model,
             current.markov_state,
-            key=iteration_key,
+            key=training_site_key(
+                training.root_key,
+                objective_id=_VMC_OBJECTIVE_ID,
+                site="samples",
+                attempt=training.attempt_cursor,
+                microstep=training.microstep,
+            ),
             num_draws=policy.draws_per_iteration,
             steps_per_draw=policy.steps_per_draw,
-            warmup_steps=policy.warmup_steps if iteration == 0 else 0,
-            energy_imag_tolerance=policy.energy_imag_tolerance,
+            warmup_steps=policy.warmup_steps if first_attempt else 0,
         )
+        training, evidence, accepted = _run_sr_attempt(kernel, training, samples)
+        diagnostics: _VMCAttemptDiagnostics = evidence.diagnostics[0]
+        estimate = diagnostics.estimate
         energies.append(estimate.energy)
         variances.append(estimate.variance)
         acceptances.append(estimate.acceptance_rate)
-        if not bool(estimate.successful):
-            control.emit(
-                TrainingIterationKind.FAILURE,
-                metrics={
+        estimated = bool(estimate.successful)
+        if estimated:
+            linear_results.append(diagnostics.linear)
+        if not accepted:
+            if not estimated:
+                status, role = estimate.status, "VMC estimation"
+                failure_metrics = {
                     "acceptance_rate": estimate.acceptance_rate,
                     "status": estimate.status,
-                },
-            )
-            statuses.append(estimate.status)
-            update_norms.append(jnp.asarray(jnp.nan))
-            current = VariationalMonteCarloState(
-                model=current.model,
-                parameter_coordinates=current.parameter_coordinates,
-                markov_state=samples.final_state,
-                iteration=iteration,
-                root_key=resolved_key,
-            )
-            if policy.failure_mode == "raise":
-                _raise_vmc(estimate.status, "VMC estimation")
-            break
-
-        score, metric = _score_geometry(
-            problem,
-            current.parameter_coordinates,
-            samples.samples,
-            damping=policy.damping,
-        )
-        force = _energy_force(
-            score,
-            estimate.local.value,
-            estimate.energy,
-            problem.complex_parameter_mode,
-        )
-        linear = solve(
-            LinearSystem(metric, nullspace_policy=policy.nullspace_policy),
-            force,
-            policy=policy.linear_policy,
-        )
-        linear_results.append(linear)
-        linear_success = bool(jnp.all(linear.successful))
-        direction = jnp.asarray(linear.value)
-        finite_direction = bool(jnp.all(jnp.isfinite(direction)))
-        if not linear_success or not finite_direction:
-            control.emit(
-                TrainingIterationKind.FAILURE, metrics={"status": VMC_LINEAR_FAILURE}
-            )
-            status = jnp.asarray(VMC_LINEAR_FAILURE, dtype=jnp.int32)
+                }
+            else:
+                status = jnp.asarray(
+                    VMC_NONFINITE
+                    if int(evidence.outcome) == TrainingAttemptOutcome.NONFINITE
+                    else VMC_LINEAR_FAILURE,
+                    dtype=jnp.int32,
+                )
+                role = "VMC metric solve"
+                failure_metrics = {"status": status}
+            control.emit(TrainingIterationKind.FAILURE, metrics=failure_metrics)
             statuses.append(status)
             update_norms.append(jnp.asarray(jnp.nan))
             current = VariationalMonteCarloState(
                 model=current.model,
                 parameter_coordinates=current.parameter_coordinates,
                 markov_state=samples.final_state,
-                iteration=iteration,
-                root_key=resolved_key,
+                iteration=training.accepted_cursor,
+                attempt_cursor=training.attempt_cursor,
+                root_key=training.root_key,
             )
             if policy.failure_mode == "raise":
-                _raise_vmc(status, "VMC metric solve")
+                _raise_vmc(status, role)
             break
 
-        norm = jnp.linalg.norm(direction)
-        if policy.max_update_norm is not None:
-            scale = jnp.minimum(1.0, policy.max_update_norm / jnp.maximum(norm, 1e-30))
-            direction = scale * direction
-            norm = jnp.linalg.norm(direction)
-        coordinates = current.parameter_coordinates - policy.learning_rate * direction
-        model = problem.model_from_coordinates(coordinates)
+        coordinates = training.parameters.coordinates
+        _direction, norm = _clipped_direction(
+            diagnostics.step.direction, policy.max_update_norm
+        )
         statuses.append(jnp.asarray(VMC_SUCCESS, dtype=jnp.int32))
         update_norms.append(norm)
         current = VariationalMonteCarloState(
-            model=model,
+            model=problem.model_from_coordinates(coordinates),
             parameter_coordinates=coordinates,
             markov_state=samples.final_state,
-            iteration=iteration + 1,
-            root_key=resolved_key,
+            iteration=training.accepted_cursor,
+            attempt_cursor=training.attempt_cursor,
+            root_key=training.root_key,
         )
 
-        control.complete_update(iteration + 1)
+        control.complete_update(int(training.accepted_cursor))
         control.emit(
             TrainingIterationKind.UPDATE,
             metrics={
@@ -1091,20 +1382,24 @@ def solve_variational_monte_carlo(
         TrainingIterationKind.RUN_TERMINAL,
         metrics={"completed_steps": control.progress.update_step},
     )
-    final_key = jr.fold_in(resolved_key, 0xF1A1)
     final_estimate, _final_samples = evaluate_variational_monte_carlo(
         problem,
         current.model,
         current.markov_state,
-        key=final_key,
+        key=training_site_key(
+            training.root_key,
+            objective_id=_VMC_OBJECTIVE_ID,
+            site="final-estimate",
+            attempt=training.attempt_cursor,
+            microstep=training.microstep,
+        ),
         num_draws=policy.final_evaluation_draws,
         steps_per_draw=policy.steps_per_draw,
         energy_imag_tolerance=policy.energy_imag_tolerance,
         compute_chain_diagnostics=policy.final_chain_diagnostics,
     )
-    final_state = current
     return VariationalMonteCarloResult(
-        final_state=final_state,
+        final_state=current,
         final_estimate=final_estimate,
         energy_history=jnp.stack(energies)
         if energies
@@ -1116,7 +1411,7 @@ def solve_variational_monte_carlo(
         if statuses
         else jnp.empty((0,), dtype=jnp.int32),
         linear_results=tuple(linear_results),
-        root_key=resolved_key,
+        root_key=current.root_key,
         problem_id=problem.problem_id,
         completed_iterations=int(current.iteration),
     )

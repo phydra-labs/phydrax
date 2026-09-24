@@ -480,6 +480,80 @@ def test_vmc_checkpoint_resume_matches_uninterrupted_training(tmp_path):
         )
 
 
+def test_vmc_checkpoint_carries_attempt_cursor_and_rejects_cursorless_archive(
+    tmp_path,
+):
+    from phydrax.solver._variational_monte_carlo import (
+        _checkpoint_compatibility,
+        _VMC_CHECKPOINT_KIND,
+    )
+    from phydrax.uq._checkpoint import read_checkpoint_archive, write_checkpoint_archive
+
+    problem = phx.solver.VariationalMonteCarloProblem(
+        _TableModel(jnp.asarray([0.2, -0.1, 0.1, -0.2])),
+        _operator(),
+        _kernel(),
+        _initial_configurations(),
+    )
+    policy = phx.solver.VariationalMonteCarloPolicy(
+        num_iterations=1,
+        draws_per_iteration=12,
+        steps_per_draw=2,
+        final_evaluation_draws=8,
+        learning_rate=0.03,
+        damping=0.1,
+    )
+    initial = problem.initial_state(key=jr.key(23))
+    # A state after rejected attempts: two attempts consumed, none accepted.
+    retried = phx.solver.VariationalMonteCarloState(
+        model=initial.model,
+        parameter_coordinates=initial.parameter_coordinates,
+        markov_state=initial.markov_state,
+        iteration=0,
+        attempt_cursor=2,
+        root_key=initial.root_key,
+    )
+    checkpoint = tmp_path / "retried-vmc-state.zip"
+    phx.solver.write_variational_monte_carlo_checkpoint(
+        checkpoint, problem, policy, retried
+    )
+    restored = phx.solver.read_variational_monte_carlo_checkpoint(
+        checkpoint, problem, policy
+    )
+    assert int(restored.iteration) == 0
+    assert int(restored.attempt_cursor) == 2
+
+    resumed = phx.solver.solve_variational_monte_carlo(problem, policy, state=restored)
+    in_memory = phx.solver.solve_variational_monte_carlo(problem, policy, state=retried)
+    fresh = phx.solver.solve_variational_monte_carlo(problem, policy, state=initial)
+    assert int(resumed.final_state.attempt_cursor) == 3
+    assert jnp.array_equal(
+        resumed.final_state.parameter_coordinates,
+        in_memory.final_state.parameter_coordinates,
+    )
+    # The retry draws fresh samples instead of replaying attempt 0.
+    assert not jnp.array_equal(
+        resumed.final_state.markov_state.position,
+        fresh.final_state.markov_state.position,
+    )
+
+    compatibility = _checkpoint_compatibility(problem, policy)
+    state, arrays = read_checkpoint_archive(
+        checkpoint, kind=_VMC_CHECKPOINT_KIND, compatibility=compatibility
+    )
+    del state["attempt_cursor"]
+    cursorless = tmp_path / "cursorless-vmc-state.zip"
+    write_checkpoint_archive(
+        cursorless,
+        kind=_VMC_CHECKPOINT_KIND,
+        compatibility=compatibility,
+        state=state,
+        arrays=arrays,
+    )
+    with pytest.raises(ValueError, match="canonical fields"):
+        phx.solver.read_variational_monte_carlo_checkpoint(cursorless, problem, policy)
+
+
 def test_vmc_checkpoint_rejects_changed_static_model_configuration(tmp_path):
     parameters = jnp.asarray([0.2, -0.1, 0.1, -0.2])
     common = (_operator(), _kernel(), _initial_configurations())

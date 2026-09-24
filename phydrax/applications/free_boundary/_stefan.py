@@ -8,22 +8,25 @@ import math
 from collections.abc import Callable
 from typing import Any, Literal
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
 from jaxtyping import Array, ArrayLike, Key
 
+from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._doc import DOC_KEY0
 from ..._model import AbstractArrayModel
 from ..._sampling import materialize_design, SobolDesign
 from ..._strict import StrictModule
-from ..._trainable import (
-    combine_parameters,
-    NonTrainableState,
-    partition_parameters,
-    require_parameter_roles,
+from ..._trainable import combine_parameters, NonTrainableState
+from ..._training_kernel import (
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    run_training_attempt,
+    TrainingKernelSpec,
 )
+from ..._training_objective import _ObjectiveContribution
 from ...geometry import regularized_delta_values, regularized_heaviside_values
 from ...sampling.collocation import CausalTimeSlabSchedule
 
@@ -590,6 +593,15 @@ def compare_stefan_representations(
     )
 
 
+def _stefan_objective(parameters, model_state, fixed, loss, keys, /):
+    """Kernel objective: the ordered Stefan total as one unit-support contribution."""
+    del keys
+    result = loss(combine_parameters(parameters, model_state, fixed))
+    if not isinstance(result, StefanLoss):
+        raise TypeError("Stefan loss callback must return StefanLoss.")
+    return _ObjectiveContribution(result.total, 1.0, 0.0), model_state, result
+
+
 def fit_stefan_pinn(
     model: Any,
     loss: Callable[[Any], StefanLoss],
@@ -599,34 +611,45 @@ def fit_stefan_pinn(
     optimizer: optax.GradientTransformation | None = None,
     jit: bool = True,
 ) -> StefanFitResult:
-    """Optimize any Stefan representation against a typed ``StefanLoss``."""
+    """Optimize any Stefan representation against a typed ``StefanLoss``.
+
+    Every step is one accepted-update attempt of the shared training kernel: the
+    model is a SURROGATE trained on its physical residual. A nonfinite loss,
+    gradient, or update is rolled back and fails the fit (the deterministic
+    objective would repeat it) with `TrainingRejectionBudgetError`.
+    """
 
     count = int(steps)
     if count < 0:
         raise ValueError("steps must be nonnegative.")
-    require_parameter_roles(model, context="fit_stefan_pinn")
+    if not callable(loss):
+        raise TypeError("loss must be callable.")
     transformation = optax.adam(1.0e-3) if optimizer is None else optimizer
-    parameters, model_state, fixed = partition_parameters(model)
-    state = transformation.init(parameters)
-
-    def step(trainable, optimizer_state):
-        def objective(current):
-            evaluated = combine_parameters(current, model_state, fixed)
-            result = loss(evaluated)
-            if not isinstance(result, StefanLoss):
-                raise TypeError("Stefan loss callback must return StefanLoss.")
-            return result.total
-
-        value, gradient = eqx.filter_value_and_grad(objective)(trainable)
-        updates, next_state = transformation.update(gradient, optimizer_state, trainable)
-        return optax.apply_updates(trainable, updates), next_state, value
-
-    run_step = eqx.filter_jit(step) if jit else step
+    kernel = prepare_training_kernel(
+        model,
+        (
+            KernelObjective(
+                objective_id="stefan-residual",
+                kind=ObjectiveKind.PHYSICAL_RESIDUAL,
+                route=DerivativeRoute.DIRECT,
+                fn=_stefan_objective,
+            ),
+        ),
+        TrainingKernelSpec(
+            OptaxUpdateRule(transformation, rule_id="stefan-optax"),
+            context="fit_stefan_pinn",
+            rejection_budget=0,
+        ),
+        root_authority=ComponentAuthority.SURROGATE,
+    )
+    # The Stefan objective draws no training randomness; the root key only
+    # completes the kernel state.
+    state = kernel.init(model, jax.random.key(0))
     history = []
     for _ in range(count):
-        parameters, state, value = run_step(parameters, state)
-        history.append(value)
-    fitted = combine_parameters(parameters, model_state, fixed)
+        state, evidence = run_training_attempt(kernel, state, loss, jit=jit)
+        history.append(evidence.value)
+    fitted = kernel.tree(state)
     final = loss(fitted)
     return StefanFitResult(
         model=fitted,
@@ -645,11 +668,14 @@ def fit_stefan_time_slabs(
     optimizer: optax.GradientTransformation | None = None,
     jit: bool = True,
 ) -> StefanFitResult:
-    """Train causally over increasing time slabs while carrying model parameters."""
+    """Train causally over increasing time slabs while carrying model parameters.
+
+    Each slab is one `fit_stefan_pinn` kernel run on its slab loss, started from
+    the previous slab's accepted parameters with a fresh optimizer state.
+    """
 
     if not isinstance(schedule, CausalTimeSlabSchedule):
         raise TypeError("schedule must be a CausalTimeSlabSchedule.")
-    require_parameter_roles(model, context="fit_stefan_time_slabs")
     current = model
     histories = []
     final = None

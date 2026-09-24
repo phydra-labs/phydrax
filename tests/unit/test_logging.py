@@ -13,7 +13,6 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import jax.numpy as jnp
-import jax.random as jr
 import pytest
 from loguru import logger
 
@@ -204,7 +203,6 @@ def test_training_iteration_kind_emits_canonical_logging_event() -> None:
     try:
         controller = TrainingController(
             total_steps=1,
-            key=jr.key(0),
             algorithm_id="logging-test-training",
         )
         controller.emit(
@@ -232,7 +230,6 @@ def test_training_controller_can_deliver_without_duplicate_log_event() -> None:
     try:
         controller = TrainingController(
             total_steps=1,
-            key=jr.key(0),
             algorithm_id="delivery-test-training",
             session=session,
         )
@@ -256,7 +253,6 @@ def test_training_selection_rejects_nonfinite_metrics_without_mutation() -> None
 
     controller = TrainingController(
         total_steps=1,
-        key=jr.key(0),
         algorithm_id="finite-selection-test",
     )
     original = controller.progress

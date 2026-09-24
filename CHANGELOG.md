@@ -96,6 +96,19 @@
   and bounded rendering/video adapters.
 
 ### Changed
+- Every native trainer (functional solvers including KFAC, evolution, windows,
+  decomposition, variational Monte Carlo and Calabi-Yau; operator fitting;
+  discrete, variational, and neural-CDE identification; kinetic rollout
+  closures; atomistic and free-energy fitting; flows, variational inference,
+  sparse GPs, buffered state space, targeted maps, SING, PGM; Stefan and
+  learned PIV) runs through one accepted-update training kernel. Attempts end
+  accepted, rule-rejected (only rule-authorized state commits), or nonfinite
+  (full rollback); unsuccessful and nonfinite updates are never committed.
+  Parameters train only under objectives their component authority admits.
+- Training and execution random keys use semantic sample addresses; training
+  checkpoints persist the kernel state and previous checkpoint formats fail
+  closed. `FunctionalUpdateKernel`, `training_key`, and `TrainingController`
+  key handling are removed.
 - Numerical flux plans, face reconstructions, and slope limiters are neutral
   `DISCRETIZATION` component slots. Mapped structured finite volumes admit any
   arbitrary-normal flux (including HLLC and the all-speed fluxes) and refuse

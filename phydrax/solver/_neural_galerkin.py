@@ -12,7 +12,6 @@ import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jr
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, Key
 
@@ -22,6 +21,7 @@ from phydrax.domain import ComponentSum, DomainFunction
 from .._doc import DOC_KEY0
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
+from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from .._trainable import ArrayRole, require_parameter_roles
 from ..dynamics import TimeGrid
@@ -61,6 +61,11 @@ from ._temporal_precision import TemporalPrecisionPolicy
 
 
 TangentFormulation: TypeAlias = Literal["rectangular", "gram"]
+
+_COMPONENT_EVALUATION_ADDRESS = SampleAddress(
+    "neural-galerkin", "field-projection", target="component", role="evaluation"
+)
+
 RateFunction: TypeAlias = Callable[
     [Array, Mapping[str, DomainFunction], Any], Mapping[str, DomainFunction]
 ]
@@ -479,7 +484,10 @@ def _component_batches_and_keys(metric: FieldProjectionMetric):
     if isinstance(base.component, ComponentSum):
         if not isinstance(batch, tuple):
             raise TypeError("Component-sum metric realization must contain batch tuples.")
-        return batch, tuple(jr.split(key, len(batch)))
+        return batch, tuple(
+            derive_key(key, _COMPONENT_EVALUATION_ADDRESS, index)
+            for index in range(len(batch))
+        )
     if isinstance(batch, tuple):
         raise TypeError(
             "Single-component metric realization cannot contain batch tuples."

@@ -259,22 +259,37 @@ deterministic reference-branch, and residual objectives share one authored
 recurrent step. Full, prefix, chunked, rematerialized, and resumed execution are
 required to agree; no JAXPR transformation or inferred carry is involved.
 
-`gradient_accumulation=K` evaluates `K` independently keyed window batches at
-fixed model, optimizer, target, and rollout-schedule state. Each objective emits
-an evidence-weighted numerator and support; numerator gradients and supports are
-summed and normalized once before the Optax update. This is exactly equivalent
+`gradient_accumulation=K` evaluates `K` window batches at fixed model,
+optimizer, target, and rollout-schedule state. Each batch emits an
+evidence-weighted numerator and support; numerator gradients and supports are
+merged and normalized once before the Optax update. This is exactly equivalent
 to the pooled evidence-weighted objective for unequal batches and final epoch
-tails. A zero-support group is consumed without advancing optimizer, target,
-validation, callback, history, or checkpoint state. `steps` counts accepted
-optimizer updates, while `TrainingProgress.microstep` counts consumed batches.
+tails. `steps` counts accepted optimizer updates, while
+`TrainingProgress.microstep` counts consumed batches.
+
+Training runs on PhydraX's internal accepted-update training kernel with MODEL
+authority and one unrolled rollout objective. Every window closes in one of
+three outcomes. An accepted update commits parameters, optimizer state, targets,
+and the accepted cursor together. A zero-support window is a skip: it is
+consumed without advancing optimizer, target, validation, callback, history, or
+checkpoint state, and any number of skips is allowed. A nonfinite or failed
+model, reference, target, or residual rollout, loss, gradient, or optimizer
+state rolls every training quantity back and raises `FloatingPointError`; no
+partial update is ever committed. Rollout randomness uses semantic
+`SampleAddress` keys addressed by the attempt, window parent, start, and depth;
+validation keys are addressed by the accepted update.
 
 The first training contract accepts real `float32` or `float64` pointwise
 models and Euclidean state layouts. Variable steps, stochastic transitions,
 non-Euclidean discrepancies, and low-precision parameters are rejected rather
-than assigned implicit semantics.
+than assigned implicit semantics. The model must have at least one PARAMETER
+leaf, and callables reachable from objectives must not hide inexact arrays.
 Checkpointed fits require a stable `model_id`; array shapes and Python type
 alone are not accepted as the identity of static activations, bindings, or
-architecture hyperparameters.
+architecture hyperparameters. A checkpoint is written only at a closed
+accumulation window and holds the kernel payload (parameters, optimizer state,
+targets, root key, cursors, identities) plus the best model; checkpoints from
+earlier releases fail closed.
 
 
 ::: phydrax.dynamics.identification.DiscreteModelRolloutPolicy
@@ -318,6 +333,14 @@ detailed-balance evidence.
 ::: phydrax.dynamics.identification.MarkovStateModel
 
 ::: phydrax.dynamics.identification.VariationalKineticTrainingPolicy
+
+`fit_variational_kinetic_model` trains its encoder on the same internal
+training kernel with a full-batch DATA_FIT objective. An unsuccessful score
+evaluation (a failed covariance factorization, a nonfinite score, or no active
+pairs) rolls the attempted update back: parameters, optimizer state, and the
+update count are unchanged. The fit then records one invalid history entry and
+stops with an infeasible or nonfinite status. Unsuccessful updates are never
+committed.
 
 ::: phydrax.dynamics.identification.fit_variational_kinetic_model
 

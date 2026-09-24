@@ -15,6 +15,7 @@ import numpy as np
 import optax
 from jaxtyping import Array, ArrayLike, Key
 
+from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._doc import DOC_KEY0
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._iteration import IterationSession
@@ -23,14 +24,25 @@ from .._trainable import (
     combine_parameters,
     ExplicitFreeze,
     NonTrainableState,
-    partition_parameters,
-    require_parameter_roles,
 )
 from .._training import (
     TrainingController,
     TrainingIterationKind,
     TrainingProgress,
 )
+from .._training_kernel import (
+    build_training_checkpoint,
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    PreparedTrainingKernel,
+    restore_training_checkpoint,
+    run_training_attempt,
+    TrainingKernelSpec,
+    TrainingKernelState,
+    TrainingRejectionBudgetError,
+)
+from .._training_objective import _ObjectiveContribution
 from ._graph import AtomisticGraphExecutionPlan, realize_atomistic_graph
 from ._potential import (
     _with_atomistic_potential_identity,
@@ -300,12 +312,14 @@ class AtomisticTrainingResult(StrictModule, ExplicitFreeze):
 
     A trained-artifact holder: it freezes the embedded potentials on purpose
     (`ExplicitFreeze`); continue training from `potential` explicitly.
+    `training_state` is the committed training-kernel state (parameters, Adam
+    state, root key, cursors) a continuation resumes; `training_checkpoint_id`
+    names the kernel configuration it belongs to.
     """
 
     potential: _AtomisticPotential
     best_potential: _AtomisticPotential
-    optimizer_state: Any
-    key: Array
+    training_state: TrainingKernelState
     normalization: AtomisticTrainingNormalization
     training_loss_history: Array
     energy_loss_history: Array
@@ -320,6 +334,7 @@ class AtomisticTrainingResult(StrictModule, ExplicitFreeze):
     problem_id: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
     continuation_id: str = eqx.field(static=True)
+    training_checkpoint_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
     @property
@@ -523,43 +538,59 @@ def _training_loss(
     )
 
 
-def _validation_loss(
+_compiled_loss = eqx.filter_jit(_loss)
+
+
+def _host_loss(
     potential: _AtomisticPotential,
     problem: AtomisticTrainingProblem,
     normalization: AtomisticTrainingNormalization,
     policy: AtomisticTrainingPolicy,
     /,
-) -> Array:
-    if problem.validation_batch is None:
-        return _training_loss(potential, problem, normalization, policy)[0]
-    return _loss(
+    *,
+    validation: bool,
+) -> tuple[Array, tuple[Array, Array]]:
+    """Compiled training (or validation, when a split exists) loss."""
+    if validation and problem.validation_batch is not None:
+        return _compiled_loss(
+            potential,
+            problem.validation_batch,
+            problem.graph_execution,
+            problem.validation_energy,
+            problem.validation_forces,
+            problem.validation_energy_mask,
+            problem.validation_force_mask,
+            normalization,
+            policy,
+        )
+    return _compiled_loss(
         potential,
-        problem.validation_batch,
+        problem.training_batch,
         problem.graph_execution,
-        problem.validation_energy,
-        problem.validation_forces,
-        problem.validation_energy_mask,
-        problem.validation_force_mask,
+        problem.training_energy,
+        problem.training_forces,
+        problem.training_energy_mask,
+        problem.training_force_mask,
         normalization,
         policy,
-    )[0]
-
-
-def _tree_finite(tree: Any, /) -> bool:
-    leaves = jax.tree_util.tree_leaves(tree)
-    return all(
-        bool(np.asarray(jnp.all(jnp.isfinite(leaf))))
-        for leaf in leaves
-        if eqx.is_inexact_array(leaf)
     )
 
 
-def _synchronize_optimizer_state_identity(
-    optimizer_state: Any,
-    checkpoint: _AtomisticPotential,
-    /,
-) -> Any:
-    """Align optimizer parameter-tree metadata without changing moment leaves."""
+def _supervision_objective(parameters, model_state, fixed, payload, keys):
+    """Full-batch energy/force data fit; the payload is `(problem, normalization, policy)`."""
+    del keys
+    problem, normalization, policy = payload
+    total, components = _training_loss(
+        combine_parameters(parameters, model_state, fixed),
+        problem,
+        normalization,
+        policy,
+    )
+    return _ObjectiveContribution(total, 1.0), model_state, components
+
+
+def _synchronize_potential_identity(tree: Any, checkpoint: _AtomisticPotential, /) -> Any:
+    """Align potential-node metadata in `tree` without changing any leaf."""
 
     return jax.tree_util.tree_map(
         lambda node: (
@@ -567,22 +598,34 @@ def _synchronize_optimizer_state_identity(
             if isinstance(node, AbstractAtomisticPotential)
             else node
         ),
-        optimizer_state,
+        tree,
         is_leaf=lambda node: isinstance(node, AbstractAtomisticPotential),
     )
 
 
-def _parameter_loss(
-    parameters: Any,
-    model_state: Any,
-    fixed: Any,
-    problem: AtomisticTrainingProblem,
-    normalization: AtomisticTrainingNormalization,
-    policy: AtomisticTrainingPolicy,
-    /,
-) -> tuple[Array, tuple[Array, Array]]:
-    candidate = combine_parameters(parameters, model_state, fixed)
-    return _training_loss(candidate, problem, normalization, policy)
+def _training_kernel(
+    potential: _AtomisticPotential, policy: AtomisticTrainingPolicy, /
+) -> PreparedTrainingKernel:
+    return prepare_training_kernel(
+        potential,
+        (
+            KernelObjective(
+                objective_id="atomistic-energy-force-supervision",
+                kind=ObjectiveKind.DATA_FIT,
+                route=DerivativeRoute.DIRECT,
+                fn=_supervision_objective,
+            ),
+        ),
+        TrainingKernelSpec(
+            OptaxUpdateRule(
+                optax.adam(policy.learning_rate),
+                rule_id=f"atomistic-training:{policy.continuation_id}",
+            ),
+            context="fit_atomistic_potential",
+            rejection_budget=0,
+        ),
+        root_authority=ComponentAuthority.MODEL,
+    )
 
 
 def _batch_neighbor_overflow(
@@ -621,7 +664,15 @@ def fit_atomistic_potential(
     session: IterationSession | None = None,
     continuation: AtomisticTrainingResult | None = None,
 ) -> AtomisticTrainingResult:
-    """Fit one finite-molecule energy potential with typed supervision."""
+    """Fit one finite-molecule energy potential with typed supervision.
+
+    Every update is one full-batch Adam attempt of the shared training kernel
+    (`MODEL` root authority, one data-fit objective). A nonfinite training loss
+    or gradient rolls the attempt back and terminates with `NONFINITE`; an
+    update whose post-update training loss is nonfinite is discarded the same
+    way, so `potential` is always the last finite accepted state. A
+    continuation resumes its committed kernel state, including its root key.
+    """
 
     if not isinstance(potential, AbstractAtomisticPotential):
         raise TypeError("potential must implement AbstractAtomisticPotential.")
@@ -629,7 +680,6 @@ def fit_atomistic_potential(
         raise TypeError("problem must be an AtomisticTrainingProblem.")
     if not isinstance(policy, AtomisticTrainingPolicy):
         raise TypeError("policy must be an AtomisticTrainingPolicy.")
-    require_parameter_roles(potential, context="fit_atomistic_potential")
     if potential.scale.scale_id != problem.training_batch.scale.scale_id:
         raise ValueError("Potential and training problem must share one scale contract.")
     if problem.training_energy is None and policy.force_weight <= 0.0:
@@ -640,13 +690,10 @@ def fit_atomistic_potential(
     if problem.validation_batch is not None:
         potential._validate_batch(problem.validation_batch)
     normalization = _normalization(problem, policy)
-    optimizer = optax.adam(policy.learning_rate)
     if continuation is None:
-        current = potential
-        trainable, _, _ = partition_parameters(current)
-        optimizer_state = optimizer.init(trainable)
+        kernel = _training_kernel(potential, policy)
+        state = kernel.init(potential, key)
         progress = TrainingProgress()
-        master_key = jnp.asarray(key)
         training_history: list[float] = []
         energy_history: list[float] = []
         force_history: list[float] = []
@@ -673,18 +720,26 @@ def fit_atomistic_potential(
             )
         if continuation.progress.update_step > policy.maximum_steps:
             raise ValueError("Continuation step exceeds the requested training ceiling.")
-        current = continuation.potential
-        optimizer_state = continuation.optimizer_state
+        kernel = _training_kernel(continuation.potential, policy)
+        if continuation.training_checkpoint_id != kernel.checkpoint_id:
+            raise ValueError(
+                "Continuation training state belongs to a different training kernel."
+            )
+        state = restore_training_checkpoint(
+            kernel,
+            build_training_checkpoint(
+                kernel, continuation.training_state, allow_intermediate=True
+            ),
+        ).state
         progress = continuation.progress
-        master_key = continuation.key
         training_history = np.asarray(continuation.training_loss_history).tolist()
         energy_history = np.asarray(continuation.energy_loss_history).tolist()
         force_history = np.asarray(continuation.force_loss_history).tolist()
         validation_history = np.asarray(continuation.validation_loss_history).tolist()
         validation_steps = np.asarray(continuation.validation_steps).tolist()
+    current = kernel.tree(state)
     control = TrainingController(
         total_steps=policy.maximum_steps,
-        key=master_key,
         algorithm_id="atomistic-training",
         progress=progress,
         session=session,
@@ -713,7 +768,9 @@ def fit_atomistic_potential(
         else:
             termination = "validation_neighbor_overflow"
     elif continuation is None:
-        initial_loss = _validation_loss(current, problem, normalization, policy)
+        initial_loss = _host_loss(
+            current, problem, normalization, policy, validation=True
+        )[0]
         initial_value = float(np.asarray(initial_loss))
         validation_history.append(initial_value)
         validation_steps.append(0)
@@ -733,30 +790,32 @@ def fit_atomistic_potential(
         terminal_status = AtomisticStatus.STOPPED_EARLY
         termination = "host_control_stop_before_first_update"
 
+    payload = (problem, normalization, policy)
     for step in range(progress.update_step + 1, policy.maximum_steps + 1):
         if terminal_status != AtomisticStatus.SUCCESS or control.stop_requested:
             break
-        trainable, model_state, fixed = partition_parameters(current)
-        (loss_value, _), gradients = jax.value_and_grad(
-            _parameter_loss,
-            argnums=0,
-            has_aux=True,
-        )(trainable, model_state, fixed, problem, normalization, policy)
-        if not bool(np.asarray(jnp.isfinite(loss_value))) or not _tree_finite(gradients):
+        try:
+            candidate_state, _ = run_training_attempt(kernel, state, payload)
+        except TrainingRejectionBudgetError:
+            candidate_state = None
+            termination = "nonfinite_training_loss_or_gradient"
+        if candidate_state is not None:
+            candidate = kernel.tree(candidate_state)
+            post_loss, post_components = _host_loss(
+                candidate, problem, normalization, policy, validation=False
+            )
+            if not bool(np.asarray(jnp.isfinite(post_loss))):
+                candidate_state = None
+                termination = "nonfinite_updated_loss"
+        if candidate_state is None:
+            # The update was rolled back; the potential is the last accepted one.
             training_history.append(float("nan"))
             energy_history.append(float("nan"))
             force_history.append(float("nan"))
             terminal_status = AtomisticStatus.NONFINITE
-            termination = "nonfinite_training_loss_or_gradient"
             break
-        updates, optimizer_state = optimizer.update(
-            gradients, optimizer_state, params=trainable
-        )
-        trainable = optax.apply_updates(trainable, updates)
-        current = combine_parameters(trainable, model_state, fixed)
-        post_loss, post_components = _training_loss(
-            current, problem, normalization, policy
-        )
+        state = candidate_state
+        current = candidate
         post_energy, post_force = post_components
         training_history.append(float(np.asarray(post_loss)))
         energy_history.append(float(np.asarray(post_energy)))
@@ -770,13 +829,11 @@ def fit_atomistic_potential(
                 "force_loss": post_force,
             },
         )
-        if not bool(np.asarray(jnp.isfinite(post_loss))):
-            terminal_status = AtomisticStatus.NONFINITE
-            termination = "nonfinite_updated_loss"
-            break
         validate = step % policy.validation_every == 0 or step == policy.maximum_steps
         if validate:
-            selected_loss = _validation_loss(current, problem, normalization, policy)
+            selected_loss = _host_loss(
+                current, problem, normalization, policy, validation=True
+            )[0]
             selected_value = float(np.asarray(selected_loss))
             validation_history.append(selected_value)
             validation_steps.append(step)
@@ -800,12 +857,14 @@ def fit_atomistic_potential(
             break
 
     current = checkpoint_atomistic_potential(current)
-    optimizer_state = _synchronize_optimizer_state_identity(optimizer_state, current)
+    state = _synchronize_potential_identity(state, current)
     if not validation_history and terminal_status not in (
         AtomisticStatus.NEIGHBOR_OVERFLOW,
         AtomisticStatus.NONFINITE,
     ):
-        selected_loss = _validation_loss(current, problem, normalization, policy)
+        selected_loss = _host_loss(
+            current, problem, normalization, policy, validation=True
+        )[0]
         selected_value = float(np.asarray(selected_loss))
         validation_history.append(selected_value)
         validation_steps.append(control.progress.update_step)
@@ -851,8 +910,7 @@ def fit_atomistic_potential(
     return AtomisticTrainingResult(
         potential=current,
         best_potential=best_potential,
-        optimizer_state=optimizer_state,
-        key=master_key,
+        training_state=state,
         normalization=normalization,
         training_loss_history=jnp.asarray(training_history, dtype=dtype),
         energy_loss_history=jnp.asarray(energy_history, dtype=dtype),
@@ -867,6 +925,7 @@ def fit_atomistic_potential(
         problem_id=problem.problem_id,
         policy_id=policy.policy_id,
         continuation_id=policy.continuation_id,
+        training_checkpoint_id=kernel.checkpoint_id,
         result_id=result_id,
     )
 

@@ -8,9 +8,9 @@ import math
 from typing import Any
 
 import equinox as eqx
-import jax.random as jr
 
 from ..._fingerprint import canonical_fingerprint
+from ..._sampling._addressing import derive_key, SampleAddress
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...domain import (
@@ -237,13 +237,21 @@ def prepare_functional_decomposition(
             kind=ownership_kind,
         ),
     )
-    trace_keys = jr.split(problem.collocation_key, len(problem.cover.pairings) + 1)
+    # Each pairing's trace points are addressed by its stable pairing identity.
     trace_batches = tuple(
         pairing.component.sample(
             PointSampling(plan.trace_points),
-            key=trace_keys[index + 1],
+            key=derive_key(
+                problem.collocation_key,
+                SampleAddress(
+                    "functional-decomposition",
+                    "trace-points",
+                    target=(pairing.pairing_id,),
+                    role="collocation",
+                ),
+            ),
         )
-        for index, pairing in enumerate(problem.cover.pairings)
+        for pairing in problem.cover.pairings
     )
     solver = FunctionalSolver(
         functions=problem.functions,

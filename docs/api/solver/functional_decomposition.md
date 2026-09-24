@@ -93,18 +93,6 @@ internal boundary.
 
 ---
 
-::: phydrax.solver.functional_decomposition.FunctionalUpdateKernel
-
----
-
-::: phydrax.solver.functional_decomposition.FunctionalUpdateState
-
----
-
-::: phydrax.solver.functional_decomposition.FunctionalUpdateEvidence
-
----
-
 ::: phydrax.solver.functional_decomposition.TraceExchangeState
 
 ---

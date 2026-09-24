@@ -15,6 +15,7 @@ from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
 from ...._model._ports import PortBindingEvidence, ValuePort
+from ...._sampling._addressing import derive_key, SampleAddress
 from ..._keys import EvalKey
 from ..data import function_samples_with_values, OperatorBatch, OperatorPrediction
 from ..engine import AbstractOperatorModel
@@ -32,7 +33,22 @@ from ._physics import OperatorOutputPipeline
 from ._trained_operator import TrainedOperator
 
 
-_ROLLOUT_MODEL_KEY_DOMAIN = 100
+_ROLLOUT_MODEL_ADDRESS = SampleAddress("operator-rollout", "model", role="step")
+
+
+def _rollout_step_key(key: EvalKey, step: Array, /) -> EvalKey:
+    """Model key of one physical rollout step, addressed by its absolute step."""
+    return None if key is None else derive_key(key, _ROLLOUT_MODEL_ADDRESS, step)
+
+
+def _control_step_key(key: EvalKey, source_name: str, step: Array, /) -> EvalKey:
+    """Key of one control source at one absolute rollout step."""
+    if key is None:
+        return None
+    address = SampleAddress(
+        "operator-rollout", "control", target=(source_name,), role="step"
+    )
+    return derive_key(key, address, step)
 
 
 @dataclass(frozen=True)
@@ -244,14 +260,7 @@ def _operator_rollout_step(
     key: EvalKey,
     /,
 ) -> tuple[_OperatorRolloutCarry, tuple[Any, ...]]:
-    step_key = (
-        None
-        if key is None
-        else jax.random.fold_in(
-            jax.random.fold_in(key, _ROLLOUT_MODEL_KEY_DOMAIN),
-            carry.next_step,
-        )
-    )
+    step_key = _rollout_step_key(key, carry.next_step)
     execution_prediction, physical_prediction = _evaluate_operator_step(
         model,
         carry.execution_batch,
@@ -461,15 +470,8 @@ def autoregressive_operator_rollout_routes(
     for local_step in range(int(steps)):
         step = jnp.asarray(step_offset + local_step, dtype=jnp.int32)
         inputs = dict(physical_batch.inputs)
-        for index, control in enumerate(control_values):
-            control_key = (
-                None
-                if key is None
-                else jax.random.fold_in(
-                    jax.random.fold_in(key, 200 + index),
-                    step,
-                )
-            )
+        for control in control_values:
+            control_key = _control_step_key(key, control.source_name, step)
             samples = control.policy(physical_batch, step, control_key)
             if control.source_name not in inputs:
                 raise KeyError(f"Unknown control source {control.source_name!r}.")
@@ -498,14 +500,7 @@ def autoregressive_operator_rollout_routes(
             plan.output_pipeline,
             plan.normalization,
             plan.dtype_policy,
-            (
-                None
-                if key is None
-                else jax.random.fold_in(
-                    jax.random.fold_in(key, _ROLLOUT_MODEL_KEY_DOMAIN),
-                    step,
-                )
-            ),
+            _rollout_step_key(key, step),
             predictor=plan.lowered_callable,
         )
         next_batch = physical_batch

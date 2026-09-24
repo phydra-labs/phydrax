@@ -726,10 +726,10 @@ def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
 
     manifest_path = checkpoint / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest.pop("version")
+    manifest["format"] = "phydrax-operator-training-checkpoint"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     old_format_reads = []
-    with pytest.raises(ValueError, match="current canonical fields"):
+    with pytest.raises(ValueError, match="is not a"):
         phx.nn.operator.training.fit_operator(
             _fit_model(),
             _logged_dataset_source(dataset, old_format_reads),

@@ -105,7 +105,7 @@ def test_pou_colored_block_schedule_respects_fixed_patch_state():
     assert float(result.family.field(first).func.value) < 1.0
     assert float(result.family.field(second).func.value) == -1.0
     assert result.state.local_steps == (2, 0)
-    assert result.state.optimizer_states[1] is None
+    assert result.state.kernel_states[1] is None
 
 
 def test_relaxed_schwarz_owns_fixed_trace_state_and_reduces_defect():
@@ -139,31 +139,6 @@ def test_relaxed_schwarz_owns_fixed_trace_state_and_reduces_defect():
     assert result.state.trace_state.sweep == 3
     assert result.state.trace_state.maximum_defect < initial.maximum_defect
     assert result.state.local_steps == (3, 3)
-
-
-def test_shared_functional_update_kernel_accepts_and_rejects_atomically():
-    domain = phx.domain.Interval1d(0.0, 1.0)
-    field = domain.Parameter(1.0)
-    term = _fixed_penalty(
-        phx.conditions.Residual("u", domain.component(), lambda value: value)
-    )
-    solver = phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
-    paths = tuple(
-        path
-        for path in phx.nn.parameters.ParameterSubspace.array_leaf_paths(solver.functions)
-        if ".func.value" in path
-    )
-    subspace = phx.nn.parameters.ParameterSubspace.from_leaf_paths(
-        solver.functions,
-        paths,
-    )
-    kernel = solver.update_kernel(optax.sgd(0.1), subspace, jit=True)
-
-    state, evidence = kernel.advance(kernel.initialize(), key=jr.key(1))
-
-    assert bool(evidence.accepted)
-    assert state.step == 1
-    np.testing.assert_allclose(state.functions["u"].func.value, 0.8)
 
 
 def test_mortar_nitsche_and_augmented_interface_terms_are_physical():
@@ -334,11 +309,16 @@ def test_sharding_hybrid_and_deployment_roundtrip(tmp_path, monkeypatch):
         replacement.replace(state_path)
         return deserialize(state_stream, *args, **kwargs)
 
-    monkeypatch.setattr(
-        decomposition_export.eqx,
-        "tree_deserialise_leaves",
-        replace_path_after_open,
-    )
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            decomposition_export.eqx,
+            "tree_deserialise_leaves",
+            replace_path_after_open,
+        )
+        # A state file replaced while it is being read fails closed.
+        with pytest.raises(ValueError, match="changed during reading"):
+            phx.solver.load_decomposition_artifact(tmp_path / "deployment", artifact)
+    phx.solver.save_decomposition_artifact(tmp_path / "deployment", artifact)
     restored = phx.solver.load_decomposition_artifact(
         tmp_path / "deployment",
         artifact,

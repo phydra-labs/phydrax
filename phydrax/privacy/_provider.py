@@ -129,21 +129,18 @@ class _PreparedPrivateGradient:
             prng_argnum=prng_argnum,
         )
 
-    def init_noise(self, parameters: Any, /) -> Any:
-        return self.upstream_plan.noise_addition_transform.init(parameters)
+    def privatize(self, clipped_gradient: Any, key: jax.Array, /) -> Any:
+        """Add this release's isotropic Gaussian noise, drawn from `key`.
 
-    def checkpoint_noise_state(self, noise_state: Any, /) -> tuple[Any, Any]:
-        key, inner_state = noise_state
-        return jax.random.key_data(key), inner_state
-
-    def restore_noise_state(self, checkpoint_state: tuple[Any, Any], /) -> Any:
-        key_data, inner_state = checkpoint_state
-        return jax.random.wrap_key_data(key_data), inner_state
-
-    def privatize(self, clipped_gradient: Any, noise_state: Any, /) -> tuple[Any, Any]:
-        return self.upstream_plan.noise_addition_transform.update(
-            clipped_gradient, noise_state
-        )
+        The mechanism's noise is stateless: every release draws from its own
+        semantically addressed key, so no noise state is carried or persisted.
+        """
+        transform = self.upstream_plan.noise_addition_transform
+        _, inner_state = transform.init(clipped_gradient)
+        if jax.tree_util.tree_leaves(inner_state):
+            raise ValueError("The prepared privatizer must add uncorrelated noise.")
+        noisy_gradient, _ = transform.update(clipped_gradient, (key, inner_state))
+        return noisy_gradient
 
     def trace(self, completed_steps: int, /) -> MechanismTrace:
         if type(completed_steps) is not int:

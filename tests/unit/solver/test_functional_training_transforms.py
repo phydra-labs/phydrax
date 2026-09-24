@@ -182,11 +182,10 @@ def test_causal_gates_reduce_later_slab_contribution():
     assert jnp.allclose(update.physical_values(solver.functions).total, 1.0)
 
 
-def _two_term_solver():
+def _two_term_solver(points=((0.2,), (0.8,))):
     domain = phx.domain.Interval1d(0.0, 1.0)
     u = domain.Parameter(jnp.asarray(1.0))
     v = domain.Parameter(jnp.asarray(10.0))
-    points = [[0.2], [0.8]]
     first = _fixed_term(
         domain,
         "u",
@@ -244,7 +243,9 @@ def test_gradient_norm_balancing_is_mean_one_and_reports_orthogonal_alignment():
 
 
 def test_ntk_trace_balancing_preserves_equal_linear_sensitivities():
-    solver = _two_term_solver()
+    # One point per term makes each block NTK a 1x1 matrix, so every Rademacher
+    # probe measures its trace exactly and the balance is realization-independent.
+    solver = _two_term_solver(points=((0.5,),))
     params, fixed = partition_functional_parameters(solver.functions)
     physical = solver.objective.prepare_training(
         (0, 1),

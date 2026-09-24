@@ -463,24 +463,6 @@ class FunctionalSolver(StrictModule):
         with precision_context:
             return evaluate_prepared_objective(prepared, self.functions).total
 
-    def update_kernel(
-        self,
-        optim: optax.GradientTransformation | optax.GradientTransformationExtraArgs,
-        parameter_subspace: ParameterSubspace,
-        /,
-        *,
-        jit: bool = True,
-    ):
-        """Prepare a reusable exact-subspace functional update kernel."""
-        from ._functional_update_kernel import FunctionalUpdateKernel
-
-        return FunctionalUpdateKernel.from_subspace(
-            self,
-            optim,
-            parameter_subspace,
-            jit=jit,
-        )
-
     def solve(
         self,
         *,
@@ -628,10 +610,9 @@ class FunctionalSolver(StrictModule):
         ):
             raise ValueError("In-memory functional training-plan identity mismatch.")
         if bool(resume) and self.training_state is not None:
+            stored_targets = self.training_state.kernel_state.targets
             stored_target_policy = (
-                None
-                if self.training_state.target_state is None
-                else self.training_state.target_state.policy
+                None if stored_targets is None else stored_targets.policy
             )
             if stored_target_policy != target_policy:
                 raise ValueError("In-memory functional target-policy identity mismatch.")

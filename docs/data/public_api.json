@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "6a11092589d411f215493bfb620609c7758115ad361f89983f08cc1729dccf45",
+  "manifest_id": "39f6ceceecb0b012e0dbac8b61c0cdc3dbbf0182839947507a59a5a3c52a85fc",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -21269,6 +21269,9 @@
       "phydrax.lifecycle.ConditionalObjectClient",
       "phydrax.lifecycle.ConfigurationLineageArtifact",
       "phydrax.lifecycle.ConservationStatus",
+      "phydrax.lifecycle.CoupledTrainingEvidence",
+      "phydrax.lifecycle.CoupledTrainingPolicy",
+      "phydrax.lifecycle.CoupledTrainingResult",
       "phydrax.lifecycle.CyclicMigrationError",
       "phydrax.lifecycle.DestinationShard",
       "phydrax.lifecycle.DestinationShardWriter",
@@ -21346,6 +21349,7 @@
       "phydrax.lifecycle.checkpoint_content_id",
       "phydrax.lifecycle.collection_digest",
       "phydrax.lifecycle.commit_candidate",
+      "phydrax.lifecycle.coupled_training_step",
       "phydrax.lifecycle.create",
       "phydrax.lifecycle.create_build_provenance",
       "phydrax.lifecycle.decode_logical_arrays",
@@ -29441,9 +29445,6 @@
       "phydrax.solver.FunctionalTrainingCheckpoint",
       "phydrax.solver.FunctionalTrainingPlan",
       "phydrax.solver.FunctionalTrainingState",
-      "phydrax.solver.FunctionalUpdateEvidence",
-      "phydrax.solver.FunctionalUpdateKernel",
-      "phydrax.solver.FunctionalUpdateState",
       "phydrax.solver.FunctionalWindowAdapter",
       "phydrax.solver.GRHDBoundaryCondition",
       "phydrax.solver.GRHDBoundaryPair",

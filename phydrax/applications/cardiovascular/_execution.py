@@ -29,10 +29,12 @@ from ..._array_archive import ArrayArchiveCorruptionError, ArrayArchiveLimits
 from ..._execution_pool import (
     PoolExecutionSignature,
     refill_completed_tasks,
+    semantic_task_indices,
     semantic_task_keys,
 )
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics._checkpointed_scan import checkpointed_scan, PreparedReplaySchedule
+from ..._sampling._addressing import SampleAddress
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...diagnostics import Diagnostic
@@ -1109,6 +1111,11 @@ def prepare_cardiovascular_cohort(
     )
 
 
+# Semantic RNG family of cohort cases: a case key depends only on the root key
+# and the stable case ID, never on cohort membership, order, or lane placement.
+_COHORT_CASE_ADDRESS = SampleAddress("cardiovascular", "cohort", role="case")
+
+
 def execute_cardiovascular_cohort(
     prepared: PreparedCardiovascularCohort,
     root_key: Array,
@@ -1122,8 +1129,10 @@ def execute_cardiovascular_cohort(
     if not callable(executor):
         raise TypeError("executor must be callable.")
     count = len(prepared.case_ids)
-    semantic_indices = jnp.arange(count, dtype=jnp.uint32)
-    keys = semantic_task_keys(jnp.asarray(root_key), semantic_indices)
+    semantic_indices = semantic_task_indices(_COHORT_CASE_ADDRESS, prepared.case_ids)
+    keys = semantic_task_keys(
+        jnp.asarray(root_key), _COHORT_CASE_ADDRESS, semantic_indices
+    )
     key_words = jax.random.key_data(keys)
     lane_ids = np.arange(prepared.lane_count, dtype=np.int32)
     next_task = prepared.lane_count

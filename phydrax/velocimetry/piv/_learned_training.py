@@ -16,21 +16,26 @@ import numpy as np
 import optax
 from jaxtyping import Array, ArrayLike, Key
 
+from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._doc import DOC_KEY0
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._iteration import IterationSession
 from ..._strict import StrictModule
-from ..._trainable import (
-    combine_parameters,
-    NonTrainableState,
-    partition_parameters,
-    require_parameter_roles,
-)
+from ..._trainable import combine_parameters, NonTrainableState
 from ..._training import (
     TrainingController,
     TrainingIterationKind,
     TrainingProgress,
 )
+from ..._training_kernel import (
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    run_training_attempt,
+    TrainingAttemptOutcome,
+    TrainingKernelSpec,
+)
+from ..._training_objective import _ObjectiveContribution
 from ...imaging import ImagePlaneSupport
 from ._learned_model import AbstractDensePIVModel
 from ._learned_primitives import (
@@ -474,6 +479,28 @@ def evaluate_learned_piv(
     return _dataset_loss(model, dataset, loss, jnp.arange(dataset.case_count))
 
 
+def _batch_objective(parameters, model_state, fixed, payload, keys, /):
+    """Kernel objective: masked PIV loss of one semantically sampled case batch.
+
+    The batch is drawn from the accepted-update key, so a rejected attempt
+    re-evaluates the same cases. Support is the batch's validity.
+    """
+    dataset, loss, batch_size = payload
+    if batch_size == dataset.case_count:
+        indices = jnp.arange(dataset.case_count)
+    else:
+        indices = jr.choice(
+            keys.accepted_key("case-batch"),
+            dataset.case_count,
+            shape=(batch_size,),
+            replace=False,
+        )
+    model = combine_parameters(parameters, model_state, fixed)
+    result = _dataset_loss(model, dataset, loss, indices)
+    support = result.valid.astype(result.total.dtype)
+    return _ObjectiveContribution(result.total, support, 0.0), model_state, result
+
+
 def fit_learned_piv(
     model: AbstractDensePIVModel,
     dataset: LearnedPIVDataset,
@@ -484,7 +511,15 @@ def fit_learned_piv(
     optimizer: optax.GradientTransformation | None = None,
     session: IterationSession | None = None,
 ) -> LearnedPIVFitResult:
-    """Fit with deterministic logical-step sampling and standard Optax updates."""
+    """Fit with semantic accepted-update batch sampling and standard Optax updates.
+
+    Every step is one attempt of the shared training kernel (the dense model is
+    a SURROGATE trained on the masked data-fit objective). The case batch of
+    accepted update `k` is drawn from `key` at the semantic training address of
+    `k`. A nonfinite attempt is rolled back and fails the fit with
+    `TrainingRejectionBudgetError`; a batch without valid support is rolled
+    back and fails with `ValueError`.
+    """
 
     if not isinstance(model, AbstractDensePIVModel):
         raise TypeError("model must satisfy AbstractDensePIVModel.")
@@ -498,7 +533,6 @@ def fit_learned_piv(
         raise ValueError("Dataset image shape does not match the model plan.")
     if dataset.channel_count != model.plan.input_channels:
         raise ValueError("Dataset channels do not match the model plan.")
-    require_parameter_roles(model, context="fit_learned_piv")
     image_support = np.any(
         np.asarray(dataset.first_valid & dataset.second_valid),
         axis=(1, 2),
@@ -521,34 +555,33 @@ def fit_learned_piv(
         if optimizer is None
         else optimizer
     )
-    parameters, model_state, fixed = partition_parameters(model)
-    optimizer_state = transformation.init(parameters)
+    kernel = prepare_training_kernel(
+        model,
+        (
+            KernelObjective(
+                objective_id="learned-piv-data-fit",
+                kind=ObjectiveKind.DATA_FIT,
+                route=DerivativeRoute.DIRECT,
+                fn=_batch_objective,
+            ),
+        ),
+        TrainingKernelSpec(
+            OptaxUpdateRule(transformation, rule_id="learned-piv-optax"),
+            context="fit_learned_piv",
+            rejection_budget=0,
+        ),
+        root_authority=ComponentAuthority.SURROGATE,
+    )
+    state = kernel.init(model, key)
     control = TrainingController(
         total_steps=config.maximum_steps,
-        key=key,
         algorithm_id="learned-piv-training",
         progress=TrainingProgress(),
         session=session,
     )
     control.emit(TrainingIterationKind.RUN_START)
 
-    def objective(parameters_: AbstractDensePIVModel, indices: Array):
-        current_model = combine_parameters(parameters_, model_state, fixed)
-        result = _dataset_loss(current_model, dataset, config.loss, indices)
-        return result.total, result
-
-    value_and_grad = eqx.filter_value_and_grad(objective, has_aux=True)
-
-    def update_step(parameters_, optimizer_state_, indices):
-        (value, terms), gradients = value_and_grad(parameters_, indices)
-        gradient_norm = optax.tree.norm(gradients)
-        updates, next_optimizer_state = transformation.update(
-            gradients, optimizer_state_, parameters_
-        )
-        next_parameters = eqx.apply_updates(parameters_, updates)
-        return next_parameters, next_optimizer_state, value, terms, gradient_norm
-
-    compiled_update_step = eqx.filter_jit(update_step) if config.jit else update_step
+    payload = (dataset, config.loss, min(config.batch_size, dataset.case_count))
     total_history: list[Array] = []
     supervised_history: list[Array] = []
     photometric_history: list[Array] = []
@@ -556,35 +589,31 @@ def fit_learned_piv(
     smoothness_history: list[Array] = []
     gradient_history: list[Array] = []
 
-    batch_size = min(config.batch_size, dataset.case_count)
     for step in range(config.maximum_steps):
         if control.stop_requested:
             break
-        if batch_size == dataset.case_count:
-            indices = jnp.arange(dataset.case_count)
-        else:
-            indices = jr.choice(
-                control.key_for(step, site=0),
-                dataset.case_count,
-                shape=(batch_size,),
-                replace=False,
+        state, attempt = run_training_attempt(kernel, state, payload, jit=config.jit)
+        # Nonfinite attempts already raised (budget 0); the only other rejection
+        # is a batch without valid support, which fails instead of skipping.
+        if int(attempt.outcome) != TrainingAttemptOutcome.ACCEPTED:
+            raise ValueError(
+                f"fit_learned_piv: the case batch of update {step} has no valid "
+                "image or target support."
             )
-        parameters, optimizer_state, total, terms, gradient_norm = compiled_update_step(
-            parameters, optimizer_state, indices
-        )
-        total_history.append(total)
+        (terms,) = attempt.diagnostics
+        total_history.append(terms.total)
         supervised_history.append(terms.supervised)
         photometric_history.append(terms.photometric)
         consistency_history.append(terms.consistency)
         smoothness_history.append(terms.smoothness)
-        gradient_history.append(gradient_norm)
+        gradient_history.append(attempt.gradient_norm)
         control.complete_update(step + 1)
         control.emit(
             TrainingIterationKind.UPDATE,
-            metrics={"loss": total, "gradient_norm": gradient_norm},
+            metrics={"loss": terms.total, "gradient_norm": attempt.gradient_norm},
         )
 
-    fitted_model = combine_parameters(parameters, model_state, fixed)
+    fitted_model = kernel.tree(state)
     dtype = dataset.first_images.dtype
 
     def stack_history(values: list[Array]) -> Array:

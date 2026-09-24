@@ -216,12 +216,13 @@ def test_functional_time_windows_transfer_optimizer_state_independently():
     assert final_state is not None
     for trained in result.solvers:
         assert trained.training_state is not None
-        statistics = trained.training_state.update_alignment_statistics
+        statistics = trained.training_state.kernel_state.rule_state.statistics
         assert statistics is not None
         assert int(statistics.steps) == 1
+    # The second window resumes the first window's Adam state: its step count is 2.
     integer_scalars = tuple(
         int(value)
-        for value in jax.tree.leaves(final_state.optimizer_state)
+        for value in jax.tree.leaves(final_state.kernel_state.rule_state.optimizer_state)
         if hasattr(value, "dtype")
         and jnp.issubdtype(value.dtype, jnp.integer)
         and value.shape == ()
@@ -247,7 +248,7 @@ def test_functional_time_windows_reinitialize_incompatible_optimizer_state():
     assert final_state.current_functions["u"].func().shape == (2,)
     integer_scalars = tuple(
         int(value)
-        for value in jax.tree.leaves(final_state.optimizer_state)
+        for value in jax.tree.leaves(final_state.kernel_state.rule_state)
         if hasattr(value, "dtype")
         and jnp.issubdtype(value.dtype, jnp.integer)
         and value.shape == ()

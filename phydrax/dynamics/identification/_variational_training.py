@@ -15,13 +15,13 @@ from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.ein import contract
 
+from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._fingerprint import canonical_fingerprint
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
 from ..._trainable import (
     combine_parameters,
     fixed_field,
-    partition_parameters,
     require_parameter_roles,
 )
 from ..._training import (
@@ -29,6 +29,21 @@ from ..._training import (
     TrainingIterationKind,
     TrainingProgress,
 )
+from ..._training_checkpoint import (
+    load_training_checkpoint,
+    read_training_checkpoint_metadata,
+    save_training_checkpoint,
+)
+from ..._training_kernel import (
+    build_training_checkpoint,
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    run_training_attempt,
+    TrainingAttemptOutcome,
+    TrainingKernelSpec,
+)
+from ..._training_objective import _ObjectiveContribution
 from ...linalg import FactorizationPolicy, inverse, OperatorProperties
 from .._layout import StateLayout
 from .._trajectory import TrajectoryData
@@ -37,10 +52,6 @@ from ._status import (
     IDENTIFICATION_INFEASIBLE,
     IDENTIFICATION_NONFINITE,
     IDENTIFICATION_SUCCESS,
-)
-from ._variational_checkpoint import (
-    _load_variational_training_checkpoint,
-    _save_variational_training_checkpoint,
 )
 from ._variational_kinetics import (
     _event_mask,
@@ -53,6 +64,10 @@ from ._variational_kinetics import (
     VACResult,
     VAMPResult,
 )
+
+
+_OBJECTIVE_ID = "variational-kinetic-score"
+_CHECKPOINT_FORMAT = "phydrax-variational-kinetic-training-checkpoint"
 
 
 class VariationalKineticTrainingPolicy(StrictModule):
@@ -396,7 +411,6 @@ def fit_variational_kinetic_model(
     if validation_source.shape[0] > policy_.maximum_transitions:
         raise ValueError("Validation transitions exceed the exact full-batch capacity.")
     optimizer_ = optax.adam(policy_.learning_rate) if optimizer is None else optimizer
-    optimizer_state = optimizer_.init(partition_parameters(model)[0])
     checkpoint = None if checkpoint_path is None else Path(checkpoint_path)
     cadence = int(checkpoint_every)
     if cadence <= 0:
@@ -415,10 +429,53 @@ def fit_variational_kinetic_model(
         "weighting": weighting.value,
         "optimizer_type": f"{type(optimizer_).__module__}.{type(optimizer_).__qualname__}",
     }
+
+    def objective(parameters, model_state, fixed, payload, keys):
+        del keys
+        score, successful = _score(
+            combine_parameters(parameters, model_state, fixed),
+            *payload,
+            policy_.regularization,
+            policy_.reversible,
+        )
+        # A failed factorization, nonfinite score, or empty active set is a
+        # nonfinite evaluation: the kernel rolls the attempt back.
+        numerator = jnp.where(successful, -score, jnp.nan)
+        return (
+            _ObjectiveContribution(numerator, jnp.ones_like(score)),
+            model_state,
+            (score, successful),
+        )
+
+    kernel = prepare_training_kernel(
+        model,
+        (
+            KernelObjective(
+                objective_id=_OBJECTIVE_ID,
+                kind=ObjectiveKind.DATA_FIT,
+                route=DerivativeRoute.DIRECT,
+                fn=objective,
+            ),
+        ),
+        TrainingKernelSpec(
+            OptaxUpdateRule(
+                optimizer_,
+                rule_id=canonical_fingerprint(
+                    {"kind": "optax", "optimizer_type": metadata["optimizer_type"]}
+                ),
+            ),
+            context="fit_variational_kinetic_model",
+            # The objective is exact and full-batch, so a retry would repeat the
+            # rejected evaluation; the loop stops at the first rejection.
+            rejection_budget=1,
+        ),
+        root_authority=ComponentAuthority.MODEL,
+    )
+    state = kernel.init(model, key)
+    payload = (source, target, valid, weights)
     current = model
     controller = TrainingController(
         total_steps=policy_.maximum_steps,
-        key=key,
         algorithm_id="variational-dynamics-training",
     )
     steps: list[int] = []
@@ -429,34 +486,38 @@ def fit_variational_kinetic_model(
     if resume:
         if checkpoint is None or not (checkpoint / "manifest.json").is_file():
             raise ValueError("resume requires an existing checkpoint manifest.")
-        loaded = _load_variational_training_checkpoint(
-            checkpoint,
-            model,
-            optimizer_state,
-            model,
-            TrainingProgress(),
-        )
-        if loaded.metadata != metadata:
+        if (
+            read_training_checkpoint_metadata(checkpoint, format=_CHECKPOINT_FORMAT).get(
+                "fit"
+            )
+            != metadata
+        ):
             raise ValueError("Checkpoint metadata does not match this kinetic fit.")
-        current = loaded.model
-        optimizer_state = loaded.optimizer_state
+        loaded = load_training_checkpoint(
+            checkpoint, kernel, state, model, format=_CHECKPOINT_FORMAT
+        )
+        state = loaded.restored.state
+        current = kernel.tree(state)
+        progress = loaded.restored.selection
+        if progress is None or progress.update_step != int(state.accepted_cursor):
+            raise ValueError("Variational kinetic checkpoint progress is incompatible.")
         controller = TrainingController(
             total_steps=policy_.maximum_steps,
-            key=loaded.key,
             algorithm_id="variational-dynamics-training",
-            progress=loaded.progress,
+            progress=progress,
         )
-        controller.best_payload = loaded.best_model
-        resumed_from_step = loaded.step
-        steps = [int(value) for value in loaded.history["steps"]]
+        controller.best_payload = loaded.extra
+        resumed_from_step = progress.update_step
+        history = loaded.metadata["history"]
+        steps = [int(value) for value in history["steps"]]
         training_scores = [
-            jnp.asarray(value) for value in loaded.history["training_scores"]
+            jnp.asarray(float.fromhex(value)) for value in history["training_scores"]
         ]
         validation_scores = [
-            jnp.asarray(value) for value in loaded.history["validation_scores"]
+            jnp.asarray(float.fromhex(value)) for value in history["validation_scores"]
         ]
         valid_history = [
-            jnp.asarray(value, dtype=jnp.bool_) for value in loaded.history["valid"]
+            jnp.asarray(value, dtype=jnp.bool_) for value in history["valid"]
         ]
     else:
         initial_score, initial_valid = _score(
@@ -484,42 +545,41 @@ def fit_variational_kinetic_model(
         },
     )
 
-    @eqx.filter_jit
-    def update(current, state):
-        parameters, model_state, fixed = partition_parameters(current)
-
-        def objective(candidate):
-            score, successful = _score(
-                combine_parameters(candidate, model_state, fixed),
-                source,
-                target,
-                valid,
-                weights,
-                policy_.regularization,
-                policy_.reversible,
-            )
-            return -score, successful
-
-        (loss, successful), gradient = eqx.filter_value_and_grad(objective, has_aux=True)(
-            parameters
-        )
-        updates, next_state = optimizer_.update(gradient, state, parameters)
-        return (
-            combine_parameters(
-                eqx.apply_updates(parameters, updates), model_state, fixed
-            ),
-            next_state,
-            -loss,
-            successful,
+    def save(committed):
+        assert checkpoint is not None
+        save_training_checkpoint(
+            checkpoint,
+            build_training_checkpoint(kernel, committed, selection=controller.progress),
+            controller.selected(current),
+            format=_CHECKPOINT_FORMAT,
+            metadata={
+                "fit": metadata,
+                "history": {
+                    "steps": list(steps),
+                    "training_scores": [float(value).hex() for value in training_scores],
+                    "validation_scores": [
+                        float(value).hex() for value in validation_scores
+                    ],
+                    "valid": [bool(value) for value in valid_history],
+                },
+            },
         )
 
+    committed = state
     for step in range(resumed_from_step + 1, policy_.maximum_steps + 1):
-        current, optimizer_state, training_score, successful = update(
-            current, optimizer_state
-        )
-        controller.complete_update(step)
+        state, evidence = run_training_attempt(kernel, state, payload)
+        training_score, _ = evidence.diagnostics[0]
+        accepted = int(evidence.outcome) == TrainingAttemptOutcome.ACCEPTED
         should_stop = False
-        if step % policy_.validation_interval == 0 or step == policy_.maximum_steps:
+        if accepted:
+            committed = state
+            current = kernel.tree(state)
+            controller.complete_update(step)
+        if (
+            not accepted
+            or step % policy_.validation_interval == 0
+            or (step == policy_.maximum_steps)
+        ):
             validation_score, validation_successful = _score(
                 current,
                 validation_source,
@@ -529,7 +589,7 @@ def fit_variational_kinetic_model(
                 policy_.regularization,
                 policy_.reversible,
             )
-            complete = successful & validation_successful
+            complete = jnp.asarray(accepted) & validation_successful
             steps.append(step)
             training_scores.append(training_score)
             validation_scores.append(validation_score)
@@ -557,42 +617,12 @@ def fit_variational_kinetic_model(
         if checkpoint is not None and (
             step % cadence == 0 or should_stop or step == policy_.maximum_steps
         ):
-            _save_variational_training_checkpoint(
-                checkpoint,
-                current,
-                optimizer_state,
-                controller.selected(current),
-                controller.progress,
-                step=step,
-                key=controller.key,
-                metadata=metadata,
-                history={
-                    "steps": list(steps),
-                    "training_scores": [float(value) for value in training_scores],
-                    "validation_scores": [float(value) for value in validation_scores],
-                    "valid": [bool(value) for value in valid_history],
-                },
-            )
+            save(committed)
             controller.emit(TrainingIterationKind.CHECKPOINT, metrics={"step": step})
         if should_stop:
             break
     if checkpoint is not None:
-        _save_variational_training_checkpoint(
-            checkpoint,
-            current,
-            optimizer_state,
-            controller.selected(current),
-            controller.progress,
-            step=controller.progress.update_step,
-            key=controller.key,
-            metadata=metadata,
-            history={
-                "steps": list(steps),
-                "training_scores": [float(value) for value in training_scores],
-                "validation_scores": [float(value) for value in validation_scores],
-                "valid": [bool(value) for value in valid_history],
-            },
-        )
+        save(committed)
         controller.emit(
             TrainingIterationKind.CHECKPOINT,
             metrics={"step": controller.progress.update_step},

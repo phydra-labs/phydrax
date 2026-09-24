@@ -195,7 +195,7 @@ def test_soap_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
         training=phx.solver.FunctionalTrainingPlan(),
     )
 
-    assert isinstance(resumed.training_state.optimizer_state, phx.optim.SOAPState)
+    assert isinstance(resumed.training_state.kernel_state.rule_state, phx.optim.SOAPState)
     assert jnp.allclose(
         resumed.training_state.current_functions["u"].func(),
         uninterrupted.training_state.current_functions["u"].func(),

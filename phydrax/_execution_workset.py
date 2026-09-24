@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -14,7 +13,11 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
-from ._execution_pool import PoolExecutionSignature, semantic_task_keys
+from ._execution_pool import (
+    PoolExecutionSignature,
+    semantic_task_indices,
+    semantic_task_keys,
+)
 from ._execution_runtime import (
     bind_execution_group,
     ExecutionGroup,
@@ -23,16 +26,15 @@ from ._execution_runtime import (
 )
 from ._execution_tasks import HostTaskExecutor, InlineTaskExecutor
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ._sampling._addressing import SampleAddress
 from ._strict import StrictModule
 from ._trainable import LaneLayout, NonTrainableState
 
 
 ExecutionWorksetMode = Literal["serial", "vmap", "filter_vmap"]
-
-
-def _semantic_rng_index(identifier: str, /) -> int:
-    digest = hashlib.sha256(f"phydrax-execution-item:{identifier}".encode()).digest()
-    return int.from_bytes(digest[:4], "big")
+# Semantic RNG family of workset items: an item's index is this address extended
+# by its semantic ID, and its key folds that index and its restart counter.
+_WORKSET_ITEM_ADDRESS = SampleAddress("execution", "workset", role="item")
 
 
 def _item_tree(values: PyTree[ArrayLike], item_count: int, /) -> PyTree[Array]:
@@ -124,11 +126,7 @@ class ExecutionWorksetPlan(StrictModule, NonTrainableState):
         )
         canonical_ids = tuple(value[0] for value in ordered)
         canonical_signatures = tuple(value[1] for value in ordered)
-        rng_indices = tuple(_semantic_rng_index(value) for value in canonical_ids)
-        if len(set(rng_indices)) != len(rng_indices):
-            raise ValueError(
-                "Semantic RNG indices collide; choose distinct semantic identifiers."
-            )
+        rng_indices = semantic_task_indices(_WORKSET_ITEM_ADDRESS, canonical_ids)
         self.semantic_ids = canonical_ids
         self.signatures = canonical_signatures
         self.semantic_rng_indices = jnp.asarray(rng_indices, dtype=jnp.uint32)
@@ -298,13 +296,14 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
         root = jnp.asarray(root_key)
         if jax.random.key_data(root).shape != (2,):
             raise ValueError("root_key must be one JAX PRNG key.")
-        item_keys = semantic_task_keys(root, self.plan.semantic_rng_indices)
-        bucket_keys = item_keys[self.item_indices]
-        bucket_counters = counters[self.item_indices]
-        flat_keys = bucket_keys.reshape((-1,) + bucket_keys.shape[2:])
-        flat_counters = bucket_counters.reshape((-1,))
-        folded = jax.vmap(jax.random.fold_in)(flat_keys, flat_counters)
-        return folded.reshape(bucket_keys.shape)
+        bucket_counters = counters[self.item_indices].reshape((-1,))
+        keys = semantic_task_keys(
+            root,
+            _WORKSET_ITEM_ADDRESS,
+            self.bucket_rng_indices.reshape((-1,)),
+            bucket_counters,
+        )
+        return keys.reshape(self.item_indices.shape + keys.shape[1:])
 
 
 class ExecutionWorksetEvidence(StrictModule, NonTrainableState):
@@ -602,6 +601,9 @@ def evaluate_execution_worksets_grouped(
     owns_executor = executor is None
     sentinel = object()
     results: list[Any] = [sentinel] * prepared.plan.item_count
+    rng_indices = tuple(
+        int(value) for value in np.asarray(prepared.plan.semantic_rng_indices)
+    )
     grouped: dict[str, list[int]] = {}
     signatures: dict[str, PoolExecutionSignature] = {}
     for item_index, signature in enumerate(prepared.plan.signatures):
@@ -643,7 +645,7 @@ def evaluate_execution_worksets_grouped(
                 handles = []
                 for slot, item_index in enumerate(wave):
                     semantic_id = prepared.plan.semantic_ids[item_index]
-                    rng_index = _semantic_rng_index(semantic_id)
+                    rng_index = rng_indices[item_index]
                     group = groups[slot]
                     handles.append(
                         (

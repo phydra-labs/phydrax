@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import _training_checkpoint
 from phydrax._model import AbstractArrayModel, ModelBinding
-from phydrax.dynamics.identification import _neural_checkpoint
 from phydrax.dynamics.identification._neural import _objective_contributions
 from phydrax.dynamics.identification._neural_windows import _NeuralWindowSource
 
@@ -477,55 +477,48 @@ def test_checkpoint_resume_is_exact_and_rejects_objective_mismatch(tmp_path):
 
 
 def test_neural_checkpoint_rejects_path_traversal_and_replacement(tmp_path, monkeypatch):
+    data = _trajectory([1.0, 2.0, 4.0])
     checkpoint = tmp_path / "checkpoint-admission"
-    model = _ScaledStep(1.0)
-    optimizer_state = jnp.asarray([2.0])
-    _neural_checkpoint._save_neural_training_checkpoint(
-        checkpoint,
-        model,
-        optimizer_state,
-        step=0,
-        key=jr.key(3),
-        metadata={},
-    )
+    common = {
+        "state_layout": data.state_layout,
+        "system_id": "checkpoint-admission",
+        "model_id": "tests.scaled-step",
+        "step_size": 1.0,
+        "rollout_policy": phx.dynamics.identification.DiscreteModelRolloutPolicy(
+            max_horizon=1
+        ),
+        "steps": 1,
+        "shuffle": False,
+        "checkpoint_path": checkpoint,
+    }
+    phx.dynamics.identification.fit_discrete_model(_ScaledStep(1.0), data, **common)
     manifest_path = checkpoint / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["state_file"] = "../outside.eqx"
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="canonical basename"):
-        _neural_checkpoint._load_neural_training_checkpoint(
-            checkpoint,
-            model,
-            optimizer_state,
+        phx.dynamics.identification.fit_discrete_model(
+            _ScaledStep(1.0), data, resume=True, **common
         )
 
-    _neural_checkpoint._save_neural_training_checkpoint(
-        checkpoint,
-        model,
-        optimizer_state,
-        step=0,
-        key=jr.key(3),
-        metadata={},
-    )
+    phx.dynamics.identification.fit_discrete_model(_ScaledStep(1.0), data, **common)
     manifest = json.loads(manifest_path.read_text())
     state_path = checkpoint / manifest["state_file"]
-    original_deserialise = _neural_checkpoint.eqx.tree_deserialise_leaves
+    original_deserialise = _training_checkpoint.eqx.tree_deserialise_leaves
 
-    def replace_after_open(stream, template):
+    def replace_after_open(stream, template, **kwargs):
         state_path.unlink()
         state_path.write_bytes(b"replacement")
-        return original_deserialise(stream, template)
+        return original_deserialise(stream, template, **kwargs)
 
     monkeypatch.setattr(
-        _neural_checkpoint.eqx,
+        _training_checkpoint.eqx,
         "tree_deserialise_leaves",
         replace_after_open,
     )
     with pytest.raises(ValueError, match="unsafe or changed"):
-        _neural_checkpoint._load_neural_training_checkpoint(
-            checkpoint,
-            model,
-            optimizer_state,
+        phx.dynamics.identification.fit_discrete_model(
+            _ScaledStep(1.0), data, resume=True, **common
         )
 
 

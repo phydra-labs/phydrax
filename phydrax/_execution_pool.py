@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import equinox as eqx
@@ -13,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from ._execution_resources import ExecutionGroupSpec
 from ._identity import ExecutableSignature
+from ._sampling._addressing import derive_key, SampleAddress
 from ._strict import StrictModule
 
 
@@ -183,12 +185,57 @@ def allocate_frontier_slots(
     )
 
 
-def semantic_task_keys(root_key: Array, task_ids: ArrayLike, /) -> Array:
-    """Derive task keys independently of lane placement and completion order."""
-    ids = jnp.asarray(task_ids, dtype=jnp.uint32)
+def semantic_task_indices(
+    address: SampleAddress, identifiers: Sequence[str], /
+) -> tuple[int, ...]:
+    """Checked 32-bit semantic index of each stable task identifier.
+
+    The index of `identifier` is the token of `address` extended by the target
+    `identifier`, so it depends only on the task family and the identifier, never
+    on how many other tasks exist or where they are placed.
+    """
+    if not isinstance(address, SampleAddress):
+        raise TypeError("address must be a SampleAddress.")
+    indices = tuple(
+        SampleAddress(
+            address.namespace,
+            address.operation,
+            target=(*address.target, identifier),
+            role=address.role,
+        ).token
+        for identifier in identifiers
+    )
+    if len(set(indices)) != len(indices):
+        raise ValueError(
+            "Semantic RNG indices collide; choose distinct semantic identifiers."
+        )
+    return indices
+
+
+def semantic_task_keys(
+    root_key: Array,
+    address: SampleAddress,
+    task_indices: ArrayLike,
+    /,
+    counters: ArrayLike | None = None,
+) -> Array:
+    """Derive task keys independently of lane placement and completion order.
+
+    Key `i` is `derive_key(root_key, address, task_indices[i][, counters[i]])`.
+    """
+    if not isinstance(address, SampleAddress):
+        raise TypeError("address must be a SampleAddress.")
+    ids = jnp.asarray(task_indices, dtype=jnp.uint32)
     if ids.ndim != 1:
-        raise ValueError("task_ids must be rank one.")
-    return jax.vmap(lambda task_id: jax.random.fold_in(root_key, task_id))(ids)
+        raise ValueError("task_indices must be rank one.")
+    if counters is None:
+        return jax.vmap(lambda task: derive_key(root_key, address, task))(ids)
+    counts = jnp.asarray(counters, dtype=jnp.uint32)
+    if counts.shape != ids.shape:
+        raise ValueError("counters must contain one counter per task index.")
+    return jax.vmap(lambda task, counter: derive_key(root_key, address, task, counter))(
+        ids, counts
+    )
 
 
 __all__ = [
@@ -197,5 +244,6 @@ __all__ = [
     "PoolRefill",
     "allocate_frontier_slots",
     "refill_completed_tasks",
+    "semantic_task_indices",
     "semantic_task_keys",
 ]

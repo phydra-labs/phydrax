@@ -1571,6 +1571,16 @@ Both results retain unconstrained and physical draws, target and family log
 densities, ELBO and gradient histories, deterministic root-key lineage, portable
 checkpoint state, prediction methods, memory, duration, and approximation identity.
 
+Each optimization step is one attempt of the shared accepted-update training
+kernel with `MODEL` root authority and one data-fit objective. Reparameterization
+draws are addressed by the attempt cursor, so a resumed run continues the exact
+stream of the uninterrupted run. A nonfinite step is rolled back, never committed,
+and raises `FloatingPointError`. `fit_variational` checkpoints are shared training
+kernel checkpoints (a directory with a manifest and a content-addressed state
+file) that bind the kernel identity, Adam state, cursors, root key, recorded
+histories, and the problem compatibility contract; checkpoints written by earlier
+layouts fail closed.
+
 ::: phydrax.uq.MeanFieldGaussianFamily
 
 ---
@@ -1616,6 +1626,9 @@ sequence without retraining.
 inverse-inclusion weights. Left and right buffers control only encoder context.
 This remains an explicitly identified approximation because its boundary states are
 provided by the amortized family rather than an exact full-data smoother.
+Each step is one training-kernel attempt: the target window is addressed by the
+accepted-update cursor and the path draws by the attempt cursor. A nonfinite step
+rolls back and raises `FloatingPointError`.
 
 ::: phydrax.uq.StateSpacePathLogDensity
 
@@ -1769,7 +1782,11 @@ The sparse variational GP surface is scalar-latent and whitened.
 and explicit estimator-weight contracts. The KL is evaluated exactly once per
 update, while non-Gaussian expected log likelihoods use fixed-count keyed
 reparameterized samples. `SparseGaussianProcessDiscrepancy` remains the distinct
-FITC approximation.
+FITC approximation. `fit_sparse_variational_gaussian_process` runs every step as
+one training-kernel attempt on the absolute-step batch; its result carries the
+committed kernel state (`training_state`), and a continuation resumes that state,
+including its root key and cursors, so a split run equals the uninterrupted one.
+A nonfinite step rolls back and raises `FloatingPointError`.
 
 ::: phydrax.uq.SWAGCollectionPlan
 

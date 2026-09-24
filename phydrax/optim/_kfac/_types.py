@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, NamedTuple
+from typing import final, Literal, NamedTuple
 
 from jaxtyping import Array
+
+from ..._strict import StrictModule
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,21 +84,34 @@ class BlockCurvatureObservation(NamedTuple):
     uncovered: Array | None
 
 
-class KFACState(NamedTuple):
-    step: Array
-    curvature: BlockCurvatureState
-    factor_updates: Array
-
-
 class KFACMetrics(NamedTuple):
-    """KFAC-native metrics emitted by one frozen functional update."""
+    """KFAC-native metrics of one proposed functional update.
 
-    factor_updates: Array
+    `candidate_value` is the objective at the proposed parameters on the
+    attempt's frozen realization (the pre-update value on a zero step).
+    """
+
     cg_iterations_max: Array
     cg_relative_residual_max: Array
     quadratic_update_norm: Array
     accepted_step_size: Array
     line_search_steps: Array
+    candidate_value: Array
+
+
+@final
+class KFACState(StrictModule):
+    """KFAC update-rule state: accepted steps, curvature, and last-step metrics.
+
+    `step` counts accepted updates; `factor_updates` counts curvature refreshes,
+    including those retained by finite rejections; `metrics` describe the last
+    accepted update.
+    """
+
+    step: Array
+    curvature: BlockCurvatureState
+    factor_updates: Array
+    metrics: KFACMetrics
 
 
 __all__ = [

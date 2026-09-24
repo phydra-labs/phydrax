@@ -49,6 +49,12 @@ from ._chunk_repository import (
     TombstoneRecord,
     UnsupportedRepositoryProfileError,
 )
+from ._coupled_training import (
+    coupled_training_step,
+    CoupledTrainingEvidence,
+    CoupledTrainingPolicy,
+    CoupledTrainingResult,
+)
 from ._distributed_checkpoint import (
     AddressableCheckpointShard,
     assemble_distributed_checkpoint_from_repository,
@@ -166,6 +172,9 @@ __all__ = [
     "ChunkEncoding",
     "ChunkRangeReader",
     "ChunkRecord",
+    "CoupledTrainingEvidence",
+    "CoupledTrainingPolicy",
+    "CoupledTrainingResult",
     "CompatibilityRegistry",
     "ConditionalObjectClient",
     "ConfigurationLineageArtifact",
@@ -231,6 +240,7 @@ __all__ = [
     "canonical_chunk_mapping",
     "collection_digest",
     "commit_candidate",
+    "coupled_training_step",
     "create",
     "create_build_provenance",
     "decode_logical_arrays",
