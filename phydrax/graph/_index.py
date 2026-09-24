@@ -4,6 +4,9 @@ from typing import Literal
 
 import jax.numpy as jnp
 
+# Edge-index utilities build or summarize topology once (coalescing, degree
+# counts); they are one-off segment reductions, not repeated message passing
+# over a prepared relation, so they keep direct segment kernels.
 from ._kernels import segment_max, segment_mean, segment_min, segment_sum
 
 

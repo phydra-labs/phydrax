@@ -386,10 +386,12 @@ DAFoam options; and every declared design vector. The steady aerodynamic profile
 limited to `DASimpleFoam`, `DARhoSimpleFoam`, or `DARhoSimpleCFoam`, reverse AD,
 Krylov/PETSc adjoints, `discipline="aero"`, explicitly declared
 `primalMinResTol`, `primalMinResTolDiff`, `checkMeshThreshold`, functions, design
-surfaces, and solver/function-participating `volCoord`, `patchVelocity`, `patchVar`,
-or `field` inputs. `volCoord` means the complete ordered volume-coordinate vector;
-the adapter does not invent a CAD or FFD map. The worker requires `MPI.COMM_WORLD`
-size one.
+surfaces, and solver/function-participating inputs of the closed
+`DAFoamDesignVariableKind` set (`volCoord`, `patchVelocity`, `patchVar`, `field`).
+`volCoord` means the complete ordered volume-coordinate vector; the adapter does not
+invent a CAD or FFD map. Each design value is an array whose C-order flattening is
+DAFoam's input vector; its shape is part of the request identity. The worker
+requires `MPI.COMM_WORLD` size one.
 
 Create a `DAFoamRuntime` with `pin_dafoam_runtime`. The reference API is pinned to
 [DAFoam v4.0.3](https://github.com/mdolab/dafoam/tree/v4.0.3), and the runtime
@@ -406,14 +408,28 @@ remain unpinned. Runtime identity is bounded by default to 100,000 files and 8 G
 native `checkMesh` and `primalFail`/finite-state acceptance.
 `total_adjoint=True` additionally runs OpenMDAO reverse `compute_totals` one
 functional at a time and returns `DAFoamTotalDerivative` records plus per-functional
-`DAFoamAdjointEvidence`. Each record carries state, realized-mesh, declared-design,
-and adjoint hashes, PETSc convergence reason, iteration count, residual norm, and
-failure text. The worker verifies that state, mesh, and design did not change between
-the accepted primal and each total-adjoint evaluation, and the host verifies those
-identities again. This is same-realization derivative evidence, not differentiation
+`DAFoamAdjointEvidence`. Totals are shape-preserving (each has its design
+variable's declared shape) and, like functions and adjoint evidence, are in
+canonical name order. Each evidence record carries state, realized-mesh,
+declared-design, and adjoint hashes, PETSc convergence reason, iteration count,
+residual norm, and failure text. The worker verifies that state, mesh, and design did
+not change between the accepted primal and each total-adjoint evaluation, and the
+host verifies those identities again; `DAFoamResult.replay_id` content-addresses
+that realization. This is same-realization derivative evidence, not differentiation
 through a host process. A failed mesh/primal exposes no function values; a failed or
 nonfinite adjoint exposes no total derivatives. `DAFoamResult.require_acceptance()`
 raises `DAFoamConvergenceError` rather than accepting either case.
+
+`DAFoamAdjointAction` exposes those totals as a staged host-boundary adjoint
+(`ExternalAdjointAction`) in six steps: (1) declare every design variable's shape,
+with inputs ordered by name and scalar functions ordered by name; (2)
+`stage_primal(*design)` runs the primal and all per-functional totals in one pinned
+run; (3) mesh, state, and every adjoint must be accepted, otherwise the stage keeps
+the failure and evidence and exposes no outputs; (4) an accepted stage holds the
+functions, shape-preserving totals, and the run's `replay_id`; (5)
+`apply_adjoint(stage, *ȳ)` refuses a stage of another case, options, runtime, or
+realization, and a failed stage; (6) it returns
+`Jᵀȳ = Σ_f ȳ[f]·totals[f, var]` for every design variable in its declared shape.
 
 Case bytes and the canonical request have individual hashes and a request identity;
 the default combined run-artifact bound is 128 MiB. The qualification entrypoint
@@ -642,6 +658,37 @@ byte-for-byte reproduction. `spectrum_observables_from_slha` extracts only
 well-defined MASS pole masses and DECAY total widths with explicit GeV units.
 Complex matrices remain separate real/imaginary SLHA blocks rather than being
 merged by guesswork.
+
+## Staged external adjoints
+
+No external provider runs inside a JAX transformation (there is no
+`pure_callback`). An adjoint-capable provider is an `ExternalAdjointAction`: its
+`input_schema` and `output_schema` are `ExternalTensorSpec` entries (exact name,
+shape, and dtype), and `action_id` content-addresses the provider, version,
+schemas, and configuration. `stage_primal(*inputs)` evaluates the provider eagerly
+on concrete values and returns an `ExternalPrimalStage` with read-only detached
+inputs and outputs, the provider's realization ID, replay data, evidence IDs,
+acceptance status, and a content-addressed `replay_id`. Downstream JAX code
+differentiates with respect to the stage outputs; `apply_adjoint(stage, *ȳ)`
+returns the input cotangents `Jᵀȳ` formed at exactly the staged realization, and
+upstream JAX code continues with its own VJP:
+
+```text
+x, pullback = jax.vjp(upstream, theta)
+stage = provider.stage_primal(x)
+loss, y_bar = jax.value_and_grad(downstream, argnums=(0, 1))(*stage.outputs)
+(x_bar,) = provider.apply_adjoint(stage, *y_bar)
+(theta_bar,) = pullback(jnp.asarray(x_bar))
+```
+
+A stage of another action, an adjoint formed at a different realization (replay
+mismatch), and a failed primal are refused with `ValueError`; both calls refuse
+every JAX transformation before the provider runs. Providers implement
+`_primal(inputs)` and `_adjoint(stage, output_cotangents)`, the latter returning
+the input cotangents with the realization ID it replayed. A provider without an
+adjoint reports `ExternalDerivativeSupport(route="none", alternatives=...)`,
+naming Phydrax derivative-free methods (EKI, evolution strategies, POUNDERS,
+differential evolution); none is selected silently.
 
 ## Optional energy execution
 

@@ -1,9 +1,5 @@
 """Production data, normalization, checkpoint, and rollout utilities for operators."""
 
-from ...._model import (
-    OperatorArchitectureCodec,
-    register_operator_architecture_codec,
-)
 from ...._training import (
     DelayedTargetPolicy,
     ExponentialMovingAverageTargetPolicy,
@@ -207,8 +203,6 @@ from ._trained_operator import (
 
 
 __all__ = [
-    "OperatorArchitectureCodec",
-    "register_operator_architecture_codec",
     "OperatorArtifactManifest",
     "OperatorArtifactTrainingState",
     "BoundedResidualAdaptationPolicy",

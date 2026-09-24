@@ -225,6 +225,107 @@ assert outputs.shape == (4, 3)
 
 ::: phydrax.LaneLayout
 
+## Identity, revisions, and plugin registration
+
+Every learned or prepared component has three independent identities.
+`SemanticProvenance` content-addresses what the component means (static
+descriptors plus named external resources). `NumericRevision` content-addresses
+its dynamic numeric realization, bound to one semantic ID: a training update
+produces a new revision and nothing else. `ExecutableSignature` identifies what
+is compiled: shapes, dtypes, spaces, topology, capacities, and algorithm and
+backend facts, with no dynamic values. Callables compiled into an executable are
+named in `static_callables` and identified through `callable_payload`, so
+weights a callable holds statically are part of the executable while weights
+passed as arguments are not. `ArtifactBindingIdentity` binds all three for a
+frozen or published model; artifacts, checkpoints, and lifecycle
+`ModelManifest`s carry it whole or not at all, and loading recomputes it from the
+loaded content and fails closed on a mismatch.
+
+`phydrax.lifecycle.RevisionLineage` records ancestry only: it references a
+canonical revision by `semantic_id` and `revision_id`, adds a label and string
+metadata, and names at most one parent by its revision and lineage IDs. A
+lifecycle archive of a lineage stores the revision's numeric content as its
+payload and recomputes the canonical revision on open. Archives written with the
+retired lifecycle numeric-revision record are refused.
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+semantic = phx.SemanticProvenance({"kind": "affine-response"})
+signature = phx.ExecutableSignature(shapes={"weight": (2,)}, dtypes={"weight": "f4"})
+before = phx.NumericRevision(semantic, {"weight": jnp.asarray([1.0, 2.0])})
+after = phx.NumericRevision(semantic, {"weight": jnp.asarray([1.5, 2.0])})
+first = phx.ArtifactBindingIdentity(semantic, before, signature)
+second = phx.ArtifactBindingIdentity(semantic, after, signature)
+assert first.executable_signature_id == second.executable_signature_id
+assert first.numeric_revision_id != second.numeric_revision_id
+lineage = phx.lifecycle.RevisionLineage(
+    after,
+    label="round-2",
+    parent_revision_id=before.revision_id,
+    parent_lineage_id=phx.lifecycle.RevisionLineage(before).lineage_id,
+)
+```
+
+Portable artifacts identify types and callables through explicit registrations
+exported here once. `register_artifact_value` binds one path-independent ID to
+one object, resolved by object identity (`artifact_value_id`) and by ID
+(`artifact_value`). `register_operator_architecture_codec` binds an
+`OperatorArchitectureCodec` ID to one exact model type;
+`operator_architecture_codec_for` never falls back to a base class, a class
+name, or an installed entry point, and conflicting registrations are rejected.
+
+::: phydrax.SemanticProvenance
+
+---
+
+::: phydrax.NumericRevision
+
+---
+
+::: phydrax.ExecutableSignature
+
+---
+
+::: phydrax.ArtifactBindingIdentity
+
+---
+
+::: phydrax.callable_payload
+
+---
+
+::: phydrax.lifecycle.RevisionLineage
+
+---
+
+::: phydrax.OperatorArchitectureCodec
+
+---
+
+::: phydrax.register_operator_architecture_codec
+
+---
+
+::: phydrax.operator_architecture_codec
+
+---
+
+::: phydrax.operator_architecture_codec_for
+
+---
+
+::: phydrax.register_artifact_value
+
+---
+
+::: phydrax.artifact_value
+
+---
+
+::: phydrax.artifact_value_id
+
 ## Sparse execution substrate
 
 `phydrax.sparse` factors out the gather–message–reduce mechanics shared by

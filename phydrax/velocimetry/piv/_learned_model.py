@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import math
 from abc import abstractmethod
-from typing import Any
 
 import equinox as eqx
 import jax
@@ -453,12 +452,6 @@ class CorrelationPyramidPIV(AbstractDensePIVModel):
                 "displacement_components": "row-column",
             }
         )
-
-    def parameter_state_tree(self, /) -> Any:
-        return {
-            "feature_pyramid": self.feature_pyramid,
-            "residual_refinement": self.residual_refinement,
-        }
 
     def __call__(self, prepared: PreparedLearnedDensePIV, /) -> DensePIVPrediction:
         if not isinstance(prepared, PreparedLearnedDensePIV):

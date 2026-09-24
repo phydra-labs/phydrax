@@ -2069,7 +2069,14 @@ must remain off device and outside process memory.
 
 `save_operator_training_checkpoint` persists a model, an optimizer state, and a
 PRNG key for custom loops, together with normalization, dtype policy, semantic
-schema, and user metadata. `fit_operator` checkpoints are a separate format:
+schema, user metadata, and the model's `ArtifactBindingIdentity`. The model's
+array roles must be declared: its PARAMETER lane is the binding's numeric
+revision, while parameter shapes and dtypes, the dtype policy, and the
+`static_callables` a model holds statically (identified by `callable_payload`,
+so their weights enter the executable signature) form the executable signature.
+Pass the same `static_callables` to `load_operator_training_checkpoint`, which
+recomputes the binding from the restored model and rejects any mismatch.
+`fit_operator` checkpoints are a separate format:
 the training kernel's committed state (parameters, model state, optimizer
 state, target parameters, root key, attempt and accepted-update cursors), its
 role-schema, objective, update-rule, and sharding identities, plus the best
@@ -2085,10 +2092,15 @@ formats are rejected rather than migrated.
 
 `save_operator_artifact` stores the execution model, physical output pipeline and
 fingerprint, fixed-query geometry fingerprints, normalization, dtype, evidence,
-and optional exact-resume state as one verified contract. Portable recipes use
-versioned architecture and value registry identities rather than defining-module
-paths. Only the current canonical representation is accepted; regenerate
-development artifacts when that representation changes.
+the model's `ArtifactBindingIdentity`, and optional exact-resume state as one
+verified contract. The binding's semantics are the task and contract
+fingerprints, architecture or factory identity, structure recipe, role schema,
+and any adapted external checkpoint binding; its numeric revision is the
+PARAMETER lane of the execution model and output pipeline. `load_trained_operator`
+recomputes the binding from the restored model and fails closed on mismatch.
+Portable recipes use versioned architecture and value registry identities rather
+than defining-module paths. Only the current canonical representation is
+accepted; regenerate development artifacts when that representation changes.
 
 ## Generalized Flower transport
 

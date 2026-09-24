@@ -227,6 +227,45 @@ cross the one-time fail-closed conversion boundary. The returned model is native
 prediction does not call the source package. ONNX export is available only when the
 native JAX primitives used by that model are representable.
 
+## Keep an external model on an explicit tier
+
+A stateful model from another JAX framework keeps its own functional form. Its
+`apply` receives the parameters, the model state, the input, a key, and an
+explicit inference flag, and returns the output with the next model state:
+
+```python
+def running_center(parameters, model_state, x, key, *, inference):
+    del key
+    if inference:
+        return parameters["scale"] * (x - model_state["mean"]), model_state
+    mean = jnp.mean(x)
+    return parameters["scale"] * (x - mean), {
+        "mean": 0.9 * model_state["mean"] + 0.1 * mean
+    }
+
+
+stateful = phx.nn.models.FunctionalJAXAdapter(
+    running_center,
+    {"scale": jnp.asarray(1.0)},
+    {"mean": jnp.asarray(0.0)},
+    in_size=4,
+    out_size=4,
+    inference=False,
+)
+centered, proposed = stateful.transition(jnp.arange(4.0))
+deployed = phx.nn.layers.inference_mode(proposed)
+```
+
+`scale` is PARAMETER and `mean` is MODEL_STATE. Calling `stateful` evaluates
+without advancing the state; `transition` returns the proposed next state, which a
+training kernel commits only with an accepted update. `deployed` evaluates with the
+committed running mean.
+
+A model that runs in a host runtime instead is loaded as a
+`phx.export.HostInferenceAdapter` (for ONNX, `phx.export.load_onnx` with
+`phydrax[onnx-inference]`). It is called eagerly with concrete arrays; `jit`,
+`vmap`, and gradients are refused before the runtime runs, and it has no adjoint.
+
 See [Native machine learning](../guides/ml.md),
 [Derivative contracts](../appendix/ml_differentiability.md), and the
 [complete ML API](../api/ml/index.md).

@@ -39,4 +39,4 @@ state = result.state
 
 Provider failure never appends a label. Member or qualification failure advances the
 label revision but preserves the previously promoted committee. Persist the returned
-state and its `NumericRevision` lineage at every accepted round boundary.
+state and its label-set `RevisionLineage` at every accepted round boundary.

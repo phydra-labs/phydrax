@@ -9,9 +9,9 @@ import numpy as np
 
 from phydrax._strict import StrictModule
 
+from ..sparse import linear_apply
 from ._graph import ensure_graph
 from ._ir import GraphIR
-from ._kernels import segment_sum
 from ._typed import edge_type_ids, node_type_ids
 
 
@@ -465,23 +465,12 @@ def _node_field(graph: GraphIR, input_key: str | None, /) -> jnp.ndarray:
     return _as_array(f"nodes[{input_key!r}]", graph.nodes[input_key])
 
 
-def _edge_signs(
-    graph: GraphIR,
-    sign_key: str,
-    edge_type_key: str,
-    wanted_type: int,
-    /,
-) -> jnp.ndarray:
+def _edge_signs(graph: GraphIR, sign_key: str, /) -> jnp.ndarray:
     if not isinstance(graph.edges, Mapping):
         raise TypeError("SimplicialHodgeLaplacian requires mapping-valued graph edges.")
     if sign_key not in graph.edges:
         raise KeyError(f"Graph edges do not contain sign_key {sign_key!r}.")
-    signs = jnp.asarray(graph.edges[sign_key], dtype=jnp.float64).reshape((-1,))
-    types = edge_type_ids(graph, type_key=edge_type_key)
-    keep = types == int(wanted_type)
-    if graph.edge_mask is not None:
-        keep = keep & graph.edge_mask
-    return jnp.where(keep, signs, 0.0)
+    return jnp.asarray(graph.edges[sign_key], dtype=jnp.float64).reshape((-1,))
 
 
 def _broadcast_weight(weight: jnp.ndarray, values: jnp.ndarray, /) -> jnp.ndarray:
@@ -501,9 +490,11 @@ def _incidence_apply(
 ) -> jnp.ndarray:
     if graph.senders is None or graph.receivers is None:
         raise ValueError("SimplicialHodgeLaplacian requires explicit senders/receivers.")
-    signs = _edge_signs(graph, sign_key, edge_type_key, edge_type)
-    messages = values[graph.senders] * _broadcast_weight(signs, values[graph.senders])
-    return segment_sum(messages, graph.receivers, values.shape[0])
+    signs = _edge_signs(graph, sign_key)
+    incidence = graph.edge_relation(node_count=values.shape[0]).with_valid(
+        edge_type_ids(graph, type_key=edge_type_key) == int(edge_type)
+    )
+    return linear_apply(incidence, signs, values)
 
 
 def _mask_cell_type(

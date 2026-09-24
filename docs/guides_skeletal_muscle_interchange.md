@@ -75,7 +75,7 @@ Each semantic ID selects a checked 32-bit RNG index: the token of Phydrax's sema
 
 Both return `ExecutionWorksetEvaluation` and `ExecutionWorksetEvidence`. The evaluation carries the whole result and the atomically advanced per-item RNG counters; counter overflow fails before a new continuation state is exposed. Evidence reports finite output, exact coverage, active items, and padded lanes. The serial route is an executable reference for the vectorized route, not a different mathematical model.
 
-`ExecutionWorksetCheckpoint` content-addresses the prepared identity, canonical semantic IDs, complete item-state pytree, and RNG counters. Restore rejects a checkpoint from another preparation and rejects any payload whose recomputed content identity differs. There is no partial-state restore or symptom-level fallback.
+`ExecutionWorksetCheckpoint` content-addresses the prepared identity, canonical semantic IDs, the sorted `NumericRevision` IDs of learned content bound into the items (none here), complete item-state pytree, and RNG counters. Restore rejects a checkpoint from another preparation or other bound numeric revisions and rejects any payload whose recomputed content identity differs. There is no partial-state restore or symptom-level fallback.
 
 ## Example and qualification
 

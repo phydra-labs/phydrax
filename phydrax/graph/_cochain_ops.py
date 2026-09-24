@@ -15,10 +15,9 @@ from jax import core as jax_core
 from jaxtyping import Array
 
 from .._strict import StrictModule
-from ..sparse import EdgeRelation, linear_apply
+from ..sparse import EdgeRelation, gather_routes, linear_apply, route_reduce
 from ._cochain import CochainBoundaryKind, CochainBoundaryPolicy
 from ._ir import GraphIR
-from ._kernels import segment_sum
 
 
 HodgeLaplacianComponent: TypeAlias = Literal["lower", "upper", "complete"]
@@ -249,14 +248,27 @@ def cochain_harmonic_projection(
         graph.n_node,
         total_repeat_length=array.shape[0],
     )
+    # Graph membership routes every cell onto its graph; padded cells are inert.
+    membership = EdgeRelation(
+        jnp.arange(array.shape[0], dtype=jnp.int32),
+        graph_ids,
+        source_size=array.shape[0],
+        target_size=graph.num_graphs,
+        valid=graph.node_mask,
+    )
+    graph_cells = membership.transpose()
     ranks = jnp.asarray(graph.globals["harmonic_rank"])[:, int(degree)]
+    cell_ranks = gather_routes(graph_cells, ranks)
     mode_ids = jnp.arange(basis.shape[1], dtype=jnp.int32)
-    mode_mask = mode_ids[None, :] < ranks[graph_ids, None]
+    mode_mask = mode_ids[None, :] < cell_ranks[:, None]
     basis = jnp.where(mode_mask, basis, 0)
     star = jnp.asarray(nodes["hodge_star"], dtype=array.dtype)
     weighted = basis[:, :, None] * star[:, None, None] * flat[:, None, :]
-    coefficients = segment_sum(weighted, graph_ids, graph.num_graphs)
-    projected = jnp.sum(basis[:, :, None] * coefficients[graph_ids], axis=1)
+    coefficients = route_reduce(membership, weighted)
+    projected = jnp.sum(
+        basis[:, :, None] * gather_routes(graph_cells, coefficients),
+        axis=1,
+    )
     active = _active_nodes(graph, nodes, int(degree), policy)
     projected = jnp.where(active[:, None], projected, 0)
     return projected.reshape(original_shape)

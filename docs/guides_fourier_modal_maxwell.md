@@ -265,17 +265,21 @@ magnetoelectric work are typed ineligible. Active negative loss is permitted, bu
 invalidates a `passive=True` claim.
 
 Call `fourier_modal_numeric_revision(prepared)` only at a host-materialized accepted
-point and pass it to loss evaluation. Tracers are rejected rather than omitted from
-the digest. Revision metadata separates a `physical_state_digest` over primitive
-vectors, frequency/Bloch values, ports/reference distances, raw constitutive values,
-per-layer thickness/translation, frame data, and source parents from a
-`physical_stack_digest` that removes frequency, angle, overall thickness, and sampled
-constitutive values while retaining geometry, primitive vectors, normalized layer
-distribution, stable material-response origins/claims, and factorization/frame
-provenance. The full revision digest additionally binds the harmonic layout and
-canonical discretized values. Without a revision the
-differentiable material-loss observable remains available, but evidence has
-`NUMERIC_REVISION_REQUIRED` and cannot be accepted.
+point and pass it to loss evaluation. It returns the canonical `phx.NumericRevision`:
+its semantic provenance names the problem, preparation, harmonic layout, and static
+port/element descriptors, and its numeric content is the canonical discretized
+values plus the revision IDs of any `source_parents`. Tracers are rejected rather
+than omitted. `require_fourier_modal_numeric_revision` recomputes the revision and
+rejects any other `revision_id`. After that check, loss and modal-sweep evidence
+compute two physical digests directly from the prepared problem:
+`fourier_modal_physical_state_digest` over primitive vectors, frequency/Bloch values,
+ports/reference distances, raw constitutive values, per-layer thickness/translation,
+frame data, and source parents, and `fourier_modal_physical_stack_digest`, which
+removes frequency, angle, overall thickness, and sampled constitutive values while
+retaining geometry, primitive vectors, normalized layer distribution, stable
+material-response origins/claims, and factorization/frame provenance. Without a
+revision the differentiable material-loss observable remains available, but evidence
+has `NUMERIC_REVISION_REQUIRED` and cannot be accepted.
 
 A single solve never claims transverse convergence.
 `assess_fourier_modal_loss_convergence` requires at least two accepted loss results

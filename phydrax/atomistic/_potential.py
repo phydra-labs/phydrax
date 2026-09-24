@@ -4,20 +4,18 @@
 
 from __future__ import annotations
 
-import copy
 import math
 from abc import abstractmethod
 from enum import StrEnum
-from typing import Any, cast, TypeVar
+from typing import Any
 
 import equinox as eqx
+import jax
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import canonical_fingerprint
+from .._identity import NumericRevision, SemanticProvenance
 from .._strict import StrictModule
-from .._trainable import NonTrainableState, ParameterOwner
-
-
-_AtomisticPotentialT = TypeVar("_AtomisticPotentialT", bound="AbstractAtomisticPotential")
+from .._trainable import NonTrainableState, ParameterOwner, partition_parameters
 
 
 class AtomisticSpeciesKind(StrEnum):
@@ -129,14 +127,12 @@ class AbstractPreparedAtomisticPotential(StrictModule):
 
 
 class AbstractAtomisticPotential(StrictModule, ParameterOwner):
-    """Atomistic scalar-energy model with checkpointable parameter provenance."""
+    """Atomistic scalar-energy model whose numeric identity is its PARAMETER lane."""
 
     configuration: eqx.AbstractVar[Any]
     scale: eqx.AbstractVar[Any]
     precision: eqx.AbstractVar[Any]
     architecture_id: eqx.AbstractVar[str]
-    parameter_state_id: eqx.AbstractVar[str]
-    potential_id: eqx.AbstractVar[str]
     method_id: eqx.AbstractVar[str]
 
     @property
@@ -174,66 +170,32 @@ class AbstractAtomisticPotential(StrictModule, ParameterOwner):
     ) -> tuple[Any, Any]:
         raise NotImplementedError
 
-    @abstractmethod
-    def parameter_state_tree(self, /) -> Any:
-        raise NotImplementedError
 
+def atomistic_potential_revision(potential: AbstractAtomisticPotential, /) -> NumericRevision:
+    """Return the canonical numeric revision of a potential's current parameters.
 
-def _parameter_state_id(potential: AbstractAtomisticPotential, /) -> str:
-    return canonical_fingerprint(
-        {
-            "kind": "atomistic-potential-parameter-state",
-            "arrays": array_tree_fingerprint(potential.parameter_state_tree()),
-        }
-    )
-
-
-def checkpoint_atomistic_potential(
-    potential: _AtomisticPotentialT, /
-) -> _AtomisticPotentialT:
-    """Return an immutable model copy with refreshed content-addressed provenance."""
+    The semantic provenance names the architecture and force method; the numeric
+    content is every PARAMETER-role leaf, keyed by its tree path. Fixed and
+    model-state leaves never enter it. This is a host boundary: the parameters
+    must be concrete arrays, so call it outside `jit`, `vmap`, and `grad`.
+    """
 
     if not isinstance(potential, AbstractAtomisticPotential):
         raise TypeError("potential must implement AbstractAtomisticPotential.")
-    state_id = _parameter_state_id(potential)
-    potential_id = canonical_fingerprint(
+    parameters = partition_parameters(potential)[0]
+    return NumericRevision(
+        SemanticProvenance(
+            {
+                "kind": "atomistic-potential",
+                "architecture_id": potential.architecture_id,
+                "method_id": potential.method_id,
+            }
+        ),
         {
-            "kind": "evaluated-atomistic-potential",
-            "architecture": potential.architecture_id,
-            "parameter_state": state_id,
-        }
+            jax.tree_util.keystr(path): leaf
+            for path, leaf in jax.tree_util.tree_flatten_with_path(parameters)[0]
+        },
     )
-    checkpoint = cast(_AtomisticPotentialT, copy.copy(potential))
-    object.__setattr__(checkpoint, "parameter_state_id", state_id)
-    object.__setattr__(checkpoint, "potential_id", potential_id)
-    return checkpoint
-
-
-def _with_atomistic_potential_identity(
-    potential: _AtomisticPotentialT,
-    identity_source: AbstractAtomisticPotential,
-    /,
-) -> _AtomisticPotentialT:
-    synchronized = cast(_AtomisticPotentialT, copy.copy(potential))
-    object.__setattr__(
-        synchronized, "parameter_state_id", identity_source.parameter_state_id
-    )
-    object.__setattr__(synchronized, "potential_id", identity_source.potential_id)
-    return synchronized
-
-
-def initialize_atomistic_potential_identity(
-    potential: AbstractAtomisticPotential, /
-) -> tuple[str, str]:
-    state_id = _parameter_state_id(potential)
-    potential_id = canonical_fingerprint(
-        {
-            "kind": "evaluated-atomistic-potential",
-            "architecture": potential.architecture_id,
-            "parameter_state": state_id,
-        }
-    )
-    return state_id, potential_id
 
 
 __all__ = [
@@ -242,5 +204,5 @@ __all__ = [
     "AtomisticPotentialCapabilities",
     "AtomisticSpeciesKind",
     "AtomisticPotentialRequirements",
-    "checkpoint_atomistic_potential",
+    "atomistic_potential_revision",
 ]

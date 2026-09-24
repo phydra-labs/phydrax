@@ -12,6 +12,7 @@ from phydrax.atomistic import (
     AtomisticStatus,
     AtomisticTrainingPolicy,
     AtomisticTrainingProblem,
+    atomistic_potential_revision,
     energy_and_forces,
     fit_atomistic_potential,
     load_rmd17_npz,
@@ -169,16 +170,10 @@ def test_deterministic_continuation_matches_uninterrupted_training_and_selection
     assert first.progress.update_step == 2
     assert continued.progress.update_step == 5
     assert continued.progress == uninterrupted.progress
-    assert continued.potential.parameter_state_id == (
-        uninterrupted.potential.parameter_state_id
-    )
-    assert continued.potential.potential_id == uninterrupted.potential.potential_id
-    assert continued.best_potential.parameter_state_id == (
-        uninterrupted.best_potential.parameter_state_id
-    )
-    assert (
-        continued.best_potential.potential_id == uninterrupted.best_potential.potential_id
-    )
+    for name in ("potential", "best_potential"):
+        assert atomistic_potential_revision(getattr(continued, name)).revision_id == (
+            atomistic_potential_revision(getattr(uninterrupted, name)).revision_id
+        )
     assert continued.problem_id == uninterrupted.problem_id
     assert continued.policy_id == uninterrupted.policy_id
     assert continued.continuation_id == uninterrupted.continuation_id
@@ -304,11 +299,10 @@ def test_training_reports_neighbor_overflow_without_nonfinite_conflation():
     assert result.training_loss_history.shape == (0,)
 
 
-def test_initial_model_is_selected_at_step_zero_and_trained_state_is_refingerprinted():
+def test_initial_model_is_selected_at_step_zero_and_trained_state_has_new_revision():
     batch = _batch()
     energy, _ = _targets(batch)
     initial = _potential(jr.key(44))
-    initial_parameter_state = initial.parameter_state_id
     result = fit_atomistic_potential(
         initial,
         AtomisticTrainingProblem(batch, _execution(), training_energy=energy),
@@ -317,8 +311,9 @@ def test_initial_model_is_selected_at_step_zero_and_trained_state_is_refingerpri
     assert int(result.validation_steps[0]) == 0
     assert result.progress.best_step in (0, 1)
     assert float(result.best_loss) <= float(result.validation_loss_history[0])
-    assert result.potential.parameter_state_id != initial_parameter_state
-    assert result.potential.potential_id != initial.potential_id
+    assert atomistic_potential_revision(result.potential).revision_id != (
+        atomistic_potential_revision(initial).revision_id
+    )
 
 
 def test_local_rmd17_parser_and_split_are_explicit_disjoint_and_reproducible(tmp_path):

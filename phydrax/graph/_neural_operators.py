@@ -9,15 +9,26 @@ import jax.tree_util as jtu
 
 from phydrax._strict import StrictModule
 
-from ..sparse import gather_routes, mask_routes, route_reduce
+from ..sparse import (
+    EdgeRelation,
+    gather_routes,
+    mask_routes,
+    route_reduce,
+    RouteReduction,
+)
 from ._graph import ensure_graph
 from ._ir import GraphIR
-from ._kernels import segment_softmax, segment_sum
 from ._typed import node_type_ids
 
 
 ArrayTree = Any
 FiniteVolumeSign = Literal["in_minus_out", "out_minus_in"]
+
+
+def _route_reduction(value: str, /) -> RouteReduction:
+    if value not in ("sum", "mean", "max", "min"):
+        raise ValueError("reduction must be 'sum', 'mean', 'max', or 'min'.")
+    return value
 
 
 def _tree_leading_size(tree: ArrayTree) -> int:
@@ -227,6 +238,7 @@ def _broadcast_node_volume(volume: jnp.ndarray, values: jnp.ndarray, /) -> jnp.n
 
 def _finite_volume_divergence(
     graph: GraphIR,
+    relation: EdgeRelation,
     flux: jnp.ndarray,
     /,
     *,
@@ -235,8 +247,7 @@ def _finite_volume_divergence(
     normalize_by_volume: bool,
     sign: FiniteVolumeSign,
 ) -> jnp.ndarray:
-    n_node = _num_graph_nodes(graph)
-    relation = graph.edge_relation(node_count=n_node)
+    n_node = relation.target_size
     incoming = route_reduce(relation, flux)
     outgoing = route_reduce(relation.transpose(), flux)
     if sign == "in_minus_out":
@@ -267,6 +278,20 @@ def _edge_bias(graph: GraphIR, edge_bias_key: str | None, /) -> jnp.ndarray | No
             "edge attention bias must have shape (n_edge,), (n_edge, 1), or (n_edge, n_head)."
         )
     return bias
+
+
+def _route_softmax(
+    relation: EdgeRelation, reverse: EdgeRelation, logits: jnp.ndarray, /
+) -> jnp.ndarray:
+    """Normalize logits over the valid routes entering each target."""
+    # Invalid logits are zeroed before exponentiation so padded routes cannot
+    # overflow or leak non-finite cotangents through the final mask.
+    logits = mask_routes(relation, logits)
+    maxima = gather_routes(reverse, route_reduce(relation, logits, reduction="max"))
+    weights = jnp.exp(logits - maxima)
+    totals = gather_routes(reverse, route_reduce(relation, weights))
+    totals = jnp.maximum(totals, jnp.asarray(1e-12, dtype=totals.dtype))
+    return mask_routes(relation, weights / totals)
 
 
 def _mask_node_type(
@@ -311,15 +336,16 @@ class GraphKernelIntegral(StrictModule):
     """Edge-kernel integral operator over a sparse graph.
 
     The block sends source node features along directed edges, optionally
-    multiplies them by a learned/analytic kernel, aggregates to receivers, and
-    writes the aggregate as the graph's node payload.
+    multiplies them by a learned/analytic kernel, reduces them onto receivers
+    with `phydrax.sparse.route_reduce`, and writes the aggregate as the graph's
+    node payload. Routes with `edge_mask=False` never contribute.
     """
 
     kernel_fn: Callable | None
     source_fn: Callable | None
     update_node_fn: Callable | None
     source_measure: Any
-    aggregate_fn: Callable = eqx.field(static=True)
+    reduction: RouteReduction = eqx.field(static=True)
     normalize: bool = eqx.field(static=True)
     source_measure_key: str | None = eqx.field(static=True)
 
@@ -332,7 +358,7 @@ class GraphKernelIntegral(StrictModule):
         update_node_fn: Callable | None = None,
         source_measure_key: str | None = None,
         source_measure: Any | None = None,
-        aggregate_fn: Callable = segment_sum,
+        reduction: RouteReduction = "sum",
         normalize: bool = False,
     ):
         self.kernel_fn = kernel_fn
@@ -340,7 +366,7 @@ class GraphKernelIntegral(StrictModule):
         self.update_node_fn = update_node_fn
         self.source_measure_key = source_measure_key
         self.source_measure = source_measure
-        self.aggregate_fn = aggregate_fn
+        self.reduction = _route_reduction(reduction)
         self.normalize = bool(normalize)
 
     def __call__(self, graph: GraphIR) -> GraphIR:
@@ -368,7 +394,7 @@ class GraphKernelIntegral(StrictModule):
                 self.source_measure,
                 n_node=num_nodes,
             )
-            edge_measure = node_measure[relation.source_indices]
+            edge_measure = gather_routes(relation, node_measure)
         messages = sent_source
         if self.kernel_fn is not None:
             weight = self.kernel_fn(graph.edges, sent_nodes, recv_nodes, glob_edge)
@@ -376,11 +402,7 @@ class GraphKernelIntegral(StrictModule):
         if edge_measure is not None:
             messages = _multiply_tree(messages, edge_measure)
 
-        messages = mask_routes(relation, messages)
-        aggregated = jtu.tree_map(
-            lambda x: self.aggregate_fn(x, relation.target_indices, num_nodes),
-            messages,
-        )
+        aggregated = route_reduce(relation, messages, reduction=self.reduction)
 
         if self.normalize:
             if edge_measure is None:
@@ -460,15 +482,15 @@ class GraphNeuralOperator(StrictModule):
 
     The block reads a named node field, sends source values across graph edges,
     multiplies them by an optional analytic/learned kernel and scalar edge
-    weights, aggregates to receivers, and writes the result back as graph nodes
-    or into `output_key`.
+    weights, reduces them onto receivers with `phydrax.sparse.route_reduce`, and
+    writes the result back as graph nodes or into `output_key`.
     """
 
     kernel_fn: Callable | None
     source_fn: Callable | None
     update_node_fn: Callable | None
     source_measure: Any
-    aggregate_fn: Callable = eqx.field(static=True)
+    reduction: RouteReduction = eqx.field(static=True)
     input_key: str | None = eqx.field(static=True)
     output_key: str | None = eqx.field(static=True)
     edge_weight_key: str | None = eqx.field(static=True)
@@ -484,7 +506,7 @@ class GraphNeuralOperator(StrictModule):
         *,
         source_fn: Callable | None = None,
         update_node_fn: Callable | None = None,
-        aggregate_fn: Callable = segment_sum,
+        reduction: RouteReduction = "sum",
         input_key: str | None = None,
         output_key: str | None = None,
         edge_weight_key: str | None = "kernel_weight",
@@ -497,7 +519,7 @@ class GraphNeuralOperator(StrictModule):
         self.kernel_fn = kernel_fn
         self.source_fn = source_fn
         self.update_node_fn = update_node_fn
-        self.aggregate_fn = aggregate_fn
+        self.reduction = _route_reduction(reduction)
         self.input_key = input_key
         self.output_key = output_key
         self.edge_weight_key = edge_weight_key
@@ -537,18 +559,13 @@ class GraphNeuralOperator(StrictModule):
                 self.source_measure,
                 n_node=num_nodes,
             )
-            edge_measure = node_measure[relation.source_indices]
+            edge_measure = gather_routes(relation, node_measure)
         edge_weight = _edge_weight(graph, self.edge_weight_key)
         if edge_weight is not None:
             messages = _multiply_tree(messages, edge_weight)
         if edge_measure is not None:
             messages = _multiply_tree(messages, edge_measure)
-        messages = mask_routes(relation, messages)
-
-        aggregated = jtu.tree_map(
-            lambda x: self.aggregate_fn(x, relation.target_indices, num_nodes),
-            messages,
-        )
+        aggregated = route_reduce(relation, messages, reduction=self.reduction)
         if self.normalize:
             normalizer = jnp.ones((num_edges,), dtype=jnp.float64)
             if edge_weight is not None:
@@ -645,27 +662,20 @@ class GraphAttentionOperator(StrictModule):
             None if target_node_type is None else int(target_node_type)
         )
 
-    def _oriented_edges(self, graph: GraphIR, /) -> tuple[jnp.ndarray, jnp.ndarray]:
-        if graph.senders is None or graph.receivers is None:
-            raise ValueError(
-                "GraphAttentionOperator requires explicit senders/receivers."
-            )
-        if self.flow == "source_to_target":
-            return graph.senders, graph.receivers
-        return graph.receivers, graph.senders
-
     def _logits(
         self,
         graph: GraphIR,
+        relation: EdgeRelation,
+        reverse: EdgeRelation,
         queries: jnp.ndarray,
         keys: jnp.ndarray,
-        source: jnp.ndarray,
-        target: jnp.ndarray,
         glob_edge: ArrayTree | None,
         /,
     ) -> jnp.ndarray:
+        sent_keys = gather_routes(relation, keys)
+        received_queries = gather_routes(reverse, queries)
         if self.logit_fn is None:
-            raw = jnp.sum(keys[source] * queries[target], axis=-1)
+            raw = jnp.sum(sent_keys * received_queries, axis=-1)
             temperature = (
                 jnp.sqrt(jnp.asarray(keys.shape[-1], dtype=raw.dtype))
                 if self.temperature <= 0.0
@@ -674,7 +684,7 @@ class GraphAttentionOperator(StrictModule):
             logits = raw / jnp.maximum(temperature, jnp.asarray(1e-12, dtype=raw.dtype))
         else:
             logits = jnp.asarray(
-                self.logit_fn(graph.edges, keys[source], queries[target], glob_edge),
+                self.logit_fn(graph.edges, sent_keys, received_queries, glob_edge),
                 dtype=jnp.float64,
             )
             if logits.ndim == 2 and logits.shape[1] == 1:
@@ -711,15 +721,15 @@ class GraphAttentionOperator(StrictModule):
         if queries.shape != keys.shape:
             raise ValueError("GraphAttentionOperator queries and keys must share shape.")
 
-        source, target = self._oriented_edges(graph)
+        if graph.senders is None or graph.receivers is None:
+            raise ValueError(
+                "GraphAttentionOperator requires explicit senders/receivers."
+            )
+        relation = graph.edge_relation(node_count=nodes.shape[0], flow=self.flow)
+        reverse = relation.transpose()
         num_edges = _num_edges(graph)
         glob_edge = _repeat_globals_for_entities(graph.globals, graph.n_edge, num_edges)
-        logits = self._logits(graph, queries, keys, source, target, glob_edge)
-        if graph.edge_mask is not None:
-            mask = graph.edge_mask
-            while mask.ndim < logits.ndim:
-                mask = jnp.expand_dims(mask, axis=-1)
-            logits = jnp.where(mask, logits, jnp.asarray(-1e30, dtype=logits.dtype))
+        logits = self._logits(graph, relation, reverse, queries, keys, glob_edge)
 
         if self.source_measure_key is not None or self.source_measure is not None:
             node_measure = _node_measure(
@@ -728,7 +738,7 @@ class GraphAttentionOperator(StrictModule):
                 self.source_measure,
                 n_node=nodes.shape[0],
             )
-            edge_measure = node_measure[source]
+            edge_measure = gather_routes(relation, node_measure)
             measure_logits = jnp.where(
                 edge_measure > 0.0,
                 jnp.log(jnp.maximum(edge_measure, self.measure_eps)),
@@ -737,20 +747,15 @@ class GraphAttentionOperator(StrictModule):
             while measure_logits.ndim < logits.ndim:
                 measure_logits = jnp.expand_dims(measure_logits, axis=-1)
             logits = logits + measure_logits
-        weights = segment_softmax(logits, target, nodes.shape[0])
-        if graph.edge_mask is not None:
-            mask = graph.edge_mask
-            while mask.ndim < weights.ndim:
-                mask = jnp.expand_dims(mask, axis=-1)
-            weights = weights * mask.astype(weights.dtype)
+        weights = _route_softmax(relation, reverse, logits)
 
-        sent_values = values[source]
+        sent_values = gather_routes(relation, values)
         if weights.ndim == 1:
             messages = sent_values * weights[:, None]
-            out = segment_sum(messages, target, nodes.shape[0])
+            out = route_reduce(relation, messages)
         else:
             messages = sent_values[:, None, :] * weights[:, :, None]
-            headed = segment_sum(messages, target, nodes.shape[0])
+            headed = route_reduce(relation, messages)
             if self.head_reduction == "mean":
                 out = jnp.mean(headed, axis=1)
             else:
@@ -808,6 +813,7 @@ class GraphFiniteVolumeDivergence(StrictModule):
         flux = _edge_array(graph, self.flux_key, name="GraphFiniteVolumeDivergence")
         out = _finite_volume_divergence(
             graph,
+            graph.edge_relation(node_count=_num_graph_nodes(graph)),
             flux,
             volume_key=self.volume_key,
             volume=self.volume,
@@ -879,9 +885,8 @@ class GraphFiniteVolumeDiffusion(StrictModule):
                 "GraphFiniteVolumeDiffusion requires explicit senders/receivers."
             )
         nodes = _node_array(graph, self.input_key, name="GraphFiniteVolumeDiffusion")
-        sent = nodes[graph.senders]
-        recv = nodes[graph.receivers]
-        flux = sent - recv
+        relation = graph.edge_relation(node_count=_num_graph_nodes(graph))
+        flux = gather_routes(relation, nodes) - gather_routes(relation.transpose(), nodes)
         if self.distance_key is not None:
             distance = _edge_array(
                 graph,
@@ -898,6 +903,7 @@ class GraphFiniteVolumeDiffusion(StrictModule):
         flux = _multiply_leaf(flux, self._conductivity(graph, flux))
         out = _finite_volume_divergence(
             graph,
+            relation,
             flux,
             volume_key=self.volume_key,
             volume=self.volume,

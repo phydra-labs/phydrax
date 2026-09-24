@@ -533,6 +533,18 @@ def _fact_records(value: RecordInput, name: str, /) -> tuple[tuple[str, str], ..
     )
 
 
+def _static_callable_records(
+    value: RecordInput, /
+) -> tuple[tuple[str, str, str], ...]:
+    records: list[tuple[str, str, str]] = []
+    for name, component in _named_records(value, "static_callables"):
+        payload = callable_payload(component)
+        records.append(
+            (name, payload["semantic_content_id"], payload["numeric_content_id"])
+        )
+    return tuple(records)
+
+
 class ExecutableSignature(StrictModule):
     """Static compilation identity with no dynamic numeric realization values."""
 
@@ -543,6 +555,7 @@ class ExecutableSignature(StrictModule):
     capacities: tuple[tuple[str, int], ...] = eqx.field(static=True)
     algorithm_facts: tuple[tuple[str, str], ...] = eqx.field(static=True)
     backend_facts: tuple[tuple[str, str], ...] = eqx.field(static=True)
+    static_callables: tuple[tuple[str, str, str], ...] = eqx.field(static=True)
     signature_id: str = eqx.field(static=True)
 
     def __init__(
@@ -555,7 +568,15 @@ class ExecutableSignature(StrictModule):
         capacities: RecordInput = (),
         algorithm_facts: RecordInput = (),
         backend_facts: RecordInput = (),
+        static_callables: RecordInput = (),
     ):
+        """Build the signature from static facts.
+
+        `static_callables` names callables compiled into the executable. Each is
+        identified by `callable_payload`: weights held statically by a callable
+        are part of the executable, so its semantic and numeric content IDs
+        both enter the signature, while opaque callables must declare them.
+        """
         shapes_ = _shape_records(shapes)
         dtypes_ = _dtype_records(dtypes)
         spaces_ = _identifier_records(space_ids, "space_ids")
@@ -563,6 +584,7 @@ class ExecutableSignature(StrictModule):
         capacities_ = _capacity_records(capacities)
         algorithms_ = _fact_records(algorithm_facts, "algorithm_facts")
         backend_ = _fact_records(backend_facts, "backend_facts")
+        callables_ = _static_callable_records(static_callables)
         payload = {
             "kind": "executable-signature",
             "shapes": [[name, list(shape)] for name, shape in shapes_],
@@ -572,6 +594,7 @@ class ExecutableSignature(StrictModule):
             "capacities": [list(record) for record in capacities_],
             "algorithm_facts": [list(record) for record in algorithms_],
             "backend_facts": [list(record) for record in backend_],
+            "static_callables": [list(record) for record in callables_],
         }
         self.shapes = shapes_
         self.dtypes = dtypes_
@@ -580,13 +603,97 @@ class ExecutableSignature(StrictModule):
         self.capacities = capacities_
         self.algorithm_facts = algorithms_
         self.backend_facts = backend_
+        self.static_callables = callables_
         self.signature_id = canonical_fingerprint(payload)
 
 
+_BINDING_FIELDS = frozenset(
+    {"semantic_id", "numeric_revision_id", "executable_signature_id", "binding_id"}
+)
+
+
+class ArtifactBindingIdentity(StrictModule):
+    """Semantic, numeric, and executable identity of one bound artifact model.
+
+    A frozen or published model is identified by all three IDs together: its
+    `SemanticProvenance`, the `NumericRevision` of its dynamic numeric content,
+    and the `ExecutableSignature` of its static compilation. `binding_id`
+    content-addresses the triple.
+    """
+
+    semantic_id: str = eqx.field(static=True)
+    numeric_revision_id: str = eqx.field(static=True)
+    executable_signature_id: str = eqx.field(static=True)
+    binding_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        semantic: SemanticProvenance | str,
+        numeric_revision: NumericRevision | str,
+        executable_signature: ExecutableSignature | str,
+        /,
+    ):
+        semantic_id = (
+            semantic.semantic_id
+            if isinstance(semantic, SemanticProvenance)
+            else _identifier(semantic, "semantic_id")
+        )
+        if isinstance(numeric_revision, NumericRevision):
+            if numeric_revision.semantic_id != semantic_id:
+                raise ValueError(
+                    "numeric_revision is bound to another semantic provenance."
+                )
+            numeric_id = numeric_revision.revision_id
+        else:
+            numeric_id = _identifier(numeric_revision, "numeric_revision_id")
+        executable_id = (
+            executable_signature.signature_id
+            if isinstance(executable_signature, ExecutableSignature)
+            else _identifier(executable_signature, "executable_signature_id")
+        )
+        self.semantic_id = semantic_id
+        self.numeric_revision_id = numeric_id
+        self.executable_signature_id = executable_id
+        self.binding_id = canonical_fingerprint(
+            {
+                "kind": "artifact-binding-identity",
+                "semantic_id": semantic_id,
+                "numeric_revision_id": numeric_id,
+                "executable_signature_id": executable_id,
+            }
+        )
+
+    def to_record(self) -> dict[str, str]:
+        """Return the JSON record read back by `from_record`."""
+        return {
+            "semantic_id": self.semantic_id,
+            "numeric_revision_id": self.numeric_revision_id,
+            "executable_signature_id": self.executable_signature_id,
+            "binding_id": self.binding_id,
+        }
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, Any], /) -> "ArtifactBindingIdentity":
+        """Rebuild a binding identity, failing closed on any field or ID mismatch."""
+        if not isinstance(record, Mapping) or set(record) != _BINDING_FIELDS:
+            raise ValueError("Artifact binding identity record fields do not match.")
+        identity = cls(
+            record["semantic_id"],
+            record["numeric_revision_id"],
+            record["executable_signature_id"],
+        )
+        if identity.binding_id != record["binding_id"]:
+            raise ValueError("Artifact binding identity record is corrupt.")
+        return identity
+
+
 __all__ = [
+    "ArtifactBindingIdentity",
     "callable_payload",
     "ExecutableSignature",
     "NumericRevision",
     "SemanticProvenance",
     "strict_module_payload",
 ]
+
+

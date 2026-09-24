@@ -1,7 +1,9 @@
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
+from phydrax._array_archive import read_array_archive, write_array_archive
 
 
 def _artifact(basis, *, role="roq"):
@@ -61,3 +63,29 @@ def test_empirical_interpolation_preserves_complex_basis_algebra():
         atol=1e-6,
     )
     assert jnp.issubdtype(prepared.reconstruction_matrix.dtype, jnp.complexfloating)
+
+
+def test_empirical_interpolation_archive_binds_canonical_numeric_revision(tmp_path):
+    interpolation = phx.rom.prepare_empirical_interpolation(_artifact(jnp.eye(4)))
+    path = phx.rom.write_empirical_interpolation_artifact(
+        tmp_path / "eim.phx", interpolation, analysis_plan_id="eim-analysis"
+    )
+    restored = phx.rom.read_empirical_interpolation_artifact(path)
+    assert restored.artifact_id == interpolation.artifact_id
+
+    manifest, arrays = read_array_archive(path)
+    manifest.pop("arrays")
+    relabeled = write_array_archive(
+        tmp_path / "relabeled.phx",
+        manifest={**manifest, "support_id": "another-support"},
+        arrays=arrays,
+    )
+    with pytest.raises(ValueError, match="numeric revision mismatch"):
+        phx.rom.read_empirical_interpolation_artifact(relabeled)
+    altered = write_array_archive(
+        tmp_path / "altered.phx",
+        manifest=manifest,
+        arrays={**arrays, "interpolation_matrix": 2.0 * arrays["interpolation_matrix"]},
+    )
+    with pytest.raises(ValueError, match="numeric revision mismatch"):
+        phx.rom.read_empirical_interpolation_artifact(altered)

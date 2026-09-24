@@ -15,13 +15,17 @@ from jaxtyping import Array
 from phydrax.ein import contract
 
 from ...._fingerprint import canonical_fingerprint
+from ...._identity import NumericRevision
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....lifecycle import NumericRevision
 from ....linalg import HermitianSpectrum
 from ._continuous import PreparedContinuousFourierModalLayer
 from ._fields import fields_in_layer
-from ._numeric_revision import require_fourier_modal_numeric_revision
+from ._numeric_revision import (
+    fourier_modal_physical_stack_digest,
+    fourier_modal_physical_state_digest,
+    require_fourier_modal_numeric_revision,
+)
 from ._runtime import (
     _canonical_material_samples,
     FourierModalSolveResult,
@@ -273,9 +277,8 @@ def evaluate_fourier_modal_loss(
     physical_stack_digest = None
     if numeric_revision is not None:
         require_fourier_modal_numeric_revision(prepared, numeric_revision)
-        revision_metadata = dict(numeric_revision.metadata)
-        physical_state_digest = revision_metadata["physical_state_digest"]
-        physical_stack_digest = revision_metadata["physical_stack_digest"]
+        physical_state_digest = fourier_modal_physical_state_digest(prepared)
+        physical_stack_digest = fourier_modal_physical_stack_digest(prepared)
     revision_bound = jnp.asarray(numeric_revision is not None)
     revision_id = None if numeric_revision is None else numeric_revision.revision_id
     rhs_count = result.net_port_power_into_stack.shape[0]

@@ -8,9 +8,9 @@ import jax.numpy as jnp
 
 from phydrax._strict import StrictModule
 
+from ..sparse import EdgeRelation, gather_routes, mask_routes, route_reduce
 from ._graph import ensure_graph
 from ._ir import GraphIR
-from ._kernels import segment_sum
 
 
 GraphFlow = Literal["source_to_target", "target_to_source"]
@@ -74,18 +74,16 @@ def _edge_weight(graph: GraphIR, edge_weight_key: str | None, /) -> jnp.ndarray 
     return weight
 
 
-def _oriented_edges(
-    graph: GraphIR, flow: GraphFlow, /
-) -> tuple[jnp.ndarray, jnp.ndarray]:
+def _oriented_relation(
+    graph: GraphIR, flow: GraphFlow, node_count: int, /
+) -> EdgeRelation:
     if graph.senders is None or graph.receivers is None:
         raise ValueError(
             "Equivariant graph operators require explicit senders/receivers."
         )
-    if flow == "source_to_target":
-        return graph.senders, graph.receivers
-    if flow == "target_to_source":
-        return graph.receivers, graph.senders
-    raise ValueError("flow must be 'source_to_target' or 'target_to_source'.")
+    if flow not in ("source_to_target", "target_to_source"):
+        raise ValueError("flow must be 'source_to_target' or 'target_to_source'.")
+    return graph.edge_relation(node_count=node_count, flow=flow)
 
 
 def _relative_geometry(
@@ -95,14 +93,14 @@ def _relative_geometry(
     position_key: str,
     flow: GraphFlow,
     eps: float,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    source, target = _oriented_edges(graph, flow)
+) -> tuple[EdgeRelation, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     pos = _positions(graph, position_key)
-    relative = pos[target] - pos[source]
+    relation = _oriented_relation(graph, flow, pos.shape[0])
+    relative = gather_routes(relation.transpose(), pos) - gather_routes(relation, pos)
     squared_distance = jnp.sum(jnp.square(relative), axis=-1, keepdims=True)
     distance = jnp.sqrt(jnp.maximum(squared_distance, float(eps)))
     unit = relative / distance
-    return source, target, relative, distance, unit
+    return relation, relative, distance, unit
 
 
 def euclidean_edge_features(
@@ -119,7 +117,7 @@ def euclidean_edge_features(
 ) -> GraphIR:
     """Attach Euclidean relative, distance, unit, and squared-distance edge features."""
     graph = ensure_graph(graph, validate=False)
-    _source, _target, relative, distance, unit = _relative_geometry(
+    _relation, relative, distance, unit = _relative_geometry(
         graph,
         position_key=position_key,
         flow=flow,
@@ -170,7 +168,8 @@ class EquivariantGraphConvolution(StrictModule):
     Scalar messages aggregate invariant source features. Vector messages are
     built from relative displacement vectors multiplied by invariant scalar
     coefficients, giving translation invariance and rotation equivariance when
-    positions are transformed rigidly.
+    positions are transformed rigidly. Messages are gathered and reduced over
+    `graph.edge_relation(flow=flow)`; routes with `edge_mask=False` are inert.
     """
 
     radial_fn: Callable | None
@@ -213,17 +212,17 @@ class EquivariantGraphConvolution(StrictModule):
 
     def __call__(self, graph: GraphIR) -> GraphIR:
         graph = ensure_graph(graph, validate=False)
-        source, target, relative, distance, unit = _relative_geometry(
+        relation, relative, distance, unit = _relative_geometry(
             graph,
             position_key=self.position_key,
             flow=self.flow,
             eps=self.eps,
         )
         scalars = _node_scalar(graph, self.input_key)
-        sent = scalars[source]
-        recv = scalars[target]
+        sent = gather_routes(relation, scalars)
+        recv = gather_routes(relation.transpose(), scalars)
 
-        weight = jnp.ones((source.shape[0],), dtype=scalars.dtype)
+        weight = jnp.ones((relation.capacity,), dtype=scalars.dtype)
         edge_weight = _edge_weight(graph, self.edge_weight_key)
         if edge_weight is not None:
             weight = weight * edge_weight.astype(weight.dtype)
@@ -237,21 +236,20 @@ class EquivariantGraphConvolution(StrictModule):
             if radial.ndim != 1:
                 raise ValueError("radial_fn must return shape (n_edge,) or (n_edge, 1).")
             weight = weight * radial
-        if graph.edge_mask is not None:
-            weight = weight * graph.edge_mask.astype(weight.dtype)
+        weight = mask_routes(relation, weight)
 
         scalar_messages = sent * _broadcast_edge_weight(weight, sent)
-        scalar_out = segment_sum(scalar_messages, target, scalars.shape[0])
+        scalar_out = route_reduce(relation, scalar_messages)
 
         vector_messages = (
             relative[:, :, None]
             * sent[:, None, :]
             * _broadcast_edge_weight(weight, sent)[:, None, :]
         )
-        vector_out = segment_sum(vector_messages, target, scalars.shape[0])
+        vector_out = route_reduce(relation, vector_messages)
 
         if self.normalize:
-            denom = segment_sum(jnp.abs(weight), target, scalars.shape[0])
+            denom = route_reduce(relation, jnp.abs(weight))
             scale = jnp.where(denom > 0, 1.0 / denom, 0.0)
             scalar_out = scalar_out * scale[:, None]
             vector_out = vector_out * scale[:, None, None]

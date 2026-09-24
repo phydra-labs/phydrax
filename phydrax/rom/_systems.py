@@ -10,9 +10,9 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._identity import NumericRevision, SemanticProvenance
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..lifecycle import NumericRevision
 from ..linalg import (
     AbstractLinearOperator,
     DenseLinearOperator,
@@ -224,13 +224,17 @@ class IndexOneDescriptorReduction(StrictModule, NonTrainableState):
         ):
             raise ValueError("Index-one algebraic block must be nonsingular.")
         content = {"add": add, "ada": ada, "aad": aad, "aaa": aaa}
-        digest = array_tree_fingerprint(content)["sha256"]
         self.differential_matrix = add
         self.coupling_da = ada
         self.coupling_ad = aad
         self.algebraic_matrix = aaa
         self.evidence = evidence
-        self.numeric_revision = NumericRevision(digest, label="index-one-descriptor")
+        self.numeric_revision = NumericRevision(
+            SemanticProvenance(
+                {"kind": "index-one-descriptor", "structure": evidence.evidence_id}
+            ),
+            content,
+        )
         self.model_id = canonical_fingerprint(
             {
                 "kind": "index-one-descriptor-reduction",

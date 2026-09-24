@@ -288,7 +288,9 @@ def _run_model(
         }
     )
     model_evidence = {
-        "potential_id": potential.potential_id,
+        "potential_revision_id": phx.atomistic.atomistic_potential_revision(
+            potential
+        ).revision_id,
         "method_id": potential.method_id,
     }
     if model_name == "nequip":

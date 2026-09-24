@@ -33,7 +33,13 @@ from ._differentiation import (
     ObjectiveKind,
 )
 from ._fingerprint import canonical_fingerprint
-from ._identity import NumericRevision
+from ._identity import (
+    ArtifactBindingIdentity,
+    ExecutableSignature,
+    NumericRevision,
+    RecordInput,
+    SemanticProvenance,
+)
 from ._model._component import AbstractComponentSlot, ComponentBinding
 from ._sampling._addressing import derive_key, SampleAddress
 from ._strict import StrictModule
@@ -46,6 +52,7 @@ from ._trainable import (
     partition_parameters,
     require_declared_callables,
     require_parameter_roles,
+    RoleResolution,
 )
 from ._training import (
     DelayedTargetPolicy,
@@ -1849,13 +1856,7 @@ def prepare_training_kernel(
         context, spec.lane_layout, tree, paths, roles, fixed
     )
 
-    role_schema_id = canonical_fingerprint(
-        {
-            "kind": "training-role-schema",
-            "paths": list(paths),
-            "roles": [role.value for role in roles],
-        }
-    )
+    role_schema_id = training_role_schema_id(resolution)
     objective_identity = canonical_fingerprint(
         {
             "kind": "training-objectives",
@@ -2042,6 +2043,64 @@ def _parameter_revision(
     return NumericRevision(kernel.checkpoint_id, _leaf_records(parameters))
 
 
+def training_role_schema_id(resolution: RoleResolution, /) -> str:
+    """Fingerprint the path and array role of every leaf of one resolved tree."""
+    return canonical_fingerprint(
+        {
+            "kind": "training-role-schema",
+            "paths": list(resolution.paths),
+            "roles": [role.value for role in resolution.roles],
+        }
+    )
+
+
+def parameter_binding_identity(
+    semantic: SemanticProvenance | str,
+    parameters: PyTree[Any],
+    /,
+    *,
+    algorithm_facts: RecordInput = (),
+    backend_facts: RecordInput = (),
+    static_callables: RecordInput = (),
+) -> ArtifactBindingIdentity:
+    """Bind a model's semantics, PARAMETER-lane values, and static executable.
+
+    `parameters` is the PARAMETER lane of `partition_parameters`. Its leaf
+    records form the numeric revision, exactly the kernel's `parameter_revision`
+    convention: model state and FIXED arrays are checkpoint payload verified by
+    structure and checksum, not model content that re-identifies the weights.
+    The executable signature holds only static facts: the lane's leaf shapes and
+    dtypes, the caller's algorithm and backend facts, and the `callable_payload`
+    identities of callables held statically, whose weights are compiled into the
+    executable rather than passed as dynamic leaves.
+    """
+    records = _leaf_records(parameters)
+    signature = ExecutableSignature(
+        shapes={path: leaf.shape for path, leaf in records.items()},
+        dtypes={path: leaf.dtype for path, leaf in records.items()},
+        algorithm_facts=algorithm_facts,
+        backend_facts=backend_facts,
+        static_callables=static_callables,
+    )
+    return ArtifactBindingIdentity(
+        semantic, NumericRevision(semantic, records), signature
+    )
+
+
+def require_binding_record(
+    record: Any, expected: ArtifactBindingIdentity, /, *, context: str
+) -> None:
+    """Raise `ValueError` unless `record` is exactly the binding `expected`.
+
+    The record's field set and combined `binding_id` are checked first; each
+    component identity is then compared so a mismatch names its cause.
+    """
+    recorded = ArtifactBindingIdentity.from_record(record).to_record()
+    for name, value in expected.to_record().items():
+        if recorded[name] != value:
+            raise ValueError(f"{context} binding {name} does not match.")
+
+
 def _expected_structures(
     kernel: PreparedTrainingKernel, arrays: Mapping[str, Any], /
 ) -> dict[str, Any]:
@@ -2217,13 +2276,16 @@ __all__ = [
     "LineSearchState",
     "ObjectiveAccumulation",
     "OptaxUpdateRule",
+    "parameter_binding_identity",
     "prepare_training_kernel",
     "PreparedTrainingKernel",
+    "require_binding_record",
     "restore_training_checkpoint",
     "RestoredTrainingCheckpoint",
     "SubspaceTrainingTree",
     "run_training_attempt",
     "training_accepted_site_key",
+    "training_role_schema_id",
     "training_site_key",
     "TrainingAttemptEvidence",
     "TrainingAttemptOutcome",

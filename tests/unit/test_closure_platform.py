@@ -54,7 +54,9 @@ def _analysis_and_execution():
 def test_lifecycle_model_round_trip(tmp_path: Path):
     values = np.arange(4.0)
     digest = phx.lifecycle.payload_digest(values)
-    revision = phx.lifecycle.NumericRevision(digest, label="fixture")
+    revision = phx.NumericRevision(
+        phx.SemanticProvenance({"kind": "closure-platform-fixture"}), {"state": values}
+    )
     manifest = phx.lifecycle.ModelManifest(
         "model",
         "analysis",

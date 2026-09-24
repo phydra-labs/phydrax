@@ -13,7 +13,7 @@ from phydrax.atomistic import (
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
     AtomisticStatus,
-    checkpoint_atomistic_potential,
+    atomistic_potential_revision,
     energy_and_forces,
 )
 from phydrax.nn.atomistic import PaiNNPotential
@@ -268,15 +268,20 @@ def test_nonfinite_padding_geometry_is_inert_before_neural_messages():
     np.testing.assert_allclose(prediction.forces[0, 2], 0.0)
 
 
-def test_parameter_state_provenance_distinguishes_same_architecture_models():
+def test_potential_revision_distinguishes_same_architecture_models():
     first = _model(seed=31)
     second = _model(seed=32)
+    first_revision = atomistic_potential_revision(first)
+    second_revision = atomistic_potential_revision(second)
     assert first.architecture_id == second.architecture_id
-    assert first.parameter_state_id != second.parameter_state_id
-    assert first.potential_id != second.potential_id
+    assert first_revision.semantic_id == second_revision.semantic_id
+    assert first_revision.revision_id != second_revision.revision_id
+    assert atomistic_potential_revision(_model(seed=31)).revision_id == (
+        first_revision.revision_id
+    )
     provenance = energy_and_forces(first, _structure(), _execution()).provenance
     assert provenance.architecture_id == first.architecture_id
-    assert provenance.parameter_state_id == first.parameter_state_id
+    assert provenance.potential_revision_id == first_revision.revision_id
 
 
 def test_force_is_cast_to_output_dtype_when_coordinate_dtype_differs():
@@ -295,20 +300,35 @@ def test_force_is_cast_to_output_dtype_when_coordinate_dtype_differs():
     assert prediction.net_torque.dtype == jnp.float32
 
 
-def test_external_parameter_updates_require_immutable_public_checkpoint():
+def test_parameter_updates_change_the_potential_revision_and_fixed_leaves_do_not():
     original = _model(seed=51)
     updated = eqx.tree_at(
         lambda potential: potential.embedding,
         original,
         original.embedding + 0.125,
     )
-    assert updated.parameter_state_id == original.parameter_state_id
-    checkpointed = checkpoint_atomistic_potential(updated)
-    assert checkpointed is not updated
-    assert updated.parameter_state_id == original.parameter_state_id
-    assert checkpointed.parameter_state_id != updated.parameter_state_id
-    prediction = energy_and_forces(checkpointed, _structure(), _execution())
-    assert prediction.provenance.parameter_state_id == checkpointed.parameter_state_id
+    original_revision = atomistic_potential_revision(original)
+    updated_revision = atomistic_potential_revision(updated)
+    assert updated_revision.revision_id != original_revision.revision_id
+    prediction = energy_and_forces(updated, _structure(), _execution())
+    assert prediction.provenance.potential_revision_id == updated_revision.revision_id
+    fixed_update = eqx.tree_at(
+        lambda potential: potential.configuration.radial_frequencies,
+        original,
+        original.configuration.radial_frequencies * 2.0,
+    )
+    assert atomistic_potential_revision(fixed_update).revision_id == (
+        original_revision.revision_id
+    )
+
+
+def test_prediction_provenance_requires_concrete_parameters():
+    model = _model()
+    structure = _structure()
+    with pytest.raises(TypeError):
+        jax.jit(lambda potential: energy_and_forces(potential, structure, _execution()))(
+            model
+        )
 
 
 def test_torque_uses_reduction_precision_before_output_cast_for_huge_coordinates():

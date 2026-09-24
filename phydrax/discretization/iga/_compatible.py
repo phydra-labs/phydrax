@@ -15,11 +15,11 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._identity import NumericRevision, SemanticProvenance
 from ..._interpolation._bspline_grid import BSplineGrid
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...diagnostics import Diagnostic
-from ...lifecycle._models import NumericRevision
 
 
 BoundarySide: TypeAlias = Literal["lower", "upper"]
@@ -1008,32 +1008,60 @@ def _gate_diagnostic(
     )
 
 
+def _complex_numeric_revision(
+    complex_: AbstractSplineDeRhamComplex, /
+) -> NumericRevision:
+    """Return the canonical revision of a complex's derivative and trace matrices."""
+    return NumericRevision(
+        SemanticProvenance(
+            {
+                "kind": "spline-de-rham-complex",
+                "dimension": complex_.dimension,
+                "dof_counts": complex_.dof_counts,
+                "traces": tuple(
+                    (
+                        trace.form_degree,
+                        trace.normal_axis,
+                        trace.side,
+                        trace.target_component_axes,
+                    )
+                    for trace in complex_.boundary_traces
+                ),
+            }
+        ),
+        {
+            "exterior_derivatives": complex_.exterior_derivatives,
+            "boundary_traces": tuple(
+                trace.matrix for trace in complex_.boundary_traces
+            ),
+        },
+    )
+
+
 def qualify_compatible_complex(
     complex_: AbstractSplineDeRhamComplex,
     projector: CommutingProjectorContract,
     relative: RelativeCohomologyEvidence,
-    numeric_revision: NumericRevision,
     policy: CompatibleQualificationPolicy,
     /,
 ) -> CompatibleQualificationEvidence:
-    """Produce fail-closed qualification evidence without publishing a profile."""
+    """Produce fail-closed qualification evidence without publishing a profile.
 
+    The evidence binds the canonical `NumericRevision` of the complex's exterior
+    derivative and boundary-trace matrices.
+    """
     if not isinstance(complex_, AbstractSplineDeRhamComplex):
         raise TypeError("Compatible qualification requires a spline de Rham complex.")
     if not isinstance(projector, CommutingProjectorContract):
         raise TypeError("Compatible qualification requires a projector contract.")
     if not isinstance(relative, RelativeCohomologyEvidence):
         raise TypeError("Compatible qualification requires relative cohomology evidence.")
-    if not isinstance(numeric_revision, NumericRevision):
-        raise TypeError("Compatible qualification requires a NumericRevision.")
     if not isinstance(policy, CompatibleQualificationPolicy):
         raise TypeError("Compatible qualification requires a policy.")
     if projector.target.complex_id != complex_.complex_id:
         raise ValueError("Projector evidence belongs to another complex.")
     if relative.complex_id != complex_.complex_id:
         raise ValueError("Relative evidence belongs to another complex.")
-    if numeric_revision.content_digest != complex_.complex_id:
-        raise ValueError("Numeric revision does not identify the compatible complex.")
     if len(policy.expected_relative_betti) != complex_.dimension + 1:
         raise ValueError("Expected relative Betti numbers have the wrong dimension.")
 
@@ -1153,7 +1181,7 @@ def qualify_compatible_complex(
         complex_id=complex_.complex_id,
         projector_contract_id=projector.contract_id,
         relative_evidence_id=relative.evidence_id,
-        numeric_revision=numeric_revision,
+        numeric_revision=_complex_numeric_revision(complex_),
         d_squared_defects=d_squared,
         projector_commuting_defects=projector_defect,
         inclusion_commuting_defects=inclusion_defect,

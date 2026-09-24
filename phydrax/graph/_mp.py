@@ -1,14 +1,45 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 
 from phydrax._strict import StrictModule
 
-from ._kernels import scatter_add, scatter_max, scatter_mean, scatter_min
+from ..sparse import EdgeRelation, gather_routes, route_reduce, RouteReduction
+
+
+MessageAggregation: TypeAlias = Literal["add", "mean", "max", "min"]
+
+
+def _route_reduction(aggr: MessageAggregation, /) -> RouteReduction:
+    match aggr:
+        case "add":
+            return "sum"
+        case "mean" | "max" | "min":
+            return aggr
+        case _:
+            raise ValueError(f"Unsupported aggregation mode: {aggr!r}.")
+
+
+def _edge_index_relation(
+    edge_index: jnp.ndarray,
+    /,
+    *,
+    reverse: bool,
+    source_size: int,
+    target_size: int,
+) -> EdgeRelation:
+    """Return the fixed `(2, num_edges)` topology as source-to-target routes."""
+    edge_index = jnp.asarray(edge_index)
+    if edge_index.ndim != 2 or edge_index.shape[0] != 2:
+        raise ValueError("`edge_index` must have shape (2, num_edges).")
+    if not jnp.issubdtype(edge_index.dtype, jnp.integer):
+        raise TypeError("`edge_index` must use integer dtype.")
+    source, target = (edge_index[1], edge_index[0]) if reverse else edge_index
+    return EdgeRelation(source, target, source_size=source_size, target_size=target_size)
 
 
 def _source_message(
@@ -31,9 +62,14 @@ def _aggregated_update(
 
 
 class MessagePassing(StrictModule):
-    """Final configurable gather, message, aggregate, and update executor."""
+    """Final configurable gather, message, aggregate, and update executor.
 
-    aggr: Literal["add", "mean", "max", "min"] = eqx.field(static=True)
+    `edge_index` is converted to a `phydrax.sparse.EdgeRelation`; source and
+    target features are gathered along its routes and messages are reduced with
+    `route_reduce` (`"add"` is the route `"sum"`; empty targets reduce to zero).
+    """
+
+    aggr: MessageAggregation = eqx.field(static=True)
     flow: Literal["source_to_target", "target_to_source"] = eqx.field(static=True)
     message_fn: Callable[
         [jnp.ndarray, jnp.ndarray | None, jnp.ndarray | None],
@@ -44,7 +80,7 @@ class MessagePassing(StrictModule):
     def __init__(
         self,
         *,
-        aggr: Literal["add", "mean", "max", "min"] = "add",
+        aggr: MessageAggregation = "add",
         flow: Literal["source_to_target", "target_to_source"] = "source_to_target",
         message: Callable[
             [jnp.ndarray, jnp.ndarray | None, jnp.ndarray | None],
@@ -55,8 +91,7 @@ class MessagePassing(StrictModule):
             jnp.ndarray,
         ] = _aggregated_update,
     ):
-        if aggr not in ("add", "mean", "max", "min"):
-            raise ValueError(f"Unsupported aggregation mode: {aggr!r}.")
+        _route_reduction(aggr)
         if flow not in ("source_to_target", "target_to_source"):
             raise ValueError(f"Unsupported flow mode: {flow!r}.")
         self.aggr = aggr
@@ -66,24 +101,6 @@ class MessagePassing(StrictModule):
         self.message_fn = message
         self.update_fn = update
 
-    def aggregate(
-        self,
-        messages: jnp.ndarray,
-        index: jnp.ndarray,
-        dim_size: int,
-    ) -> jnp.ndarray:
-        match self.aggr:
-            case "add":
-                return scatter_add(messages, index, dim_size)
-            case "mean":
-                return scatter_mean(messages, index, dim_size)
-            case "max":
-                return scatter_max(messages, index, dim_size)
-            case "min":
-                return scatter_min(messages, index, dim_size)
-            case _:
-                raise AssertionError("Validated aggregation mode fell through.")
-
     def propagate(
         self,
         edge_index: jnp.ndarray,
@@ -91,12 +108,6 @@ class MessagePassing(StrictModule):
         edge_attr: jnp.ndarray | None = None,
         size: tuple[int, int] | None = None,
     ) -> jnp.ndarray:
-        edge_index = jnp.asarray(edge_index)
-        if edge_index.ndim != 2 or edge_index.shape[0] != 2:
-            raise ValueError("`edge_index` must have shape (2, num_edges).")
-        if not jnp.issubdtype(edge_index.dtype, jnp.integer):
-            raise TypeError("`edge_index` must use integer dtype.")
-
         if isinstance(x, tuple):
             x_src, x_dst = x
             if size is None:
@@ -109,22 +120,20 @@ class MessagePassing(StrictModule):
                 size = (n, n)
 
         if self.flow == "source_to_target":
-            row = edge_index[0].astype(jnp.int32)
-            col = edge_index[1].astype(jnp.int32)
-            dim_size = size[1]
-            x_base = x_dst
-            x_j = jnp.take(x_src, row, axis=0)
-            x_i = jnp.take(x_dst, col, axis=0)
+            relation = _edge_index_relation(
+                edge_index, reverse=False, source_size=size[0], target_size=size[1]
+            )
+            x_base, x_source = x_dst, x_src
         else:
-            row = edge_index[1].astype(jnp.int32)
-            col = edge_index[0].astype(jnp.int32)
-            dim_size = size[0]
-            x_base = x_src
-            x_j = jnp.take(x_dst, row, axis=0)
-            x_i = jnp.take(x_src, col, axis=0)
+            relation = _edge_index_relation(
+                edge_index, reverse=True, source_size=size[1], target_size=size[0]
+            )
+            x_base, x_source = x_src, x_dst
+        x_j = gather_routes(relation, x_source)
+        x_i = gather_routes(relation.transpose(), x_base)
 
         messages = self.message_fn(x_j, x_i, edge_attr)
-        aggr_out = self.aggregate(messages, col, dim_size)
+        aggr_out = route_reduce(relation, messages, reduction=_route_reduction(self.aggr))
         return self.update_fn(aggr_out, x_base)
 
     def __call__(

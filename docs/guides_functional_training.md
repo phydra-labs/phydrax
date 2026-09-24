@@ -256,9 +256,15 @@ optimizer state, target parameters, root key, attempt and accepted cursors,
 role schema, objective and update-rule identities), current and best functions
 separately, previous pseudo-time fields, adaptive coefficients, collocation
 populations, update/microstep progress, gradient-accumulation identity, and run
-identities. Restore rejects mismatched accumulation, training plans, target
-policies, discretization bundles, roles, objectives, update rules, and array
-structures; checkpoints written before the training kernel fail closed.
+identities. Its metadata also records the solved functions'
+`ArtifactBindingIdentity`: the kernel checkpoint identity as semantics, the
+PARAMETER lane as the numeric revision (the kernel's parameter revision), and
+parameter shapes, dtypes, update rule, FIXED and model-state structure,
+discretization, and sharding as the executable signature. Restore rejects
+mismatched accumulation, training plans, target policies, discretization
+bundles, roles, objectives, update rules, array structures, and bindings
+recomputed from the restored parameters; checkpoints without a binding or
+written before the training kernel fail closed.
 Periodic checkpoints are published only at accepted-update boundaries; the
 final checkpoint of a run may follow a rejected attempt and records that.
 

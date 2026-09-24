@@ -14,9 +14,9 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._identity import NumericRevision, SemanticProvenance
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..lifecycle import NumericRevision
 from ..linalg import DualSpace
 from ._affine import (
     AffineLinearROMEvaluation,
@@ -314,8 +314,17 @@ def prepare_residual_dual_norm(
         * len(atoms)
         * jnp.maximum(jnp.linalg.norm(gram), 1.0)
     )
-    content_digest = array_tree_fingerprint({"factor": factor, "gram": gram})["sha256"]
-    revision = NumericRevision(content_digest, label="affine-residual-dual-norm")
+    revision = NumericRevision(
+        SemanticProvenance(
+            {
+                "kind": "affine-residual-dual-norm",
+                "family": problem.family_id,
+                "reduction": problem.reduction.reduction_id,
+                "space": problem.reduction.test.full_space.space_id,
+            }
+        ),
+        {"factor": factor, "gram": gram},
+    )
     artifact_id = canonical_fingerprint(
         {
             "kind": "affine-residual-dual-norm",

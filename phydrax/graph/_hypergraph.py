@@ -9,9 +9,9 @@ import numpy as np
 
 from phydrax._strict import StrictModule
 
+from ..sparse import linear_apply, route_reduce
 from ._graph import ensure_graph
 from ._ir import GraphIR
-from ._kernels import segment_sum
 from ._typed import edge_type_ids, node_type_indices
 
 
@@ -358,8 +358,6 @@ def _edge_weight(graph: GraphIR, edge_weight_key: str | None, /) -> jnp.ndarray:
                 f"Graph edges do not contain edge_weight_key {edge_weight_key!r}."
             )
         out = jnp.asarray(graph.edges[edge_weight_key], dtype=jnp.float64).reshape((-1,))
-    if graph.edge_mask is not None:
-        out = out * graph.edge_mask.astype(out.dtype)
     return out
 
 
@@ -380,7 +378,12 @@ def _mask_nodes(nodes: jnp.ndarray, graph: GraphIR, /) -> jnp.ndarray:
 
 
 class HypergraphConvolution(StrictModule):
-    """Two-stage hypergraph convolution over a bipartite hypergraph graph."""
+    """Two-stage hypergraph convolution over a bipartite hypergraph graph.
+
+    Incidence and reverse-incidence edges are typed restrictions of
+    `graph.edge_relation()`; both stages apply them with native sparse routes,
+    so routes with `edge_mask=False` never contribute.
+    """
 
     input_key: str | None = eqx.field(static=True)
     output_key: str | None = eqx.field(static=True)
@@ -436,22 +439,19 @@ class HypergraphConvolution(StrictModule):
         hyper = node_type_indices(
             graph, self.hyperedge_node_type, type_key=self.node_type_key
         )
-        is_incidence = edge_types == self.incidence_edge_type
-        is_reverse = edge_types == self.reverse_incidence_edge_type
+        relation = graph.edge_relation(node_count=n)
+        incidence = relation.with_valid(edge_types == self.incidence_edge_type)
+        reverse = relation.with_valid(edge_types == self.reverse_incidence_edge_type)
 
-        incidence_weight = jnp.where(is_incidence, weights, 0.0)
-        hyper_messages = x[graph.senders] * incidence_weight[:, None]
-        hyper_state = segment_sum(hyper_messages, graph.receivers, n)
+        hyper_state = linear_apply(incidence, weights, x)
         if self.normalize_hyperedges:
-            hyper_degree = segment_sum(incidence_weight, graph.receivers, n)
+            hyper_degree = route_reduce(incidence, weights)
             hyper_scale = jnp.where(hyper_degree > 0, 1.0 / hyper_degree, 0.0)
             hyper_state = hyper_state * hyper_scale[:, None]
 
-        reverse_weight = jnp.where(is_reverse, weights, 0.0)
-        node_messages = hyper_state[graph.senders] * reverse_weight[:, None]
-        out = segment_sum(node_messages, graph.receivers, n)
+        out = linear_apply(reverse, weights, hyper_state)
         if self.normalize_nodes:
-            node_degree = segment_sum(reverse_weight, graph.receivers, n)
+            node_degree = route_reduce(reverse, weights)
             node_scale = jnp.where(node_degree > 0, 1.0 / node_degree, 0.0)
             out = out * node_scale[:, None]
         original_mask = jnp.zeros((n,), dtype=jnp.bool_).at[original].set(True)

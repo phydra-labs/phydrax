@@ -13,10 +13,20 @@ from typing import Any, Literal
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ...._differentiation import DerivativeContract, DerivativeRoute
 from ...._document_resource import decode_json_resource
 from ...._external_resource import read_bounded_resource, ResourceLimits
+from ...._external_runtime import _require_execution
 from ...._frozendict import frozendict
 from ...._host_io import open_regular_file
+from ...._identity import (
+    ArtifactBindingIdentity,
+    ExecutableSignature,
+    NumericRevision,
+    SemanticProvenance,
+)
+from ...._model._array import value_derivative_contract
+from ...._model._component import ExecutionCapabilities, ModelExecutionContract
 from ...._publication import publish_bytes
 from ...._trainable import NonTrainableState
 from ..._keys import EvalKey
@@ -156,6 +166,29 @@ class OperatorCheckpointManifest(NonTrainableState):
             checkpoint_sha256=str(value["checkpoint_sha256"]),
         )
 
+    def binding_identity(self) -> ArtifactBindingIdentity:
+        """Artifact binding identity of the checkpoint this manifest describes.
+
+        The semantic provenance is the manifest content with the checkpoint as a
+        named resource, the numeric revision is the checkpoint digest, and the
+        executable signature records the declared architecture release.
+        """
+        semantic = SemanticProvenance(
+            {"kind": "external-operator-checkpoint", **self.to_dict()},
+            resource_ids={"checkpoint": self.checkpoint_sha256},
+        )
+        return ArtifactBindingIdentity(
+            semantic,
+            NumericRevision(semantic, {"checkpoint_sha256": self.checkpoint_sha256}),
+            ExecutableSignature(
+                algorithm_facts={
+                    "architecture": self.architecture,
+                    "model_version": self.model_version,
+                    "revision": self.revision,
+                }
+            ),
+        )
+
 
 def save_operator_manifest(
     path: str | Path,
@@ -221,6 +254,14 @@ class ExternalOperatorAdapter(AbstractOperatorModel):
     ``input_adapter`` owns normalization/tokenization, ``runner`` owns invocation,
     and ``output_adapter`` restores PhydraX channels/query layout. This keeps
     framework-specific tensor conventions out of the operator/domain runtime.
+
+    The runner is an opaque fixed artifact: ``capabilities`` declare how it
+    executes and ``binding`` identifies the loaded artifact. Every call is
+    admitted against the capabilities before the input adapter or runner runs,
+    so a host-only runner is refused under ``jit``, ``vmap``, ``grad``, ``jvp``,
+    and ``vjp`` without being invoked. A host-only runner offers no derivative
+    (``STOPPED`` route); a JAX-tier runner keeps the conservative undeclared
+    ``DIRECT`` contract.
     """
 
     _operator_contract_builder = staticmethod(_external_operator_contract)
@@ -229,6 +270,8 @@ class ExternalOperatorAdapter(AbstractOperatorModel):
     input_adapter: Callable[[OperatorBatch, OperatorCheckpointManifest], Any]
     output_adapter: Callable[[Any, OperatorBatch, OperatorCheckpointManifest], Array]
     manifest: OperatorCheckpointManifest
+    capabilities: ExecutionCapabilities
+    binding: ArtifactBindingIdentity
     in_size: int | tuple[int, ...] | Literal["scalar"]
     out_size: int | tuple[int, ...] | Literal["scalar"]
 
@@ -239,6 +282,8 @@ class ExternalOperatorAdapter(AbstractOperatorModel):
         input_adapter: Callable[[OperatorBatch, OperatorCheckpointManifest], Any],
         output_adapter: Callable[[Any, OperatorBatch, OperatorCheckpointManifest], Array],
         manifest: OperatorCheckpointManifest,
+        capabilities: ExecutionCapabilities,
+        binding: ArtifactBindingIdentity,
         in_size: int | tuple[int, ...] | Literal["scalar"],
         out_size: int | tuple[int, ...] | Literal["scalar"],
     ):
@@ -250,12 +295,27 @@ class ExternalOperatorAdapter(AbstractOperatorModel):
             raise TypeError("runner, input_adapter, and output_adapter must be callable.")
         if not isinstance(manifest, OperatorCheckpointManifest):
             raise TypeError("manifest must be an OperatorCheckpointManifest.")
+        if not isinstance(capabilities, ExecutionCapabilities):
+            raise TypeError("capabilities must be ExecutionCapabilities.")
+        if not isinstance(binding, ArtifactBindingIdentity):
+            raise TypeError("binding must be an ArtifactBindingIdentity.")
         self.runner = runner
         self.input_adapter = input_adapter
         self.output_adapter = output_adapter
         self.manifest = manifest
+        self.capabilities = capabilities
+        self.binding = binding
         self.in_size = in_size
         self.out_size = out_size
+
+    def model_execution_contract(self) -> ModelExecutionContract:
+        """Return the declared capabilities with the runner's derivative route."""
+        derivative = (
+            DerivativeContract(route=DerivativeRoute.STOPPED)
+            if self.capabilities.host_only
+            else value_derivative_contract(None)
+        )
+        return self._execution_contract(derivative, execution=self.capabilities)
 
     def __call_operator_batch__(
         self,
@@ -264,6 +324,7 @@ class ExternalOperatorAdapter(AbstractOperatorModel):
         *,
         key: EvalKey = None,
     ) -> Array:
+        _require_execution(self.capabilities, batch, key)
         payload = self.input_adapter(batch, self.manifest)
         raw_output = self.runner(payload, key)
         return jnp.asarray(self.output_adapter(raw_output, batch, self.manifest))
@@ -291,10 +352,15 @@ def load_external_operator_adapter(
     *,
     input_adapter: Callable[[OperatorBatch, OperatorCheckpointManifest], Any],
     output_adapter: Callable[[Any, OperatorBatch, OperatorCheckpointManifest], Array],
+    capabilities: ExecutionCapabilities,
     in_size: int | tuple[int, ...] | Literal["scalar"],
     out_size: int | tuple[int, ...] | Literal["scalar"],
 ) -> ExternalOperatorAdapter:
-    """Verify a checkpoint before loading it behind the operator protocol."""
+    """Verify a checkpoint before loading it behind the operator protocol.
+
+    The adapter is bound to `manifest.binding_identity()` of the verified
+    manifest and executes under the declared `capabilities`.
+    """
     manifest = load_operator_manifest(manifest_path)
     checkpoint = Path(checkpoint_path)
     if not verify_operator_checkpoint(checkpoint, manifest):
@@ -305,6 +371,8 @@ def load_external_operator_adapter(
         input_adapter=input_adapter,
         output_adapter=output_adapter,
         manifest=manifest,
+        capabilities=capabilities,
+        binding=manifest.binding_identity(),
         in_size=in_size,
         out_size=out_size,
     )

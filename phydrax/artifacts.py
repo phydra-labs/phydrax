@@ -12,6 +12,7 @@ import equinox as eqx
 
 from ._differentiation import DerivativeContract
 from ._fingerprint import canonical_fingerprint
+from ._identity import ArtifactBindingIdentity
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
 
@@ -113,6 +114,13 @@ class DerivativeEvidence(StrictModule, NonTrainableState):
 
 
 class ScientificArtifactEnvelope(StrictModule, NonTrainableState):
+    """Producer, status, and lineage envelope of one scientific artifact.
+
+    `binding` is the complete `ArtifactBindingIdentity` of the model an artifact
+    freezes (semantic, numeric, and executable IDs together) or `None` for
+    artifacts that do not carry a model.
+    """
+
     artifact_kind: str = eqx.field(static=True)
     content_digest: str = eqx.field(static=True)
     producer: str = eqx.field(static=True)
@@ -123,6 +131,7 @@ class ScientificArtifactEnvelope(StrictModule, NonTrainableState):
     resource_id: str = eqx.field(static=True)
     status: str = eqx.field(static=True)
     failure_reason: str = eqx.field(static=True)
+    binding: ArtifactBindingIdentity | None
     artifact_id: str = eqx.field(static=True)
 
     def __init__(
@@ -138,7 +147,10 @@ class ScientificArtifactEnvelope(StrictModule, NonTrainableState):
         status: str,
         failure_reason: str = "none",
         parent_artifact_ids: tuple[str, ...] = (),
+        binding: ArtifactBindingIdentity | None = None,
     ):
+        if binding is not None and not isinstance(binding, ArtifactBindingIdentity):
+            raise TypeError("binding must be an ArtifactBindingIdentity or None.")
         values = tuple(
             str(value).strip()
             for value in (
@@ -173,12 +185,14 @@ class ScientificArtifactEnvelope(StrictModule, NonTrainableState):
         ) = values
         self.parent_artifact_ids = parents
         self.status = status_
+        self.binding = binding
         self.artifact_id = canonical_fingerprint(
             {
                 "kind": "scientific-artifact",
                 "values": list(values),
                 "parents": list(parents),
                 "status": status_,
+                **({} if binding is None else {"binding": binding.binding_id}),
             }
         )
 

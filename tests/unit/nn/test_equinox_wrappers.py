@@ -10,7 +10,7 @@ import pytest
 
 import phydrax as phx
 from phydrax.nn.layers import Dropout, inference_mode
-from phydrax.nn.models import EquinoxModel, EquinoxStructuredModel
+from phydrax.nn.models import EquinoxModel, EquinoxStructuredModel, FunctionalJAXAdapter
 
 
 def test_equinox_model_value_layout_tensor_io():
@@ -93,13 +93,79 @@ def test_equinox_wrappers_declare_wrapped_module_arrays_as_parameters():
         assert all(left is right for left, right in zip(leaves, arrays, strict=True))
 
 
-def test_equinox_wrappers_reject_stateful_modules():
+def test_equinox_wrappers_reject_stateful_modules_and_name_the_functional_adapter():
     module, _ = eqx.nn.make_with_state(eqx.nn.BatchNorm)(3, axis_name="batch")
 
-    with pytest.raises(TypeError, match="stateful Equinox modules"):
+    with pytest.raises(TypeError, match="stateful Equinox modules.*FunctionalJAXAdapter"):
         EquinoxModel(module, in_size=3, out_size=3)
-    with pytest.raises(TypeError, match="stateful Equinox modules"):
+    with pytest.raises(TypeError, match="stateful Equinox modules.*FunctionalJAXAdapter"):
         EquinoxStructuredModel(module, in_size=3, out_size=3)
+
+
+def _running_mean(parameters, model_state, x, key, *, inference):
+    del key
+    if inference:
+        return parameters["scale"] * (x - model_state["mean"]), model_state
+    mean = jnp.mean(x)
+    next_state = {"mean": 0.5 * model_state["mean"] + 0.5 * mean}
+    return parameters["scale"] * (x - mean), next_state
+
+
+def _running_mean_adapter(**options):
+    return FunctionalJAXAdapter(
+        _running_mean,
+        {"scale": jnp.asarray(2.0)},
+        {"mean": jnp.asarray(0.0)},
+        in_size=3,
+        out_size=3,
+        **options,
+    )
+
+
+def test_functional_jax_adapter_threads_explicit_state_and_inference_mode():
+    adapter = _running_mean_adapter(inference=False)
+    x = jnp.asarray([1.0, 2.0, 3.0])
+
+    output, advanced = adapter.transition(x)
+    assert jnp.allclose(output, 2.0 * (x - 2.0))
+    assert float(advanced.model_state["mean"]) == 1.0
+    assert float(adapter.model_state["mean"]) == 0.0
+    assert jnp.allclose(adapter(x), output)
+    assert float(adapter.model_state["mean"]) == 0.0
+
+    evaluated = inference_mode(advanced)
+    assert evaluated.inference and not advanced.inference
+    assert jnp.allclose(evaluated(x), 2.0 * (x - 1.0))
+    assert float(evaluated.transition(x)[1].model_state["mean"]) == 1.0
+
+    parameters, model_state, _ = phx.partition_parameters(adapter)
+    assert [float(leaf) for leaf in jax.tree_util.tree_leaves(parameters)] == [2.0]
+    assert [float(leaf) for leaf in jax.tree_util.tree_leaves(model_state)] == [0.0]
+    execution = adapter.model_execution_contract().execution
+    assert (execution.tier, execution.stateful, execution.jit) == (
+        "functional-jax",
+        True,
+        True,
+    )
+    assert jnp.allclose(eqx.filter_jit(lambda model, v: model(v))(adapter, x), output)
+
+
+def test_functional_jax_adapter_rejects_incongruent_next_state():
+    adapter = FunctionalJAXAdapter(
+        lambda parameters, model_state, x, key, *, inference: (
+            x,
+            {"mean": jnp.zeros(2)},
+        ),
+        {"scale": jnp.asarray(2.0)},
+        {"mean": jnp.asarray(0.0)},
+        in_size=3,
+        out_size=3,
+        inference=False,
+    )
+    with pytest.raises(ValueError, match="next_model_state"):
+        adapter(jnp.ones(3))
+    with pytest.raises(TypeError, match="inference must be bool"):
+        _running_mean_adapter(inference=1)
 
 
 def test_inference_mode_switches_mixed_phydrax_and_equinox_tree():

@@ -1,3 +1,5 @@
+import json
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -411,6 +413,64 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(
         disk_resumed.training_state.kernel_state.rule_state.statistics,
         uninterrupted.training_state.kernel_state.rule_state.statistics,
     )
+
+
+def test_functional_checkpoint_binding_tracks_parameters_and_fails_closed(tmp_path):
+    solver = _fixed_interval_solver()
+
+    def solve(name, num_iter, *, resume=False):
+        return solver.solve(
+            num_iter=num_iter,
+            optim=optax.sgd(0.05),
+            keep_best=False,
+            log_every=0,
+            training=phx.solver.FunctionalTrainingPlan(
+                checkpoint=phx.solver.FunctionalCheckpointPolicy(
+                    tmp_path / name, every=1
+                )
+            ),
+            resume=resume,
+        )
+
+    def manifest(name):
+        path = tmp_path / name / "manifest.json"
+        return path, json.loads(path.read_text(encoding="utf-8"))
+
+    solve("first", 1)
+    solve("second", 2)
+    first_path, first = manifest("first")
+    _, second = manifest("second")
+    first_binding = first["metadata"]["binding"]
+    second_binding = second["metadata"]["binding"]
+    assert first_binding["numeric_revision_id"] == first["kernel"]["parameter_revision"]
+    assert first_binding["semantic_id"] == second_binding["semantic_id"]
+    assert first_binding["numeric_revision_id"] != second_binding["numeric_revision_id"]
+    assert (
+        first_binding["executable_signature_id"]
+        == second_binding["executable_signature_id"]
+    )
+    assert solve("first", 1, resume=True).training_state.progress.update_step == 1
+
+    swapped = phx.ArtifactBindingIdentity(
+        first_binding["semantic_id"],
+        second_binding["numeric_revision_id"],
+        first_binding["executable_signature_id"],
+    ).to_record()
+    first["metadata"]["binding"] = swapped
+    first_path.write_text(json.dumps(first), encoding="utf-8")
+    with pytest.raises(ValueError, match="binding numeric_revision_id"):
+        solve("first", 1, resume=True)
+
+    first["metadata"]["binding"] = dict(swapped, binding_id="0" * 64)
+    first_path.write_text(json.dumps(first), encoding="utf-8")
+    with pytest.raises(ValueError, match="corrupt"):
+        solve("first", 1, resume=True)
+
+    del first["metadata"]["binding"]
+    first_path.write_text(json.dumps(first), encoding="utf-8")
+    with pytest.raises(ValueError, match="metadata fields are not canonical"):
+        solve("first", 1, resume=True)
+
 
 
 def test_functional_session_cursor_resumes_in_memory(tmp_path):

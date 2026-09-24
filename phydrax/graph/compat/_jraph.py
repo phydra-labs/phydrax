@@ -7,6 +7,9 @@ from typing import Any
 from .._ir import GraphIR
 
 
+# jraph parity surface: segment kernels and pluggable-aggregator models keep the
+# jraph callback contract. Native fixed-topology layers use `phydrax.sparse`
+# relations instead.
 _FORWARDED_SYMBOLS = (
     "ArrayTree",
     "DeepSets",

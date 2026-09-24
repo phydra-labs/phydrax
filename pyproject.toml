@@ -98,6 +98,9 @@ hep-columnar = [
 onnx-export = [
   "jax2onnx>=0.14.0",
 ]
+onnx-inference = [
+  "onnxruntime>=1.20,<2",
+]
 privacy-jax = [
   "dp-accounting==0.6.0",
   "jax-privacy==2.0.0",

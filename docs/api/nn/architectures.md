@@ -1016,20 +1016,18 @@ implementations are grouped by representation—spectral, geometric, attention,
 conditioning, dynamics, and probabilistic—behind the stable
 `phydrax.nn.operator.architectures` facade.
 
-Portable third-party engines register an
-`OperatorArchitectureCodec` with an explicitly versioned architecture ID. A
-codec may provide configuration encode/decode functions; artifacts persist that
-identity rather than a Python defining-module path.
+Portable third-party engines register a root `phydrax.OperatorArchitectureCodec`
+with `phydrax.register_operator_architecture_codec` under an explicitly
+versioned architecture ID, bound to one exact model type (see
+[Identity, revisions, and plugin registration](../phydrax.md#identity-revisions-and-plugin-registration)).
+A codec may provide configuration encode/decode functions; artifacts persist
+that identity rather than a Python defining-module path.
 
 ::: phydrax.nn.operator.OperatorModel
 
 ---
 
 ::: phydrax.nn.operator.AbstractOperatorModel
-
----
-
-::: phydrax.nn.operator.training.OperatorArchitectureCodec
 
 ### Reusable state, multi-query batches, and physical branches
 
@@ -2840,11 +2838,17 @@ Short final operator batches remain logical tails. Case-sharded loaders pad only
 their physical capacity to the mesh divisor and mark every padding lane inactive,
 so losses, metrics, gradients, and reported case support remain unchanged.
 
-`ExternalOperatorAdapter` requires a version-2
-`OperatorCheckpointManifest` with immutable source and checkpoint revisions,
-separate code and weight licenses, field schemas, preprocessing, normalization,
-dataset provenance, and a mandatory SHA-256 digest. Loading verifies the
-checkpoint before framework-specific tokenization or execution.
+`ExternalOperatorAdapter` requires an `OperatorCheckpointManifest` with
+immutable source and checkpoint revisions, separate code and weight licenses,
+field schemas, preprocessing, normalization, dataset provenance, and a mandatory
+SHA-256 digest, plus the runner's declared `ExecutionCapabilities` and artifact
+`binding` (`OperatorCheckpointManifest.binding_identity()` for a loaded
+checkpoint). Loading verifies the checkpoint before framework-specific
+tokenization or execution, and every call is admitted against the capabilities
+before the runner runs: a host-only runner is refused under `jit`, `vmap`,
+`grad`, `jvp`, and `vjp`, has no JAX derivative route, and cannot use the
+compiled `OperatorExecutionPlan` strategy. `OperatorContextModel` carries the
+operator's capabilities and applies the same admission.
 
 ---
 

@@ -151,23 +151,25 @@ are not silently projected to zero.
 
 `AtomisticPrecisionPolicy` separately declares coordinate, interaction,
 reduction, and output dtypes. Prediction provenance records scale and precision,
-the architecture identity, and a content fingerprint of the exact evaluated
-parameter state. Training refreshes that state identity for both final and
-selected-best potentials.
+the architecture identity, and the canonical `phydrax.NumericRevision` of the
+exact evaluated parameters.
 
-`PaiNNPotential(...)` and `fit_atomistic_potential(...)` return checkpointed
-models. An external Equinox or Optax tree update changes numeric parameters but
-necessarily preserves static metadata; it is unsupported for provenance-bearing
-prediction until explicitly checkpointed:
+`phx.atomistic.atomistic_potential_revision(potential)` derives that revision on
+the host from the potential's PARAMETER role lane: its semantic provenance names
+the architecture and force method, and its numeric content is every parameter
+leaf keyed by tree path. Fixed and model-state leaves never enter it. Because
+the identity is computed from the current parameters, an external Equinox or
+Optax update is reflected immediately and no checkpoint step exists:
 
 ```text
-updated = phx.atomistic.checkpoint_atomistic_potential(updated)
+updated = eqx.tree_at(lambda potential: potential.embedding, potential, embedding)
+revision = phx.atomistic.atomistic_potential_revision(updated)
 prediction = phx.atomistic.energy_and_forces(updated, batch, execution)
 ```
 
-The immutable checkpoint operation returns a new potential and is shared by the
-abstract atomistic-potential contract so additional equivariant architectures
-use the same provenance boundary.
+The revision is a host boundary. `energy_and_forces` records it, so call it with
+concrete parameters rather than on a potential traced by `jit`, `vmap`, or
+`grad`; differentiate the energy closure through the training entry points.
 
 ## Energy, force, or joint training
 

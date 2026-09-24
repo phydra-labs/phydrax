@@ -29,6 +29,7 @@ from ._potential import (
     AtomisticPotentialCapabilities,
     AtomisticPotentialRequirements,
     AtomisticSpeciesKind,
+    atomistic_potential_revision,
 )
 from ._sites import AtomisticInteractionSiteState
 from ._system import PreparedAtomisticSystem
@@ -187,7 +188,7 @@ class LearnedGraphPotentialTerm(AbstractAtomisticEnergyTerm):
         self.term_id = canonical_fingerprint(
             {
                 "kind": "learned-graph-potential-term",
-                "potential": potential.potential_id,
+                "potential_revision": atomistic_potential_revision(potential).revision_id,
                 "name": identifier,
                 "force_group": group,
                 "allow_periodic": bool(allow_periodic),

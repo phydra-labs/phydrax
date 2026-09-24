@@ -122,6 +122,47 @@ result = trained.save_onnx(
 
 ::: phydrax.export.OnnxExportResult
 
+## Host inference
+
+External model tiers are declared by `phydrax.ExecutionCapabilities`. A host
+runtime (ONNX Runtime, a compiled IREE module, or any framework-neutral callable)
+executes outside JAX: it is host-only, so every call is admitted against its
+capabilities before the runtime runs, and `jit`, `vmap`, `grad`, `jvp`, and `vjp`
+raise `TypeError` without invoking it. Call such models eagerly with concrete
+values. Host inference has no adjoint; `derivative_support` reports the
+derivative-free alternatives (EKI, evolution strategies, POUNDERS, differential
+evolution) and never selects one. Adjoint-capable providers use the staged
+`phydrax.interchange.ExternalAdjointAction` instead.
+
+`HostInferenceAdapter(runner, input_schema, output_schema, binding)` wraps a
+runner that receives one host NumPy array per `ExternalTensorSpec` in
+`input_schema` and returns one array per `output_schema` entry. Shapes and
+dtypes must match exactly (nothing is cast), outputs must be finite, and results
+are detached concrete JAX arrays. `transport="copy"` copies across the host
+boundary; `transport="dlpack"` exchanges buffers without copying (inputs must
+export `__dlpack__`, outputs alias the runtime's buffers). `binding` is the
+`ArtifactBindingIdentity` of the loaded model.
+
+Install `phydrax[onnx-inference]` for the ONNX Runtime loader. `load_onnx`
+requires a caller-supplied model SHA-256 pin, reads fixed input and output
+shapes and tensor types from the model as the schemas (symbolic dimensions are
+refused), runs on the CPU execution provider, and binds the model digest,
+schemas, and ONNX Runtime version. `phydrax[onnx-export]` stays export-only.
+
+```text
+exported = phx.export.save_onnx(model, "model.onnx", inputs=[(8, 3)])
+runtime = phx.export.load_onnx(
+    exported.path, trusted_model_sha256=trusted_digest, transport="dlpack"
+)
+prediction = runtime(features)  # eager only
+```
+
+::: phydrax.export.load_onnx
+
+---
+
+::: phydrax.export.HostInferenceAdapter
+
 ## StableHLO and IREE deployment
 
 Install the matched optional compiler/runtime pair with `phydrax[iree]`.
@@ -163,6 +204,12 @@ matching `output_names`. Outputs use static concrete shapes. `key` must be
 `None`; stochastic inference must be converted to an explicitly deterministic
 deployed function first. Like ONNX, IREE export is an inference boundary, not
 serialization of a solver or training loop.
+
+A loaded `IREEExecutable` is a host-only `"compiled-inference"` tier
+(`IREEExecutable.capabilities`): it is refused under JAX transformations before
+the module runs. `IREEArtifactManifest.binding_identity()` (also
+`IREEExecutable.binding`) identifies the calling ABI, the module digest, and the
+compiler, runtime, target, and driver.
 
 `save_discrete_velocity_iree(...)` is the typed exception to the generic
 model-only boundary: it compiles one frozen, fixed-shape smooth-compressible

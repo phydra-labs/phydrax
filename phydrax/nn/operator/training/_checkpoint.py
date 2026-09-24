@@ -12,8 +12,11 @@ from typing import Any
 import equinox as eqx
 from jaxtyping import Array, Key
 
+from ...._fingerprint import canonical_fingerprint
+from ...._identity import ArtifactBindingIdentity, RecordInput, SemanticProvenance
 from ...._model import deserialize_model_leaf, serialize_model_leaf
 from ...._model._structure import preflight_model_tree_serialization
+from ...._trainable import partition_parameters, resolve_array_roles
 from ...._training_checkpoint import (
     _deserialize_root_key,
     _open_verified_state,
@@ -22,6 +25,11 @@ from ...._training_checkpoint import (
     _publish_state,
     _read_manifest,
     _serialize_root_key,
+)
+from ...._training_kernel import (
+    parameter_binding_identity,
+    require_binding_record,
+    training_role_schema_id,
 )
 from ._dtype import OperatorDTypePolicy
 from ._fingerprint import operator_batch_schema
@@ -43,6 +51,39 @@ class OperatorTrainingCheckpoint:
     dtype_policy: OperatorDTypePolicy | None
     schema: Mapping[str, Any] | None
     metadata: Mapping[str, Any]
+    binding: ArtifactBindingIdentity
+
+
+def _checkpoint_binding(
+    model: Any,
+    schema: Mapping[str, Any] | None,
+    dtype_policy: OperatorDTypePolicy | None,
+    static_callables: RecordInput,
+    /,
+) -> ArtifactBindingIdentity:
+    """Bind the checkpointed model's semantics, parameters, and executable.
+
+    Semantics are the model's role schema and the batch schema it trains on;
+    the numeric revision is the model's PARAMETER lane (optimizer state, model
+    state, and FIXED arrays are checksummed payload); the executable adds the
+    dtype policy and the declared `static_callables`, whose held weights are
+    compiled into the executable.
+    """
+    parameters, _, _ = partition_parameters(model)
+    semantic = SemanticProvenance(
+        {
+            "role_schema_id": training_role_schema_id(resolve_array_roles(model)),
+            "schema_id": None if schema is None else canonical_fingerprint(schema),
+        }
+    )
+    return parameter_binding_identity(
+        semantic,
+        parameters,
+        algorithm_facts={
+            "dtype_policy": None if dtype_policy is None else dtype_policy.to_dict()
+        },
+        static_callables=static_callables,
+    )
 
 
 def save_operator_training_checkpoint(
@@ -57,10 +98,18 @@ def save_operator_training_checkpoint(
     dtype_policy: OperatorDTypePolicy | None = None,
     schema: Mapping[str, Any] | None = None,
     metadata: Mapping[str, Any] | None = None,
+    static_callables: RecordInput = (),
 ) -> Path:
-    """Atomically publish an exact model/optimizer/RNG training checkpoint."""
+    """Atomically publish an exact model/optimizer/RNG training checkpoint.
+
+    The manifest records the model's `ArtifactBindingIdentity`. The model's
+    array roles must be declared; `static_callables` names callables held
+    statically by the model (identified by `callable_payload`) and must be
+    declared again on load.
+    """
     if type(step) is not int or step < 0:
         raise ValueError("step must be a non-negative integer.")
+    binding = _checkpoint_binding(model, schema, dtype_policy, static_callables)
     destination = Path(path)
     state_path, checksum = _publish_state(
         destination,
@@ -81,6 +130,7 @@ def save_operator_training_checkpoint(
         "dtype_policy": None if dtype_policy is None else dtype_policy.to_dict(),
         "schema": None if schema is None else dict(schema),
         "metadata": {} if metadata is None else dict(metadata),
+        "binding": binding.to_record(),
     }
     _publish_manifest(destination / "manifest.json", manifest)
     _prune_state_files(destination, state_name)
@@ -105,6 +155,7 @@ def _read_operator_training_manifest(
         "dtype_policy",
         "schema",
         "metadata",
+        "binding",
     }
     if not isinstance(manifest, dict):
         raise ValueError("Operator training checkpoint manifest must be an object.")
@@ -163,8 +214,13 @@ def load_operator_training_checkpoint(
     /,
     *,
     expected_schema: Mapping[str, Any] | None = None,
+    static_callables: RecordInput = (),
 ) -> OperatorTrainingCheckpoint:
-    """Verify and restore a checkpoint against explicit PyTree templates."""
+    """Verify and restore a checkpoint against explicit PyTree templates.
+
+    The model's binding identity is recomputed from the restored arrays, the
+    manifest policies, and `static_callables`; any mismatch raises `ValueError`.
+    """
     source = Path(path)
     manifest, state_name = _read_operator_training_manifest(source)
     if expected_schema is not None and manifest["schema"] != dict(expected_schema):
@@ -192,7 +248,18 @@ def load_operator_training_checkpoint(
             raise ValueError("Operator training checkpoint state has trailing payload.")
     key = _deserialize_root_key(manifest["key_data"], manifest["key_impl"])
     normalization = manifest["normalization"]
-    dtype_policy = manifest["dtype_policy"]
+    dtype_policy = (
+        None
+        if manifest["dtype_policy"] is None
+        else OperatorDTypePolicy.from_dict(manifest["dtype_policy"])
+    )
+    binding = _checkpoint_binding(
+        model, manifest["schema"], dtype_policy, static_callables
+    )
+    require_binding_record(
+        manifest["binding"], binding, context="Operator training checkpoint"
+    )
+    _prune_state_files(source, state_name.as_posix())
     return OperatorTrainingCheckpoint(
         model=model,
         optimizer_state=optimizer_state,
@@ -203,11 +270,10 @@ def load_operator_training_checkpoint(
             if normalization is None
             else OperatorNormalizationPolicy.from_dict(normalization)
         ),
-        dtype_policy=(
-            None if dtype_policy is None else OperatorDTypePolicy.from_dict(dtype_policy)
-        ),
+        dtype_policy=dtype_policy,
         schema=manifest["schema"],
         metadata=manifest["metadata"],
+        binding=binding,
     )
 
 

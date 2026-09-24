@@ -404,7 +404,7 @@ from ._potential import (
     AtomisticPotentialCapabilities,
     AtomisticPotentialRequirements,
     AtomisticSpeciesKind,
-    checkpoint_atomistic_potential,
+    atomistic_potential_revision,
 )
 from ._potential_program import (
     AbstractAtomisticEnergyTerm,
@@ -812,13 +812,13 @@ __all__ = [
     "atomistic_cell_energy_and_stress",
     "materialize_mobility",
     "atomistic_driven_stress",
+    "atomistic_potential_revision",
     "atomistic_replay_matches",
     "atomistic_score_equivariance",
     "atomistic_trajectory_data",
     "evaluate_classical_spin_hamiltonian",
     "prepare_classical_spin_hamiltonian",
     "refresh_classical_spin_hamiltonian",
-    "checkpoint_atomistic_potential",
     "displacement_correlation",
     "diffusion_closure_artifact",
     "slip_closure_artifact",

@@ -3,6 +3,7 @@ from importlib import import_module
 #
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from .._external_runtime import HostInferenceAdapter
 from ._array_archive import __all__ as _array_archive_all
 from ._complex_parameters import (
     complex_coefficients_to_frame,
@@ -63,7 +64,7 @@ from ._neutral import (
     NeutralPointCloudSchema,
     NeutralSchemaKind,
 )
-from ._onnx import OnnxExportResult, save_onnx
+from ._onnx import load_onnx, OnnxExportResult, save_onnx
 
 
 _FACADE_EXPORT_MODULES = ("._array_archive",)
@@ -96,6 +97,7 @@ __all__ = [
     "DiscreteVelocityIREEContract",
     "DiscreteVelocityIREEExportBundle",
     "DiscreteVelocityIREEExportMode",
+    "HostInferenceAdapter",
     "ImportedComplexTrainingState",
     "PreparedComplexTrainingInterchange",
     "RNGInterchangeState",
@@ -130,6 +132,7 @@ __all__ = [
     "save_compressible_kinetic_iree",
     "save_lattice_boltzmann_iree",
     "import_complex_parameters",
+    "load_onnx",
     "OnnxExportResult",
     "save_onnx",
     "save_iree",

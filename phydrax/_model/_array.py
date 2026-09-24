@@ -150,14 +150,21 @@ class AbstractArrayModel(StrictModule, ModelEvaluator, ParameterOwner):
         *,
         precision: ComponentPrecisionContract | None = None,
         randomness: RandomnessContract | None = None,
+        execution: ExecutionCapabilities | None = None,
     ) -> ModelExecutionContract:
-        """Native-JAX contract with `derivative` and this model's ports and certificates."""
+        """Contract with `derivative` and this model's ports and certificates.
+
+        `execution` defaults to native JAX; external model tiers pass their
+        declared capabilities.
+        """
         metadata = (
             self.model_metadata() if isinstance(self, ModelMetadataProvider) else {}
         )
         return ModelExecutionContract(
             derivative=derivative,
-            execution=ExecutionCapabilities("native-jax"),
+            execution=ExecutionCapabilities("native-jax")
+            if execution is None
+            else execution,
             precision=precision,
             randomness=randomness,
             ports=self._contract_ports(),

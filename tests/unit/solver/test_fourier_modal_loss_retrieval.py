@@ -260,6 +260,21 @@ def _retrieval(
     return retrieval
 
 
+def test_numeric_revision_is_content_addressed_and_fails_closed() -> None:
+    _, prepared = _slab_case(2.25, numeric_version="revision-target")
+    _, rebuilt = _slab_case(2.25, numeric_version="revision-target")
+    _, perturbed = _slab_case(2.5, numeric_version="revision-target")
+    revision = fm.fourier_modal_numeric_revision(prepared)
+    changed = fm.fourier_modal_numeric_revision(perturbed)
+
+    assert fm.fourier_modal_numeric_revision(rebuilt).revision_id == revision.revision_id
+    assert changed.semantic_id == revision.semantic_id
+    assert changed.content_id != revision.content_id
+    fm.require_fourier_modal_numeric_revision(rebuilt, revision)
+    with pytest.raises(ValueError, match="numeric_revision"):
+        fm.require_fourier_modal_numeric_revision(perturbed, revision)
+
+
 def test_retrieval_boundary_rejects_unbound_numeric_revision() -> None:
     harmonics, prepared = _slab_case(2.25, numeric_version="revision-target")
     _, other = _slab_case(3.0, numeric_version="revision-other")
