@@ -216,6 +216,70 @@ recomputes each block. Replay does not change primal values or output retention.
 Diffrax's internal adaptive steps or progress callbacks as audited Phydrax
 iterations.
 
+## Accepted-step transforms and learned step correction
+
+`AbstractAcceptedStepTransform` and `AbstractSSPRKStageTransform` are
+`DISCRETIZATION`-authority component slots (slot IDs
+`solver.accepted-step-transform` and `solver.ssprk-stage-transform`): structural
+invariants of the transformed step certify them, not a residual. Classical
+implementations (identity, callable stage transforms, Shepard renormalization,
+entropy filters) are fixed; an implementation holding a model trains its
+parameters.
+
+The consuming method validates every transform result centrally, for direct
+and composite transforms alike, exactly as SSP stage results are validated: the
+transformed state preserves the candidate's PyTree structure, shapes, and
+dtypes; `applied` and `successful` are Boolean scalars; the correction norm is
+a scalar cast to the state's real dtype; optional `admissibility` evidence is a
+scalar `AdmissibilityHeader`. An unsuccessful transform cannot change the
+candidate, and its step is rejected.
+
+`LearnedStepCorrection(model, state_shape=..., maximum_relative_correction=...)`
+corrects the native candidate `c` of the accepted state `y`: the model maps the
+flattened `(y, c)` to an increment `d`, proposing `p = c + d`. Native checks
+admit `p` only when it is finite and inside `support`, satisfies every declared
+`conserved` linear invariant to `conservation_tolerance` relative to the
+candidate, respects `lower_bounds` (positivity with `0`), and obeys the
+stability bound `||p - c|| <= maximum_relative_correction * ||c - y||`. The
+decision is one `lifecycle.TransactionalCandidate` (`propose`) committed with
+`commit_candidate`: an admitted proposal is the transformed state; a rejected
+one keeps `c` unchanged, with `LearnedStepCorrectionReason` and
+`AdmissibilityReason` bits in `FixedStepResult.transform_admissibility` and in
+the stacked `transform_admissibility` of rollout results. There is no retry,
+and rejection never fails the step; `c` stays under the method's own
+acceptance. The checks are admissibility conditions, not an accuracy
+certificate: the coarse method's residual or error does not certify `p`.
+
+```python
+correction = phx.solver.LearnedStepCorrection(
+    model,  # in_size == 2 * n, out_size == n
+    state_shape=(n,),
+    maximum_relative_correction=0.5,
+    conserved=[[1.0] * n],
+    lower_bounds=0.0,
+)
+method = phx.solver.SSPRK33FixedStepMethod(vector_field, transform=correction)
+```
+
+The model trains through discrete rollouts: partition the `FixedStepProblem`
+with `partition_parameters` and differentiate a checkpointed
+`FixedStepRolloutPlan` rollout. Rollout derivatives hold every accept/reject
+decision frozen (`LearnedStepCorrection.derivative_contract`).
+
+::: phydrax.solver.AbstractAcceptedStepTransform
+
+---
+
+::: phydrax.solver.AcceptedStepTransformResult
+
+---
+
+::: phydrax.solver.LearnedStepCorrection
+
+---
+
+::: phydrax.solver.LearnedStepCorrectionReason
+
 ## Prepared ETDRK and channel continuation
 
 `ETDRKMethod.prepare` binds one complete `SemilinearDrift` identity and, when
@@ -379,6 +443,8 @@ run/resume/step/checkpoint lifecycle and an instantaneous statistics snapshot.
   frozen upwind/limiter branches, and acceptance are only branchwise differentiable.
   Failed LES stability, admissibility, or solver gates have no valid derivative claim.
 - Failed adaptive primals have no valid derivative.
+- Learned step corrections differentiate through checkpointed rollouts with each
+  admission decision frozen; a rejected proposal contributes no correction.
 
 ## Stochastic compatibility
 

@@ -34,7 +34,7 @@ from ..._numerics._ssp_runge_kutta import (
     StageTransformResult,
 )
 from ..._strict import StrictModule
-from ..._trainable import fixed_field
+from ..._trainable import fixed_field, NonTrainableState
 from ...discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ...dynamics import DiscreteStepContext, InputLayout, StateLayout
 from ...dynamics.identification._neural_transition import (
@@ -177,7 +177,9 @@ class _CurrentStressPredictor(StrictModule):
         return jnp.asarray(values).reshape(self.output_shape)
 
 
-class PeriodicLearnedStressRolloutTransition(AbstractDiscreteModelRolloutTransition):
+class PeriodicLearnedStressRolloutTransition(
+    AbstractDiscreteModelRolloutTransition, NonTrainableState
+):
     """SSPRK(3,3) periodic dynamics with learned stress at every stage."""
 
     prepared_stress: PreparedPeriodicLearnedStress
@@ -345,7 +347,9 @@ class PeriodicLearnedStressRolloutTransition(AbstractDiscreteModelRolloutTransit
         )
 
 
-class MACLearnedRateRolloutTransition(AbstractDiscreteModelRolloutTransition):
+class MACLearnedRateRolloutTransition(
+    AbstractDiscreteModelRolloutTransition, NonTrainableState
+):
     """Explicit MAC transition with a learned rate and controlled projection."""
 
     dynamics: CompiledMACIncompressibleDynamics

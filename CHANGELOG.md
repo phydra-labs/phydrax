@@ -12,6 +12,15 @@
   trains inside the prepared dynamics as the only parameter lane. Euler,
   compressible Navier--Stokes, and homogeneous-mixture gas systems implement the
   explicit `AbstractNormalFrameSystem` capability used by face-normal-frame closures.
+- Added `LearnedStepCorrection`, a learned accepted-step transform: a model
+  proposes a correction of the native fixed-step candidate, native checks
+  (finiteness, support, declared conservation invariants, lower bounds, and a
+  stability bound relative to the native increment) admit it as one
+  transaction, and a rejected proposal keeps the native candidate with
+  `LearnedStepCorrectionReason` bits in the new `transform_admissibility`
+  evidence of fixed-step results, rollouts, and solutions. It never retries,
+  never uses the coarse residual as an accuracy certificate, and trains
+  through checkpointed fixed-step rollouts with frozen admission decisions.
 - Added model execution contracts (`ModelExecutionContract`,
   `ExecutionCapabilities`, `ComponentPrecisionContract`, `RandomnessContract`)
   separate from bound component contracts (`AbstractComponentSlot`,
@@ -85,6 +94,13 @@
   leaves remain fixed. Frozen artifacts (`FrozenModel`, `TrainedOperator`,
   operator correction bindings) are explicit freezes. Operator batches,
   context sources, normalizers, scalers, and fitted ML statistics are fixed.
+- Accepted-step and SSP stage transforms are `DISCRETIZATION` component
+  slots, and discrete model rollout transitions are a `MODEL` component slot;
+  built-in transitions are fixed. Fixed-step methods validate every direct
+  accepted-step transform result centrally (structure, dtype, scalar
+  evidence), and a failed transform can no longer change the candidate.
+  Learned DAE defects enter through the residual and the existing implicit
+  and adaptive acceptance lifecycle; `DAESolvePolicy` stays a fixed policy.
 - `ParameterSubspace` selections are role declarations; worksets and
   ensembles map lanes through a declared `LaneLayout`, independent of roles.
   `FunctionalSolver.partition_functions` returns three lanes.

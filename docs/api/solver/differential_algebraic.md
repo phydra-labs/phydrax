@@ -344,6 +344,21 @@ plan/method/linear-plan provenance. If initialization or integration fails, unsa
 nodes are `NOT_RUN`; no fallback state is fabricated. Use `failure="error"` when a
 non-successful solution must raise at the call boundary.
 
+## Learned residual components
+
+`DAESolvePolicy` is a fixed numerical policy; there is no separate learned DAE
+method family. A learned defect, closure, or constitutive term enters through
+the residual: pass the model in `args` (or hold it in the residual module) and
+evaluate it inside `residual(time, state, state_rate, args)`, for example
+`state_rate + state - defect(state)`. Every learned evaluation then passes
+through the same lifecycle as the physical residual: trial-domain predicates,
+implicit stage roots, independent residual certification, adaptive
+accept/reject and rollback, regularity probes, and continuation identities.
+Model parameters are ordinary `args` leaves, so fixed-grid JVP/VJP use the
+implicit stage derivatives and adaptive derivatives the frozen accepted-grid
+replay described above. A learned term never certifies a stage: acceptance is
+decided by the native residual, constraint, and local-error checks.
+
 ## Semidiscrete implicit PDE residuals
 
 `compile_semidiscrete_dae` lowers validated `PDEProblemIR` into a

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any
+from typing import Any, ClassVar
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -26,7 +26,7 @@ from ..._differentiation import (
     DerivativeSurface,
 )
 from ..._fingerprint import canonical_fingerprint
-from ..._model import AbstractArrayModel, ComponentContract
+from ..._model import AbstractArrayModel, AbstractComponentSlot, bind_component
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._layout import InputLayout, StateLayout
@@ -97,8 +97,17 @@ class DiscreteModelRolloutTransitionResult(StrictModule):
         self.transition_id = str(transition_id)
 
 
-class AbstractDiscreteModelRolloutTransition(StrictModule, NonTrainableState):
-    """Interpret a learned model output inside one accepted discrete transition."""
+class AbstractDiscreteModelRolloutTransition(AbstractComponentSlot):
+    """Interpret a learned model output inside one accepted discrete transition.
+
+    The model bound to this slot has `MODEL` authority; the transition owns the
+    physical interpretation and acceptance of its output. Built-in transitions
+    are fixed analytic interpretations and hold no learned component: the model
+    is supplied at evaluation.
+    """
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.MODEL
+    slot_semantic_id: ClassVar[str] = "dynamics.discrete-model-rollout-transition"
 
     transition_id: str = eqx.field(static=True)
     state_layout: StateLayout
@@ -149,26 +158,14 @@ class AbstractDiscreteModelRolloutTransition(StrictModule, NonTrainableState):
     ) -> DiscreteModelRolloutTransitionResult:
         """Attach the common evidence and poison derivatives where invalid.
 
-        The header's `model_id` is the model's declared semantic provenance
-        (a marked fingerprint of its execution contract when undeclared) and its
-        `evidence_id` binds this transition to the model's MODEL-authority
-        component contract. The model's parameters join `dependencies` so a
-        rejected state that no longer depends on them is still poisoned.
+        The header's `model_id` is the model's evidence identity (its declared
+        semantic provenance, else a marked contract fingerprint) and its
+        `evidence_id` binds this transition to the model's contract bound to
+        this slot. The model's parameters join `dependencies` so a rejected
+        state that no longer depends on them is still poisoned.
         """
-        contract = model.model_execution_contract()
-        model_id = (
-            canonical_fingerprint(
-                {
-                    "kind": "undeclared-model-provenance",
-                    "model_contract": contract.contract_id,
-                }
-            )
-            if contract.semantic_provenance is None
-            else contract.semantic_provenance.semantic_id
-        )
-        component = ComponentContract(
-            authority=ComponentAuthority.MODEL, model_contract=contract
-        )
+        component = bind_component(model, type(self)).contract()
+        model_id = component.model_contract.evidence_model_id
         converged = jnp.asarray(physically_converged, dtype=jnp.bool_)
         header = AdmissibilityHeader(
             jnp.where(converged, 1.0, -1.0),
@@ -216,7 +213,9 @@ class AbstractDiscreteModelRolloutTransition(StrictModule, NonTrainableState):
         )
 
 
-class DirectDiscreteModelRolloutTransition(AbstractDiscreteModelRolloutTransition):
+class DirectDiscreteModelRolloutTransition(
+    AbstractDiscreteModelRolloutTransition, NonTrainableState
+):
     """Current direct next-state model semantics as an explicit rollout route."""
 
     def __init__(

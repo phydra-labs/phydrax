@@ -6,17 +6,29 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._differentiation import ComponentAuthority
+from .._model._component import AbstractComponentSlot
 from .._strict import StrictModule
 from .._temporal_precision import TemporalPrecisionPolicy
 
 
-class AbstractSSPRKStageTransform(StrictModule):
+class AbstractSSPRKStageTransform(AbstractComponentSlot):
+    """Slot transforming one SSP Runge--Kutta stage candidate.
+
+    Implementations carry `DISCRETIZATION` authority: structural invariants of the
+    stage map certify them, not a residual. The stage owner validates every
+    result (state shape and dtype, scalar Boolean evidence, scalar correction
+    norm) and continues from the prior accepted state when a stage fails.
+    """
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.DISCRETIZATION
+    slot_semantic_id: ClassVar[str] = "solver.ssprk-stage-transform"
     transform_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod

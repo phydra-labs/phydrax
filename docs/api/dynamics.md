@@ -802,6 +802,16 @@ the ordinary next-state behavior. Domain transitions may instead interpret a
 model output as a source, flux, stress, control, or correction and return
 `DiscreteModelRolloutTransitionResult`.
 
+`AbstractDiscreteModelRolloutTransition` is a `MODEL`-authority component slot
+(`slot_contract()`, slot ID `dynamics.discrete-model-rollout-transition`). The
+model supplied at evaluation is bound to that slot: the result header's
+`evidence_id` names the bound component contract, and its `model_id` is the
+model's declared semantic provenance (a marked contract fingerprint when
+undeclared). Built-in transitions are fixed interpretations holding no learned
+component. A learned correction of a native fixed-step method is instead a
+`DISCRETIZATION` slot, `phydrax.solver.LearnedStepCorrection` (see
+[Time integrators](solver/time_integrators.md#accepted-step-transforms-and-learned-step-correction)).
+
 The result keeps candidate state, accepted training state, training usability,
 physical convergence, status, residual, and work count separate.
 `fit_discrete_model(..., transition=...)` recurrently uses only its accepted
