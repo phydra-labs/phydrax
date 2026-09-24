@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "a3802e00740c82def086badf9d0329672e8a277f9c4edf32c871931ed538d816",
+  "manifest_id": "8c5afb632668d7f3cc51a7d4ab805c46f2795f9c8ef4e176e7aba1b92eb355de",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -6435,6 +6435,7 @@
       "phydrax.applications.reacting_flow.StefanMaxwellTransportPlan",
       "phydrax.applications.reacting_flow.ThermochemicalNonequilibriumDiagnostics",
       "phydrax.applications.reacting_flow.ThermochemicalNonequilibriumProcessPlan",
+      "phydrax.applications.reacting_flow.TrainableLearnedChemicalTransitionPlan",
       "phydrax.applications.reacting_flow.TransportPropertyReuseCandidate",
       "phydrax.applications.reacting_flow.TransportPropertyReusePlan",
       "phydrax.applications.reacting_flow.TransportPropertyReuseState",
@@ -10515,6 +10516,7 @@
       "phydrax.closure_data.StateRepresentation",
       "phydrax.closure_data.StressEnergyPolicy",
       "phydrax.closure_data.TrainOnlyNormalizer",
+      "phydrax.closure_data.TrainableLearnedClosureBinding",
       "phydrax.closure_data.TrainedClosureOperatorPredictor",
       "phydrax.closure_data.attempt_kinetic_rollout_update",
       "phydrax.closure_data.bind_trained_stress_operator",
@@ -17437,6 +17439,7 @@
       "phydrax.equations.AbstractChemicalRatePlan",
       "phydrax.equations.AbstractConservationSystem",
       "phydrax.equations.AbstractConservativeDVMSource",
+      "phydrax.equations.AbstractConstitutiveModel",
       "phydrax.equations.AbstractDenominatorRegularization",
       "phydrax.equations.AbstractDynamicLESAveraging",
       "phydrax.equations.AbstractElectrochemicalClosure",
@@ -17754,6 +17757,7 @@
       "phydrax.equations.LandauDeGennesClosure",
       "phydrax.equations.LandauDeGennesParameters",
       "phydrax.equations.LatticeBoltzmannProblem",
+      "phydrax.equations.LearnedConstitutiveModel",
       "phydrax.equations.LindemannRatePlan",
       "phydrax.equations.LinearMonogenicField",
       "phydrax.equations.LinearTrefftzField",
@@ -18254,6 +18258,7 @@
     ],
     "phydrax.equations.fem": [
       "phydrax.equations.fem.ALEMetricEvidence",
+      "phydrax.equations.fem.AbstractLocalImplicitMaterial",
       "phydrax.equations.fem.AcceptedStepAdjointRecord",
       "phydrax.equations.fem.ActionKind",
       "phydrax.equations.fem.BoundaryEntropyEvidence",
@@ -18315,6 +18320,7 @@
       "phydrax.equations.fem.HDivStokesPlan",
       "phydrax.equations.fem.KernelBinding",
       "phydrax.equations.fem.KernelTable",
+      "phydrax.equations.fem.LearnedLocalImplicitMaterial",
       "phydrax.equations.fem.LocalActionIR",
       "phydrax.equations.fem.LocalImplicitDiagnostics",
       "phydrax.equations.fem.LocalImplicitMaterial",

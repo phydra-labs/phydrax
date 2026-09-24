@@ -210,6 +210,156 @@ def test_g1_mismatched_port_mapping_is_rejected_before_execution():
     )
 
 
+# G2: learned constitutive -> implicit mechanics ---------------------------------
+
+
+class _LearnedStress(phx.AbstractArrayModel):
+    """Learned uniaxial stress `E * strain + k * strain**3` with a declared contract."""
+
+    modulus: jax.Array
+    stiffening: jax.Array
+    in_size: int = eqx.field(static=True)
+    out_size: int = eqx.field(static=True)
+
+    def __init__(self, modulus, stiffening):
+        self.modulus = jnp.asarray(modulus)
+        self.stiffening = jnp.asarray(stiffening)
+        self.in_size = 1
+        self.out_size = 1
+
+    def __call__(self, x, /, *, key=None):
+        return self.modulus * x + self.stiffening * x**3
+
+    def model_execution_contract(self):
+        return phx.ModelExecutionContract(
+            derivative=_smooth_derivative(),
+            execution=phx.ExecutionCapabilities("native-jax"),
+            precision=phx.ComponentPrecisionContract.native("float64"),
+            randomness=phx.RandomnessContract("deterministic"),
+        )
+
+
+_BAR_ELEMENTS = 4
+_BAR_LENGTH = 1.0 / _BAR_ELEMENTS
+
+
+def _uniaxial_port(name, unit):
+    return phx.ValuePort(
+        f"g2.{name}",
+        event_shape=(1,),
+        component_ids=(name,),
+        representation="engineering",
+        dimensions=(phx.units.parse_unit(unit).dimension,),
+    )
+
+
+def _learned_bar_law(model):
+    return phx.equations.LearnedConstitutiveModel(
+        model,
+        _uniaxial_port("strain", "1"),
+        _uniaxial_port("stress", "Pa"),
+        lower=[-0.2],
+        upper=[0.2],
+        model_id="g2-learned-bar-law",
+    )
+
+
+def _bar_strain(displacement):
+    nodal = jnp.concatenate((jnp.zeros(1), displacement))
+    return ((nodal[1:] - nodal[:-1]) / _BAR_LENGTH)[:, None]
+
+
+class _BarEquilibrium(eqx.Module):
+    """Clamped bar internal-minus-external nodal force with a learned law."""
+
+    law: phx.equations.AbstractConstitutiveModel
+
+    def __call__(self, displacement, load):
+        response = self.law.evaluate(
+            _bar_strain(displacement), jnp.zeros((_BAR_ELEMENTS, 0)), None, 0.0, 1.0
+        )
+        stress = response.response[:, 0]
+        internal = jnp.zeros(_BAR_ELEMENTS + 1).at[1:].add(stress).at[:-1].add(-stress)
+        return internal[1:] - jnp.zeros(_BAR_ELEMENTS).at[-1].set(load)
+
+
+def _bar_root(model, load):
+    return phx.nonlinear.implicit_root_result(
+        phx.nonlinear.NonlinearSystemProblem(_BarEquilibrium(_learned_bar_law(model))),
+        jnp.zeros(_BAR_ELEMENTS),
+        termination=phx.nonlinear.NonlinearTermination(
+            absolute_residual=1e-12, relative_residual=0.0
+        ),
+        args=load,
+    )
+
+
+def test_g2_native_newton_owns_acceptance_of_the_learned_law():
+    accepted = _bar_root(_LearnedStress(1.0, 2.0), 0.1)
+    assert bool(accepted.successful)
+    assert float(jnp.max(jnp.abs(accepted.residual))) <= 1e-12
+    assert accepted.component_evidence == ("residual.law.binding:deterministic",)
+    law = _learned_bar_law(_LearnedStress(1.0, 2.0))
+    at_root = law.evaluate(
+        _bar_strain(accepted.state), jnp.zeros((_BAR_ELEMENTS, 0)), None, 0.0, 1.0
+    )
+    assert bool(jnp.all(at_root.header.eligible))
+
+    # A load whose equilibrium leaves the learned support is never accepted.
+    refused = _bar_root(_LearnedStress(1.0, 2.0), 0.5)
+    assert not bool(refused.successful)
+    # A law without classical C1 regularity cannot enter implicit mechanics.
+    relu = phx.nn.models.MLP(
+        in_size=1,
+        out_size=1,
+        width_size=8,
+        depth=1,
+        activation=jax.nn.relu,
+        key=jr.key(0),
+    )
+    with pytest.raises(ValueError, match="implicit-requires-c1"):
+        _learned_bar_law(relu)
+
+
+def test_g2_implicit_parameter_gradient_matches_finite_differences():
+    def tip(parameters):
+        return _bar_root(_LearnedStress(parameters[0], parameters[1]), 0.1).state[-1]
+
+    parameters = jnp.asarray([1.0, 2.0])
+    gradient = jax.grad(tip)(parameters)
+    step = 1e-6
+    finite_difference = jnp.stack(
+        [
+            (tip(parameters + step * basis) - tip(parameters - step * basis))
+            / (2.0 * step)
+            for basis in jnp.eye(2)
+        ]
+    )
+    assert jnp.allclose(gradient, finite_difference, rtol=1e-6, atol=1e-10)
+    law = _learned_bar_law(_LearnedStress(1.0, 2.0))
+    assert len(jax.tree_util.tree_leaves(phx.partition_parameters(law)[0])) == 2
+
+
+def test_g2_invalid_tangent_poisons_the_derivative():
+    equilibrium = _BarEquilibrium(_learned_bar_law(_LearnedStress(1.0, 2.0)))
+    # Element 2 strains to 0.6, outside the learned support [-0.2, 0.2].
+    displacement = jnp.asarray([0.05, 0.1, 0.25, 0.28])
+    residual = equilibrium(displacement, 0.1)
+    assert bool(jnp.all(jnp.isfinite(residual)))
+    jacobian = jax.jacfwd(lambda value: equilibrium(value, 0.1))(displacement)
+    coupled = jnp.asarray([False, True, True, False])
+    assert bool(jnp.all(jnp.isnan(jacobian[coupled])))
+    assert bool(jnp.all(jnp.isfinite(jacobian[~coupled])))
+
+    # The parameter derivative of the equilibrium at that state is poisoned too.
+    parameter_gradient = jax.grad(
+        lambda parameters: _BarEquilibrium(
+            _learned_bar_law(_LearnedStress(parameters[0], parameters[1]))
+        )(displacement, 0.1)[1]
+    )(jnp.asarray([1.0, 2.0]))
+    assert bool(jnp.all(jnp.isnan(parameter_gradient)))
+
+
 # G14: ensemble lanes -----------------------------------------------------------
 
 

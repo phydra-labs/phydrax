@@ -8,6 +8,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax as phx
+from phydrax import (
+    ArrayRole,
+    ParameterOwner,
+    partition_parameters,
+    require_parameter_roles,
+    StrictModule,
+)
 from phydrax.closure_data._alignment import (
     conservative_prolong,
     conservative_restrict,
@@ -528,3 +536,59 @@ def test_spectral_nonfinite_prediction_returns_explicit_typed_fallback_artifact(
     assert int(result.fallback.reason_code) == 1
     assert result.fallback.fallback_kind == "zero_spectral_drift"
     assert not bool(result.evidence.valid)
+
+
+class _SpectralDamping(StrictModule, ParameterOwner):
+    rate: jax.Array
+
+    def __call__(self, value, args=None):
+        del args
+        return -self.rate * value
+
+
+def _damping_binding(schema, predictor):
+    return LearnedClosureBindingPlan(
+        predictor,
+        deployment_kind="spectral_drift",
+        schema_id=schema.schema_id,
+        input_component_names=("u", "v"),
+        output_component_names=("u", "v"),
+        model_artifact_id="damping-model",
+        normalizer_provenance_id="normalizer",
+    )
+
+
+def test_frozen_spectral_binding_cannot_train_but_its_trainable_binding_does():
+    _, projector, coordinates, dealiasing, state, schema = _spectral_contract()
+    artifact = _damping_binding(schema, _SpectralDamping(jnp.asarray(0.1)))
+    frozen_hook = artifact.bind_spectral_drift(schema, projector, coordinates, dealiasing)
+
+    resolution = require_parameter_roles(frozen_hook, context="frozen closure hook")
+    assert ArrayRole.PARAMETER not in resolution.roles
+    assert not jax.tree_util.tree_leaves(partition_parameters(frozen_hook)[0])
+
+    trainable = artifact.as_trainable_binding()
+    assert trainable.binding_id == artifact.binding_id
+    hook = trainable.bind_spectral_drift(schema, projector, coordinates, dealiasing)
+    assert hook.hook_id == frozen_hook.hook_id
+    (rate,) = jax.tree_util.tree_leaves(partition_parameters(hook)[0])
+    assert float(rate) == 0.1
+
+    def mismatch(candidate):
+        drift = candidate.apply(state).drift
+        return jnp.sum(jnp.abs(drift + 0.5 * state) ** 2)
+
+    gradient = eqx.filter_grad(mismatch)(hook)
+    assert float(gradient.binding.predictor.rate) < 0.0
+    assert float(artifact.predictor.rate) == 0.1
+
+
+def test_trainable_closure_binding_requires_a_visible_trainable_predictor():
+    schema = _spectral_contract()[-1]
+    with pytest.raises(ValueError, match="no visible inexact array"):
+        _damping_binding(schema, lambda value, args: -0.1 * value).as_trainable_binding()
+    network = phx.nn.models.MLP(
+        in_size=2, out_size=2, width_size=4, depth=1, key=jax.random.key(0)
+    )
+    frozen = _damping_binding(schema, phx.uq.FrozenModel(network))
+    assert frozen.as_trainable_binding().predictor is network

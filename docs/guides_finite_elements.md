@@ -129,8 +129,16 @@ existing `SparseAssemblyPlan` prepare/refresh lifecycle.
 
 ## Materials, compatible methods, and hierarchy
 
+Integration-site laws implement `AbstractConstitutiveModel` (`MODEL` authority).
 Pure `ConstitutiveModel` updates return response, candidate quadrature state, and
-diagnostics. `FiniteElementMaterialTransaction` commits or rolls back all
+diagnostics; `LearnedConstitutiveModel` evaluates a learned model bound to the slot
+with unit-carrying strain/stress/history ports, a support box, and an
+`AdmissibilityHeader` per site. Its consistent tangent is the exact forward-mode
+derivative of the learned response, and out-of-support sites are invalid with NaN
+derivatives, so native Newton solves own acceptance and implicit parameter
+gradients never silently use an invalid tangent. `LearnedLocalImplicitMaterial` is
+the learned counterpart of `LocalImplicitMaterial` for local constitutive roots.
+`FiniteElementMaterialTransaction` commits or rolls back all
 material regions atomically; FE checkpoints bind field/material state to exact
 prepared and compilation IDs.
 

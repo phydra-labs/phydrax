@@ -39,6 +39,7 @@ from ._binding import (
     SpectralEnergyPolicy,
     SpectralFallbackArtifact,
     StressEnergyPolicy,
+    TrainableLearnedClosureBinding,
 )
 from ._dataset import (
     ChunkedClosureDatasetManifest,
@@ -182,6 +183,7 @@ __all__ = [
     "LearnedEnergyEquilibriumBindingPlan",
     "LearnedEnergyEquilibriumArtifact",
     "LearnedClosureBindingPlan",
+    "TrainableLearnedClosureBinding",
     "LearnedStressBindingPlan",
     "LearnedStressEvidence",
     "LearnedStressFeatureSchema",

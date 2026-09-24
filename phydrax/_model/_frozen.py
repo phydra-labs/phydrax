@@ -6,7 +6,10 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from .._trainable import ExplicitFreeze
+import equinox as eqx
+import jax
+
+from .._trainable import ExplicitFreeze, NonTrainableState
 from ._array import AbstractArrayModel
 from ._component import ModelExecutionContract
 
@@ -57,4 +60,28 @@ class FrozenModel(AbstractArrayModel, ExplicitFreeze):
         return self.model
 
 
-__all__ = ["FrozenModel"]
+def trainable_provider(provider: Any, /) -> Any:
+    """Return the trainable form of a frozen provider, refusing one without any.
+
+    Frozen artifacts use it for their explicit trainable counterpart: a
+    `FrozenModel` is unwrapped (without copying array leaves); any other
+    terminal (`NonTrainableState`) provider cannot become trainable. The
+    provider must be callable and hold a visible inexact array leaf, which
+    becomes a PARAMETER in the trainable holder. Raises `ValueError` otherwise.
+    """
+    unwrapped = provider.as_trainable() if isinstance(provider, FrozenModel) else provider
+    if not callable(unwrapped):
+        raise TypeError("A trainable provider must be callable.")
+    if isinstance(unwrapped, NonTrainableState):
+        raise ValueError(
+            f"{type(unwrapped).__name__} is a fixed provider and cannot become trainable."
+        )
+    if not jax.tree_util.tree_leaves(eqx.filter(unwrapped, eqx.is_inexact_array)):
+        raise ValueError(
+            f"{type(unwrapped).__name__} holds no visible inexact array to train; a "
+            "trainable binding needs a provider whose arrays are PyTree leaves."
+        )
+    return unwrapped
+
+
+__all__ = ["FrozenModel", "trainable_provider"]

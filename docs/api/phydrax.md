@@ -594,7 +594,12 @@ nondimensional values carry the reference-scale fingerprint as their normalizati
 `LeakageSafePartitionPlan` groups by declared case/trajectory/realization/time-block
 identity. `TrainOnlyNormalizer` records the exact training assignments used for its
 statistics. `LearnedClosureBindingPlan` binds predictor ABI, model artifact, component
-ordering, normalizer provenance, and differentiability. Conservative-face deployment
+ordering, normalizer provenance, and differentiability. It is the frozen deployment
+artifact (`ExplicitFreeze`): its predictor never trains through a deployment.
+`as_trainable_binding()` returns a new `TrainableLearnedClosureBinding` whose
+predictor is a PARAMETER child and whose ABI, provenance, and `binding_id` are those
+of the artifact; the spectral drift hook holds its binding, so each keeps its role.
+Conservative-face deployment
 uses the finite-volume closure owner. Spectral drift is explicitly dealiased,
 projected, Hermitian constrained, and energy checked; invalid prediction produces zero
 drift together with a `SpectralFallbackArtifact`, never a hidden fallback.
@@ -628,6 +633,10 @@ drift together with a `SpectralFallbackArtifact`, never a hidden fallback.
 ---
 
 ::: phydrax.closure_data.LearnedClosureBindingPlan
+
+---
+
+::: phydrax.closure_data.TrainableLearnedClosureBinding
 
 ---
 

@@ -10,7 +10,8 @@ qualified rather than being implied by the core API. See
 ## Materials and transport
 
 `EulerSystem` owns an immutable `IdealGasMaterial`. `CompressibleNavierStokesSystem`
-adds an `AbstractTransportClosure`:
+adds an `AbstractTransportClosure`, a neutral `MODEL`-authority slot whose built-in
+closures are fixed analytic laws:
 
 ```python
 import phydrax as phx

@@ -47,6 +47,8 @@ These narrow profiles do not claim a complete moving-engine DNS or arbitrary AMR
 
 `LearnedChemicalTransitionPlan` consumes a units-exact feature schema, model and training rights manifests, a reaction-extent model, and an uncertainty model. Extents are mapped through the exact stoichiometric matrix, so element and charge closure are structural. Unsupported, uncertain, nonfinite, negative, or invariant-failing lanes execute the exact prepared mechanism route and expose the fallback reason. Route transitions invalidate smooth derivatives.
 
+The plan is a frozen deployment artifact (`ExplicitFreeze`): its models never train accidentally. `as_trainable_binding()` returns a new `TrainableLearnedChemicalTransitionPlan` whose extent model is a PARAMETER child, while the uncertainty model, mechanism, feature schema, manifests, `component_id`, and `plan_id` stay fixed.
+
 ## Qualification
 
 `reacting_flow_candidate_profiles()` and `reacting_flow_candidate_campaigns()` create unreleased, leakage-controlled profiles. `tools/reacting_flow_closure_qualification.py` is synthetic numerical evidence only. Governed property, equilibrium, flame, extinction/reignition, wall, DNS, and experimental artifacts are required for scientific release. See [Reacting-flow sources](reacting_flow_sources.md).

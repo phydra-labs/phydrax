@@ -24,6 +24,7 @@ from .._differentiation import (
 from .._fingerprint import canonical_fingerprint
 from .._identity import SemanticProvenance
 from .._model import ValuePort
+from .._model._frozen import trainable_provider
 from .._model._ports import (
     bind_model_ports,
     intrinsic_model_ports,
@@ -33,7 +34,7 @@ from .._model._ports import (
     require_mapped_order,
 )
 from .._strict import StrictModule
-from .._trainable import ExplicitFreeze, NonTrainableState
+from .._trainable import ExplicitFreeze, NonTrainableState, parameter_field
 from ..discretization.finite_volume._closure import ConservativeFaceClosurePlan
 from ..discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ..discretization.spectral._dealias import (
@@ -52,10 +53,15 @@ SpectralEnergyPolicy = Literal["nonincreasing", "diagnostic"]
 StressEnergyPolicy = Literal["signed", "dissipative", "bounded_backscatter"]
 
 
-class LearnedClosureBindingPlan(StrictModule, NonTrainableState):
-    """Artifact- and schema-bound learned predictor with an explicit deployment ABI."""
+class _AbstractLearnedClosureBinding(StrictModule):
+    """Deployment ABI, artifact provenance, and deployments of one closure predictor.
 
-    predictor: Callable = eqx.field(static=True)
+    The frozen artifact (`LearnedClosureBindingPlan`) and its explicit trainable
+    counterpart (`TrainableLearnedClosureBinding`) share this static provenance
+    and the deployment operations; they differ only in the role of `predictor`.
+    """
+
+    predictor: eqx.AbstractVar[Callable]
     deployment_kind: ClosureDeploymentKind = eqx.field(static=True)
     schema_id: str = eqx.field(static=True)
     input_component_names: tuple[str, ...] = eqx.field(static=True)
@@ -64,6 +70,95 @@ class LearnedClosureBindingPlan(StrictModule, NonTrainableState):
     normalizer_provenance_id: str = eqx.field(static=True)
     differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
+
+    def bind_conservative_faces(
+        self,
+        schema: FlowStateSchema,
+        /,
+        *,
+        consistency_tolerance: float = 1e-10,
+    ) -> ConservativeFaceClosurePlan:
+        self._validate_schema(schema)
+        if self.deployment_kind != "conservative_face":
+            raise ValueError(
+                "Only conservative_face bindings can enter a face flux plan."
+            )
+        if self.output_component_names != schema.component_names:
+            raise ValueError(
+                "A conservative face closure must output every conservative component in schema order."
+            )
+        return ConservativeFaceClosurePlan(
+            self.predictor,
+            closure_id=self.binding_id,
+            consistency_tolerance=consistency_tolerance,
+            differentiability=self.differentiability,
+        )
+
+    def bind_spectral_drift(
+        self,
+        schema: FlowStateSchema,
+        projector: PeriodicLerayProjector,
+        hermitian_coordinates: HermitianSpectralCoordinates,
+        dealiasing: PreparedDealiasingPlan,
+        /,
+        *,
+        energy_policy: SpectralEnergyPolicy = "nonincreasing",
+        evidence_tolerance: float = 1e-10,
+    ) -> PreparedSpectralDriftHook:
+        """Deploy the predictor as a spectral drift hook holding this binding.
+
+        The hook holds the binding as its child, so the predictor keeps this
+        binding's role: FIXED for the frozen artifact, PARAMETER for a
+        trainable binding.
+        """
+        self._validate_schema(schema)
+        if self.deployment_kind != "spectral_drift":
+            raise ValueError("Only spectral_drift bindings can enter a spectral hook.")
+        if self.output_component_names != schema.velocity_names:
+            raise ValueError(
+                "A spectral drift binding must output the declared velocity components in order."
+            )
+        return PreparedSpectralDriftHook(
+            self,
+            projector,
+            hermitian_coordinates,
+            dealiasing,
+            energy_policy=energy_policy,
+            evidence_tolerance=evidence_tolerance,
+        )
+
+    def _validate_schema(self, schema: FlowStateSchema) -> None:
+        if not isinstance(schema, FlowStateSchema):
+            raise TypeError("schema must be a FlowStateSchema.")
+        if schema.schema_id != self.schema_id:
+            raise ValueError(
+                "Learned closure binding schema identity does not match deployment."
+            )
+        if any(
+            value not in schema.component_names for value in self.input_component_names
+        ):
+            raise ValueError(
+                "Learned closure input components are absent from the schema."
+            )
+        if any(
+            value not in schema.component_names for value in self.output_component_names
+        ):
+            raise ValueError(
+                "Learned closure output components are absent from the schema."
+            )
+
+
+class LearnedClosureBindingPlan(_AbstractLearnedClosureBinding, ExplicitFreeze):
+    """Artifact- and schema-bound learned predictor with an explicit deployment ABI.
+
+    The binding is the frozen deployment artifact: as an `ExplicitFreeze`
+    holder its predictor is FIXED wherever the binding or one of its
+    deployments is held, so training never updates it accidentally.
+    `as_trainable_binding` is the explicit operation that returns a new
+    trainable binding.
+    """
+
+    predictor: Callable
 
     def __init__(
         self,
@@ -143,76 +238,40 @@ class LearnedClosureBindingPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def bind_conservative_faces(
-        self,
-        schema: FlowStateSchema,
-        /,
-        *,
-        consistency_tolerance: float = 1e-10,
-    ) -> ConservativeFaceClosurePlan:
-        self._validate_schema(schema)
-        if self.deployment_kind != "conservative_face":
-            raise ValueError(
-                "Only conservative_face bindings can enter a face flux plan."
-            )
-        if self.output_component_names != schema.component_names:
-            raise ValueError(
-                "A conservative face closure must output every conservative component in schema order."
-            )
-        return ConservativeFaceClosurePlan(
-            self.predictor,
-            closure_id=self.binding_id,
-            consistency_tolerance=consistency_tolerance,
-            differentiability=self.differentiability,
-        )
+    def as_trainable_binding(self, /) -> TrainableLearnedClosureBinding:
+        """Return a new binding whose predictor is a trainable PARAMETER child.
 
-    def bind_spectral_drift(
-        self,
-        schema: FlowStateSchema,
-        projector: PeriodicLerayProjector,
-        hermitian_coordinates: HermitianSpectralCoordinates,
-        dealiasing: PreparedDealiasingPlan,
-        /,
-        *,
-        energy_policy: SpectralEnergyPolicy = "nonincreasing",
-        evidence_tolerance: float = 1e-10,
-    ) -> PreparedSpectralDriftHook:
-        self._validate_schema(schema)
-        if self.deployment_kind != "spectral_drift":
-            raise ValueError("Only spectral_drift bindings can enter a spectral hook.")
-        if self.output_component_names != schema.velocity_names:
-            raise ValueError(
-                "A spectral drift binding must output the declared velocity components in order."
-            )
-        return PreparedSpectralDriftHook(
-            self.predictor,
-            projector,
-            hermitian_coordinates,
-            dealiasing,
-            binding_id=self.binding_id,
-            energy_policy=energy_policy,
-            evidence_tolerance=evidence_tolerance,
-        )
+        The deployment ABI and the schema, artifact, and normalizer provenance
+        (and so `binding_id`) are kept; this frozen artifact is not modified. A
+        `FrozenModel` predictor is unwrapped to its trainable model. Raises
+        `ValueError` when the predictor holds no trainable array.
+        """
+        return TrainableLearnedClosureBinding(self.predictor, self)
 
-    def _validate_schema(self, schema: FlowStateSchema) -> None:
-        if not isinstance(schema, FlowStateSchema):
-            raise TypeError("schema must be a FlowStateSchema.")
-        if schema.schema_id != self.schema_id:
-            raise ValueError(
-                "Learned closure binding schema identity does not match deployment."
-            )
-        if any(
-            value not in schema.component_names for value in self.input_component_names
-        ):
-            raise ValueError(
-                "Learned closure input components are absent from the schema."
-            )
-        if any(
-            value not in schema.component_names for value in self.output_component_names
-        ):
-            raise ValueError(
-                "Learned closure output components are absent from the schema."
-            )
+
+class TrainableLearnedClosureBinding(_AbstractLearnedClosureBinding):
+    """Explicit trainable counterpart of a frozen `LearnedClosureBindingPlan`.
+
+    Created by `LearnedClosureBindingPlan.as_trainable_binding`. The predictor
+    is a PARAMETER child, so it trains through every deployment holding this
+    binding; the deployment ABI and artifact provenance (`binding_id`) stay
+    those of the source artifact.
+    """
+
+    predictor: Callable = parameter_field()
+
+    def __init__(self, predictor: Callable, source: LearnedClosureBindingPlan, /):
+        if not isinstance(source, LearnedClosureBindingPlan):
+            raise TypeError("source must be a LearnedClosureBindingPlan.")
+        self.predictor = trainable_provider(predictor)
+        self.deployment_kind = source.deployment_kind
+        self.schema_id = source.schema_id
+        self.input_component_names = source.input_component_names
+        self.output_component_names = source.output_component_names
+        self.model_artifact_id = source.model_artifact_id
+        self.normalizer_provenance_id = source.normalizer_provenance_id
+        self.differentiability = source.differentiability
+        self.binding_id = source.binding_id
 
 
 class LearnedStressFeatureSchema(StrictModule, NonTrainableState):
@@ -1093,10 +1152,15 @@ class SpectralDriftResult(StrictModule, NonTrainableState):
         self.fallback = fallback
 
 
-class PreparedSpectralDriftHook(StrictModule, NonTrainableState):
-    """Dealiased, solenoidal, Hermitian learned drift with energy evidence."""
+class PreparedSpectralDriftHook(StrictModule):
+    """Dealiased, solenoidal, Hermitian learned drift with energy evidence.
 
-    predictor: Callable = eqx.field(static=True)
+    The hook holds its closure `binding` as a child and is otherwise neutral:
+    the predictor of a frozen `LearnedClosureBindingPlan` stays FIXED, and the
+    predictor of a `TrainableLearnedClosureBinding` trains through the hook.
+    """
+
+    binding: _AbstractLearnedClosureBinding
     projector: PeriodicLerayProjector
     hermitian_coordinates: HermitianSpectralCoordinates
     dealiasing: PreparedDealiasingPlan
@@ -1107,18 +1171,20 @@ class PreparedSpectralDriftHook(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        predictor: Callable,
+        binding: LearnedClosureBindingPlan | TrainableLearnedClosureBinding,
         projector: PeriodicLerayProjector,
         hermitian_coordinates: HermitianSpectralCoordinates,
         dealiasing: PreparedDealiasingPlan,
         /,
         *,
-        binding_id: str,
         energy_policy: SpectralEnergyPolicy,
         evidence_tolerance: float,
     ):
-        if not callable(predictor):
-            raise TypeError("predictor must be callable.")
+        if not isinstance(binding, _AbstractLearnedClosureBinding):
+            raise TypeError(
+                "binding must be a LearnedClosureBindingPlan or "
+                "TrainableLearnedClosureBinding."
+            )
         if not isinstance(projector, PeriodicLerayProjector):
             raise TypeError("projector must be a PeriodicLerayProjector.")
         if not isinstance(hermitian_coordinates, HermitianSpectralCoordinates):
@@ -1130,12 +1196,10 @@ class PreparedSpectralDriftHook(StrictModule, NonTrainableState):
                 "Oversampling dealiasing cannot serve as a learned spectral drift "
                 "output filter because its filter action is identity."
             )
-        binding = str(binding_id).strip()
         policy = str(energy_policy).strip()
         tolerance = float(evidence_tolerance)
         if (
-            not binding
-            or policy not in ("nonincreasing", "diagnostic")
+            policy not in ("nonincreasing", "diagnostic")
             or not np.isfinite(tolerance)
             or tolerance < 0.0
             or projector.state_shape != hermitian_coordinates.state_shape
@@ -1144,17 +1208,17 @@ class PreparedSpectralDriftHook(StrictModule, NonTrainableState):
             != projector.discretization.prepared_id
         ):
             raise ValueError("Spectral drift hook contracts are incompatible.")
-        self.predictor = predictor
+        self.binding = binding
         self.projector = projector
         self.hermitian_coordinates = hermitian_coordinates
         self.dealiasing = dealiasing
-        self.binding_id = binding
+        self.binding_id = binding.binding_id
         self.energy_policy = policy
         self.evidence_tolerance = tolerance
         self.hook_id = canonical_fingerprint(
             {
                 "kind": "prepared-spectral-drift-hook",
-                "binding": binding,
+                "binding": self.binding_id,
                 "projector": projector.projector_id,
                 "hermitian_coordinates": hermitian_coordinates.coordinate_id,
                 "dealiasing": dealiasing.prepared_id,
@@ -1175,7 +1239,7 @@ class PreparedSpectralDriftHook(StrictModule, NonTrainableState):
             | (input_hermitian > self.evidence_tolerance),
             "Spectral closure input violates finiteness, projection, or Hermitian contracts.",
         )
-        raw = jnp.asarray(self.predictor(value, args))
+        raw = jnp.asarray(self.binding.predictor(value, args))
         if raw.shape != value.shape:
             raise ValueError("Spectral closure predictor output must match state shape.")
         if not jnp.issubdtype(raw.dtype, jnp.complexfloating):
@@ -1261,4 +1325,5 @@ __all__ = [
     "SpectralEnergyPolicy",
     "SpectralFallbackArtifact",
     "StressEnergyPolicy",
+    "TrainableLearnedClosureBinding",
 ]

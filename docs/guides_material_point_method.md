@@ -55,6 +55,8 @@ impulse and work remain explicit diagnostics. It does not claim collision/contac
 
 `AbstractMPMConstitutivePlan` returns first-Piola stress, reference-volume energy,
 candidate history, admissibility, and a conservative current-state wave-speed bound.
+It is a neutral `MODEL`-authority slot: built-in plans are fixed analytic
+implementations, and a learned plan keeps its model trainable.
 The baseline `NeoHookeanMPMConstitutivePlan` is stateless and supports:
 
 - one-dimensional mechanics;
