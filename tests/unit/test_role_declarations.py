@@ -45,6 +45,10 @@ _SLOT_BASES = (
     ("phydrax.discretization.finite_volume._closure", "ConservativeFaceClosurePlan"),
     ("phydrax.solver._fixed_step", "AbstractAcceptedStepTransform"),
     ("phydrax._numerics._ssp_runge_kutta", "AbstractSSPRKStageTransform"),
+    (
+        "phydrax.dynamics.identification._neural_transition",
+        "AbstractDiscreteModelRolloutTransition",
+    ),
     ("phydrax.linalg._preconditioners", "AbstractPreconditioner"),
     ("phydrax.nonlinear._updates", "AbstractNonlinearUpdate"),
     ("phydrax.equations._transport_closures", "AbstractTransportClosure"),

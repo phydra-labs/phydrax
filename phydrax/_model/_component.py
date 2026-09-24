@@ -566,6 +566,19 @@ class ModelExecutionContract(StrictModule, NonTrainableState):
             sorted({(capability, kind) for capability, _, kind in self.certificates})
         )
 
+    @property
+    def evidence_model_id(self) -> str:
+        """Identity naming this model in admissibility evidence.
+
+        The declared semantic provenance ID, else a marked fingerprint of this
+        contract so undeclared provenance is never mistaken for a declared one.
+        """
+        if self.semantic_provenance is not None:
+            return self.semantic_provenance.semantic_id
+        return canonical_fingerprint(
+            {"kind": "undeclared-model-provenance", "model_contract": self.contract_id}
+        )
+
 
 def _requirement_key(requirement: CapabilityRequirement, /) -> tuple[Any, ...]:
     return (

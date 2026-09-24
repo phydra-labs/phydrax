@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "a3802e00740c82def086badf9d0329672e8a277f9c4edf32c871931ed538d816",
+  "manifest_id": "d3928e503c8b1b9b3239af3b7a9506a64af7e8dfbf92aeacfb8eda9e17f51770",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -29607,6 +29607,8 @@
       "phydrax.solver.LaplaceCapacitanceResult3D",
       "phydrax.solver.LaplaceCapacitanceSensitivityEvidence3D",
       "phydrax.solver.LatticeBoltzmannFixedStepMethod",
+      "phydrax.solver.LearnedStepCorrection",
+      "phydrax.solver.LearnedStepCorrectionReason",
       "phydrax.solver.LeastSquaresBSDEDiagnostics",
       "phydrax.solver.LeastSquaresBSDEResult",
       "phydrax.solver.LevySDEProblem",

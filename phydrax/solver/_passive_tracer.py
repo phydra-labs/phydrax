@@ -121,6 +121,7 @@ class MACPassiveTracerFixedStepMethod(AbstractFixedStepMethod):
             + jnp.asarray(self.transport.work_count, dtype=base.work.dtype),
             transform_applied=base.transform_applied,
             transform_correction_norm=base.transform_correction_norm,
+            transform_admissibility=base.transform_admissibility,
         )
 
 
