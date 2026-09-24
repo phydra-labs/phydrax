@@ -78,7 +78,9 @@ candidate = model.update(F, model.initial_state(), Q, 0.1)
 `model.free_energy(F, state)` and `model.first_piola(F, state)` expose the fixed
 internal-state energy/stress relation. Differentiating `update(...).first_piola`
 uses the same `LocalImplicitMaterial` custom-root contract as the primal update;
-the root is not recomputed through a second derivative path.
+the root is not recomputed through a second derivative path. The crystal slip law
+is a fixed analytic implementation of `AbstractLocalImplicitMaterial`; a learned
+slip law implements the same slot as `LearnedLocalImplicitMaterial`.
 
 ## Block-exact finite-element routing
 

@@ -454,7 +454,10 @@ model ports (for example a `phx.ml.fit` model trained with
 the mapping is required exactly for such predictors, and the resulting
 `PortBindingEvidence` is `PreparedLearnedStressBinding.port_binding`.
 `LearnedClosureBindingPlan` face-correction and spectral-drift ABIs declare no
-owner value ports and reject port-declaring predictors.
+owner value ports and reject port-declaring predictors. The plan is a frozen
+deployment artifact; `as_trainable_binding()` explicitly returns a new
+`TrainableLearnedClosureBinding` whose predictor trains, with the artifact's ABI,
+schema, normalizer provenance, and `binding_id` unchanged.
 
 `PeriodicLearnedStressPlan` builds the fixed nine-component velocity-gradient ABI,
 evaluates the bound stress, and owns Fourier divergence, Leray projection, momentum,

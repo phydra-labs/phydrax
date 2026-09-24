@@ -97,7 +97,9 @@ from ._mass_inverse import (
     PreparedDiscontinuousMassInverse,
 )
 from ._materials import (
+    AbstractLocalImplicitMaterial,
     FiniteElementAuxiliaryEvaluation,
+    LearnedLocalImplicitMaterial,
     LocalImplicitDiagnostics,
     LocalImplicitMaterial,
 )
@@ -306,6 +308,8 @@ __all__ = [
     "KernelBinding",
     "KernelTable",
     "LocalImplicitMaterial",
+    "AbstractLocalImplicitMaterial",
+    "LearnedLocalImplicitMaterial",
     "FacetJet",
     "FieldJet",
     "FieldSlot",

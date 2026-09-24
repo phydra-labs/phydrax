@@ -2,9 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax._admissibility import AdmissibilityReason, DOMAIN_REASON_SHIFT
@@ -206,3 +208,79 @@ def test_invalid_derivative_lanes_are_poisoned_without_changing_primals():
     )(_LANES)
     assert bool(jnp.all(jnp.isfinite(jacobian[0])))
     assert bool(jnp.all(jnp.isnan(jacobian[1])))
+
+
+class _ConstantExtent(phx.AbstractArrayModel):
+    extent: jax.Array
+    in_size: int = eqx.field(static=True)
+    out_size: int = eqx.field(static=True)
+
+    def __init__(self, extent):
+        self.extent = jnp.asarray(extent)
+        self.in_size = 5
+        self.out_size = 1
+
+    def __call__(self, features, /, *, key=None):
+        return self.extent * jnp.ones(features.shape[:-1] + (1,))
+
+
+def _artifact(model=None):
+    return phx.applications.reacting_flow.LearnedChemicalTransitionPlan(
+        _mechanism(),
+        _schema(),
+        phx.uq.FrozenModel(_ConstantExtent(0.01)) if model is None else model,
+        _uncertainty,
+        _manifest("model"),
+        (_manifest("training"),),
+        model_id="extent-model",
+        maximum_uncertainty=0.1,
+    )
+
+
+def _target_loss(plan):
+    result = plan.advance(jnp.asarray((0.9, 0.1)), 1000.0, 101325.0, 0.01)
+    return jnp.sum((result.accepted_concentrations - jnp.asarray((0.87, 0.13))) ** 2)
+
+
+def test_frozen_chemistry_artifact_exposes_no_parameters():
+    artifact = _artifact()
+    resolution = phx.require_parameter_roles(artifact, context="chemistry artifact")
+
+    assert phx.ArrayRole.PARAMETER not in resolution.roles
+    assert not jax.tree_util.tree_leaves(phx.partition_parameters(artifact)[0])
+
+
+def test_explicit_trainable_chemistry_binding_trains_without_touching_the_artifact():
+    artifact = _artifact()
+    trainable = artifact.as_trainable_binding()
+
+    assert trainable.plan_id == artifact.plan_id
+    assert trainable.component_id == artifact.component_id
+    (parameter,) = jax.tree_util.tree_leaves(phx.partition_parameters(trainable)[0])
+    assert float(parameter) == 0.01
+
+    @eqx.filter_jit
+    def step(plan):
+        parameters, model_state, fixed = phx.partition_parameters(plan)
+        gradient = jax.grad(
+            lambda values: _target_loss(
+                phx.combine_parameters(values, model_state, fixed)
+            )
+        )(parameters)
+        updated = jax.tree_util.tree_map(
+            lambda value, slope: value - 0.1 * slope, parameters, gradient
+        )
+        return phx.combine_parameters(updated, model_state, fixed)
+
+    trained = step(step(trainable))
+    assert float(_target_loss(trained)) < float(_target_loss(trainable))
+    assert float(artifact.model.model.extent) == 0.01
+    assert float(trained.model.extent) > 0.01
+
+
+def test_trainable_binding_requires_visible_model_arrays():
+    def model(features):
+        return 0.01 * jnp.ones(features.shape[:-1] + (1,))
+
+    with pytest.raises(ValueError, match="no visible inexact array"):
+        _artifact(model).as_trainable_binding()

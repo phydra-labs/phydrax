@@ -21,6 +21,29 @@
   evidence of fixed-step results, rollouts, and solutions. It never retries,
   never uses the coarse residual as an accuracy certificate, and trains
   through checkpointed fixed-step rollouts with frozen admission decisions.
+- Added `MODEL`-authority constitutive slots `AbstractConstitutiveModel` and
+  `phydrax.equations.fem.AbstractLocalImplicitMaterial`. `ConstitutiveModel` and
+  `LocalImplicitMaterial` are their fixed analytic implementations;
+  `LearnedConstitutiveModel` and `LearnedLocalImplicitMaterial` hold a learned
+  model child bound to the slot with unit-carrying ports, admit only models with
+  classical `C^1` regularity, deterministic randomness, and a declared precision
+  contract, return per-site admissibility headers, and poison derivatives
+  (including the exact-JVP consistent tangent) at invalid sites.
+  `MaterialIntegrationPlan` accepts any constitutive slot implementation and is
+  neutral, so learned laws train through implicit mechanics.
+  `AbstractTransportClosure`, `AbstractMPMConstitutivePlan`, and
+  `AbstractImplicitMPMConstitutivePlan` are neutral `MODEL` slots.
+- Frozen learned providers gain an explicit trainable counterpart:
+  `LearnedClosureBindingPlan.as_trainable_binding()` returns a
+  `TrainableLearnedClosureBinding`, and
+  `LearnedChemicalTransitionPlan.as_trainable_binding()` returns a
+  `TrainableLearnedChemicalTransitionPlan`; both keep the artifact's ABI,
+  schema, normalizer, manifests, and identities, and never modify the artifact.
+  The artifacts are now `ExplicitFreeze` holders. `PreparedSpectralDriftHook`
+  holds its binding (constructor takes the binding instead of a predictor and
+  `binding_id`), and a conservative-face `ArbitraryNormalFaceClosurePlan` holds
+  its binding as the correction child, so in either deployment a frozen
+  predictor stays fixed and a trainable one trains.
 - Added model execution contracts (`ModelExecutionContract`,
   `ExecutionCapabilities`, `ComponentPrecisionContract`, `RandomnessContract`)
   separate from bound component contracts (`AbstractComponentSlot`,

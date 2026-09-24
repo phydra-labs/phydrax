@@ -53,6 +53,8 @@ _SLOT_BASES = (
     ("phydrax.nonlinear._updates", "AbstractNonlinearUpdate"),
     ("phydrax.equations._transport_closures", "AbstractTransportClosure"),
     ("phydrax.equations._material_point", "AbstractMPMConstitutivePlan"),
+    ("phydrax.equations._finite_element_material", "AbstractConstitutiveModel"),
+    ("phydrax.equations.fem._materials", "AbstractLocalImplicitMaterial"),
     ("phydrax.control._parameterization", "AbstractControlParameterization"),
     ("phydrax.stochastic._state_space", "AbstractTransitionKernel"),
     ("phydrax.stochastic._state_space", "AbstractObservationModel"),
@@ -115,6 +117,7 @@ _REQUIRED_NEUTRAL = (
         "ModelCollectiveVariableProgram",
     ),
     ("phydrax.stochastic._state_space", "GaussianObservationModel"),
+    ("phydrax.closure_data._binding", "PreparedSpectralDriftHook"),
 )
 
 

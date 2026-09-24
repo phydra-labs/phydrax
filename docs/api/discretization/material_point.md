@@ -9,7 +9,15 @@
 
 ## Problem declaration and compilation
 
+`AbstractMPMConstitutivePlan` and `AbstractImplicitMPMConstitutivePlan` are neutral
+`MODEL`-authority slots: built-in analytic plans are FIXED, wrapper plans hold
+their base plan as a child, and a learned plan keeps its model trainable.
+
 ::: phydrax.equations.AbstractMPMConstitutivePlan
+
+---
+
+::: phydrax.equations.AbstractImplicitMPMConstitutivePlan
 
 ---
 

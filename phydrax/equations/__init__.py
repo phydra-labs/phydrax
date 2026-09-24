@@ -236,8 +236,10 @@ from ._fd_compile import (
 )
 from ._finite_element_functional import FiniteElementFunctional
 from ._finite_element_material import (
+    AbstractConstitutiveModel,
     ConstitutiveModel,
     ConstitutiveResponse,
+    LearnedConstitutiveModel,
     MaterialCheckpointPayload,
     MaterialIntegrationPlan,
     MaterialSiteId,
@@ -1131,7 +1133,9 @@ __all__ = [
     "CompiledSpectralDynamics",
     "CompiledSpectralResidual",
     "CompiledFiniteDifferenceDynamics",
+    "AbstractConstitutiveModel",
     "ConstitutiveModel",
+    "LearnedConstitutiveModel",
     "AbstractMPMConstitutivePlan",
     "AbstractImplicitMPMConstitutivePlan",
     "MPMConstitutiveResponse",
