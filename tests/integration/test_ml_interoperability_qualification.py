@@ -677,3 +677,70 @@ def test_g16_frozen_realization_reproduces_primal_and_derivative():
         _NoisyResponse(0.5), jr.key(8), realization_id="noise-draw-8"
     )
     assert not jnp.allclose(_implicit_state(redrawn, target).state, first.state)
+
+
+# G23: field validity -------------------------------------------------------------
+
+
+def _kinked_finite_element_view():
+    """P1 field u = max(x - y, 0) on the unit square split along x = y."""
+    mesh = phx.discretization.CellMesh(
+        jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+        (
+            phx.discretization.CellBlock(
+                "cells", "triangle", jnp.asarray(((0, 1, 2), (0, 2, 3)))
+            ),
+        ),
+    )
+    discretization = phx.discretization.FiniteElementPlan(
+        mesh,
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 1)
+        ),
+    ).prepare()
+    reconstruction = phx.discretization.fem.prepare_finite_element_field_reconstruction(
+        discretization, "u"
+    )
+    nodes = discretization.dof_maps[0].dof_coordinates
+    coefficients = jnp.maximum(nodes[:, 0] - nodes[:, 1], 0.0)
+    domain = phx.domain.GeometryDomain(reconstruction.support_geometry, label="x")
+    return phx.discretization.DiscreteFieldFunctionView(
+        reconstruction, coefficients, domain, variable="x", field_name="u"
+    )
+
+
+def test_g23_c0_facet_gradient_refuses_without_a_trace_side():
+    view = _kinked_finite_element_view()
+    gradient = phx.operators.grad(view.as_domain_function(), var="x")
+    facet = jnp.asarray((0.5, 0.5))
+
+    assert jnp.allclose(view.as_domain_function().func(facet), 0.0)
+    with pytest.raises(ValueError, match="SIDE_REQUIRED"):
+        gradient.func(facet)
+    with pytest.raises(Exception, match="invalid"):
+        eqx.filter_jit(gradient.func)(facet).block_until_ready()
+    # The piecewise-linear regularity makes second derivatives degenerate; they are
+    # refused instead of differentiating the discontinuous gradient generically.
+    with pytest.raises(ValueError, match="regularity-degenerate"):
+        phx.operators.laplacian(view.as_domain_function(), var="x")
+
+
+def test_g23_explicit_trace_sides_define_facet_gradients():
+    view = _kinked_finite_element_view()
+    sites = jnp.asarray(((0.5, 0.5), (0.2, 0.2)))
+    normal = jnp.asarray((1.0, -1.0)) / jnp.sqrt(2.0)
+
+    owner = phx.operators.grad(
+        view.trace(sites, side="owner", cell_ids=jnp.asarray((0, 0))), var="x"
+    )
+    neighbor = phx.operators.grad(
+        view.trace(sites, side="neighbor", cell_ids=jnp.asarray((1, 1))), var="x"
+    )
+    average = phx.operators.grad(view.trace(sites, side="average"), var="x")
+    jump = jax.vmap(owner.func)(sites) @ normal - jax.vmap(neighbor.func)(sites) @ normal
+
+    assert jnp.allclose(jump, jnp.sqrt(2.0))
+    assert jnp.allclose(jax.vmap(average.func)(sites), jnp.asarray((0.5, -0.5)))
+    assert jnp.allclose(
+        eqx.filter_jit(jax.vmap(owner.func))(sites), jnp.asarray(((1.0, -1.0),) * 2)
+    )

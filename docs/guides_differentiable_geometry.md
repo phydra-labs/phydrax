@@ -145,6 +145,65 @@ accepted concrete realization. Ordinary dense-grid evidence is sampled/local;
 it is not a global topology theorem. A `CertifiedImplicitTopology` is required
 for a certified-topology claim.
 
+## Neural implicit regions
+
+`NeuralImplicitRegion(network, bounds, ...)` represents the region
+`{x in bounds : phi(x; w) <= 0}` of a scalar network `phi`, negative inside, over
+explicit axis-aligned bounds. Every weight array of the network becomes a design
+parameter `ParameterId(feature_id, path)` of the compiled `DesignState`; the kernel
+keeps only static network structure and rebuilds the network from the state.
+Weights therefore train only through the geometry design-state route
+(`with_parameters`, `with_state`, or an objective over the state). A
+`GeometryDomain` wrapping the compiled geometry stays a fixed domain.
+
+Construction certifies the current weights host-side and refuses (`ValueError`)
+without each certificate:
+
+1. a Lipschitz upper bound, constructed for a plain `MLP` as the product of layer
+   Frobenius norms and activation Lipschitz constants (`CONSTRUCTED`), or declared
+   through `lipschitz_upper_bound` (`DECLARED`) and checked against sampled
+   gradient norms;
+2. an `evaluation_error` bound on evaluated field values;
+3. sign margins: `interior_points` satisfy `phi <= -(sign_margin + error)`, while
+   `exterior_points` and the lattice nodes on the bounds satisfy
+   `phi >= sign_margin + error`;
+4. a topology identity: the region's Betti numbers from `discover_implicit_curve`
+   or `discover_implicit_surface` on a uniform `discovery_resolution` lattice.
+
+The `FieldCertificate` carries the Lipschitz bound, evaluation error, and topology
+identity. `BOUNDARY_NORMAL` is advertised only for networks whose declared
+regularity is at least C1 (for example `tanh` or `sin`, not ReLU) when
+`gradient_margin` holds on the discovered zero set. Measures, boundary sampling,
+and closest points are not advertised.
+
+```python
+# `network`: a pretrained phx.nn.models.MLP(in_size=2, out_size="scalar", ...)
+# whose zero set bounds the body.
+region = phx.geometry.NeuralImplicitRegion(
+    network,
+    [[-1.5, -1.5], [1.5, 1.5]],
+    interior_points=[[0.0, 0.0]],
+    exterior_points=[[1.4, 1.4]],
+    sign_margin=0.05,
+    evaluation_error=1.0e-12,
+    gradient_margin=0.1,
+    discovery_resolution=33,
+    feature_id="neural-body",
+)
+geometry = region.compile()
+domain = phx.domain.GeometryDomain(geometry)
+
+trained = geometry.with_parameters({region.parameter_ids[0]: updated_weight})
+certified = region.recertify(trained.state).compile()
+```
+
+`CompiledGeometry.validity(state)` rechecks every sampled margin at any state but
+stays inconclusive away from the certified weights, because the topology identity
+is established only by discovery. `region.recertify(state)` reruns every check at
+the trained weights and rejects the state when a margin fails or the discovered
+`ImplicitRegionTopology` differs, for example when a disk splits in two or
+vanishes.
+
 ## Finite-element mesh motion
 
 `FiniteElementMeshMotionPlan` maps a fixed boundary-coordinate provider into a

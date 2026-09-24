@@ -108,6 +108,10 @@ from ._eigen_verification import (
     SpectralEigenResolutionPolicy,
     SpectralEigenResolutionReport,
 )
+from ._field_view import (
+    prepare_spectral_field_reconstruction,
+    SpectralFieldReconstructionKernel,
+)
 from ._fourier_shells import (
     DCPolicy,
     FinalEdgePolicy,
@@ -334,6 +338,8 @@ __all__ = [
     "TauSolveResult",
     "TensorSpectralDiscretization",
     "TensorSpectralPlan",
+    "SpectralFieldReconstructionKernel",
+    "prepare_spectral_field_reconstruction",
     "spectral_derivative_operator",
     "spectral_hilbert_operator",
     "spectral_laplacian_operator",

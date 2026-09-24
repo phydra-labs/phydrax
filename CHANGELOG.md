@@ -3,6 +3,30 @@
 ## Unreleased
 
 ### Added
+- Added discrete field views: `PreparedFieldReconstruction` owns exact
+  coordinate evaluation, support geometry, value port, regularity, evidenced
+  maximum derivative order, trace policy, pointwise query evidence, and the
+  exact coefficient transpose; `DiscreteFieldFunctionView` binds coefficients to
+  an explicit equivalent `GeometryDomain` and exposes `as_domain_function()`
+  (an exact derivative rule that refuses unsupported orders and invalid queries)
+  and side-bound `trace(points, side=..., cell_ids=...)`. Finite-element fields
+  are evaluated from native tabulation and DOF routes at arbitrary points located
+  by `PreparedSimplicialCellLocator` (which now reports every containing cell and
+  accepts cell masks) or an explicit `AbstractCellLocator`; `C^0` facet
+  gradients require an owner, neighbor, or average trace. Sums with other fields
+  require matching value ports (units, frame, axes). FE point interpolation moved
+  to its own module and gained arbitrary component shapes and exact physical
+  derivatives.
+- Added `TensorSpectralDiscretization.evaluate` and `derivative_at` for
+  arbitrary-point canonical synthesis (prepared normalization, sign, and mode
+  ordering; periodic wrapping; out-of-box queries fail) and
+  `prepare_spectral_field_reconstruction` for smooth spectral field views.
+- Added `NeuralImplicitRegion`: a certified neural implicit region whose weights
+  live in the geometry `DesignState`, with explicit bounds, negative-inside sign
+  margins, constructed or declared Lipschitz and evaluation-error bounds,
+  discovered topology identity (`ImplicitRegionTopology`), normals only for
+  evidenced `C^1` networks with gradient margins, and `recertify` that rejects
+  topology changes. Geometry domains remain FIXED.
 - Added model execution contracts (`ModelExecutionContract`,
   `ExecutionCapabilities`, `ComponentPrecisionContract`, `RandomnessContract`)
   separate from bound component contracts (`AbstractComponentSlot`,
@@ -39,6 +63,14 @@
   and bounded rendering/video adapters.
 
 ### Changed
+- `FieldCertificate` owns the Lipschitz upper bound, evaluation-error bound, and
+  topology identity; `ExactSDFEnclosureCertificate` carries only its field
+  certificate and requires those bounds on it.
+- `PreparedFiniteElementPointInterpolation` and
+  `prepare_finite_element_point_interpolation` live in the FE point-evaluation
+  module; rigid attachments check their nodal vector-field layout themselves.
+  `InterpolationTransposeEvidence` is exported from `phydrax.discretization`
+  only.
 - Models with intrinsic ports require an explicit `PortMapping` at
   `Domain.Model`, model systems, operator context/execution plans, geophysical
   bindings, and learned-stress bindings. Operator output name maps are replaced

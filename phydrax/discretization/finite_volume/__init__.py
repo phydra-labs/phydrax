@@ -113,6 +113,11 @@ from ._entropy import (
     FiniteVolumeEntropyProductionDiagnostics,
     integrated_finite_volume_relative_entropy,
 )
+from ._field_view import (
+    prepare_finite_volume_field_reconstruction,
+    StructuredFiniteVolumeFieldReconstructionKernel,
+    UnstructuredFiniteVolumeFieldReconstructionKernel,
+)
 from ._geometry_protocol import (
     ALEGeometryConsistencyPolicy,
     ExplicitFaceBlockGeometry,
@@ -626,6 +631,9 @@ __all__ = [
     "PreparedUnstructuredWENOZReconstruction",
     "UnstructuredWENOLimiter",
     "UnstructuredWENOZReconstructionPlan",
+    "StructuredFiniteVolumeFieldReconstructionKernel",
+    "UnstructuredFiniteVolumeFieldReconstructionKernel",
+    "prepare_finite_volume_field_reconstruction",
     "PreparedTriangleFiniteVolumeDynamics",
     "TriangleFiniteVolumeBoundarySet",
     "TriangleFiniteVolumeDiagnostics",

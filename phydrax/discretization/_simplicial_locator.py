@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import abc
 from enum import IntEnum
 
 import equinox as eqx
@@ -18,7 +19,7 @@ from .._bvh import build_packed_bvh, PackedBVH, point_select_leaf_items
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from .fem import PreparedFiniteElementCellMap
+from .fem._cell_map import PreparedFiniteElementCellMap
 
 
 class CellLocationStatus(IntEnum):
@@ -77,6 +78,15 @@ class SimplicialLocationPolicy(StrictModule, NonTrainableState):
 
 
 class CellLocationResult(StrictModule):
+    """Located cell, reference coordinates, and every containing candidate.
+
+    `cell_ids` is the lowest-index containing cell (`-1` when none).
+    `candidate_cells` lists each bounded candidate cell that contains the point
+    (`-1` otherwise) with its `candidate_reference` coordinates, so consumers
+    resolving non-smooth loci see every containing cell rather than one.
+    `candidate_count` is the number of containing candidates.
+    """
+
     cell_ids: Array
     reference_coordinates: Array
     barycentric: Array
@@ -88,6 +98,8 @@ class CellLocationResult(StrictModule):
     candidate_count: Array
     status: Array
     successful: Array
+    candidate_cells: Array
+    candidate_reference: Array
     locator_id: str = eqx.field(static=True)
 
 
@@ -100,7 +112,27 @@ class SegmentLocationResult(StrictModule):
     locator_id: str = eqx.field(static=True)
 
 
-class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
+class AbstractCellLocator(StrictModule):
+    """Inverse cell map of one prepared FE cell block.
+
+    `locate(points, cell_mask=None)` returns a `CellLocationResult` whose
+    candidates are restricted to cells where `cell_mask` is true. Simplicial
+    blocks use `PreparedSimplicialCellLocator`; other cell kinds require an
+    explicit implementation with the same result contract.
+    """
+
+    cell_map: eqx.AbstractVar[PreparedFiniteElementCellMap]
+    coordinates: eqx.AbstractVar[Array]
+    locator_id: eqx.AbstractVar[str]
+
+    @abc.abstractmethod
+    def locate(
+        self, points: ArrayLike, /, *, cell_mask: ArrayLike | None = None
+    ) -> CellLocationResult:
+        raise NotImplementedError
+
+
+class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
     """Bounded damped-Newton locator over a canonical prepared FE cell map."""
 
     cell_map: PreparedFiniteElementCellMap
@@ -164,10 +196,18 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
     def coordinate_count(self) -> int:
         return self.cell_map.coordinate_count
 
-    def locate(self, points: ArrayLike, /) -> CellLocationResult:
+    def locate(
+        self, points: ArrayLike, /, *, cell_mask: ArrayLike | None = None
+    ) -> CellLocationResult:
         values = jnp.asarray(points, dtype=self.coordinates.dtype)
         if values.ndim != 2 or values.shape[1] != self.cell_map.ambient_dimension:
             raise ValueError("Locator points have incompatible ambient dimension.")
+        if cell_mask is not None:
+            mask = jnp.asarray(cell_mask)
+            if mask.shape != (self.cell_count,) or mask.dtype != jnp.bool_:
+                raise ValueError(
+                    "cell_mask must be a boolean array with one entry per cell."
+                )
         point_count = values.shape[0]
         candidate_capacity = min(self.policy.maximum_candidates, self.cell_count)
         candidates, candidate_valid, search_complete = point_select_leaf_items(
@@ -176,6 +216,10 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
             maximum_candidates=candidate_capacity,
             tolerance=self.policy.reference_tolerance,
         )
+        if cell_mask is not None:
+            candidate_valid = (
+                candidate_valid & mask[jnp.where(candidate_valid, candidates, 0)]
+            )
         reference_dimension = self.dimension
         centroid_seed = jnp.full(
             (reference_dimension,), 1.0 / (reference_dimension + 1), dtype=values.dtype
@@ -309,6 +353,12 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
             ((1.0 - jnp.sum(reference_result, axis=-1))[:, None], reference_result),
             axis=-1,
         )
+        candidate_accepted = jnp.any(accepted, axis=2)
+        candidate_seed = jnp.argmax(accepted, axis=2)
+        candidate_reference = jnp.take_along_axis(
+            reference_all, candidate_seed[:, :, None, None], axis=2
+        )[:, :, 0, :]
+        candidate_cells = jnp.where(candidate_accepted, candidates, -1)
         converged_valid = converged.reshape(
             (point_count, candidate_capacity, seed_count)
         ) & (evaluation.valid & flat_candidate_valid).reshape(
@@ -359,9 +409,11 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
             jnp.where(inside, condition_result, jnp.inf),
             inside,
             seed_choice != 0,
-            jnp.sum(jnp.any(accepted, axis=2), axis=1, dtype=jnp.int32),
+            jnp.sum(candidate_accepted, axis=1, dtype=jnp.int32),
             status,
             inside & finite,
+            candidate_cells,
+            jnp.where(candidate_accepted[:, :, None], candidate_reference, 0.0),
             self.locator_id,
         )
 
@@ -379,6 +431,7 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
 
 
 __all__ = [
+    "AbstractCellLocator",
     "CellLocationResult",
     "CellLocationStatus",
     "PreparedSimplicialCellLocator",

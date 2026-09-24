@@ -86,6 +86,24 @@
 
 ::: phydrax.discretization.PreparedUnstructuredWENOZReconstruction
 
+## Field views
+
+`prepare_finite_volume_field_reconstruction` exposes cell averages (piecewise
+constant, no derivatives), k-exact cell polynomials (exact derivatives up to
+their degree), or WENO-Z reconstructions (branchwise, nonlinear in the cell
+averages) as `PreparedFieldReconstruction`s on structured and unstructured
+finite-volume meshes.
+
+::: phydrax.discretization.prepare_finite_volume_field_reconstruction
+
+---
+
+::: phydrax.discretization.StructuredFiniteVolumeFieldReconstructionKernel
+
+---
+
+::: phydrax.discretization.UnstructuredFiniteVolumeFieldReconstructionKernel
+
 ## Implicit and pressure-correction solvers
 
 ::: phydrax.solver.FiniteVolumeBackwardEulerPlan

@@ -607,6 +607,10 @@ class DomainFunction(StrictModule):
         joined = _join_field_domains(self.domain, other_fn.domain)
         a = self.promote(joined)
         b = other_fn.promote(joined)
+        # Imported here: discretization depends on the domain package.
+        from ..discretization._views import require_compatible_field_composition
+
+        require_compatible_field_composition(a, b, op)
 
         deps = tuple(lbl for lbl in joined.labels if (lbl in a.deps) or (lbl in b.deps))
         idx = {lbl: i for i, lbl in enumerate(deps)}

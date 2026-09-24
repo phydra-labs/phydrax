@@ -73,6 +73,30 @@ def _analysis_from_synthesis(
     return np.asarray(jnp.stack(columns, axis=1))
 
 
+def _legendre_normalizers(count: int, length: ArrayLike, /) -> ArrayLike:
+    """Orthonormal Legendre scaling `sqrt((2k + 1) / length)` on one interval.
+
+    Host lengths give NumPy data for preparation; traced lengths give JAX data
+    for point synthesis, so both share one normalization convention.
+    """
+    degrees = np.arange(count, dtype=np.float64)
+    return ((2.0 * degrees + 1.0) / length) ** 0.5
+
+
+def _sine_derivative(angle: Array, order: int, /) -> Array:
+    match order % 4:
+        case 0:
+            return jnp.sin(angle)
+        case 1:
+            return jnp.cos(angle)
+        case 2:
+            return -jnp.sin(angle)
+        case 3:
+            return -jnp.cos(angle)
+        case _:
+            raise ValueError("Derivative phase must lie in [0, 4).")
+
+
 class SpectralModeLayout(StrictModule, NonTrainableState):
     """Stable one-dimensional spectral modes and storage correspondences."""
 
@@ -429,6 +453,79 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
             )
         scale = jnp.asarray(jnp.pi, dtype=values.dtype) / self.length
         return (1j * scale * values) ** derivative_order
+
+    def evaluate_basis(self, coordinates: ArrayLike, /, *, order: int = 0) -> Array:
+        """Return synthesis rows `d^order phi_k / dx^order` at physical coordinates.
+
+        The result has shape `(points, modes)` in the coefficient dtype and uses
+        the prepared mode ordering, normalization, and sign convention, so
+        `evaluate_basis(nodes) @ c` equals `synthesize(c)` and derivative rows
+        agree with `derivative_multiplier`/`derivative_matrix`. Fourier rows use
+        the prepared mode numbers (the Nyquist mode is `exp(-i pi N (x - a) / L)`
+        for even `N`); sine and cosine odd orders use the dual-parity rows.
+        Coordinates are synthesized as given: callers own support validation.
+        Constrained and rational axes refuse with `ValueError`.
+        """
+        if isinstance(order, bool) or not isinstance(order, (int, np.integer)):
+            raise TypeError("Spectral point-synthesis order must be an int.")
+        derivative_order = int(order)
+        if derivative_order < 0:
+            raise ValueError("Spectral point-synthesis order must be non-negative.")
+        coordinate_dtype = jnp.finfo(jnp.dtype(self.precision.physical_dtype)).dtype
+        points = jnp.asarray(coordinates, dtype=coordinate_dtype)
+        if points.ndim != 1:
+            raise ValueError("Spectral point-synthesis coordinates must be rank one.")
+        coefficient_dtype = jnp.dtype(self.precision.coefficient_dtype)
+        lower = self.domain.lower.astype(points.dtype)
+        upper = self.domain.upper.astype(points.dtype)
+        length = upper - lower
+        offset = (points - lower)[:, None]
+        count = self.mode_count
+        match self.plan:
+            case FourierBasisPlan():
+                numbers = self.modes.mode_numbers.astype(points.dtype)
+                wave = 2.0 * jnp.pi * numbers / length
+                rows = jnp.exp(1j * offset * wave[None, :]) / jnp.sqrt(length)
+                return (
+                    rows * self.derivative_multiplier(derivative_order)[None, :]
+                ).astype(coefficient_dtype)
+            case SineBasisPlan():
+                numbers = self.modes.mode_numbers.astype(points.dtype)
+                wave = jnp.pi * numbers / length
+                # Orthonormal DST-II scales the highest sine mode by 1/sqrt(2).
+                edge = jnp.where(numbers == count, jnp.sqrt(0.5), 1.0)
+                amplitude = jnp.sqrt(2.0 / length) * edge * wave**derivative_order
+                rows = amplitude[None, :] * _sine_derivative(
+                    offset * wave[None, :], derivative_order
+                )
+                return rows.astype(coefficient_dtype)
+            case CosineBasisPlan():
+                numbers = self.modes.mode_numbers.astype(points.dtype)
+                wave = jnp.pi * numbers / length
+                # Orthonormal DCT-I scales the first and last cosine modes by 1/sqrt(2).
+                edge = jnp.where(
+                    (numbers == 0) | (numbers == count - 1), jnp.sqrt(0.5), 1.0
+                )
+                amplitude = jnp.sqrt(2.0 / length) * edge * wave**derivative_order
+                rows = amplitude[None, :] * _sine_derivative(
+                    offset * wave[None, :], derivative_order + 1
+                )
+                return rows.astype(coefficient_dtype)
+            case ChebyshevBasisPlan() | LegendreBasisPlan():
+                reference = (2.0 * points - (lower + upper)) / length
+                rows = standard_vandermonde(self.family, reference, count - 1)
+                if self.family == "legendre":
+                    rows = rows * _legendre_normalizers(count, length)[None, :]
+                rows = rows.astype(coefficient_dtype)
+                for _ in range(derivative_order):
+                    rows = rows @ self.derivative_matrix
+                return rows
+            case _:
+                raise ValueError(
+                    f"Spectral axis {type(self.plan).__name__} ({self.family}) does not "
+                    "expose arbitrary-point synthesis; constrained and rational bases "
+                    "have no prepared per-point basis rows."
+                )
 
 
 class FourierBasisPlan(AbstractSpectralBasisPlan):
@@ -816,9 +913,7 @@ class LegendreBasisPlan(AbstractSpectralBasisPlan):
         standard = np.asarray(
             standard_vandermonde("legendre", reference_nodes, count - 1)
         )
-        normalizers = np.sqrt(
-            (2.0 * np.arange(count, dtype=np.float64) + 1.0) / (upper_value - lower_value)
-        )
+        normalizers = _legendre_normalizers(count, upper_value - lower_value)
         synthesis = standard * normalizers[None, :]
         analysis = _analysis_from_synthesis(
             synthesis,

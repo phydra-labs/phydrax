@@ -13,7 +13,7 @@ from phydrax.applications.solid_mechanics._fem_dynamics import (
     prepare_finite_element_dynamics_step,
     solve_finite_element_dynamics_step,
 )
-from phydrax.discretization.fem._rigid_coupling import (
+from phydrax.discretization.fem import (
     prepare_finite_element_point_interpolation,
     PreparedFiniteElementPointInterpolation,
     RigidDeformableAttachmentPlan,

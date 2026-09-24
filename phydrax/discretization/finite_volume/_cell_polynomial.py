@@ -549,7 +549,9 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
         )
         return jnp.asarray(state)[routes, None, ...] + delta
 
-    def basis_values(self, cell_routes: Array, points: Array, /) -> Array:
+    def _normalized_points(
+        self, cell_routes: Array, points: Array, /
+    ) -> tuple[Array, Array, Array]:
         routes = jnp.asarray(cell_routes, dtype=jnp.int32)
         evaluation_points = jnp.asarray(points)
         if routes.ndim != 1:
@@ -562,8 +564,43 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
         centers = self.discretization.cell_centers.astype(dtype)[routes]
         lengths = self.characteristic_lengths.astype(dtype)[routes]
         normalized = (evaluation_points - centers[:, None, :]) / lengths[:, None, None]
+        return routes, normalized, lengths
+
+    def basis_values(self, cell_routes: Array, points: Array, /) -> Array:
+        routes, normalized, _ = self._normalized_points(cell_routes, points)
         monomials = _jax_monomials(normalized, self.basis.exponents)
-        return monomials - self.moments.astype(dtype)[routes, None, :]
+        return monomials - self.moments.astype(normalized.dtype)[routes, None, :]
+
+    def basis_derivative(
+        self, cell_routes: Array, points: Array, derivative: tuple[int, ...], /
+    ) -> Array:
+        """Exact physical coordinate derivative of `basis_values`.
+
+        `derivative` gives one order per axis. The zero multi-index returns
+        `basis_values`; otherwise the normalized monomials are differentiated
+        exactly (falling factorials vanish above each exponent) and the constant
+        cell moments drop out.
+        """
+        orders = tuple(derivative)
+        if len(orders) != self.basis.dimension:
+            raise ValueError("derivative must give one order per basis dimension.")
+        if any(
+            isinstance(order, bool) or not isinstance(order, Integral) or order < 0
+            for order in orders
+        ):
+            raise ValueError("derivative orders must be non-negative integers.")
+        if not any(orders):
+            return self.basis_values(cell_routes, points)
+        _, normalized, lengths = self._normalized_points(cell_routes, points)
+        exponents = self.basis.exponents
+        coefficient = jnp.ones(exponents.shape[:1], dtype=normalized.dtype)
+        for axis, order in enumerate(orders):
+            for count in range(order):
+                coefficient = coefficient * (exponents[:, axis] - count)
+        reduced = jnp.maximum(exponents - jnp.asarray(orders, dtype=exponents.dtype), 0)
+        monomials = _jax_monomials(normalized, reduced)
+        scale = lengths ** (-sum(orders))
+        return coefficient * monomials * scale[:, None, None]
 
     def evaluate_coefficients(
         self,

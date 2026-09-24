@@ -74,6 +74,12 @@ The solver derivative is the pullback through the parameterized trial field. It 
 not the ambient physical-space functional derivative. `pullback_fields` controls
 which bound field parameters receive derivatives.
 
+Discrete fields enter this route as `DomainFunction`s only through
+`phx.discretization.DiscreteFieldFunctionView(...).as_domain_function()`, whose
+exact coordinate derivatives and evidenced maximum order are owned by the
+reconstruction. Integrated functionals of discrete fields on their own support
+use the prepared-local compilers below rather than a pointwise view.
+
 ## Prepared-local discretization binding
 
 Use `finite_element_form_from_functional` when a form object is needed, or

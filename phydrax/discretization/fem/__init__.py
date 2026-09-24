@@ -217,6 +217,12 @@ from ._patch_preconditioning import (
     FiniteElementPatchPreconditionerBuilder,
     one_ring_patch_plan,
 )
+from ._point_interpolation import (
+    FiniteElementFieldReconstructionKernel,
+    prepare_finite_element_field_reconstruction,
+    prepare_finite_element_point_interpolation,
+    PreparedFiniteElementPointInterpolation,
+)
 from ._precision import FiniteElementPrecisionPolicy
 from ._reference import (
     discontinuous_element,
@@ -234,9 +240,6 @@ from ._reference_operator import (
 from ._rigid_coupling import (
     AttachmentActionReactionCertificate,
     AttachmentRankEvidence,
-    InterpolationTransposeEvidence,
-    prepare_finite_element_point_interpolation,
-    PreparedFiniteElementPointInterpolation,
     RigidDeformableAttachmentEvaluation,
     RigidDeformableAttachmentPlan,
     RigidDeformableKKTLinearization,
@@ -503,7 +506,6 @@ __all__ = [
     "PersistentSemanticCache",
     "AttachmentActionReactionCertificate",
     "AttachmentRankEvidence",
-    "InterpolationTransposeEvidence",
     "MixedConstraintFormulation",
     "MixedFiniteElementConstraintEvaluation",
     "MixedFiniteElementConstraintPlan",
@@ -513,6 +515,8 @@ __all__ = [
     "MixedPressureStabilizationKind",
     "mixed_inf_sup_diagnostic",
     "prepare_finite_element_point_interpolation",
+    "prepare_finite_element_field_reconstruction",
+    "FiniteElementFieldReconstructionKernel",
     "PreparedFiniteElementPointInterpolation",
     "PreparedMixedFiniteElementConstraint",
     "PressureGaugeEvidence",

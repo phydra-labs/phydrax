@@ -21,6 +21,10 @@
 
 ---
 
+::: phydrax.discretization.AbstractCellLocator
+
+---
+
 ::: phydrax.discretization.PreparedSimplicialCellLocator
 
 ---

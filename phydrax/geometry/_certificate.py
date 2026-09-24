@@ -7,6 +7,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 from enum import Enum
+from numbers import Real
+
+from .._validation import optional_identifier
 
 
 class ZeroSetAccuracy(str, Enum):
@@ -43,7 +46,13 @@ class FieldRegularity(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class FieldCertificate:
-    """Machine-readable guarantees carried by a boundary-defining field."""
+    """Machine-readable guarantees carried by a boundary-defining field.
+
+    `lipschitz_upper_bound` bounds the field's Lipschitz constant and
+    `evaluation_error` bounds the absolute error of an evaluated field value;
+    both are `None` when undeclared. `topology_identity` is the canonical
+    identifier of the certified region topology (`None` when uncertified).
+    """
 
     zero_set_accuracy: ZeroSetAccuracy
     sign_reliability: SignReliability
@@ -53,6 +62,25 @@ class FieldCertificate:
     validity_region: str
     parameter_differentiable: bool
     provenance: tuple[str, ...] = ()
+    lipschitz_upper_bound: float | None = None
+    evaluation_error: float | None = None
+    topology_identity: str | None = None
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("lipschitz_upper_bound", self.lipschitz_upper_bound),
+            ("evaluation_error", self.evaluation_error),
+        ):
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, Real)
+                or not math.isfinite(value)
+                or value < 0.0
+            ):
+                raise ValueError(
+                    f"FieldCertificate.{name} must be finite and non-negative when declared."
+                )
+        optional_identifier(self.topology_identity, "FieldCertificate.topology_identity")
 
     @property
     def is_signed_distance(self) -> bool:
@@ -65,20 +93,21 @@ class FieldCertificate:
 
 @dataclass(frozen=True, slots=True)
 class ExactSDFEnclosureCertificate:
-    """Numerical inputs for a global Lipschitz enclosure of an exact SDF.
+    """Global Lipschitz enclosure qualification of an exact SDF field certificate.
 
-    This certificate qualifies interval sign classification. It does not by
-    itself claim exact cell measures: boxes intersecting the zero set remain
-    as explicit lower/upper measure uncertainty.
+    The field certificate owns the declared evaluation error and Lipschitz
+    upper bound. This certificate qualifies interval sign classification. It
+    does not by itself claim exact cell measures: boxes intersecting the zero
+    set remain as explicit lower/upper measure uncertainty.
     """
 
     field: FieldCertificate
-    evaluation_error: float = 0.0
-    lipschitz_upper_bound: float = 1.0
 
     def __post_init__(self) -> None:
-        error = float(self.evaluation_error)
-        lipschitz = float(self.lipschitz_upper_bound)
+        if not isinstance(self.field, FieldCertificate):
+            raise TypeError(
+                "ExactSDFEnclosureCertificate.field must be a FieldCertificate."
+            )
         if (
             self.field.zero_set_accuracy is not ZeroSetAccuracy.EXACT
             or self.field.sign_reliability is not SignReliability.RELIABLE
@@ -89,14 +118,13 @@ class ExactSDFEnclosureCertificate:
                 "Exact-SDF measure enclosure requires a globally reliable exact signed-distance certificate."
             )
         if (
-            not math.isfinite(error)
-            or not math.isfinite(lipschitz)
-            or error < 0.0
-            or lipschitz < 1.0
+            self.field.evaluation_error is None
+            or self.field.lipschitz_upper_bound is None
+            or self.field.lipschitz_upper_bound < 1.0
         ):
             raise ValueError(
-                "SDF evaluation error must be finite/nonnegative and its "
-                "Lipschitz upper bound must be finite and at least one."
+                "Exact-SDF measure enclosure requires a declared evaluation error and "
+                "a declared Lipschitz upper bound of at least one."
             )
 
     @property
@@ -113,6 +141,8 @@ _EXACT_SDF_CERTIFICATE = FieldCertificate(
     validity_region="all_space",
     parameter_differentiable=True,
     provenance=("analytic",),
+    lipschitz_upper_bound=1.0,
+    evaluation_error=0.0,
 )
 
 

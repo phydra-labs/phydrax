@@ -471,6 +471,34 @@ different policy.
 
 ::: phydrax.solver.CompatibleThermoelasticDynamics
 
+### Field views
+
+Finite-difference nodal values become field views only through an explicit
+interpolation policy; point clouds use a prepared moving-least-squares
+reconstruction with conditioning and support evidence.
+
+::: phydrax.discretization.prepare_finite_difference_field_reconstruction
+
+---
+
+::: phydrax.discretization.MultilinearGridInterpolation
+
+---
+
+::: phydrax.discretization.BSplineGridInterpolation
+
+---
+
+::: phydrax.discretization.FiniteDifferenceFieldReconstructionKernel
+
+---
+
+::: phydrax.discretization.prepare_point_cloud_field_reconstruction
+
+---
+
+::: phydrax.discretization.PointCloudFieldReconstructionKernel
+
 ## Staggered acoustic reference solver
 
 ::: phydrax.solver.SplitFieldPMLPlan

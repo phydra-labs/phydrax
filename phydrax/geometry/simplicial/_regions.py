@@ -466,6 +466,8 @@ _MESH_CERTIFICATE = FieldCertificate(
     "watertight_non_self_intersecting_mesh",
     True,
     ("simplicial", "generalized_winding"),
+    lipschitz_upper_bound=1.0,
+    evaluation_error=0.0,
 )
 
 

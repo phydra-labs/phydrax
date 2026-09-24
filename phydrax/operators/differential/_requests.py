@@ -94,10 +94,15 @@ def _unary_regularity(op: Callable[[Any], Any], /) -> DerivativeRegularity | Non
 
 
 def _callable_regularity(function: Any, /) -> DerivativeRegularity | None:
+    # Imported here: discretization depends on the differential operators.
+    from ...discretization._views import DiscreteFieldEvaluator
+
     if isinstance(function, ConcatenatedModelEvaluator):
         return _callable_regularity(function.raw_model)
     if isinstance(function, AbstractArrayModel):
         return function.model_execution_contract().regularity
+    if isinstance(function, DiscreteFieldEvaluator):
+        return function.regularity
     if isinstance(function, _ConstCallable):
         return _CONSTANT_REGULARITY
     if isinstance(function, BinaryFieldEvaluator):
@@ -116,6 +121,7 @@ def field_regularity(field: DomainFunction, /) -> DerivativeRegularity | None:
 
     The regularity is composed structurally over the field's evaluation tree:
     bound models contribute their `model_execution_contract().regularity`,
+    discrete field views contribute their reconstruction regularity,
     constants are degree-zero polynomials, sums and differences take the maximum
     degree bound, products add degree bounds, division by a constant preserves
     the numerator, and known pointwise maps compose. Any node whose regularity

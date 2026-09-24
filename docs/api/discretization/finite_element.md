@@ -64,6 +64,66 @@
 
 ::: phydrax.discretization.FiniteElementPrecisionPolicy
 
+## Field views and point evaluation
+
+Discrete field views are shared by every discretization family; the finite-element
+factory prepares one from native tabulation, oriented DOF routes, and an inverse
+cell map.
+
+::: phydrax.discretization.fem.prepare_finite_element_field_reconstruction
+
+---
+
+::: phydrax.discretization.fem.FiniteElementFieldReconstructionKernel
+
+---
+
+::: phydrax.discretization.fem.prepare_finite_element_point_interpolation
+
+---
+
+::: phydrax.discretization.fem.PreparedFiniteElementPointInterpolation
+
+---
+
+::: phydrax.discretization.PreparedFieldReconstruction
+
+---
+
+::: phydrax.discretization.DiscreteFieldFunctionView
+
+---
+
+::: phydrax.discretization.DiscreteFieldEvaluator
+
+---
+
+::: phydrax.discretization.AbstractFieldReconstructionKernel
+
+---
+
+::: phydrax.discretization.FieldTracePolicy
+
+---
+
+::: phydrax.discretization.FieldSideBinding
+
+---
+
+::: phydrax.discretization.FieldQueryEvidence
+
+---
+
+::: phydrax.discretization.FieldQueryResult
+
+---
+
+::: phydrax.discretization.FieldQueryStatus
+
+---
+
+::: phydrax.discretization.InterpolationTransposeEvidence
+
 ## Fixed-topology mesh motion
 
 `FiniteElementMeshMotionPlan` consumes a fixed-route boundary coordinate provider,
