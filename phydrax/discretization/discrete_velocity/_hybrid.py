@@ -14,7 +14,7 @@ import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...equations._hyperbolic_systems import AbstractAdmissibleSystem
 from ...equations._materials import IdealGasMaterial
 from ._energy_equilibrium import PositiveEnergyEquilibriumPlan
@@ -268,7 +268,7 @@ class AtomicHybridUpdateResult(StrictModule):
     evidence: AtomicHybridUpdateEvidence
 
 
-class FixedConformingFVKineticInterfacePlan(StrictModule, NonTrainableState):
+class FixedConformingFVKineticInterfacePlan(StrictModule):
     """Fixed conforming interface using one common population-derived flux.
 
     The normal is oriented from the finite-volume cell to the kinetic cell.
@@ -278,7 +278,7 @@ class FixedConformingFVKineticInterfacePlan(StrictModule, NonTrainableState):
 
     method: SmoothCompressibleD2VKineticMethod
     finite_volume_system: AbstractAdmissibleSystem
-    normal: Array
+    normal: Array = fixed_field()
     face_id: str = eqx.field(static=True)
     shock_owner: str = eqx.field(static=True)
     population_floor: float = eqx.field(static=True)

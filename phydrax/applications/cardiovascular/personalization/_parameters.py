@@ -18,7 +18,7 @@ from jaxtyping import Array, ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._probability import AbstractProbabilityLaw
 from ...._strict import StrictModule
-from ...._trainable import NonTrainableState
+from ...._trainable import fixed_field, NonTrainableState
 from ....uq import AbstractBijector, ParameterSpace
 from .._quantities import CardiovascularQuantitySpec
 
@@ -131,14 +131,14 @@ class CardiacParameterSupport(StrictModule, NonTrainableState):
         return array
 
 
-class CardiacParameterSpec(StrictModule, NonTrainableState):
+class CardiacParameterSpec(StrictModule):
     """One physical parameter with native UQ transform and prior semantics."""
 
     name: str = eqx.field(static=True)
     quantity: CardiovascularQuantitySpec = eqx.field(static=True)
     transform: AbstractBijector
-    support: CardiacParameterSupport
-    prior: AbstractProbabilityLaw
+    support: CardiacParameterSupport = fixed_field()
+    prior: AbstractProbabilityLaw = fixed_field()
     subsystem: CardiacSubsystem = eqx.field(static=True)
     identifiability: ParameterIdentifiability = eqx.field(static=True)
     shape: tuple[int, ...] = eqx.field(static=True)

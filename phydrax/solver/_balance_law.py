@@ -96,7 +96,7 @@ class BalanceLawAcceptedStepCouplingAdvance(StrictModule):
     diagnostics: Any
 
 
-class AbstractPreparedAcceptedStepCoupling(StrictModule, NonTrainableState):
+class AbstractPreparedAcceptedStepCoupling(StrictModule):
     coupling_id: str = eqx.field(static=True)
     modified_components: tuple[str, ...] = eqx.field(static=True)
 
@@ -110,7 +110,7 @@ class AbstractPreparedAcceptedStepCoupling(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
-class AbstractPreparedBalanceLawProcess(StrictModule, NonTrainableState):
+class AbstractPreparedBalanceLawProcess(StrictModule):
     """Prepared deterministic or replayable stochastic finite-update process.
 
     ``advance`` owns the numerical method over its supplied interval. The outer

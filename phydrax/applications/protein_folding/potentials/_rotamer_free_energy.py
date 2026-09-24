@@ -22,6 +22,7 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax._strict import StrictModule
+from phydrax._trainable import fixed_field
 from phydrax.atomistic._potential import (
     AtomisticPotentialCapabilities,
     AtomisticPotentialRequirements,
@@ -409,12 +410,12 @@ class RotamerFreeEnergyTerm(AbstractAtomisticEnergyTerm):
 
 
 class PreparedRotamerFreeEnergyTerm(AbstractPreparedAtomisticEnergyTerm):
-    plan: RotamerFreeEnergyTerm
-    frame_rows: Array
-    attribution: Array
+    plan: RotamerFreeEnergyTerm = fixed_field()
+    frame_rows: Array = fixed_field()
+    attribution: Array = fixed_field()
     bp: PreparedBeliefPropagation
-    initial_state: BeliefPropagationState
-    exact: PreparedExactFactorGraph | None
+    initial_state: BeliefPropagationState = fixed_field()
+    exact: PreparedExactFactorGraph | None = fixed_field()
     pair_cavity_degrees: tuple[int, ...] = eqx.field(static=True)
     capacity: int = eqx.field(static=True)
     name: str = eqx.field(static=True)

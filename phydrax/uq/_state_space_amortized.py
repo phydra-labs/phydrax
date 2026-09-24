@@ -17,6 +17,7 @@ from jaxtyping import Array
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from .._trainable import fixed_field, ParameterOwner
 from ..stochastic import StateSpaceProblem
 from ._posterior import ParameterSpace, PosteriorProblem
 from ._state_space_path_density import state_space_path_log_density
@@ -57,7 +58,7 @@ def _sequence_features(problem: StateSpaceProblem, /) -> Array:
     )
 
 
-class AmortizedGaussianMarkovEncoder(StrictModule):
+class AmortizedGaussianMarkovEncoder(StrictModule, ParameterOwner):
     """Shared observation encoder producing one Gaussian Markov path family."""
 
     hidden_weight: Array
@@ -180,10 +181,10 @@ class AmortizedGaussianMarkovFamily(AbstractVariationalFamily):
     """Observation-conditioned Gaussian Markov family with shared encoder arrays."""
 
     encoder: AmortizedGaussianMarkovEncoder
-    features: Array
-    step_valid: Array
-    context_mask: Array
-    prior_location: Array
+    features: Array = fixed_field()
+    step_valid: Array = fixed_field()
+    context_mask: Array = fixed_field()
+    prior_location: Array = fixed_field()
     case_shape: tuple[int, ...] = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
     scale_floor: float = eqx.field(static=True)

@@ -19,6 +19,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._model import ModelBinding
+from ..._trainable import fixed_field
 from ...kernels import AbstractPositiveDefiniteKernel, SquaredExponentialKernel
 from .._batch import MLBatch
 from .._contracts import AbstractRecipe, FitResult, ML_NONCONVERGED
@@ -93,11 +94,11 @@ def _fit_ocsvm_one(
 class OneClassSVMModel(AbstractFittedModel):
     """Native kernel one-class SVM with smooth novelty scores and hard prediction."""
 
-    training_features: Array
+    training_features: Array = fixed_field()
     dual_coefficients: Array
     rho: Array
     active: Array
-    kernel: AbstractPositiveDefiniteKernel
+    kernel: AbstractPositiveDefiniteKernel = fixed_field()
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)

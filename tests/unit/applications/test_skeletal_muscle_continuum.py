@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 import phydrax.ein as ein
-from phydrax._trainable import partition_trainable
+from phydrax import partition_parameters
 from phydrax.applications.skeletal_muscle.continuum import (
     affine_mesh_power_evidence,
     EngelhardtGasam2025Parameters,
@@ -44,9 +44,10 @@ def test_material_parameters_are_dynamic_jax_leaves():
     assert len(leaves) == 7
     assert all(isinstance(value, jax.Array) for value in leaves)
     material = _material(0.5)
-    trainable, fixed = partition_trainable(material)
-    assert trainable.parameters.alpha is not None
-    assert trainable.parameters.peak_active_nominal_stress_pa is not None
+    parameters_lane, _, fixed = partition_parameters(material)
+    assert parameters_lane.parameters.alpha is not None
+    assert parameters_lane.parameters.peak_active_nominal_stress_pa is not None
+    assert parameters_lane.plan is None
     assert fixed.plan is material.plan
 
 

@@ -215,7 +215,7 @@ def _flatten_batch_inputs(batch: phx.nn.operator.OperatorBatch, names: tuple[str
     return jnp.concatenate(features, axis=-1)
 
 
-class PODLinearROMBaseline(eqx.Module):
+class PODLinearROMBaseline(eqx.Module, phx.ParameterOwner):
     """POD output basis with a fitted linear map from source observations."""
 
     output_mean: jax.Array
@@ -267,7 +267,7 @@ class PODLinearROMBaseline(eqx.Module):
         return _apply_query_mask(output, batch)
 
 
-class PointwiseAffineBaseline(eqx.Module):
+class PointwiseAffineBaseline(eqx.Module, phx.ParameterOwner):
     """Trainable scalar affine baseline on coincident samples."""
 
     weight: jax.Array

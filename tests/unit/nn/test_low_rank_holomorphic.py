@@ -9,7 +9,6 @@ import pytest
 from opt_einsum import contract
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 
 
 def test_low_rank_complex_linear_matches_materialized_affine_map():
@@ -46,7 +45,7 @@ def test_low_rank_complex_linear_uses_real_trainable_leaves_and_jax_transforms()
         rank=2,
         key=jr.key(5),
     )
-    trainable, _ = partition_trainable(layer)
+    trainable, _model_state, _ = phx.partition_parameters(layer)
     assert all(not jnp.iscomplexobj(leaf) for leaf in jax.tree.leaves(trainable))
 
     values = jr.normal(jr.key(6), (7, 3))
@@ -92,7 +91,7 @@ def test_factorized_holomorphic_mlp_is_holomorphic_and_binds_architecture():
     assert certificate.construction_dependencies == (model.architecture_id,)
     assert all(
         not jnp.iscomplexobj(leaf)
-        for leaf in jax.tree.leaves(partition_trainable(model)[0])
+        for leaf in jax.tree.leaves(phx.partition_parameters(model)[0])
     )
 
 

@@ -594,7 +594,7 @@ def transfer_coupling_signal(
     return CouplingWaveform(target_grid, values, target_port.space)
 
 
-class FixedGridSubcyclingSubsystem(AbstractCouplingSubsystem):
+class FixedGridSubcyclingSubsystem(AbstractCouplingSubsystem, NonTrainableState):
     """Adapt a fixed substep callback to one sampled coupling waveform."""
 
     advance_substep: Any

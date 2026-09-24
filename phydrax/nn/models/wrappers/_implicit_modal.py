@@ -22,7 +22,7 @@ from phydrax.ein import contract
 from ...._doc import DOC_KEY0
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
-from ...._trainable import NonTrainableState
+from ...._trainable import NonTrainableState, ParameterOwner
 from ....discretization.spectral import (
     HermitianSpectralCoordinates,
     TensorSpectralDiscretization,
@@ -138,7 +138,7 @@ class _FixedRates(StrictModule, NonTrainableState):
         return self.values
 
 
-class ExponentialSpectralEnvelope(StrictModule):
+class ExponentialSpectralEnvelope(StrictModule, ParameterOwner):
     """Positive axis-anisotropic exponential envelope over modal indices.
 
     The envelope is ``exp(-sum_j rate_j * abs(k_j)))``. ``aggregation='mean'``
@@ -271,7 +271,7 @@ class _ModalFeatureTable(StrictModule, NonTrainableState):
         )
 
 
-class SpectralBasisModulation(StrictModule):
+class SpectralBasisModulation(StrictModule, ParameterOwner):
     """Learn one coefficient multiplier from exact prepared basis samples."""
 
     model: Any
@@ -323,7 +323,7 @@ class SpectralBasisModulation(StrictModule):
         return values.reshape(self.table.modal_shape + self.component_shape)
 
 
-class ImplicitModalField(StrictModule):
+class ImplicitModalField(StrictModule, ParameterOwner):
     """Materialize a modal tensor by querying one shared coefficient model.
 
     The wrapped model receives ``[k_1 / s_1, ..., k_d / s_d, t]`` and must return
@@ -540,7 +540,7 @@ class ImplicitModalField(StrictModule):
         )
 
 
-class SparseImplicitModalField(StrictModule):
+class SparseImplicitModalField(StrictModule, ParameterOwner):
     """Fixed-capacity discovered modal support with explicit dense scatter."""
 
     support: PreparedModalSupport

@@ -18,6 +18,12 @@ from phydrax.ein import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
+from ..._trainable import (
+    combine_parameters,
+    fixed_field,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ..._training import (
     TrainingController,
     TrainingIterationKind,
@@ -186,9 +192,11 @@ class ModelFeatureLibrary(AbstractFeatureLibrary):
 
 
 class VariationalCoordinateModel(AbstractArrayModel):
+    """Trained encoder followed by the FIXED canonical coordinate map it was fitted with."""
+
     encoder: AbstractArrayModel
-    mean: Array
-    rotations: Array
+    mean: Array = fixed_field()
+    rotations: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
@@ -351,6 +359,7 @@ def fit_variational_kinetic_model(
 
     if not isinstance(model, AbstractArrayModel) or not isinstance(data, TrajectoryData):
         raise TypeError("model and data must satisfy their declared contracts.")
+    require_parameter_roles(model, context="fit_variational_kinetic_model")
     policy_ = VariationalKineticTrainingPolicy() if policy is None else policy
     if not isinstance(policy_, VariationalKineticTrainingPolicy):
         raise TypeError("policy must be VariationalKineticTrainingPolicy or None.")
@@ -387,7 +396,7 @@ def fit_variational_kinetic_model(
     if validation_source.shape[0] > policy_.maximum_transitions:
         raise ValueError("Validation transitions exceed the exact full-batch capacity.")
     optimizer_ = optax.adam(policy_.learning_rate) if optimizer is None else optimizer
-    optimizer_state = optimizer_.init(eqx.filter(model, eqx.is_inexact_array))
+    optimizer_state = optimizer_.init(partition_parameters(model)[0])
     checkpoint = None if checkpoint_path is None else Path(checkpoint_path)
     cadence = int(checkpoint_every)
     if cadence <= 0:
@@ -477,9 +486,11 @@ def fit_variational_kinetic_model(
 
     @eqx.filter_jit
     def update(current, state):
+        parameters, model_state, fixed = partition_parameters(current)
+
         def objective(candidate):
             score, successful = _score(
-                candidate,
+                combine_parameters(candidate, model_state, fixed),
                 source,
                 target,
                 valid,
@@ -490,10 +501,17 @@ def fit_variational_kinetic_model(
             return -score, successful
 
         (loss, successful), gradient = eqx.filter_value_and_grad(objective, has_aux=True)(
-            current
+            parameters
         )
-        updates, next_state = optimizer_.update(gradient, state, current)
-        return eqx.apply_updates(current, updates), next_state, -loss, successful
+        updates, next_state = optimizer_.update(gradient, state, parameters)
+        return (
+            combine_parameters(
+                eqx.apply_updates(parameters, updates), model_state, fixed
+            ),
+            next_state,
+            -loss,
+            successful,
+        )
 
     for step in range(resumed_from_step + 1, policy_.maximum_steps + 1):
         current, optimizer_state, training_score, successful = update(

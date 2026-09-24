@@ -10,7 +10,6 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
 from ._support import PreparedCoordinateSupport
 
 
@@ -31,7 +30,7 @@ class CoordinateDecoding(StrictModule):
     representation_id: str = eqx.field(static=True)
 
 
-class AbstractCoordinateDecoder(StrictModule, NonTrainableState):
+class AbstractCoordinateDecoder(StrictModule):
     """Fixed-support differentiable encoding/decoding contract.
 
     Implementations own only a numerical representation. They must retain every

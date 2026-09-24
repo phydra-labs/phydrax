@@ -11,12 +11,18 @@ import equinox as eqx
 from jaxtyping import Array
 
 from .._strict import StrictModule
+from .._trainable import ParameterOwner
 from ._binding import ModelBinding
 from ._protocols import ModelEvaluator
 
 
-class AbstractArrayModel(StrictModule, ModelEvaluator):
-    """Callable array model with explicit input/output sizes and domain binding."""
+class AbstractArrayModel(StrictModule, ModelEvaluator, ParameterOwner):
+    """Callable array model with explicit input/output sizes and domain binding.
+
+    Unannotated inexact array leaves are PARAMETER (`ParameterOwner`); subclasses
+    declare fixed data such as nodes, training sets and fitted statistics with
+    `fixed_field`.
+    """
 
     # JAX hashes callable objects when a module itself is passed to ``jax.jit``.
     # Equinox's structural hash cannot hash array leaves; identity is stable because

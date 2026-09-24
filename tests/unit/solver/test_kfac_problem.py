@@ -21,6 +21,7 @@ from phydrax.solver._functional_residual import (
     prepared_residual_loss_and_flat_gradient,
     prepared_term_residual_vector,
 )
+from phydrax.solver._functional_run import partition_functional_parameters
 from phydrax.solver._kfac_layout import discover_parameter_layout
 from phydrax.solver._kfac_problem import (
     term_block_curvature_observations,
@@ -82,7 +83,7 @@ def test_type_two_residual_curvature_is_nonzero_at_zero_residual():
     u = domain.Model("x")(model)
     term = _residual_term(domain, "u", lambda field: field, samples=7)
     solver = phx.solver.FunctionalSolver(functions={"u": u}, terms=term)
-    params, non_trainable = solver.partition_functions()
+    params, non_trainable = partition_functional_parameters(solver.functions)
     residual_map = _prepare_residual(solver, params, non_trainable, key=jr.key(5))
     flat, jacobians, _ = prepared_residual_jacobians(residual_map, params)
     residual = prepared_term_residual_vector(
@@ -123,7 +124,7 @@ def test_frozen_loss_uses_nonnegative_quadratic_coefficients():
         functions={"u": domain.Model("x")(model)},
         terms=term,
     )
-    params, non_trainable = solver.partition_functions()
+    params, non_trainable = partition_functional_parameters(solver.functions)
     residual_map = _prepare_residual(solver, params, non_trainable, key=jr.key(34))
     loss, gradient, _ = prepared_residual_loss_and_flat_gradient(
         params,
@@ -171,7 +172,7 @@ def test_hard_enforced_ansatz_has_finite_residual_curvature():
         terms=term,
         enforcement=enforcement,
     )
-    params, non_trainable = solver.partition_functions()
+    params, non_trainable = partition_functional_parameters(solver.functions)
     validate_derivative_coverage(
         solver.terms,
         solver.enforcement.apply(solver.functions),
@@ -204,7 +205,7 @@ def test_streamed_block_observations_match_dense_jacobian_oracle(approximation):
         samples=5,
     )
     solver = phx.solver.FunctionalSolver(functions=functions, terms=term)
-    params, non_trainable = solver.partition_functions()
+    params, non_trainable = partition_functional_parameters(solver.functions)
     layout = discover_parameter_layout(
         functions,
         params,

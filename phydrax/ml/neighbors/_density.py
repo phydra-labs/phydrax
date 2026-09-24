@@ -19,6 +19,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._model._binding import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -41,10 +42,10 @@ from ._utils import (
 
 
 class KernelDensityModel(AbstractFittedModel):
-    support: Array
-    support_weight: Array
+    support: Array = fixed_field()
+    support_weight: Array = fixed_field()
     support_mask: Array
-    bandwidth: Array
+    bandwidth: Array = fixed_field()
     feature_count: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -227,11 +228,11 @@ class KernelDensityRecipe(AbstractRecipe):
 
 
 class LocalOutlierFactorModel(AbstractFittedModel):
-    support: Array
+    support: Array = fixed_field()
     support_mask: Array
-    support_weight: Array
-    local_reachability_density: Array
-    k_distance: Array
+    support_weight: Array = fixed_field()
+    local_reachability_density: Array = fixed_field()
+    k_distance: Array = fixed_field()
     metric: Any
     neighbor_count: int = eqx.field(static=True)
     feature_count: int = eqx.field(static=True)

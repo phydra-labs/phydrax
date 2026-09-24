@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ..discretization import (
     CellPolynomialReconstructionPlan,
     ExtrapolationBoundary,
@@ -74,7 +75,7 @@ class PreparedFiniteVolumeCase(StrictModule):
     case: FiniteVolumeCaseSpec
     runtime: PreparedFiniteVolumeRuntime
     discretization: FiniteVolumeDiscretization | UnstructuredFiniteVolumeDiscretization
-    initial_state: Array | None
+    initial_state: Array | None = fixed_field()
     mesh_archive_path: str = eqx.field(static=True)
 
 

@@ -12,7 +12,7 @@ from phydrax.stochastic._feynman_kac import FeynmanKacSamplingPlan
 
 
 class _LinearHJBValue(eqx.Module):
-    time_coefficient: jnp.ndarray
+    time_coefficient: jnp.ndarray = phx.parameter_field()
 
     def __call__(self, time, state, *, key=None):
         del key

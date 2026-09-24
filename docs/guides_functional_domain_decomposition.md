@@ -262,7 +262,8 @@ Periodic Cartesian partitions use wrapped local supports and fixed periodic
 coordinate maps, so overlapping POU windows remain smooth across the seam.
 
 `FunctionalDecompositionShardingPlan` assigns every patch to an explicit JAX device.
-`place_local_field_family` places local array trees, while
+`place_local_field_family` moves each local field's parameter, model-state, and
+undeclared arrays to its patch device and leaves fixed arrays in place, while
 `place_schwarz_trace_state` moves incoming traces to their target devices and reports
 cross-device payload bytes. `distributed_pou_collective` uses an actual device-axis
 sum, and `distributed_schwarz_exchange` routes fixed-shape traces through a device

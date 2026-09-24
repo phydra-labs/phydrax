@@ -18,6 +18,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import fixed_field, NonTrainableState
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._dense_inverse import dense_inverse
 from ._local_blocks import (
@@ -114,8 +115,8 @@ def _prepared_action_cost(
 class AbstractPreconditioner(StrictModule):
     """Prepared approximate inverse with explicit source-space semantics."""
 
-    space: AbstractVectorSpace
-    properties: PreconditionerProperties
+    space: AbstractVectorSpace = fixed_field()
+    properties: PreconditionerProperties = fixed_field()
     preconditioner_id: str = eqx.field(static=True)
 
     @abc.abstractmethod
@@ -190,7 +191,7 @@ class PrecisionCastPreconditioner(AbstractPreconditioner):
         return self.space.validate(restored)
 
 
-class IdentityPreconditioner(AbstractPreconditioner):
+class IdentityPreconditioner(AbstractPreconditioner, NonTrainableState):
     def __init__(self, space: AbstractVectorSpace, /):
         if not isinstance(space, AbstractVectorSpace):
             raise TypeError("space must be an AbstractVectorSpace.")
@@ -224,7 +225,7 @@ class IdentityPreconditioner(AbstractPreconditioner):
         return _prepared_action_cost(self, setup_operator)
 
 
-class DiagonalPreconditioner(AbstractPreconditioner):
+class DiagonalPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Jacobi inverse prepared from a nonzero canonical diagonal."""
 
     inverse_diagonal: Array
@@ -302,7 +303,7 @@ class DiagonalPreconditioner(AbstractPreconditioner):
         return _prepared_action_cost(self, setup_operator)
 
 
-class BlockDiagonalPreconditioner(AbstractPreconditioner):
+class BlockDiagonalPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Prepared inverse of independent dense canonical-coordinate blocks."""
 
     inverse_blocks: tuple[Array, ...]
@@ -391,7 +392,7 @@ class BlockDiagonalPreconditioner(AbstractPreconditioner):
         return _prepared_action_cost(self, setup_operator)
 
 
-class LocalBlockPreconditioner(AbstractPreconditioner):
+class LocalBlockPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Prepared inverse of homogeneous local blocks without explicit inverses."""
 
     factorization: LocalBlockFactorization
@@ -514,7 +515,7 @@ class LocalBlockPreconditioner(AbstractPreconditioner):
         )
 
 
-class IncompleteFactorizationPreconditioner(AbstractPreconditioner):
+class IncompleteFactorizationPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Triangular-factor approximate inverse, suitable for ILU/IC factors."""
 
     lower: Array
@@ -605,7 +606,7 @@ class IncompleteFactorizationPreconditioner(AbstractPreconditioner):
         return _prepared_action_cost(self, setup_operator, apply_workspace_multiplier=3)
 
 
-class LowRankWoodburyPreconditioner(AbstractPreconditioner):
+class LowRankWoodburyPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Prepared inverse of ``diag(d) + U C Vᴴ`` via Woodbury."""
 
     inverse_diagonal: Array
@@ -724,7 +725,7 @@ class LowRankWoodburyPreconditioner(AbstractPreconditioner):
         return _prepared_action_cost(self, setup_operator, apply_workspace_multiplier=3)
 
 
-class OperatorPreconditioner(AbstractPreconditioner):
+class OperatorPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Adapter for an already-prepared inverse action."""
 
     operator: AbstractLinearOperator

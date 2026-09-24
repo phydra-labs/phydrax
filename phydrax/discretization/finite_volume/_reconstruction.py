@@ -46,7 +46,7 @@ def _boundary_layer(value: ArrayLike, interior: Array, /) -> Array:
     return layer
 
 
-class AbstractFaceReconstructionPlan(StrictModule, NonTrainableState):
+class AbstractFaceReconstructionPlan(StrictModule):
     """Cell-average to directional left/right face traces."""
 
     formal_order: int = eqx.field(static=True)
@@ -69,7 +69,10 @@ class AbstractFaceReconstructionPlan(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
-class PiecewiseConstantReconstruction(AbstractFaceReconstructionPlan):
+class PiecewiseConstantReconstruction(
+    AbstractFaceReconstructionPlan,
+    NonTrainableState,
+):
     """First-order Godunov traces from cell averages."""
 
     def __init__(self):
@@ -102,7 +105,7 @@ class PiecewiseConstantReconstruction(AbstractFaceReconstructionPlan):
         return _restore_axis(left, axis), _restore_axis(right, axis)
 
 
-class AbstractSlopeLimiter(StrictModule, NonTrainableState):
+class AbstractSlopeLimiter(StrictModule):
     """Two-slope nonlinear limiter."""
 
     limiter_id: str = eqx.field(static=True)
@@ -121,7 +124,7 @@ def _same_sign_minimum(left: Array, right: Array, /) -> Array:
     )
 
 
-class UnlimitedLimiter(AbstractSlopeLimiter):
+class UnlimitedLimiter(AbstractSlopeLimiter, NonTrainableState):
     """Centered smooth-solution slope without nonlinear limiting."""
 
     def __init__(self):
@@ -131,7 +134,7 @@ class UnlimitedLimiter(AbstractSlopeLimiter):
         return 0.5 * (backward + forward)
 
 
-class MinmodLimiter(AbstractSlopeLimiter):
+class MinmodLimiter(AbstractSlopeLimiter, NonTrainableState):
     def __init__(self):
         self.limiter_id = canonical_fingerprint({"kind": "minmod"})
 
@@ -139,7 +142,7 @@ class MinmodLimiter(AbstractSlopeLimiter):
         return _same_sign_minimum(backward, forward)
 
 
-class MCLimiter(AbstractSlopeLimiter):
+class MCLimiter(AbstractSlopeLimiter, NonTrainableState):
     def __init__(self):
         self.limiter_id = canonical_fingerprint({"kind": "monotonized-central"})
 
@@ -151,7 +154,7 @@ class MCLimiter(AbstractSlopeLimiter):
         )
 
 
-class VanLeerLimiter(AbstractSlopeLimiter):
+class VanLeerLimiter(AbstractSlopeLimiter, NonTrainableState):
     def __init__(self):
         self.limiter_id = canonical_fingerprint({"kind": "van-leer"})
 
@@ -163,7 +166,7 @@ class VanLeerLimiter(AbstractSlopeLimiter):
         return jnp.where(backward * forward > 0.0, harmonic, 0.0)
 
 
-class SuperbeeLimiter(AbstractSlopeLimiter):
+class SuperbeeLimiter(AbstractSlopeLimiter, NonTrainableState):
     def __init__(self):
         self.limiter_id = canonical_fingerprint({"kind": "superbee"})
 

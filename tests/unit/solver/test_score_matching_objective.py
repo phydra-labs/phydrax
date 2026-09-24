@@ -13,7 +13,7 @@ from phydrax.terms._score_matching import (
 
 
 class _LinearScore(eqx.Module):
-    coefficient: jnp.ndarray
+    coefficient: jnp.ndarray = phx.parameter_field()
 
     def __call__(self, state, time):
         del time
@@ -21,7 +21,7 @@ class _LinearScore(eqx.Module):
 
 
 class _MatrixScore(eqx.Module):
-    matrix: jnp.ndarray
+    matrix: jnp.ndarray = phx.parameter_field()
 
     def __call__(self, state, time):
         del time

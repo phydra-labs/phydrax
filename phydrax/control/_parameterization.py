@@ -18,6 +18,7 @@ from .._interpolation import (
     ProjectionMethod,
 )
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ..dynamics import TimeGrid
 from ._problem import _identifier, _shape
 
@@ -277,7 +278,7 @@ class BSplineControlRefinement(StrictModule):
     """A diagnosed B-spline grid transfer and its refined coefficients."""
 
     parameterization: BSplineControlParameterization
-    coefficients: Array
+    coefficients: Array = fixed_field()
     transfer: BSplineGridTransfer
     source_parameterization_id: str = eqx.field(static=True)
     target_parameterization_id: str = eqx.field(static=True)

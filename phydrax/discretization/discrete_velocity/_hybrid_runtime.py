@@ -19,7 +19,7 @@ import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...closure_data._kinetic_equilibrium import (
     EnergyEquilibriumSupportEvidence,
     PreparedLearnedEnergyEquilibriumBinding,
@@ -145,16 +145,16 @@ class FixedPartitionHybridAdvanceEvidence(StrictModule):
 
 
 class FixedPartitionHybridAdvanceResult(StrictModule):
-    previous: FixedPartitionHybridState
-    candidate: FixedPartitionHybridState
-    runtime_state: FixedPartitionHybridState
+    previous: FixedPartitionHybridState = fixed_field()
+    candidate: FixedPartitionHybridState = fixed_field()
+    runtime_state: FixedPartitionHybridState = fixed_field()
     finite_volume: FiniteVolumeScheduledAdvanceResult
-    kinetic_collision: SmoothCompressibleLearnedCollisionResult
+    kinetic_collision: SmoothCompressibleLearnedCollisionResult = fixed_field()
     stage_flux_trace: FiniteVolumeStageFluxTrace
-    evidence: FixedPartitionHybridAdvanceEvidence
+    evidence: FixedPartitionHybridAdvanceEvidence = fixed_field()
 
 
-class _FixedHybridStageFluxCallback(StrictModule, NonTrainableState):
+class _FixedHybridStageFluxCallback(StrictModule):
     finite_volume: PreparedFiniteVolumeRuntime
     learned_energy: PreparedLearnedEnergyEquilibriumBinding
     interfaces: tuple[FixedConformingFVKineticInterfacePlan, ...]
@@ -163,7 +163,7 @@ class _FixedHybridStageFluxCallback(StrictModule, NonTrainableState):
     finite_volume_cell_indices: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     kinetic_cell_indices: tuple[tuple[int, int], ...] = eqx.field(static=True)
     normal_signs: tuple[float, ...] = eqx.field(static=True)
-    kinetic_trace: SmoothCompressibleKineticState
+    kinetic_trace: SmoothCompressibleKineticState = fixed_field()
 
     def _kinetic_face_trace(
         self,
@@ -281,7 +281,7 @@ class _FixedHybridStageFluxCallback(StrictModule, NonTrainableState):
         )
 
 
-class PreparedFixedPartitionHybridRuntime(StrictModule, NonTrainableState):
+class PreparedFixedPartitionHybridRuntime(StrictModule):
     """Atomic fixed-step FV/D2V17 runtime with one common stage flux per face."""
 
     finite_volume: PreparedFiniteVolumeRuntime
@@ -294,7 +294,7 @@ class PreparedFixedPartitionHybridRuntime(StrictModule, NonTrainableState):
     kinetic_cell_indices: tuple[tuple[int, int], ...] = eqx.field(static=True)
     normal_signs: tuple[float, ...] = eqx.field(static=True)
     kinetic_outer_boundary: SpecularAdiabaticD2VBoundaryPlan
-    face_measures: Array
+    face_measures: Array = fixed_field()
     conservation_tolerance: float = eqx.field(static=True)
     shock_owner: str = eqx.field(static=True)
     ownership_differentiability: str = eqx.field(static=True)
@@ -1126,7 +1126,7 @@ class DynamicHybridCheckpoint(StrictModule, NonTrainableState):
     payload_id: str = eqx.field(static=True)
 
 
-class DynamicHybridOwnershipPlan(StrictModule, NonTrainableState):
+class DynamicHybridOwnershipPlan(StrictModule):
     """Accepted-boundary ownership migration with non-differentiable hysteresis."""
 
     method: SmoothCompressibleD2VKineticMethod

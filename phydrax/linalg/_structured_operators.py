@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.ein as ein
 
+from .._trainable import fixed_field
 from ._operators import (
     _array_value,
     _assemble_operator_diagonal,
@@ -1767,9 +1768,9 @@ class StackedLinearOperator(AbstractLinearOperator):
 class SchurComplementLinearOperator(AbstractLinearOperator):
     """Matrix-free Schur complement ``D - C M B`` with a typed inverse action."""
 
-    diagonal_block: AbstractLinearOperator
-    lower_block: AbstractLinearOperator
-    upper_block: AbstractLinearOperator
+    diagonal_block: AbstractLinearOperator = fixed_field()
+    lower_block: AbstractLinearOperator = fixed_field()
+    upper_block: AbstractLinearOperator = fixed_field()
     inverse_action: AbstractPreconditioner
 
     def __init__(

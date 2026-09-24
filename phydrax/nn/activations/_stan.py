@@ -9,9 +9,10 @@ from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 
 
-class Stan(StrictModule):
+class Stan(StrictModule, ParameterOwner):
     r"""Self-scalable tanh (Stan) activation.
 
     Applies

@@ -19,7 +19,7 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
-from phydrax._trainable import combine_trainable, partition_trainable
+from phydrax._trainable import combine_parameters, partition_parameters
 from phydrax.nn.operator import (
     AbstractOperatorModel,
     FunctionSamples,
@@ -174,7 +174,7 @@ class OperatorBenchmarkResult:
 
 
 def parameter_count(model) -> int:
-    trainable, _ = partition_trainable(model)
+    trainable, _, _ = partition_parameters(model)
     return sum(
         leaf.size * (2 if jnp.issubdtype(leaf.dtype, jnp.complexfloating) else 1)
         for leaf in jax.tree_util.tree_leaves(trainable)
@@ -290,12 +290,12 @@ def training_step_cost(
             generated_code_bytes=0,
             source="not-applicable",
         )
-    parameters, fixed = partition_trainable(model)
+    parameters, model_state, fixed = partition_parameters(model)
 
     @eqx.filter_jit
     def value_and_gradient(current_parameters):
         def objective(candidate):
-            current_model = combine_trainable(candidate, fixed)
+            current_model = combine_parameters(candidate, model_state, fixed)
             return _loss(
                 current_model,
                 scenario.train_batch,
@@ -400,7 +400,7 @@ def _train_operator_with_trace(
             prefix=f"{scenario.name}:validation",
         )
     )
-    trainable_leaves, _ = partition_trainable(model)
+    trainable_leaves, _, _ = partition_parameters(model)
     use_float64 = any(
         isinstance(leaf, jax.Array)
         and (leaf.dtype == jnp.float64 or leaf.dtype == jnp.complex128)

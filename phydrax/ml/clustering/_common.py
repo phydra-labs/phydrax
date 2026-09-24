@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._numerics import MetricName
 from .._schema import AbstractFittedModel
@@ -229,7 +230,7 @@ class ClusterDiagnostics(StrictModule):
 class HardClusterModel(AbstractFittedModel):
     """Terminal nondifferentiable nearest-representative assignment."""
 
-    centers: Array
+    centers: Array = fixed_field()
     active_clusters: Array
     in_size: int = eqx.field(static=True)
     out_size: Literal["scalar"] = eqx.field(static=True)

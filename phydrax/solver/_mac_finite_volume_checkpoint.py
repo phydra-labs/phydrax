@@ -18,7 +18,7 @@ from .._array_archive import (
 )
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import fixed_field
 from ._mac_adaptive import MACAdaptiveRolloutPlan, MACAdaptiveRuntimeState
 
 
@@ -42,11 +42,11 @@ class MACFiniteVolumeCheckpoint(StrictModule):
     checkpoint_plan_id: str = eqx.field(static=True)
 
 
-class MACFiniteVolumeCheckpointPlan(StrictModule, NonTrainableState):
+class MACFiniteVolumeCheckpointPlan(StrictModule):
     """Strict archive identity and exact runtime leaf template for MAC restart."""
 
     adaptive: MACAdaptiveRolloutPlan
-    template: MACAdaptiveRuntimeState
+    template: MACAdaptiveRuntimeState = fixed_field()
     dynamics_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
     controller_id: str = eqx.field(static=True)

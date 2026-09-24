@@ -132,7 +132,7 @@ class CoupledMultiphysicsProductionCase(StrictModule, NonTrainableState):
         self.case_id = case_id
 
 
-class CoupledMultiphysicsFixedStepMethod(AbstractFixedStepMethod):
+class CoupledMultiphysicsFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
     plan: CoupledMultiphysicsPlan
     method_id: str = eqx.field(static=True)
 

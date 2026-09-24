@@ -10,10 +10,11 @@ import numpy as np
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
+from .._trainable import NonTrainableState
 from ._hyperbolic_systems import AbstractAdmissibleSystem
 
 
-class MultigroupM1RadiationSystem(AbstractAdmissibleSystem):
+class MultigroupM1RadiationSystem(AbstractAdmissibleSystem, NonTrainableState):
     """Hyperbolic multigroup M1 radiation moments with reduced light speed."""
 
     group_count: int = eqx.field(static=True)

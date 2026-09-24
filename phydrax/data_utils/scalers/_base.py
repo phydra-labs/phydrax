@@ -8,10 +8,11 @@ import equinox as eqx
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 
 
-class _AbstractScaler(StrictModule):
-    """Abstract base class for data scalers."""
+class _AbstractScaler(StrictModule, NonTrainableState):
+    """Abstract base class for data scalers; fitted scaler statistics are FIXED."""
 
     @abc.abstractmethod
     def transform(self, x: ArrayLike) -> Array:

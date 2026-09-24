@@ -18,7 +18,12 @@ import phydrax.ein as ein
 
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import (
+    combine_parameters,
+    NonTrainableState,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ...geometry import regularized_heaviside_values
 
 
@@ -335,14 +340,15 @@ def fit_probabilistic_level_set_stefan(
     count = int(steps)
     if count < 0:
         raise ValueError("steps must be nonnegative.")
+    require_parameter_roles(model, context="fit_probabilistic_level_set_stefan")
     transformation = optax.adam(1.0e-3) if optimizer is None else optimizer
-    trainable, fixed = eqx.partition(model, eqx.is_inexact_array)
+    trainable, model_state, fixed = partition_parameters(model)
     state = transformation.init(trainable)
 
     def step(current, optimizer_state):
         objective = lambda value: (
             probabilistic_stefan_moment_loss(
-                eqx.combine(value, fixed),
+                combine_parameters(value, model_state, fixed),
                 batch,
                 parameters,
             ).total
@@ -356,7 +362,7 @@ def fit_probabilistic_level_set_stefan(
     for _ in range(count):
         trainable, state, value = run_step(trainable, state)
         history.append(value)
-    fitted = eqx.combine(trainable, fixed)
+    fitted = combine_parameters(trainable, model_state, fixed)
     final = probabilistic_stefan_moment_loss(fitted, batch, parameters)
     return ProbabilisticStefanFitResult(
         model=fitted,

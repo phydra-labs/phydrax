@@ -18,7 +18,6 @@ import optax
 
 from .._frozendict import frozendict
 from .._iteration import IterationSession
-from .._trainable import combine_trainable, partition_trainable
 from .._training import (
     DelayedTargetPolicy,
     emit_training_signal_stop as _emit_training_signal_stop,
@@ -86,6 +85,7 @@ from ._functional_residual import (
 )
 from ._functional_run import (
     expand_train_terms as _expanded_train_terms,
+    partition_functional_parameters,
     replace_solver_state,
     select_train_terms as _active_train_terms,
     validate_term_sample_size as _train_term_sample_size,
@@ -277,8 +277,11 @@ def solve_gradient(
             self.functions if resume_state is None else resume_state.current_functions
         )
         surrogate_filter_spec = None
+        sharding_policy = None if training is None else training.sharding
         if parameter_paths is None:
-            params, non_trainable = partition_trainable(source_functions)
+            params, non_trainable = partition_functional_parameters(
+                source_functions, sharding=sharding_policy
+            )
             explicit_subspace = False
         else:
             subspace = ParameterSubspace.from_leaf_paths(
@@ -305,17 +308,16 @@ def solve_gradient(
                 is_leaf=lambda leaf: leaf is None,
             )
             explicit_subspace = True
-        sharding_policy = None if training is None else training.sharding
-        if sharding_policy is not None:
-            params = sharding_policy.place_parameters(params)
-            non_trainable = sharding_policy.place_tree(non_trainable)
+            if sharding_policy is not None:
+                params = sharding_policy.place_parameters(params)
+                non_trainable = sharding_policy.place_tree(non_trainable)
 
         def reconstruct_functions(current, fixed):
             if explicit_subspace:
                 if not isinstance(fixed, ParameterSubspace):
                     raise TypeError("Explicit functional subspace state is invalid.")
                 return fixed.reconstruct(current)
-            return combine_trainable(current, fixed)
+            return eqx.combine(current, fixed)
 
         def surrogate_coordinates(current, fixed):
             if not explicit_subspace:
@@ -984,7 +986,9 @@ def solve_gradient(
             restored_objective = restored.objective
             source_functions = resume_state.current_functions
             if parameter_paths is None:
-                params, non_trainable = partition_trainable(source_functions)
+                params, non_trainable = partition_functional_parameters(
+                    source_functions, sharding=sharding_policy
+                )
             else:
                 resumed_subspace = ParameterSubspace.from_leaf_paths(
                     source_functions,
@@ -1000,10 +1004,11 @@ def solve_gradient(
                     )
                 validate_low_rank_subspace(source_functions, resumed_subspace)
                 params, non_trainable = resumed_subspace.initial, resumed_subspace
+                if sharding_policy is not None:
+                    params = sharding_policy.place_parameters(params)
+                    non_trainable = sharding_policy.place_tree(non_trainable)
             opt_state = resume_state.optimizer_state
             if sharding_policy is not None:
-                params = sharding_policy.place_parameters(params)
-                non_trainable = sharding_policy.place_tree(non_trainable)
                 opt_state = sharding_policy.place_tree(opt_state)
             target_state = resume_state.target_state
             current_evaluation_params = resolve_evaluation_parameters(
@@ -1028,7 +1033,9 @@ def solve_gradient(
         if resume_state is None:
             control.best_payload = current_evaluation_params
         elif parameter_paths is None:
-            control.best_payload = partition_trainable(resume_state.best_functions)[0]
+            control.best_payload = partition_functional_parameters(
+                resume_state.best_functions
+            )[0]
         else:
             control.best_payload = ParameterSubspace.from_leaf_paths(
                 resume_state.best_functions,

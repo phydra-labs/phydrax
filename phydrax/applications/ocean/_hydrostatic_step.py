@@ -20,6 +20,7 @@ from ..._array_archive import (
 )
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 from ...solver import AbstractFixedStepMethod, FixedStepResult
 from ._external_mode import ExternalModeSubcycleSchedule
 from ._hydrostatic import (
@@ -175,7 +176,7 @@ def _cell_outgoing_transport(transport: Array, axis: int, periodic: bool, /) -> 
     return jnp.moveaxis(outgoing, 0, axis)
 
 
-class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
+class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod, NonTrainableState):
     """Stage-consistent midpoint IMEX method with implicit/split external mode."""
 
     ocean: PreparedHydrostaticOcean

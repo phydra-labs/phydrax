@@ -14,7 +14,12 @@ from jaxtyping import Array, ArrayLike, Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import (
+    combine_parameters,
+    NonTrainableState,
+    partition_parameters,
+    require_parameter_roles,
+)
 from .._training import TrainingController, TrainingIterationKind, TrainingProgress
 from ._posterior import AbstractBijector
 from ._targeted_free_energy import (
@@ -189,8 +194,9 @@ def fit_targeted_free_energy_map(
     if policy_.reverse_weight > 0.0 and target is None:
         raise ValueError("Positive reverse_weight requires target_samples.")
     current = problem.mapping.bijector
+    require_parameter_roles(current, context="fit_targeted_free_energy_map")
     optimizer_ = optax.adam(policy_.learning_rate) if optimizer is None else optimizer
-    state = optimizer_.init(eqx.filter(current, eqx.is_inexact_array))
+    state = optimizer_.init(partition_parameters(current)[0])
     controller = TrainingController(
         total_steps=policy_.maximum_steps,
         key=key,
@@ -199,15 +205,30 @@ def fit_targeted_free_energy_map(
 
     @eqx.filter_jit
     def update(bijector, optimizer_state):
+        parameters, model_state, fixed = partition_parameters(bijector)
+
         def loss_fn(candidate):
-            loss, valid, _, _ = _objective(candidate, problem, source, target, policy_)
+            loss, valid, _, _ = _objective(
+                combine_parameters(candidate, model_state, fixed),
+                problem,
+                source,
+                target,
+                policy_,
+            )
             return loss, valid
 
         (loss, valid), gradient = eqx.filter_value_and_grad(loss_fn, has_aux=True)(
-            bijector
+            parameters
         )
-        updates, next_state = optimizer_.update(gradient, optimizer_state, bijector)
-        return eqx.apply_updates(bijector, updates), next_state, loss, valid
+        updates, next_state = optimizer_.update(gradient, optimizer_state, parameters)
+        return (
+            combine_parameters(
+                eqx.apply_updates(parameters, updates), model_state, fixed
+            ),
+            next_state,
+            loss,
+            valid,
+        )
 
     initial_loss, valid, _, _ = _objective(
         current, problem, validation_source_, validation_target_, policy_

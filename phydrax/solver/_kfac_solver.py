@@ -18,7 +18,6 @@ from jax.flatten_util import ravel_pytree
 
 from .._frozendict import frozendict
 from .._iteration import IterationSession
-from .._trainable import combine_trainable, partition_trainable
 from .._training import (
     emit_training_signal_stop as _emit_training_signal_stop,
     tensorboard_every as _tensorboard_every,
@@ -56,6 +55,7 @@ from ._functional_reporting import (
 from ._functional_residual import materialize_prepared_residual_terms
 from ._functional_run import (
     expand_train_terms as _expanded_train_terms,
+    partition_functional_parameters,
     replace_solver_state,
     select_train_terms as _active_train_terms,
     validate_term_sample_size as _train_term_sample_size,
@@ -261,11 +261,10 @@ def _prepare_kfac_setup(
     source_functions = (
         self.functions if resume_state is None else resume_state.current_functions
     )
-    params, non_trainable = partition_trainable(source_functions)
     sharding_policy = None if training is None else training.sharding
-    if sharding_policy is not None:
-        params = sharding_policy.place_parameters(params)
-        non_trainable = sharding_policy.place_tree(non_trainable)
+    params, non_trainable = partition_functional_parameters(
+        source_functions, sharding=sharding_policy
+    )
     plan = build_kfac_plan(
         optim,
         source_functions,
@@ -317,10 +316,9 @@ def _prepare_kfac_setup(
         )
         resume_state = restored.state
         source_functions = resume_state.current_functions
-        params, non_trainable = partition_trainable(source_functions)
-        if sharding_policy is not None:
-            params = sharding_policy.place_parameters(params)
-            non_trainable = sharding_policy.place_tree(non_trainable)
+        params, non_trainable = partition_functional_parameters(
+            source_functions, sharding=sharding_policy
+        )
         plan = build_kfac_plan(
             optim,
             source_functions,
@@ -410,7 +408,7 @@ def solve_kfac(
     best_params = (
         params
         if resume_state is None
-        else partition_trainable(resume_state.best_functions)[0]
+        else partition_functional_parameters(resume_state.best_functions)[0]
     )
     control = TrainingController(
         total_steps=int(num_iter),
@@ -430,7 +428,7 @@ def solve_kfac(
             key=jr.fold_in(root_key, 1200),
             iteration=jnp.asarray(0.0),
         )
-        initial_functions = combine_trainable(params, non_trainable)
+        initial_functions = eqx.combine(params, non_trainable)
         initial_value = evaluate_prepared_objective(
             initial_selection, initial_functions
         ).total
@@ -511,8 +509,8 @@ def solve_kfac(
     def make_training_state(current_params, selected_params):
         if training is None:
             raise RuntimeError("Functional training state requires a training plan.")
-        current_functions_ = combine_trainable(current_params, non_trainable)
-        selected_functions_ = combine_trainable(selected_params, non_trainable)
+        current_functions_ = eqx.combine(current_params, non_trainable)
+        selected_functions_ = eqx.combine(selected_params, non_trainable)
         return FunctionalTrainingState(
             current_functions=current_functions_,
             best_functions=selected_functions_,
@@ -581,7 +579,7 @@ def solve_kfac(
             iteration = epoch + 1
             term_iteration = jnp.asarray(iteration, dtype=jnp.float64)
             iteration_key = jr.fold_in(root_key, epoch)
-            functions_snapshot = combine_trainable(params, non_trainable)
+            functions_snapshot = eqx.combine(params, non_trainable)
             refresh_started = time.perf_counter()
             objective = objective.refresh(
                 functions_snapshot,
@@ -655,7 +653,7 @@ def solve_kfac(
             if update is None:
 
                 def physical_loss(flat, _prepared=prepared, _unravel=unravel):
-                    functions = combine_trainable(_unravel(flat), non_trainable)
+                    functions = eqx.combine(_unravel(flat), non_trainable)
                     return evaluate_prepared_objective(
                         _prepared,
                         functions,
@@ -740,7 +738,7 @@ def solve_kfac(
             ):
                 if _update is not None:
                     return _update.surrogate_loss(_unravel(flat_candidate), non_trainable)
-                functions = combine_trainable(
+                functions = eqx.combine(
                     _unravel(flat_candidate),
                     non_trainable,
                 )
@@ -802,7 +800,7 @@ def solve_kfac(
                     key=jr.fold_in(iteration_key, 1201),
                     iteration=term_iteration,
                 )
-                selection_functions = combine_trainable(params, non_trainable)
+                selection_functions = eqx.combine(params, non_trainable)
                 selection_evaluation_loss = evaluate_prepared_objective(
                     selection_prepared, selection_functions
                 ).total
@@ -854,7 +852,7 @@ def solve_kfac(
             eval_terms = jnp.zeros((len(self.evaluation_terms),), dtype=jnp.float64)
             eval_data_metrics = tuple({} for _ in self.evaluation_terms)
             if log_terms and report_step:
-                evaluation_functions = combine_trainable(params, non_trainable)
+                evaluation_functions = eqx.combine(params, non_trainable)
                 active_values = evaluate_prepared_objective(
                     prepared,
                     evaluation_functions,
@@ -996,7 +994,7 @@ def solve_kfac(
                 break
 
     chosen = control.selected(params) if keep_best else params
-    functions = combine_trainable(chosen, non_trainable)
+    functions = eqx.combine(chosen, non_trainable)
     settle_started = time.perf_counter()
     objective = objective.settle(
         functions,

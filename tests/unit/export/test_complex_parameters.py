@@ -9,16 +9,11 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 
 
 def _complex_trainable_leaf_count(value):
-    trainable, _ = partition_trainable(value)
-    return sum(
-        int(jnp.iscomplexobj(leaf))
-        for leaf in jax.tree.leaves(trainable)
-        if eqx.is_array(leaf)
-    )
+    parameters, _, _ = phx.partition_parameters(value)
+    return sum(int(jnp.iscomplexobj(leaf)) for leaf in jax.tree.leaves(parameters))
 
 
 def test_complex_interchange_state_is_canonical_and_rejects_invalid_entries():

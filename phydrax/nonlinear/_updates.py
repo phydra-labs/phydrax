@@ -15,6 +15,7 @@ from jaxtyping import Array, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from .._tree_math import tree_allfinite, validate_inexact_tree
 from ..linalg import AbstractVectorSpace
 from ._newton import NewtonKrylov, NewtonTrustRegion
@@ -444,14 +445,14 @@ class NonlinearUpdatePlan(StrictModule):
 class PreparedNonlinearUpdate(StrictModule):
     """Prepared finite-work update with reusable numerical state."""
 
-    problem: NonlinearSystemProblem
+    problem: NonlinearSystemProblem = fixed_field()
     update: AbstractNonlinearUpdate
-    plan: NonlinearUpdatePlan
+    plan: NonlinearUpdatePlan = fixed_field()
     internal_state: Any
-    reference_state: PyTree[Array]
-    reference_residual: PyTree[Array]
+    reference_state: PyTree[Array] = fixed_field()
+    reference_residual: PyTree[Array] = fixed_field()
     reference_auxiliary: Any
-    numeric_version: Array
+    numeric_version: Array = fixed_field()
 
     def __init__(
         self,

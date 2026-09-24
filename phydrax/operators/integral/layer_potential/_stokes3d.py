@@ -19,7 +19,7 @@ import phydrax.ein as ein
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._model import AbstractArrayModel, TRIAL_SPACE_CERTIFICATE_KEY
 from ...._strict import StrictModule
-from ...._trainable import NonTrainableState
+from ...._trainable import fixed_field, NonTrainableState
 from ....discretization import EntitySet
 from ....equations.trefftz._core import (
     TrialSpaceCertificate,
@@ -186,7 +186,7 @@ class StokesLayerPotential3D(AbstractArrayModel):
     """Finite steady-Stokes layer sum off its discrete source support."""
 
     panelization: SurfacePanelization3D
-    kernel: StokesLayerKernel3D
+    kernel: StokesLayerKernel3D = fixed_field()
     density: Array
     kind: Literal["single", "double"] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)

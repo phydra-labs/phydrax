@@ -11,6 +11,7 @@ import jax.random as jr
 import optax
 
 from ..._strict import StrictModule
+from ..._trainable import require_parameter_roles
 from ...terms import AugmentedInterfaceEvidence, AugmentedValueConstraint
 from .._functional_solver import FunctionalSolver
 
@@ -93,6 +94,7 @@ def solve_augmented_interface(
     constraint = solver.terms[index]
     if not isinstance(constraint, AugmentedValueConstraint):
         raise TypeError("constraint_index must select an AugmentedValueConstraint.")
+    require_parameter_roles(solver.functions, context="solve_augmented_interface")
     current = solver
     history = []
     converged = False

@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 from phydrax.nn.models import (
     BSplineEdgeBasis,
     BSplineGrid,
@@ -138,7 +137,7 @@ def test_trainable_bspline_grid_participates_in_kan_gradients_and_scan():
             jnp.sum(candidate(inputs) ** 2) + 1e-3 * candidate.regularization_loss()
         )
     )(model)
-    trainable, fixed = partition_trainable(model)
+    trainable, _model_state, fixed = phx.partition_parameters(model)
 
     assert trainable.layers[0].edge_basis.grid.raw_span_logits is not None
     assert fixed.layers[0].edge_basis.grid.raw_span_logits is None
@@ -392,7 +391,7 @@ def test_bspline_grid_is_excluded_from_trainable_partition():
         key=jr.key(2),
     )
 
-    trainable, fixed = partition_trainable(model)
+    trainable, _model_state, fixed = phx.partition_parameters(model)
 
     assert trainable.layers[0].edge_basis.grid is None
     assert fixed.layers[0].edge_basis.grid is not None

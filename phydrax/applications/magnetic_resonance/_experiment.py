@@ -16,6 +16,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from ...control._parameterization import PiecewiseConstantControlParameterization
 from ...dynamics._grid import TimeGrid
 from ...linalg import HermitianSpectrum, MaterializationPolicy
@@ -69,10 +70,10 @@ class FixedPulseSequence(StrictModule):
 
 
 class PreparedPulseSequence(StrictModule):
-    sequence: FixedPulseSequence
+    sequence: FixedPulseSequence = fixed_field()
     control_schedule: QuantumControlSchedule
-    sampled_controls: QuantumControlScheduleResult
-    fixed_hamiltonian: FixedGridLocalHamiltonian
+    sampled_controls: QuantumControlScheduleResult = fixed_field()
+    fixed_hamiltonian: FixedGridLocalHamiltonian = fixed_field()
 
 
 def prepare_pulse_sequence(

@@ -8,6 +8,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ..linalg import (
     DenseLinearOperator,
     DenseLU,
@@ -27,12 +28,12 @@ from ..operators.integral.layer_potential import (
 class InteriorLaplaceDirichletResult(StrictModule):
     """Solved double-layer density and independently certified potential."""
 
-    density: Array
+    density: Array = fixed_field()
     potential: LaplaceLayerPotential2D
-    linear_result: LinearSolveResult
+    linear_result: LinearSolveResult = fixed_field()
     discretization: LayerDiscretizationReport
-    boundary_residual_norm: Array
-    valid: Array
+    boundary_residual_norm: Array = fixed_field()
+    valid: Array = fixed_field()
 
     def __init__(
         self,

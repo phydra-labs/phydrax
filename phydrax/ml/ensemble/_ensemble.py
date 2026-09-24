@@ -58,14 +58,15 @@ def _call_members(members: Sequence[AbstractArrayModel], x: Any, key: Any) -> Ar
 def _homogeneous_predictions(
     ensemble: HomogeneousFunctionEnsemble, x: Any, key: Any
 ) -> Array:
+    member_axes = ensemble.layout.in_axes(ensemble.model)
     if key is None:
         return eqx.filter_vmap(
-            lambda member: member(x, key=None), in_axes=eqx.if_array(0)
+            lambda member: member(x, key=None), in_axes=(member_axes,)
         )(ensemble.model)
     keys = jr.split(key, ensemble.num_members)
     return eqx.filter_vmap(
         lambda member, member_key: member(x, key=member_key),
-        in_axes=(eqx.if_array(0), 0),
+        in_axes=(member_axes, 0),
     )(ensemble.model, keys)
 
 

@@ -22,7 +22,11 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._strict import StrictModule
-from ..._trainable import combine_trainable, partition_trainable
+from ..._trainable import (
+    combine_parameters,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ..._tree_math import tree_allfinite, tree_inner, tree_norm
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
@@ -317,12 +321,15 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
             self.negative_label,
             self.positive_label,
         )
-        trainable, fixed = partition_trainable(classifier)
+        require_parameter_roles(
+            classifier, context="VariationalCircuitClassifierRecipe.fit_batch"
+        )
+        trainable, model_state, fixed = partition_parameters(classifier)
         optimizer = optax.adam(self.learning_rate)
         optimizer_state = optimizer.init(trainable)
 
         def objective(parameters):
-            candidate = combine_trainable(parameters, fixed)
+            candidate = combine_parameters(parameters, model_state, fixed)
             logits = jax.vmap(candidate.decision_function)(safe_features)
             losses = jax.nn.softplus(logits) - encoded * logits
             data_loss = jnp.sum(safe_weights * losses) / mass
@@ -346,7 +353,7 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
             method="variational_circuit_classifier",
         )
         fitted_trainable, _ = iteration.value
-        fitted = combine_trainable(fitted_trainable, fixed)
+        fitted = combine_parameters(fitted_trainable, model_state, fixed)
         final_index = jnp.maximum(iteration.iterations - 1, 0)
         objective_value = iteration.objective_history[final_index]
         gradient_norm = iteration.residual_history[final_index]

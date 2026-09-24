@@ -30,10 +30,11 @@ prediction = result.model(query)
 
 The recipe is unchanged by fitting. The returned `FitResult` contains:
 
-- `model`: a `FrozenModel` that is excluded from Phydrax solver parameter
-  partitions but remains an ordinary differentiable JAX PyTree when called. The
-  wrapper preserves the fitted model's exact input binding and exposes only named
-  prediction capabilities that the wrapped model actually implements:
+- `model`: a `FrozenModel`, an `ExplicitFreeze` holder whose arrays are all
+  FIXED in Phydrax training trees but which remains an ordinary differentiable
+  JAX PyTree when called. The wrapper preserves the fitted model's exact input
+  binding and exposes only named prediction capabilities that the wrapped model
+  actually implements:
   `decision_function`, `predict`, `predict_log_proba`, and `predict_proba`;
 - `diagnostics`: family-specific numerical evidence;
 - `valid` and `status`: scalar or case-shaped fit validity;
@@ -44,7 +45,10 @@ The recipe is unchanged by fitting. The returned `FitResult` contains:
 
 Call `result.as_trainable()` to make the fitted arrays an explicit warm start for a
 later optimization problem. This unwraps the same arrays; it does not copy them or
-silently change the fitting gradient.
+silently change the fitting gradient. The unwrapped model is a `ParameterOwner`: its
+fitted coefficients are PARAMETER, while data and statistics it retains (neighbor
+training sets, kernel landmarks, scaler statistics, hard tree thresholds, cluster
+assignments) are declared with `fixed_field` and stay FIXED.
 
 ## Canonical data semantics
 
@@ -575,9 +579,10 @@ fixed_prediction = result.model(query)
 warm_start = result.as_trainable()
 ```
 
-`result.model` and `warm_start` contain the same fitted arrays. The first is a
-`NonTrainableState` for solver partitioning; the second deliberately exposes
-those leaves to later optimization. Neither object is mutable.
+`result.model` and `warm_start` contain the same fitted arrays. The first is an
+`ExplicitFreeze` holder, so every array is FIXED in solver partitions; the second
+deliberately exposes its PARAMETER leaves to later optimization. Neither object is
+mutable.
 
 Invalid dynamic data is represented by `valid`, `status`, and diagnostic arrays so
 case-batched and transformed fits remain JAX programs. Invalid static

@@ -30,7 +30,10 @@ from ._triangle_fv import TriangleFiniteVolumeDiscretization
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
 
-class EinfeldtHLLFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan):
+class EinfeldtHLLFluxPlan(
+    AbstractArbitraryNormalALENumericalFluxPlan,
+    NonTrainableState,
+):
     """Monotone HLL fallback with Roe-enlarged Einfeldt signal bounds."""
 
     def __init__(self):
@@ -238,7 +241,7 @@ class StageRatePositivityResult(StrictModule):
     face_blend_factors: tuple[Array, ...]
 
 
-class FluxPositivityPlan(StrictModule, NonTrainableState):
+class FluxPositivityPlan(StrictModule):
     """Conservative global blending against a monotone fallback stage."""
 
     fallback_flux: AbstractNumericalFluxPlan

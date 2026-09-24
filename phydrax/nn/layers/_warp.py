@@ -15,6 +15,7 @@ from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from .._keys import EvalKey
 from ._linear import Linear
 from ._warp_geometry import (
@@ -170,7 +171,7 @@ def _sample_regular_grid_linear(
     return output
 
 
-class MultiheadWarp(StrictModule):
+class MultiheadWarp(StrictModule, ParameterOwner):
     """Adaptive multihead pullback on a regular channel-last grid.
 
     Displacements are predicted in domain-normalized coordinates. Periodic axes

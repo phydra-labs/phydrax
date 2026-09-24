@@ -7,7 +7,7 @@ import phydrax as phx
 
 
 class _Hydrogenic(eqx.Module):
-    alpha: jax.Array
+    alpha: jax.Array = phx.parameter_field()
 
     def __call__(self, electrons):
         radius = jnp.sqrt(jnp.sum(electrons[0] ** 2))
@@ -15,7 +15,7 @@ class _Hydrogenic(eqx.Module):
 
 
 class _TwoScaleHydrogenic(eqx.Module):
-    alpha: jax.Array
+    alpha: jax.Array = phx.parameter_field()
 
     def __call__(self, electrons):
         radius = jnp.sqrt(jnp.sum(electrons[0] ** 2))

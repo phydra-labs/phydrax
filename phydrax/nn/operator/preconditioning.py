@@ -14,7 +14,7 @@ from jaxtyping import ArrayLike, PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import ExplicitFreeze, NonTrainableState
 from ...discretization import DiscreteFieldSpace, FieldTransfer
 from ...linalg import (
     AbstractLinearOperator,
@@ -235,7 +235,7 @@ class OperatorCorrectionCost(StrictModule, NonTrainableState):
         )
 
 
-class OperatorCorrectionBinding(StrictModule, NonTrainableState):
+class OperatorCorrectionBinding(StrictModule, ExplicitFreeze):
     """Task-bound physical residual and correction representation contract."""
 
     trained_operator: TrainedOperator
@@ -400,7 +400,7 @@ class OperatorCorrectionBinding(StrictModule, NonTrainableState):
         )
 
 
-class PreparedOperatorCorrection(StrictModule, NonTrainableState):
+class PreparedOperatorCorrection(StrictModule, ExplicitFreeze):
     """Prepared deterministic residual-to-correction operator application."""
 
     binding: OperatorCorrectionBinding

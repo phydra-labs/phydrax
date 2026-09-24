@@ -6,12 +6,16 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from .._trainable import NonTrainableState
+from .._trainable import ExplicitFreeze
 from ._array import AbstractArrayModel
 
 
-class FrozenModel(AbstractArrayModel, NonTrainableState):
-    """Callable wrapper that keeps an entire model outside solver partitions."""
+class FrozenModel(AbstractArrayModel, ExplicitFreeze):
+    """Callable wrapper that intentionally freezes an entire trained model.
+
+    Every array below the wrapper is FIXED; as an `ExplicitFreeze` holder it may
+    legally sit inside other fixed state.
+    """
 
     model: AbstractArrayModel
     in_size: int | tuple[int, ...] | Literal["scalar"]

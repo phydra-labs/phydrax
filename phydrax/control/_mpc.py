@@ -17,6 +17,7 @@ import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ..dynamics import TimeGrid
 from ..optim._programming import (
     ClarabelInteriorPoint,
@@ -73,13 +74,13 @@ class RecedingHorizonMPCResult(StrictModule):
 
     trajectory: ControlTrajectory
     policy: PiecewiseConstantControlParameterization
-    parameters: Array
+    parameters: Array = fixed_field()
     subproblem_solutions: tuple[LinearControlQPSolution, ...]
-    qp_results: tuple[ConvexProgramResult, ...]
-    objective: Array
-    stage_valid: Array
-    valid: Array
-    status: Array
+    qp_results: tuple[ConvexProgramResult, ...] = fixed_field()
+    objective: Array = fixed_field()
+    stage_valid: Array = fixed_field()
+    valid: Array = fixed_field()
+    status: Array = fixed_field()
     prediction_horizon: int = eqx.field(static=True)
     terminal_policy: MPCTerminalPolicy = eqx.field(static=True)
     result_id: str = eqx.field(static=True)

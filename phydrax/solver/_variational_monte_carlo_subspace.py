@@ -26,7 +26,7 @@ from .._sampling import (
     sample_markov,
 )
 from .._strict import StrictModule
-from .._trainable import partition_trainable
+from .._trainable import ArrayRole, require_parameter_roles
 from ..linalg import (
     ArraySpace,
     EmpiricalGramLinearOperator,
@@ -163,12 +163,13 @@ def _resolve_modes(
     return resolved
 
 
-def _default_parameter_subspace(model: Any, /) -> ParameterSubspace | None:
-    trainable, _non_trainable = partition_trainable(model)
-    paths = ParameterSubspace.array_leaf_paths(trainable)
-    if not paths:
+def _default_parameter_subspace(model: Any, /, *, index: int) -> ParameterSubspace | None:
+    resolution = require_parameter_roles(
+        model, context=f"VariationalMonteCarloSubspaceProblem (model {index})"
+    )
+    if ArrayRole.PARAMETER not in resolution.roles:
         return None
-    return ParameterSubspace.from_leaf_paths(model, paths)
+    return ParameterSubspace(model, resolution.filter_spec(ArrayRole.PARAMETER))
 
 
 def _mixture_components(
@@ -275,7 +276,10 @@ class VariationalMonteCarloSubspaceProblem(StrictModule):
             )
         modes = _resolve_modes(complex_parameter_modes, len(models_))
         if parameter_subspaces is None:
-            subspaces = tuple(_default_parameter_subspace(model) for model in models_)
+            subspaces = tuple(
+                _default_parameter_subspace(model, index=index)
+                for index, model in enumerate(models_)
+            )
         else:
             subspaces = tuple(parameter_subspaces)
             if len(subspaces) != len(models_):

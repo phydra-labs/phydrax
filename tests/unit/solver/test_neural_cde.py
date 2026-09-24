@@ -11,7 +11,7 @@ import phydrax as phx
 
 
 class _ScalarRateModel(eqx.Module):
-    rate: jax.Array
+    rate: jax.Array = phx.parameter_field()
 
     def __call__(self, state):
         return jnp.asarray([self.rate * state[0]])

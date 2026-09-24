@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import NonTrainableState, parameter_field
 from ...dynamics import HeldInputPolicy, InputLayout
 
 
@@ -429,8 +429,8 @@ class BatteryProtocolPlan(StrictModule, NonTrainableState):
 class BatteryProtocolValues(StrictModule):
     """Dynamic trainable current amplitudes and stop thresholds for one topology."""
 
-    current_amplitudes_a: Array
-    stop_thresholds: Array
+    current_amplitudes_a: Array = parameter_field()
+    stop_thresholds: Array = parameter_field()
     protocol_id: str = eqx.field(static=True)
 
     def __init__(

@@ -4,7 +4,7 @@ import optax
 import pytest
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
+from phydrax.solver._functional_run import partition_functional_parameters
 from phydrax.solver._functional_surrogate import prepare_functional_update
 
 
@@ -70,7 +70,7 @@ def test_pseudo_transient_root_uses_explicit_relaxation_map():
         label="equation",
     )
     solver = phx.solver.FunctionalSolver(functions={"u": current}, terms=(term,))
-    params, fixed = partition_trainable(solver.functions)
+    params, fixed = partition_functional_parameters(solver.functions)
     physical = solver.objective.prepare_training(
         (0,),
         scale=1.0,
@@ -154,7 +154,7 @@ def test_causal_gates_reduce_later_slab_contribution():
         label="dynamics",
     )
     solver = phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
-    params, fixed = partition_trainable(solver.functions)
+    params, fixed = partition_functional_parameters(solver.functions)
     physical = solver.objective.prepare_training(
         (0,),
         scale=1.0,
@@ -206,7 +206,7 @@ def _two_term_solver():
 
 def test_gradient_norm_balancing_is_mean_one_and_reports_orthogonal_alignment():
     solver = _two_term_solver()
-    params, fixed = partition_trainable(solver.functions)
+    params, fixed = partition_functional_parameters(solver.functions)
     physical = solver.objective.prepare_training(
         (0, 1),
         scale=1.0,
@@ -245,7 +245,7 @@ def test_gradient_norm_balancing_is_mean_one_and_reports_orthogonal_alignment():
 
 def test_ntk_trace_balancing_preserves_equal_linear_sensitivities():
     solver = _two_term_solver()
-    params, fixed = partition_trainable(solver.functions)
+    params, fixed = partition_functional_parameters(solver.functions)
     physical = solver.objective.prepare_training(
         (0, 1),
         scale=1.0,

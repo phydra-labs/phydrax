@@ -8,7 +8,6 @@ import pytest
 
 import phydrax as phx
 from phydrax._interpolation import BSplineGrid
-from phydrax._trainable import partition_trainable
 
 
 def test_declared_callable_path_has_closed_support_and_explicit_schedule():
@@ -149,7 +148,8 @@ def test_fixed_bspline_has_exact_one_sided_derivatives_and_coefficient_gradients
     )(coefficients)
     assert jnp.allclose(gradient, jnp.asarray([0.5, 0.5, 0.0]))
 
-    trainable, fixed = partition_trainable(path)
+    trainable, model_state, fixed = phx.partition_parameters(path)
+    assert jax.tree_util.tree_leaves(model_state) == []
     assert trainable.coefficients is not None
     assert trainable.grid is None
     assert fixed.coefficients is None

@@ -21,6 +21,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._model._binding import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -88,9 +89,9 @@ def _target_width(output_shape: tuple[int, ...]) -> int:
 
 
 class ExactNeighborRegressorModel(AbstractFittedModel):
-    support: Array
-    targets: Array
-    support_weight: Array
+    support: Array = fixed_field()
+    targets: Array = fixed_field()
+    support_weight: Array = fixed_field()
     support_mask: Array
     metric: Any
     neighbor_count: int = eqx.field(static=True)
@@ -172,9 +173,9 @@ class ExactNeighborRegressorModel(AbstractFittedModel):
 
 
 class ExactNeighborClassifierModel(AbstractFittedModel):
-    support: Array
+    support: Array = fixed_field()
     labels: Array
-    support_weight: Array
+    support_weight: Array = fixed_field()
     support_mask: Array
     metric: Any
     neighbor_count: int = eqx.field(static=True)
@@ -261,16 +262,16 @@ class ExactNeighborClassifierModel(AbstractFittedModel):
 class KernelNeighborRegressorModel(AbstractFittedModel):
     """Smooth all-support kernel weighting, distinct from hard top-k selection."""
 
-    support: Array
-    targets: Array
-    support_weight: Array
+    support: Array = fixed_field()
+    targets: Array = fixed_field()
+    support_weight: Array = fixed_field()
     support_mask: Array
     metric: Any
     neighbor_count: int = eqx.field(static=True)
     feature_count: int = eqx.field(static=True)
     output_shape: tuple[int, ...] = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
-    temperature: Array
+    temperature: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
 
@@ -345,16 +346,16 @@ class KernelNeighborRegressorModel(AbstractFittedModel):
 class KernelNeighborClassifierModel(AbstractFittedModel):
     """Smooth all-support class probabilities with no hard top-k operation."""
 
-    support: Array
+    support: Array = fixed_field()
     labels: Array
-    support_weight: Array
+    support_weight: Array = fixed_field()
     support_mask: Array
     metric: Any
     neighbor_count: int = eqx.field(static=True)
     class_count: int = eqx.field(static=True)
     feature_count: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
-    temperature: Array
+    temperature: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
@@ -432,16 +433,16 @@ class KernelNeighborClassifierModel(AbstractFittedModel):
 
 
 class RadiusNeighborRegressorModel(AbstractFittedModel):
-    support: Array
-    targets: Array
-    support_weight: Array
+    support: Array = fixed_field()
+    targets: Array = fixed_field()
+    support_weight: Array = fixed_field()
     support_mask: Array
     metric: Any
     neighbor_count: int = eqx.field(static=True)
     feature_count: int = eqx.field(static=True)
     output_shape: tuple[int, ...] = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
-    radius: Array
+    radius: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
 
@@ -513,16 +514,16 @@ class RadiusNeighborRegressorModel(AbstractFittedModel):
 
 
 class RadiusNeighborClassifierModel(AbstractFittedModel):
-    support: Array
+    support: Array = fixed_field()
     labels: Array
-    support_weight: Array
+    support_weight: Array = fixed_field()
     support_mask: Array
     metric: Any
     neighbor_count: int = eqx.field(static=True)
     class_count: int = eqx.field(static=True)
     feature_count: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
-    radius: Array
+    radius: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 

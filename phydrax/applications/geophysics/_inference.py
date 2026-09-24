@@ -23,6 +23,7 @@ from ... import linalg, optim, uq
 from ..._array_archive import read_array_archive, write_array_archive
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 from ...metrix import EuclideanStateGeometry
 from ...solver import FixedStepProblem, FixedStepRolloutPlan
 from ...solver._fixed_step import AbstractFixedStepMethod, FixedStepResult
@@ -217,7 +218,7 @@ class ColumnObservationBinding:
         )
 
 
-class _DifferentiableColumnMethod(AbstractFixedStepMethod):
+class _DifferentiableColumnMethod(AbstractFixedStepMethod, NonTrainableState):
     """Native fixed-step adapter retaining admission/branch validity as a Boolean state."""
 
     plan: InteractiveMoistColumnPlan

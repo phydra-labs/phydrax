@@ -438,7 +438,7 @@ class DryAtmospherePlan(StrictModule, NonTrainableState):
         return PreparedDryAtmosphere(self, balance)
 
 
-class PreparedDryAtmosphere(AbstractFixedStepMethod):
+class PreparedDryAtmosphere(AbstractFixedStepMethod, NonTrainableState):
     """Atomic SSPRK(3,3) on native FV content with stage-CFL/admissibility veto.
 
     This is a native fixed-step method for production continuation. It does not

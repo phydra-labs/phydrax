@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator, AdjointLinearOperator
@@ -51,8 +52,8 @@ def _identifier(value: str | None, payload: dict[str, object], /) -> str:
 class SubspaceCorrectionTerm(StrictModule):
     """Restriction, prolongation, and local approximate-inverse recipe."""
 
-    restriction: AbstractLinearOperator
-    prolongation: AbstractLinearOperator
+    restriction: AbstractLinearOperator = fixed_field()
+    prolongation: AbstractLinearOperator = fixed_field()
     local_solver: PreconditionerSource
     term_id: str = eqx.field(static=True)
 
@@ -345,9 +346,9 @@ def _subtract(left: PyTree[Array], right: PyTree[Array], /) -> PyTree[Array]:
 class AdditiveSubspaceCorrectionPreconditioner(AbstractPreconditioner):
     """Prepared sum of independent prolongated local corrections."""
 
-    setup_operator: AbstractLinearOperator
+    setup_operator: AbstractLinearOperator = fixed_field()
     terms: tuple[SubspaceCorrectionTerm, ...]
-    local_setup_operators: tuple[AbstractLinearOperator, ...]
+    local_setup_operators: tuple[AbstractLinearOperator, ...] = fixed_field()
     builder_id: str = eqx.field(static=True)
 
     def __init__(
@@ -430,9 +431,9 @@ class AdditiveSubspaceCorrectionPreconditioner(AbstractPreconditioner):
 class MultiplicativeSubspaceCorrectionPreconditioner(AbstractPreconditioner):
     """Prepared ordered defect-correction sweep over local subspaces."""
 
-    setup_operator: AbstractLinearOperator
+    setup_operator: AbstractLinearOperator = fixed_field()
     terms: tuple[SubspaceCorrectionTerm, ...]
-    local_setup_operators: tuple[AbstractLinearOperator, ...]
+    local_setup_operators: tuple[AbstractLinearOperator, ...] = fixed_field()
     sweep: SubspaceCorrectionSweep = eqx.field(static=True)
     term_order: tuple[int, ...] = eqx.field(static=True)
     builder_id: str = eqx.field(static=True)
@@ -630,7 +631,7 @@ class AdditiveSubspaceCorrectionBuilder(AbstractPreconditionerBuilder):
     """Build a sum of local corrections from one global setup operator."""
 
     terms: tuple[SubspaceCorrectionTerm, ...]
-    properties: PreconditionerProperties | None
+    properties: PreconditionerProperties | None = fixed_field()
     _builder_id: str = eqx.field(static=True)
 
     def __init__(
@@ -750,7 +751,7 @@ class MultiplicativeSubspaceCorrectionBuilder(AbstractPreconditionerBuilder):
     """Build an ordered defect-correction sweep over local subspaces."""
 
     terms: tuple[SubspaceCorrectionTerm, ...]
-    properties: PreconditionerProperties | None
+    properties: PreconditionerProperties | None = fixed_field()
     sweep: SubspaceCorrectionSweep = eqx.field(static=True)
     _builder_id: str = eqx.field(static=True)
 

@@ -137,7 +137,7 @@ def _primitive_array(primitive: Any, dimension: int, /) -> Array:
     return value
 
 
-class TwoMaterialVOFSystem(AbstractAdmissibleSystem):
+class TwoMaterialVOFSystem(AbstractAdmissibleSystem, NonTrainableState):
     """Compressible two-material VOF conservation system.
 
     The extensive variables use conservative Euler fluxes.  The alpha

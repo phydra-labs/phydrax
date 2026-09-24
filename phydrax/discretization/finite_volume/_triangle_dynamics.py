@@ -92,7 +92,7 @@ class TriangleFiniteVolumeBoundarySet(StrictModule, NonTrainableState):
         )
 
 
-class TriangleFiniteVolumeMethodPlan(StrictModule, NonTrainableState):
+class TriangleFiniteVolumeMethodPlan(StrictModule):
     reconstruction: (
         PiecewiseConstantReconstruction
         | TriangleMUSCLReconstructionPlan

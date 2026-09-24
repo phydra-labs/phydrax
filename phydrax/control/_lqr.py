@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ..dynamics import TimeGrid
 from ._parameterization import (
     _case_shape,
@@ -37,7 +38,7 @@ from ._riccati import (
 )
 
 
-class AffineFeedbackPolicy(AbstractControlParameterization):
+class AffineFeedbackPolicy(AbstractControlParameterization, NonTrainableState):
     """Affine state feedback ``u(t, x) = K(t)x + k(t)``.
 
     A finite policy carries one gain per interval of ``time_grid``. An infinite

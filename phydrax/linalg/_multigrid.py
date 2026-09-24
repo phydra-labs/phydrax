@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ._assembly import PreparedSparseAssembly
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
@@ -99,10 +100,10 @@ class MultigridCyclePolicy(StrictModule):
 class MultigridLevel(StrictModule):
     """Prepared operator, transfer pair, smoother, and schedule for one level."""
 
-    operator: AbstractLinearOperator
+    operator: AbstractLinearOperator = fixed_field()
     smoother: AbstractPreconditioner
-    restriction: AbstractLinearOperator | None
-    prolongation: AbstractLinearOperator | None
+    restriction: AbstractLinearOperator | None = fixed_field()
+    prolongation: AbstractLinearOperator | None = fixed_field()
     pre_smoothing: int = eqx.field(static=True)
     post_smoothing: int = eqx.field(static=True)
 
@@ -341,9 +342,9 @@ class MultigridHierarchy(StrictModule):
     """Immutable prepared hierarchy whose transfers carry explicit level spaces."""
 
     levels: tuple[MultigridLevel, ...]
-    properties: PreconditionerProperties
-    diagnostics: MultigridSetupDiagnostics
-    sparse_assemblies: tuple[PreparedSparseAssembly | None, ...]
+    properties: PreconditionerProperties = fixed_field()
+    diagnostics: MultigridSetupDiagnostics = fixed_field()
+    sparse_assemblies: tuple[PreparedSparseAssembly | None, ...] = fixed_field()
     hierarchy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -470,7 +471,7 @@ class MultigridPreconditioner(AbstractPreconditioner):
     """One policy-selected cycle over an immutable prepared hierarchy."""
 
     hierarchy: MultigridHierarchy
-    cycle_policy: MultigridCyclePolicy
+    cycle_policy: MultigridCyclePolicy = fixed_field()
 
     def __init__(
         self,
@@ -623,10 +624,10 @@ class MultigridPreconditioner(AbstractPreconditioner):
 class MultigridLevelBuilder(StrictModule):
     """Symbolic level operator, transfers, and smoother/coarse-solve recipe."""
 
-    operator: AbstractLinearOperator
+    operator: AbstractLinearOperator = fixed_field()
     smoother: PreconditionerSource
-    restriction: AbstractLinearOperator | None
-    prolongation: AbstractLinearOperator | None
+    restriction: AbstractLinearOperator | None = fixed_field()
+    prolongation: AbstractLinearOperator | None = fixed_field()
     pre_smoothing: int = eqx.field(static=True)
     post_smoothing: int = eqx.field(static=True)
 
@@ -680,8 +681,8 @@ class MultigridHierarchyBuilder(AbstractPreconditionerBuilder):
     """Prepare a policy-selected cycle from explicit immutable levels."""
 
     levels: tuple[MultigridLevelBuilder, ...]
-    properties: PreconditionerProperties
-    cycle_policy: MultigridCyclePolicy
+    properties: PreconditionerProperties = fixed_field()
+    cycle_policy: MultigridCyclePolicy = fixed_field()
     _builder_id: str = eqx.field(static=True)
 
     def __init__(

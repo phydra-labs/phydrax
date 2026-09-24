@@ -10,6 +10,7 @@ from typing import Any
 from ...._doc import DOC_KEY0
 from ...._frozendict import frozendict
 from ...._strict import StrictModule
+from ...._trainable import ExplicitFreeze
 from ....privacy import PrivacyCertificate
 from ..._keys import EvalKey
 from ..capabilities import ConfiguredOperatorContract, OperatorTrainingEvidence
@@ -30,8 +31,12 @@ from ._normalization import OperatorNormalizationPolicy
 from ._physics import OperatorOutputPipeline
 
 
-class TrainedOperator(StrictModule):
-    """Artifact identity around one fully prepared operator execution plan."""
+class TrainedOperator(StrictModule, ExplicitFreeze):
+    """Artifact identity around one fully prepared operator execution plan.
+
+    As an `ExplicitFreeze` holder the trained operator is FIXED wherever it is
+    embedded; train its ``execution_model`` directly to fine-tune it.
+    """
 
     execution_plan: OperatorExecutionPlan
     artifact_id: str

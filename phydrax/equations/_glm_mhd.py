@@ -10,11 +10,12 @@ import numpy as np
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
+from .._trainable import NonTrainableState
 from ._hyperbolic_systems import AbstractAdmissibleSystem, IdealMHDSystem
 from ._materials import IdealGasMaterial
 
 
-class GLMIdealMHDSystem(AbstractAdmissibleSystem):
+class GLMIdealMHDSystem(AbstractAdmissibleSystem, NonTrainableState):
     """Cell-centered ideal MHD with hyperbolic divergence cleaning."""
 
     ideal: IdealMHDSystem

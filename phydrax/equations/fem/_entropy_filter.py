@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -22,11 +22,15 @@ from ..._numerics._ssp_runge_kutta import (
     StageTransformResult,
 )
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...discretization._conservation_boundary import PrescribedNormalFluxBoundary
 from ...discretization.fem._boundary import tensor_local_face
 from .._hyperbolic_systems import EulerSystem
 from ._conservation import PreparedDGSEMConservationDynamics
+
+
+if TYPE_CHECKING:
+    from ._nodal_conservation import PreparedNodalDGConservationDynamics
 
 
 class EntropyFilterEvidence(StrictModule, NonTrainableState):
@@ -139,10 +143,10 @@ class EntropyFilterPlan(StrictModule, NonTrainableState):
 class _PreparedTensorEntropyFilter(AbstractSSPRKStageTransform):
     plan: EntropyFilterPlan
     dynamics: PreparedDGSEMConservationDynamics
-    nodal_to_modal: Array
-    modal_to_nodal: Array
-    modal_scale: Array
-    local_mass_weights: Array
+    nodal_to_modal: Array = fixed_field()
+    modal_to_nodal: Array = fixed_field()
+    modal_scale: Array = fixed_field()
+    local_mass_weights: Array = fixed_field()
     density_floor: float = eqx.field(static=True)
     pressure_floor: float = eqx.field(static=True)
     transform_id: str = eqx.field(static=True)
@@ -411,13 +415,18 @@ class _PreparedTensorEntropyFilter(AbstractSSPRKStageTransform):
 
 class _PreparedNodalEntropyFilter(AbstractSSPRKStageTransform):
     plan: EntropyFilterPlan
-    dynamics: Any
-    cell_by_dof: Array
+    dynamics: PreparedNodalDGConservationDynamics
+    cell_by_dof: Array = fixed_field()
     density_floor: float = eqx.field(static=True)
     pressure_floor: float = eqx.field(static=True)
     transform_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: EntropyFilterPlan, dynamics: Any, /):
+    def __init__(
+        self,
+        plan: EntropyFilterPlan,
+        dynamics: PreparedNodalDGConservationDynamics,
+        /,
+    ):
         if dynamics.entropy_pair is None:
             raise ValueError("Nodal entropy filtering requires an entropy pair.")
         cell_by_dof = np.full((dynamics.state_space.shape[0],), -1, dtype=np.int32)
@@ -580,10 +589,14 @@ class _PreparedNodalEntropyFilter(AbstractSSPRKStageTransform):
 
 
 class PreparedEntropyFilter(AbstractSSPRKStageTransform):
-    implementation: Any
+    implementation: _PreparedTensorEntropyFilter | _PreparedNodalEntropyFilter
     transform_id: str = eqx.field(static=True)
 
-    def __init__(self, implementation: Any, /):
+    def __init__(
+        self,
+        implementation: _PreparedTensorEntropyFilter | _PreparedNodalEntropyFilter,
+        /,
+    ):
         if not isinstance(
             implementation, (_PreparedTensorEntropyFilter, _PreparedNodalEntropyFilter)
         ):

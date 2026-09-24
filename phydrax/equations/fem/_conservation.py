@@ -18,7 +18,7 @@ import phydrax.linalg as la
 from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...discretization._conservation_boundary import evaluate_conservation_boundary
 from ...discretization.fem._boundary import (
     FiniteElementBoundarySet,
@@ -541,7 +541,7 @@ class DGSEMNonconformingMortarPlan(StrictModule, NonTrainableState):
         )
 
 
-class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
+class DGSEMConservationMethodPlan(StrictModule):
     """Collocated tensor GLL flux-differencing and surface-flux policy."""
 
     volume_flux: AbstractSymmetricTwoPointFluxPlan
@@ -988,11 +988,11 @@ class PreparedDGSEMConservationDynamics(StrictModule):
     sbp: ElementLocalSBPData
     metrics: MappedTensorMetrics
     face_pairs: tuple[MetricFacePair, ...]
-    face_permutations: tuple[Array, ...]
+    face_permutations: tuple[Array, ...] = fixed_field()
     compiled_finite_element_problem: CompiledFiniteElementProblem
-    mass_operator: DiagonalLinearOperator
-    inverse_mass_operator: DiagonalLinearOperator
-    scalar_mass_weights: Array
+    mass_operator: DiagonalLinearOperator = fixed_field()
+    inverse_mass_operator: DiagonalLinearOperator = fixed_field()
+    scalar_mass_weights: Array = fixed_field()
     report: DGSEMPreparationReport
     dynamics_id: str = eqx.field(static=True)
 

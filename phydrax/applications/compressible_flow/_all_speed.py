@@ -186,7 +186,8 @@ class AllSpeedHLLFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan, NonTraina
 
 
 class ShockAwareAllSpeedFluxPlan(
-    AbstractArbitraryNormalALENumericalFluxPlan, NonTrainableState
+    AbstractArbitraryNormalALENumericalFluxPlan,
+    NonTrainableState,
 ):
     """All-speed primary flux with explicit pressure-sensor generic-HLL dispatch."""
 

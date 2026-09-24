@@ -24,7 +24,7 @@ from ._execution_runtime import (
 from ._execution_tasks import HostTaskExecutor, InlineTaskExecutor
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._strict import StrictModule
-from ._trainable import NonTrainableState
+from ._trainable import LaneLayout, NonTrainableState
 
 
 ExecutionWorksetMode = Literal["serial", "vmap", "filter_vmap"]
@@ -69,6 +69,16 @@ def _mask_tree(values: PyTree[Array], mask: Array, /) -> PyTree[Array]:
 def _tree_finite(values: PyTree[Array], /) -> Array:
     leaves = jax.tree_util.tree_leaves(values)
     return jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in leaves)))
+
+
+def _item_layout(values: Any, layout: LaneLayout | None, /) -> LaneLayout:
+    if layout is None:
+        if not any(eqx.is_array(leaf) for leaf in jax.tree_util.tree_leaves(values)):
+            raise ValueError("Filtered workset values require at least one array leaf.")
+        return LaneLayout.from_predicate(values, lambda _: True, kind="item")
+    if not isinstance(layout, LaneLayout) or layout.kind != "item":
+        raise TypeError("layout must be a LaneLayout of kind 'item'.")
+    return layout
 
 
 class ExecutionWorksetPlan(StrictModule, NonTrainableState):
@@ -236,29 +246,18 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
         arrays = _item_tree(values, self.item_count)
         return jax.tree_util.tree_map(lambda value: value[self.item_indices], arrays)
 
-    def gather_filtered(self, values: Any, /) -> Any:
-        """Gather mapped array leaves while broadcasting shared static leaves."""
-        arrays, static = eqx.partition(values, eqx.is_array)
-        leaves = [
-            value
-            for value in jax.tree_util.tree_leaves(
-                arrays,
-                is_leaf=lambda value: value is None,
-            )
-            if value is not None
-        ]
-        if not leaves:
-            raise ValueError("Filtered workset values require at least one array leaf.")
-        if any(value.ndim < 1 or value.shape[0] != self.item_count for value in leaves):
+    def gather_filtered(self, values: Any, /, *, layout: LaneLayout | None = None) -> Any:
+        """Gather the item lane of the declared leaves; other leaves are shared.
+
+        `layout` declares which leaves carry the leading item axis, independently
+        of array roles (FIXED data may be mapped). By default every array leaf does.
+        """
+        lanes = _item_layout(values, layout)
+        if lanes.lane_size(values) != self.item_count:
             raise ValueError(
                 "Every mapped workset array leaf must have one leading item axis."
             )
-        gathered = jax.tree.map(
-            lambda value: None if value is None else value[self.item_indices],
-            arrays,
-            is_leaf=lambda value: value is None,
-        )
-        return eqx.combine(gathered, static)
+        return lanes.take(values, self.item_indices)
 
     def scatter(self, bucket_values: PyTree[ArrayLike], /) -> PyTree[Array]:
         """Scatter every valid bucket lane back to canonical item order."""
@@ -350,16 +349,18 @@ def _evaluate_execution_worksets(
     /,
     *,
     mode: ExecutionWorksetMode,
+    layout: LaneLayout | None = None,
 ) -> ExecutionWorksetEvaluation:
     if not isinstance(prepared, PreparedExecutionWorksets):
         raise TypeError("prepared must be PreparedExecutionWorksets.")
     if not callable(operation):
         raise TypeError("operation must be callable.")
-    gathered = (
-        prepared.gather_filtered(values)
-        if mode == "filter_vmap"
-        else prepared.gather(values)
-    )
+    if mode == "filter_vmap":
+        lanes = _item_layout(values, layout)
+        gathered = prepared.gather_filtered(values, layout=lanes)
+        lane_axes = (lanes.in_axes(gathered), 0, 0)
+    else:
+        gathered = prepared.gather(values)
     counters = jnp.asarray(rng_counters, dtype=jnp.uint32)
     keys = prepared.semantic_keys(root_key, counters)
     counter_overflow = jnp.any(counters == jnp.iinfo(jnp.uint32).max)
@@ -376,21 +377,24 @@ def _evaluate_execution_worksets(
                 == signature.signature_id
             ):
                 stop += 1
-            group_values = jax.tree_util.tree_map(
-                lambda value, start=start, stop=stop: value[start:stop],
-                gathered,
-            )
             group_keys = keys[start:stop]
             group_indices = prepared.bucket_rng_indices[start:stop]
 
             def lane_operation(item, key, semantic_index, signature=signature):
                 return operation(signature, item, key, semantic_index)
 
-            mapper = (
-                eqx.filter_vmap(eqx.filter_vmap(lane_operation))
-                if mode == "filter_vmap"
-                else jax.vmap(jax.vmap(lane_operation))
-            )
+            if mode == "filter_vmap":
+                group_values = lanes.take(gathered, slice(start, stop))
+                mapper = eqx.filter_vmap(
+                    eqx.filter_vmap(lane_operation, in_axes=lane_axes),
+                    in_axes=lane_axes,
+                )
+            else:
+                group_values = jax.tree_util.tree_map(
+                    lambda value, start=start, stop=stop: value[start:stop],
+                    gathered,
+                )
+                mapper = jax.vmap(jax.vmap(lane_operation))
             signature_group_outputs.append(
                 mapper(group_values, group_keys, group_indices)
             )
@@ -501,8 +505,17 @@ def evaluate_execution_worksets_filter_vmap(
     root_key: Array,
     rng_counters: ArrayLike,
     /,
+    *,
+    layout: LaneLayout | None = None,
 ) -> ExecutionWorksetEvaluation:
-    """Map homogeneous Equinox PyTrees while broadcasting their static leaves."""
+    """Map homogeneous Equinox PyTrees over their declared item lane.
+
+    `layout` (a `LaneLayout` of kind ``"item"``) declares which leaves carry the
+    leading item axis; every other leaf, including static configuration and shared
+    arrays, is broadcast within each signature bucket. Lanes are independent of
+    array roles, so FIXED data may be mapped. By default every array leaf is
+    mapped.
+    """
     return _evaluate_execution_worksets(
         prepared,
         operation,
@@ -510,6 +523,7 @@ def evaluate_execution_worksets_filter_vmap(
         root_key,
         rng_counters,
         mode="filter_vmap",
+        layout=layout,
     )
 
 

@@ -82,7 +82,9 @@ Native JAX global arrays are the default numerical route. Use
 for structured values, and `shard_map`-based owners for manual halo or
 redistribution algorithms. A JAX reduction over a global array already has
 global semantics; explicit collectives belong inside rank-local mapped
-kernels.
+kernels. `shard_tree_axis` and `replicate_tree` place every array leaf of a
+PyTree the same way, independently of array roles: FIXED data is placed like
+parameters.
 
 `phydrax.backends.JaxCollectiveProvider` supplies named-axis operations inside
 mapped regions. `Mpi4JaxCollectiveProvider` is an optional rank-local route with
@@ -123,10 +125,54 @@ process-symmetric. Multi-process JAX groups execute in one controller-consistent
 order; independent scheduler jobs use separate process sets.
 
 Homogeneous Equinox module batches use
-`evaluate_execution_worksets_filter_vmap`: array leaves carry the item axis,
-while identical static leaves are broadcast within each signature bucket.
-Large or heterogeneous modules remain separate worksets rather than being
-forced through one unbounded vectorization.
+`evaluate_execution_worksets_filter_vmap`. The item lane is a caller-declared
+`phydrax.LaneLayout` of kind `"item"`: declared leaves carry the leading item
+axis, while every other leaf (static configuration and shared arrays) is
+broadcast within each signature bucket. Lanes are independent of array roles,
+so FIXED data such as per-item normalizers may be mapped while parameters are
+shared. Without a layout every array leaf carries the item axis. Large or
+heterogeneous modules remain separate worksets rather than being forced through
+one unbounded vectorization.
+
+```python
+import jax
+import jax.numpy as jnp
+import phydrax as phx
+from phydrax.execution import (
+    ExecutionWorksetPlan,
+    PoolExecutionSignature,
+    evaluate_execution_worksets_filter_vmap,
+)
+
+
+class Normalized(phx.StrictModule, phx.ParameterOwner):
+    weight: jax.Array
+    shift: jax.Array = phx.fixed_field()
+
+    def __call__(self, x):
+        return self.weight * (x - self.shift)
+
+
+signature = PoolExecutionSignature(
+    topology_id="cells",
+    method_id="normalized-map",
+    precision_id="float64",
+    backend_id="jax-cpu",
+)
+prepared = ExecutionWorksetPlan(
+    ("cell-a", "cell-b", "cell-c"), (signature,) * 3, bucket_capacity=2
+).prepare()
+items = Normalized(jnp.ones(2), jnp.arange(6.0).reshape(3, 2))
+evaluation = evaluate_execution_worksets_filter_vmap(
+    prepared,
+    lambda signature, item, key, index: item(jnp.zeros(2)),
+    items,
+    jax.random.key(0),
+    jnp.zeros(3, dtype=jnp.uint32),
+    layout=phx.LaneLayout("item", (".shift",)),
+)
+assert evaluation.values.shape == (3, 2)
+```
 
 ::: phydrax.execution.ExecutionWorksetPlan
 

@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ..linalg import (
     DenseLU,
     DifferentiationPolicy,
@@ -37,16 +38,16 @@ class ElasticityDirichletResult3D(StrictModule):
     does not certify continuum discretization error.
     """
 
-    traction_density: Array
-    prescribed_displacement: Array
+    traction_density: Array = fixed_field()
+    prescribed_displacement: Array = fixed_field()
     potential: ElasticityLayerPotential3D
-    linear_result: LinearSolveResult
+    linear_result: LinearSolveResult = fixed_field()
     assembly_report: ElasticitySingleLayerDP0AssemblyReport3D
     nullspace: ElasticityNullspaceMetadata3D
     contract: ElasticityBoundaryContract3D = eqx.field(static=True)
-    boundary_residual_norm: Array
-    finite: Array
-    valid: Array
+    boundary_residual_norm: Array = fixed_field()
+    finite: Array = fixed_field()
+    valid: Array = fixed_field()
     formulation: str = eqx.field(static=True)
 
 

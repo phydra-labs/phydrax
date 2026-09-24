@@ -14,6 +14,7 @@ import phydrax.ein as ein
 
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
+from ...._trainable import fixed_field, NonTrainableState
 from ..._base import _AbstractBaseModel
 from ..._keys import EvalKey
 
@@ -27,7 +28,7 @@ DifferentialTransform = Literal[
 DerivativeBackend = Literal["autodiff", "central_difference"]
 
 
-class DifferentialNormalization(StrictModule):
+class DifferentialNormalization(StrictModule, NonTrainableState):
     """Affine scale factors needed to recover physical derivatives."""
 
     coordinate_scale: Array
@@ -60,7 +61,7 @@ class DifferentialNormalization(StrictModule):
         )
 
 
-class LinearDifferentialTransform(StrictModule):
+class LinearDifferentialTransform(StrictModule, NonTrainableState):
     """Validated linear map from a field Jacobian to derived output channels."""
 
     coefficients: Array
@@ -109,7 +110,7 @@ class DifferentialFieldDecoder(_AbstractBaseModel):
     transform: DifferentialTransform | LinearDifferentialTransform
     backend: DerivativeBackend
     normalization: DifferentialNormalization
-    step: Array
+    step: Array = fixed_field()
     coord_dim: int
     field_channels: int
     in_size: int

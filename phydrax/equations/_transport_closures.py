@@ -23,7 +23,7 @@ class TransportProperties(StrictModule):
     thermal_conductivity: Array
 
 
-class AbstractTransportClosure(StrictModule, NonTrainableState):
+class AbstractTransportClosure(StrictModule):
     """Temperature-dependent viscous and thermal transport closure."""
 
     closure_id: str = eqx.field(static=True)
@@ -39,7 +39,7 @@ class AbstractTransportClosure(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
-class ConstantTransport(AbstractTransportClosure):
+class ConstantTransport(AbstractTransportClosure, NonTrainableState):
     dynamic_viscosity: float = eqx.field(static=True)
     bulk_viscosity: float = eqx.field(static=True)
     thermal_conductivity: float = eqx.field(static=True)
@@ -95,7 +95,7 @@ class ConstantTransport(AbstractTransportClosure):
         )
 
 
-class SutherlandTransport(AbstractTransportClosure):
+class SutherlandTransport(AbstractTransportClosure, NonTrainableState):
     """Sutherland viscosity with constant Prandtl heat conduction."""
 
     reference_viscosity: float = eqx.field(static=True)

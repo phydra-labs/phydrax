@@ -19,6 +19,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._sampling import IncrementalMarkovTarget, SingleCoordinateProposalPayload
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from ...linalg import (
     accept_low_rank_update,
     DenseLinearOperator,
@@ -68,7 +69,7 @@ class PfaffianJastrowCache(StrictModule):
         return self.route == _FULL_REBASE
 
 
-class PfaffianJastrowAmplitude(StrictModule):
+class PfaffianJastrowAmplitude(StrictModule, ParameterOwner):
     """Finite even-particle Pfaffian times a scalar complex Jastrow factor.
 
     The pairing evaluator owns construction of the complete dense pairing matrix.

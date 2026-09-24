@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...discretization.finite_volume._distributed_marker_transfer import (
     DistributedMarkerTransferDiagnostics,
 )
@@ -278,18 +278,18 @@ class PreparedImmersedRuntimeAdmission(StrictModule, NonTrainableState):
 class ImmersedRuntimeAdmissionResult(StrictModule):
     preflight: PreparedImmersedRuntimeAdmission
     runtime_evidence: ImmersedRuntimeEvidence
-    gap_decision: ImmersedNearGapDecision | None
-    topology_epoch_admitted: Array
-    motion_epoch_admitted: Array
-    geometry_epoch_admitted: Array
-    route_admitted: Array
-    support_admitted: Array
-    distributed_admitted: Array
-    gap_admitted: Array
-    sharp_admitted: Array
-    load_admitted: Array
-    status: Array
-    admitted: Array
+    gap_decision: ImmersedNearGapDecision | None = fixed_field()
+    topology_epoch_admitted: Array = fixed_field()
+    motion_epoch_admitted: Array = fixed_field()
+    geometry_epoch_admitted: Array = fixed_field()
+    route_admitted: Array = fixed_field()
+    support_admitted: Array = fixed_field()
+    distributed_admitted: Array = fixed_field()
+    gap_admitted: Array = fixed_field()
+    sharp_admitted: Array = fixed_field()
+    load_admitted: Array = fixed_field()
+    status: Array = fixed_field()
+    admitted: Array = fixed_field()
     plan_id: str = eqx.field(static=True)
 
 

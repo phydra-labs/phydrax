@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike, Key
 from .._event_layout import ComplexEventLayout
 from .._probability import AbstractProbabilityLaw, DiagonalNormalLaw
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ..domain._measure import MeasureKind
 from ._gaussian_diffusion import VariancePreservingDiffusion
 
@@ -90,7 +91,7 @@ class ComplexNormalLaw(AbstractProbabilityLaw):
 class ComplexVariancePreservingDiffusion(StrictModule):
     """Proper complex VP diffusion implemented through explicit real coordinates."""
 
-    layout: ComplexEventLayout
+    layout: ComplexEventLayout = fixed_field()
     real_process: VariancePreservingDiffusion
     process_id: str = eqx.field(static=True)
 

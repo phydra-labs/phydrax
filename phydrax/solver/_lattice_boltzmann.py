@@ -11,11 +11,12 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
+from .._trainable import NonTrainableState
 from ..discretization.lattice_boltzmann import PreparedLatticeBoltzmannDynamics
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 
 
-class LatticeBoltzmannFixedStepMethod(AbstractFixedStepMethod):
+class LatticeBoltzmannFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
     """Fixed-step adapter for one prepared collide-and-route LBM dynamics."""
 
     dynamics: PreparedLatticeBoltzmannDynamics

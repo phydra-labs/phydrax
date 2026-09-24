@@ -21,6 +21,7 @@ import phydrax.ein as ein
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from .._trainable import fixed_field, NonTrainableState
 from ._linear_gaussian import (
     degenerate_gaussian_log_prob,
     LinearGaussianDynamics,
@@ -528,7 +529,7 @@ class AbstractTransitionKernel(StrictModule):
         raise NotImplementedError
 
 
-class CallableTransitionKernel(AbstractTransitionKernel):
+class CallableTransitionKernel(AbstractTransitionKernel, NonTrainableState):
     sample_fn: Callable[
         [Array, Array, Array, Array, StateSpaceStepContext], Array | TransitionSample
     ] = eqx.field(static=True)
@@ -981,7 +982,9 @@ def _masked_gaussian_log_prob(
 
 class GaussianObservationModel(AbstractObservationModel):
     location_fn: Callable[[Array, Array, StateSpaceStepContext], Array]
-    covariance: Array | Callable[[Array, StateSpaceStepContext], ArrayLike]
+    covariance: Array | Callable[[Array, StateSpaceStepContext], ArrayLike] = (
+        fixed_field()
+    )
     state_shape: tuple[int, ...] = eqx.field(static=True)
     observation_shape: tuple[int, ...] = eqx.field(static=True)
     observation_id: str = eqx.field(static=True)
@@ -1051,7 +1054,7 @@ class GaussianObservationModel(AbstractObservationModel):
         return values.reshape(samples + batch_shape + self.observation_shape)
 
 
-class LinearGaussianObservationModel(AbstractObservationModel):
+class LinearGaussianObservationModel(AbstractObservationModel, NonTrainableState):
     matrix: Array | Callable[[Array, StateSpaceStepContext], ArrayLike]
     offset: Array | Callable[[Array, StateSpaceStepContext], ArrayLike]
     covariance: Array | Callable[[Array, StateSpaceStepContext], ArrayLike]
@@ -1326,10 +1329,10 @@ class StateSpaceProblem(StrictModule):
     """State-space model bound to one canonical masked observation schedule."""
 
     model: StateSpaceModel
-    observations: ObservationSequence
-    initial_time: Array
+    observations: ObservationSequence = fixed_field()
+    initial_time: Array = fixed_field()
     input_signal: AbstractStateSpaceInput | None
-    input_valid: Array
+    input_valid: Array = fixed_field()
     args: Any
     problem_id: str = eqx.field(static=True)
 

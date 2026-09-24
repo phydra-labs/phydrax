@@ -520,7 +520,7 @@ class GrandPotentialFEMPlan(StrictModule, NonTrainableState):
         )
 
 
-class PreparedGrandPotentialFEM(AbstractFixedStepMethod):
+class PreparedGrandPotentialFEM(AbstractFixedStepMethod, NonTrainableState):
     plan: GrandPotentialFEMPlan
     discretization: FiniteElementDiscretization
     compiled: CompiledFiniteElementProblem

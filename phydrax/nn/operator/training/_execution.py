@@ -18,6 +18,7 @@ import jax.numpy as jnp
 from ...._doc import DOC_KEY0
 from ...._frozendict import frozendict
 from ...._strict import StrictModule
+from ...._trainable import fixed_field, NonTrainableState
 from ..._keys import EvalKey, split_eval_key
 from ..capabilities import ConfiguredOperatorContract, OperatorTrainingEvidence
 from ..data import (
@@ -345,7 +346,7 @@ def _evaluate_operator_step(
     return execution_prediction, physical_prediction
 
 
-class PreparedOperatorInput(StrictModule):
+class PreparedOperatorInput(StrictModule, NonTrainableState):
     """Physical and execution batches prepared for exactly one execution plan."""
 
     physical_batch: OperatorBatch
@@ -366,15 +367,19 @@ class PreparedOperatorInput(StrictModule):
 
 
 class OperatorExecutionPlan(StrictModule):
-    """Prepared runtime decisions and lowered callable for one trained operator."""
+    """Prepared runtime decisions and lowered callable for one trained operator.
+
+    The plan is a neutral container: ``execution_model`` keeps its own roles while
+    the task and normalization statistics are FIXED.
+    """
 
     execution_model: AbstractOperatorModel
-    task: OperatorTask
+    task: OperatorTask = fixed_field()
     contract: ConfiguredOperatorContract
     output_field_map: frozendict[str, str]
     fixed_query_fingerprints: frozendict[str, str]
     output_pipeline: OperatorOutputPipeline | None
-    normalization: OperatorNormalizationPolicy | None
+    normalization: OperatorNormalizationPolicy | None = fixed_field()
     dtype_policy: OperatorDTypePolicy
     precision_evidence: OperatorPrecisionEvidence
     training_evidence: OperatorTrainingEvidence

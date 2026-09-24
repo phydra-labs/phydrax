@@ -21,6 +21,7 @@ from ..._differentiation import (
 )
 from ..._model import ModelBinding
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from ...linalg import FactorizationPolicy, pseudoinverse, RankPolicy
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
@@ -159,8 +160,8 @@ def _apply_matrix(
 class CCAModel(AbstractFittedModel):
     """Canonical correlation encoder with paired target coordinates."""
 
-    x_mean: Array
-    y_mean: Array
+    x_mean: Array = fixed_field()
+    y_mean: Array = fixed_field()
     x_rotations: Array
     y_rotations: Array
     canonical_correlations: Array
@@ -387,8 +388,8 @@ class CCA(AbstractRecipe):
 class PLSModel(AbstractFittedModel):
     """Two-block PLS latent encoder, decoder, and target predictor."""
 
-    x_mean: Array
-    y_mean: Array
+    x_mean: Array = fixed_field()
+    y_mean: Array = fixed_field()
     x_weights: Array
     x_decoder: Array
     y_loadings: Array

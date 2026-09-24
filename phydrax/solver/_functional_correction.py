@@ -14,7 +14,7 @@ from jaxtyping import Array, Key
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import ExplicitFreeze
 from ..domain import (
     BatchEvaluator,
     DerivativeBackend,
@@ -29,7 +29,7 @@ from ..terms import ResidualPenalty
 from ._functional_solver import FunctionalSolver
 
 
-class _FrozenFieldEvaluator(StrictModule, BatchEvaluator, NonTrainableState):
+class _FrozenFieldEvaluator(StrictModule, BatchEvaluator, ExplicitFreeze):
     field: DomainFunction
 
     def __init__(self, field: DomainFunction, /):
@@ -51,7 +51,7 @@ class _FrozenFieldEvaluator(StrictModule, BatchEvaluator, NonTrainableState):
         return self.field.func(*args, key=key, **kwargs)
 
 
-class _FrozenDerivativeRule(StrictModule, DerivativeRule, NonTrainableState):
+class _FrozenDerivativeRule(StrictModule, DerivativeRule, ExplicitFreeze):
     field: DomainFunction
 
     def derive(
@@ -104,7 +104,11 @@ class _FrozenDerivativeRule(StrictModule, DerivativeRule, NonTrainableState):
 
 
 def freeze_domain_function(field: DomainFunction, /) -> DomainFunction:
-    """Return an equivalent field whose complete evaluator is solver-frozen."""
+    """Return an equivalent field whose complete evaluator is intentionally frozen.
+
+    The evaluator and derivative rule are `ExplicitFreeze` holders: every array of
+    `field`, including trained model parameters, is FIXED in the returned field.
+    """
     return DomainFunction(
         domain=field.domain,
         deps=field.deps,

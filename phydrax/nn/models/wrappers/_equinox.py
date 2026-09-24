@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
@@ -33,6 +35,21 @@ def _flatten_value(x: Array, /, *, in_size: int | tuple[int, ...] | Literal["sca
         raise ValueError(f"`x` must have shape {in_shape}, got {x_arr.shape}.")
     x_flat = x_arr.reshape((_get_size(in_size),))
     return x_flat, ()
+
+
+def _stateless_module(module: Any, /, *, wrapper: str) -> Any:
+    """Wrap `module` for keyword dispatch after rejecting Equinox state."""
+    if any(
+        isinstance(node, eqx.nn.StateIndex)
+        for node in jax.tree_util.tree_leaves(
+            module, is_leaf=lambda node: isinstance(node, eqx.nn.StateIndex)
+        )
+    ):
+        raise TypeError(
+            f"stateful Equinox modules are not supported by {wrapper}; "
+            "declare model state explicitly"
+        )
+    return _ensure_special_kwonly_args(module)
 
 
 def _reshape_value(
@@ -77,6 +94,9 @@ class EquinoxModel(_AbstractBaseModel):
     (flatten value axes) -> (call wrapped module) -> (reshape back to value axes).
 
     Use `layout="passthrough"` to forward inputs/outputs unchanged.
+
+    The wrapper is a `ParameterOwner`: every inexact array of `module` is a
+    PARAMETER. Modules holding `eqx.nn.StateIndex` state are rejected.
     """
 
     module: Any
@@ -93,7 +113,7 @@ class EquinoxModel(_AbstractBaseModel):
         out_size: SizeLike,
         layout: _Layout = "value",
     ):
-        self.module = _ensure_special_kwonly_args(module)
+        self.module = _stateless_module(module, wrapper=type(self).__name__)
         self.in_size = _canonical_size(in_size)
         self.out_size = _canonical_size(out_size)
         self.layout = layout
@@ -117,7 +137,11 @@ class EquinoxModel(_AbstractBaseModel):
 
 
 class EquinoxStructuredModel(_AbstractStructuredInputModel):
-    """Equinox/JAX callable adapter that supports structured (tuple) inputs."""
+    """Equinox/JAX callable adapter that supports structured (tuple) inputs.
+
+    Like `EquinoxModel`, the module's inexact arrays are PARAMETER and stateful
+    modules are rejected.
+    """
 
     module: Any
     in_size: int | tuple[int, ...] | Literal["scalar"]
@@ -133,7 +157,7 @@ class EquinoxStructuredModel(_AbstractStructuredInputModel):
         out_size: SizeLike,
         layout: _Layout = "passthrough",
     ):
-        self.module = _ensure_special_kwonly_args(module)
+        self.module = _stateless_module(module, wrapper=type(self).__name__)
         self.in_size = _canonical_size(in_size)
         self.out_size = _canonical_size(out_size)
         self.layout = layout

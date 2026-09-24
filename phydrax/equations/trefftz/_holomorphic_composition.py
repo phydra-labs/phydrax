@@ -29,7 +29,7 @@ from ..._holomorphic_taylor import (
     taylor_multiply,
 )
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 
 
 def _certificates(
@@ -172,8 +172,8 @@ class HolomorphicBranchBundle(StrictModule):
 
     providers: tuple[Any, ...]
     branch_offsets: tuple[int, ...] = eqx.field(static=True)
-    factorization: HolomorphicFactorizationEvidence
-    _certificate: HolomorphicMapCertificate
+    factorization: HolomorphicFactorizationEvidence = fixed_field()
+    _certificate: HolomorphicMapCertificate = fixed_field()
 
     def __init__(self, providers: Sequence[HolomorphicPotentialProvider], /):
         resolved = tuple(providers)
@@ -256,8 +256,8 @@ class HolomorphicProductPotential(StrictModule):
     factors: tuple[Any, ...]
     latent_rank: int = eqx.field(static=True)
     branches: int = eqx.field(static=True)
-    factorization: HolomorphicFactorizationEvidence
-    _certificate: HolomorphicMapCertificate
+    factorization: HolomorphicFactorizationEvidence = fixed_field()
+    _certificate: HolomorphicMapCertificate = fixed_field()
 
     def __init__(
         self,

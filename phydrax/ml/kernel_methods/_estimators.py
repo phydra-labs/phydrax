@@ -20,6 +20,7 @@ from ..._differentiation import (
 )
 from ..._model import ValuePort
 from ..._model._binding import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -68,11 +69,11 @@ def _apply_coefficients(
 class AbstractKernelLinearModel(AbstractFittedModel):
     """Smooth kernel expansion shared by ridge, LS-SVM, SVC and SVR."""
 
-    support: Array
+    support: Array = fixed_field()
     coefficients: Array
     intercept: Array
     support_mask: Array
-    kernel: Any
+    kernel: Any = fixed_field()
     feature_count: int = eqx.field(static=True)
     output_shape: tuple[int, ...] = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)

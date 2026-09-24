@@ -196,7 +196,7 @@ class DistributedMixedEvolutionResult(StrictModule):
     execution_id: str = eqx.field(static=True)
 
 
-class DistributedMixedExecutionPlan(StrictModule, NonTrainableState):
+class DistributedMixedExecutionPlan(StrictModule):
     """Prepare fixed-capacity mixed execution on one exact named device mesh."""
 
     mixed: PreparedWaveParticleCosmology | PreparedWaveParticleGasCosmology
@@ -738,7 +738,7 @@ class DistributedMixedExecutionPlan(StrictModule, NonTrainableState):
         )
 
 
-class PreparedDistributedMixedExecution(StrictModule, NonTrainableState):
+class PreparedDistributedMixedExecution(StrictModule):
     """Executable sharded mixed evolution bound to one mesh and physics identity."""
 
     plan: DistributedMixedExecutionPlan

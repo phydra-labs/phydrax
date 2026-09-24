@@ -32,6 +32,25 @@
   and bounded rendering/video adapters.
 
 ### Changed
+- Trainability is declared, not inferred from dtype. Arrays carry an
+  `ArrayRole` (parameter, fixed, model state) from field declarations
+  (`parameter_field`, `fixed_field`, `model_state_field`), `ParameterOwner`
+  model bases, and terminal `NonTrainableState`/`ExplicitFreeze` markers.
+  Every training entry runs `require_parameter_roles`, which rejects
+  unclassified arrays, parameters hidden under a fixed ancestor, and callables
+  capturing undeclared arrays. `partition_parameters` returns parameter,
+  model-state, and fixed lanes; `partition_trainable`, `combine_trainable`,
+  and the trainable-leaf predicates are removed.
+- Learned-component slot bases (numerical fluxes, reconstructions, limiters,
+  face closures, step and stage transforms, transport and MPM constitutive
+  plans) and their method/dynamics containers are neutral; built-in analytic
+  leaves remain fixed. Frozen artifacts (`FrozenModel`, `TrainedOperator`,
+  operator correction bindings) are explicit freezes. Operator batches,
+  context sources, normalizers, scalers, and fitted ML statistics are fixed.
+- `ParameterSubspace` selections are role declarations; worksets and
+  ensembles map lanes through a declared `LaneLayout`, independent of roles.
+  `FunctionalSolver.partition_functions` returns three lanes.
+- `EquinoxModel` rejects stateful Equinox modules.
 - ML fitting uses the canonical derivative vocabulary: `FitResult` exposes
   `derivative_contract`, `derivative_admission`, `require_derivative`, and model
   ports; `fit(..., derivative_request=...)` replaces the ML gradient request.

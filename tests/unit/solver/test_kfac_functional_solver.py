@@ -397,8 +397,8 @@ def test_kfac_replays_seed_across_eager_and_requested_jit_modes():
         log_every=0,
     )
 
-    eager_params, _ = eager.partition_functions()
-    jit_params, _ = requested_jit.partition_functions()
+    eager_params, _, _ = eager.partition_functions()
+    jit_params, _, _ = requested_jit.partition_functions()
     for eager_leaf, jit_leaf in zip(
         jax.tree_util.tree_leaves(eager_params),
         jax.tree_util.tree_leaves(jit_params),

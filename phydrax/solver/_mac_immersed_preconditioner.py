@@ -27,7 +27,7 @@ class MACImmersedPressureBlockPreconditionerEvidence(StrictModule, NonTrainableS
     evidence_id: str = eqx.field(static=True)
 
 
-class MACImmersedPressureBlockPreconditionerPlan(StrictModule, NonTrainableState):
+class MACImmersedPressureBlockPreconditionerPlan(StrictModule):
     """Compose a pressure approximate inverse into the existing immersed KKT solve.
 
     The composition supplies only the pressure and marker diagonal actions.  Assembly,

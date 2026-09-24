@@ -14,6 +14,7 @@ import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 from ...stochastic._state_space import (
     AbstractTransitionKernel,
     StateSpaceStepContext,
@@ -77,7 +78,7 @@ def _state_indices(values: Array, support: Array, state_shape: tuple[int, ...], 
     return indices.reshape(batch_shape), valid.reshape(batch_shape)
 
 
-class ControlledTransitionKernel(AbstractTransitionKernel):
+class ControlledTransitionKernel(AbstractTransitionKernel, NonTrainableState):
     """Doob transform of a solved exact finite-state reference process."""
 
     support: Array

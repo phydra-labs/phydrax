@@ -21,6 +21,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._model import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch
 from .._contracts import AbstractRecipe, FitResult
 from .._schema import AbstractFittedModel
@@ -166,8 +167,8 @@ def _lle_alignment_one(
 class LocallyLinearEmbeddingModel(AbstractFittedModel):
     """Fitted LLE embedding with conditional barycentric out-of-sample extension."""
 
-    training_features: Array
-    training_embedding: Array
+    training_features: Array = fixed_field()
+    training_embedding: Array = fixed_field()
     active: Array
     regularization: float = eqx.field(static=True)
     n_neighbors: int = eqx.field(static=True)

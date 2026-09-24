@@ -17,7 +17,6 @@ import phydrax.axes as cx
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from .._trainable import combine_trainable
 from ..enforcement import EnforcementProgram
 from ..integration import IntegrationRealization
 from ..operators.differential._runtime import derivative_runtime_context
@@ -309,7 +308,7 @@ def evaluate_prepared_residual_term(
     residual_override: Any = None,
 ) -> tuple[ResidualRootBlock, ...]:
     """Evaluate one prepared term as canonical real residual-root blocks."""
-    functions = combine_trainable(params, non_trainable)
+    functions = eqx.combine(params, non_trainable)
     enforced = functions if enforcement is None else enforcement.apply(functions)
     with derivative_runtime_context():
         data = prepared.term._quadratic_residual_data(

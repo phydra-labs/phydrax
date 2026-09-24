@@ -73,7 +73,7 @@ class HydrostaticLayerCoupling(StrictModule, NonTrainableState):
         )
 
 
-class MultilayerShallowWaterSystem(AbstractAdmissibleSystem):
+class MultilayerShallowWaterSystem(AbstractAdmissibleSystem, NonTrainableState):
     coupling: HydrostaticLayerCoupling
 
     def __init__(self, coupling: HydrostaticLayerCoupling, dimension: int = 1, /):
@@ -267,7 +267,7 @@ class BedloadSedimentPlan(StrictModule, NonTrainableState):
         )
 
 
-class ShallowWaterExnerSystem(AbstractAdmissibleSystem):
+class ShallowWaterExnerSystem(AbstractAdmissibleSystem, NonTrainableState):
     base: ShallowWaterSystem
     sediment: BedloadSedimentPlan
     minimum_bed: float = eqx.field(static=True)

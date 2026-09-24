@@ -9,6 +9,11 @@ import jax.numpy as jnp
 import optax
 from jaxtyping import Array, Key
 
+from ..._trainable import (
+    combine_parameters,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ._core import AbstractFlowDistribution
 
 
@@ -31,6 +36,7 @@ def fit_flow_to_data(
         raise ValueError("Flow training data must match the flow event shape.")
     if flow.cond_shape is not None:
         raise ValueError("Unconditional data fitting does not accept conditional flows.")
+    require_parameter_roles(flow, context="fit_flow_to_data")
     count = samples.shape[0]
     validation_count = round(float(validation_fraction) * count)
     training_count = count - validation_count
@@ -40,11 +46,11 @@ def fit_flow_to_data(
     training = samples[permutation[:training_count]]
     validation = samples[permutation[training_count:]]
     optimizer = optax.adam(float(learning_rate))
-    trainable, static = eqx.partition(flow, eqx.is_inexact_array)
+    trainable, model_state, fixed = partition_parameters(flow)
     state = optimizer.init(trainable)
 
     def loss(parameters, batch):
-        model = eqx.combine(parameters, static)
+        model = combine_parameters(parameters, model_state, fixed)
         return -jnp.mean(model.log_prob(batch))
 
     value_and_grad = eqx.filter_value_and_grad(loss)
@@ -67,7 +73,7 @@ def fit_flow_to_data(
             updates, state = optimizer.update(gradients, state, trainable)
             trainable = eqx.apply_updates(trainable, updates)
             epoch_loss = epoch_loss + value * ((stop - start) / training_count)
-        model = eqx.combine(trainable, static)
+        model = combine_parameters(trainable, model_state, fixed)
         validation_loss = -jnp.mean(model.log_prob(validation))
         train_losses.append(epoch_loss)
         validation_losses.append(validation_loss)
@@ -81,7 +87,7 @@ def fit_flow_to_data(
             if patience >= int(max_patience):
                 break
     return (
-        eqx.combine(best, static),
+        combine_parameters(best, model_state, fixed),
         jnp.stack(train_losses),
         jnp.stack(validation_losses),
     )

@@ -12,6 +12,7 @@ import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ._gaussian_diffusion import AbstractGaussianDiffusion
 from ._spatial_noise import SpatialNoiseBasis
 from ._subspace_diffusion import AffineSubspaceLayout, SubspaceGaussianDiffusion
@@ -109,7 +110,7 @@ class FieldNoiseGeometry(StrictModule):
 class FieldGaussianDiffusion(StrictModule):
     """Coefficient-space Gaussian diffusion with mesh-explicit field synthesis."""
 
-    geometry: FieldNoiseGeometry
+    geometry: FieldNoiseGeometry = fixed_field()
     coefficient_process: AbstractGaussianDiffusion
     subspace_process: SubspaceGaussianDiffusion
     process_id: str = eqx.field(static=True)

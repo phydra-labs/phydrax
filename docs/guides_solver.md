@@ -397,24 +397,37 @@ the compiler, specification, anchor, and program APIs.
 ## Training (`solve(...)`)
 
 `FunctionalSolver.solve(...)` runs an optimization loop over the parameters contained inside
-`solver.functions`. Under the hood it uses a Phydrax-aware Equinox partition to split
-the function PyTree into:
+`solver.functions`. Every array leaf has one declared role (see
+[array roles](api/phydrax.md#array-roles-and-lanes)), and `solve(...)` splits the
+function PyTree into three lanes:
 
-- **trainable parameters**: inexact arrays inside trainable models/functions,
-- **non-trainable state**: domains, observed data tables, fixed trajectory signals,
-  hard-enforcement lookup tables, integer metadata, and other fixed state.
+- **parameters**: inexact arrays of parameter-owning models (for example stock
+  `phydrax.nn` models, `EquinoxModel`, and `Domain.Parameter(...)`) and arrays
+  declared with `parameter_field`,
+- **model state**: arrays declared with `model_state_field`, carried unchanged by
+  functional training because no functional objective returns a next model state,
+- **fixed**: domains, observed data tables, fixed trajectory signals,
+  hard-enforcement lookup tables, integer metadata, intentionally frozen models,
+  arrays declared with `fixed_field`, and other fixed state.
 
 This distinction matters for physics-data problems. Observed data may be a JAX
 array so it can participate in JIT-compiled residuals, but it is not an optimizer
-parameter and is excluded from gradients, optimizer state, and weight decay.
-Explicit learnable fields created through model wrappers or `Domain.Parameter(...)`
-remain trainable. Literal constant `DomainFunction` values are treated as fixed
-state; use `Domain.Parameter(...)` when a scalar/vector coefficient should be
-optimized.
+parameter and is excluded from gradients, optimizer state, target/EMA state, and
+weight decay. Literal constant `DomainFunction` values are fixed; use
+`Domain.Parameter(...)` when a scalar/vector coefficient should be optimized.
 
-Use `solver.partition_functions()` to inspect the exact split, or
-`solver.trainable_functions()` when an external optimizer needs the trainable PyTree
-shape.
+Roles are never inferred from dtype. An inexact array whose role is undeclared
+(for example a raw `equinox.Module` field) makes `solve(...)` raise `ValueError`
+before training, naming the entry and every undeclared path. Declare it with
+`parameter_field`/`fixed_field`, wrap raw Equinox modules in `EquinoxModel`, or
+pass an explicit `parameter_subspace`, which is itself the parameter declaration.
+KFAC and `solve_linear_trial_space(...)` additionally require an empty model-state
+lane.
+
+Use `solver.partition_functions()` to inspect the exact `(parameters, model_state,
+fixed)` lanes (`phydrax.combine_parameters` recombines them), or
+`solver.trainable_functions()` when an external optimizer needs the parameters
+PyTree shape.
 
 ### Optimizer support
 

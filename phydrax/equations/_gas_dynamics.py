@@ -16,6 +16,7 @@ from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ..linalg import inverse
 from ._chemical_species import ChemicalPhaseKind
 from ._favre_les import FavreLESInputs, FavreLESResult, PreparedFavreLESModel
@@ -109,6 +110,7 @@ class HomogeneousMixtureEulerSystem(
     AbstractEntropySystem,
     AbstractNormalReflectionSystem,
     AbstractNormalCharacteristicSystem,
+    NonTrainableState,
 ):
     """Frozen-composition Euler flow driven by homogeneous gas thermodynamics.
 

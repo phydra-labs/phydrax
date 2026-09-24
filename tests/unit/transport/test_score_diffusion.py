@@ -8,8 +8,8 @@ import phydrax as phx
 
 class _GaussianMarginalScore(eqx.Module):
     process: phx.stochastic.VariancePreservingDiffusion
-    mean: jnp.ndarray
-    variance: jnp.ndarray
+    mean: jnp.ndarray = phx.fixed_field()
+    variance: jnp.ndarray = phx.fixed_field()
 
     def __call__(self, state, time):
         slope = (

@@ -11,7 +11,6 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 
 
 def _axes():
@@ -158,7 +157,7 @@ def _trained(model):
 
 
 def _trainable_arrays(model):
-    parameters, _ = partition_trainable(model)
+    parameters, _, _ = phx.partition_parameters(model)
     return tuple(jax.tree.leaves(parameters))
 
 

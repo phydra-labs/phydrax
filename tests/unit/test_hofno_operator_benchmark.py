@@ -9,12 +9,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+import phydrax as phx
 from tools.operator_benchmarks.models import compatible_architectures
 from tools.operator_benchmarks.runner import parameter_count, run_operator_benchmark
 from tools.operator_benchmarks.scenarios import polynomial_poisson_scenario
 
 
-class _ComplexParameters(eqx.Module):
+class _ComplexParameters(eqx.Module, phx.ParameterOwner):
     weight: jax.Array
     real_bias: jax.Array
 

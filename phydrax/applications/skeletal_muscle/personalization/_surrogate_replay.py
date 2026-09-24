@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
-from ...._trainable import NonTrainableState
+from ...._trainable import fixed_field, NonTrainableState
 from ....control import (
     AbstractControlParameterization,
     ControlProblem,
@@ -77,7 +77,7 @@ class SkeletalSurrogateReplayPlan(StrictModule):
     source_problem: ControlProblem
     parameterization: AbstractControlParameterization
     observation_operator: SkeletalReplayObservationOperator
-    valid_mask: Array
+    valid_mask: Array = fixed_field()
     surrogate_id: str = eqx.field(static=True)
     quantity_id: str = eqx.field(static=True)
     absolute_tolerance: float = eqx.field(static=True)

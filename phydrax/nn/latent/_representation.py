@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike, Key
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 
 
 class LatentPosterior(StrictModule):
@@ -31,7 +32,7 @@ class DecodedDistribution(StrictModule):
     density_kind: str = eqx.field(static=True)
 
 
-class AbstractLatentRepresentation(StrictModule):
+class AbstractLatentRepresentation(StrictModule, ParameterOwner):
     data_event_shape: eqx.AbstractVar[tuple[int, ...]]
     latent_event_shape: eqx.AbstractVar[tuple[int, ...]]
     representation_id: eqx.AbstractVar[str]

@@ -16,7 +16,7 @@ import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field
 from ...equations._materials import IdealGasMaterial
 from ...equations._transport_closures import AbstractTransportClosure, TransportProperties
 from ..lattice_boltzmann._program import (
@@ -145,7 +145,7 @@ class SmoothCompressibleLearnedCollisionResult(StrictModule):
     rollback_applied: Array
 
 
-class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
+class SmoothCompressibleD2VKineticMethod(StrictModule):
     """Two-population D2V17/D2V37 compressible-energy research method.
 
     This class is deliberately not named as an on-lattice streaming method.
@@ -157,12 +157,12 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
     quadrature: CertifiedDiscreteVelocityQuadrature
     material: IdealGasMaterial
     transport: AbstractTransportClosure
-    particle_moment_matrix: Array
-    particle_moment_lift: Array
-    particle_equilibrium_moment_matrix: Array
-    particle_equilibrium_moment_lift: Array
-    particle_nullspace_projector: Array
-    energy_moment_lift: Array
+    particle_moment_matrix: Array = fixed_field()
+    particle_moment_lift: Array = fixed_field()
+    particle_equilibrium_moment_matrix: Array = fixed_field()
+    particle_equilibrium_moment_lift: Array = fixed_field()
+    particle_nullspace_projector: Array = fixed_field()
+    energy_moment_lift: Array = fixed_field()
     program_manifest: KineticProgramManifest
     method_id: str = eqx.field(static=True)
 

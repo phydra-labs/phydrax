@@ -20,6 +20,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._model._binding import ModelBinding
+from ..._trainable import fixed_field
 from ...kernels import FiniteFeatureKernel, SquaredExponentialKernel
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
@@ -62,13 +63,13 @@ def _case_matmul(matrix: Array, factor: Array, case_shape: tuple[int, ...]) -> A
 
 
 class KernelPCAModel(AbstractFittedModel):
-    support: Array
+    support: Array = fixed_field()
     support_mask: Array
-    normalized_weight: Array
-    support_column_mean: Array
-    total_mean: Array
+    normalized_weight: Array = fixed_field()
+    support_column_mean: Array = fixed_field()
+    total_mean: Array = fixed_field()
     components: Array
-    kernel: Any
+    kernel: Any = fixed_field()
     feature_count: int = eqx.field(static=True)
     component_count: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -237,9 +238,9 @@ class KernelPCARecipe(AbstractRecipe):
 
 
 class NystromModel(AbstractFittedModel):
-    landmarks: Array
-    whitening: Array
-    kernel: Any
+    landmarks: Array = fixed_field()
+    whitening: Array = fixed_field()
+    kernel: Any = fixed_field()
     feature_count: int = eqx.field(static=True)
     component_count: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -417,9 +418,9 @@ class NystromRecipe(AbstractRecipe):
 
 
 class RandomFourierFeatureModel(AbstractFittedModel):
-    frequencies: Array
-    phases: Array
-    scale: Array
+    frequencies: Array = fixed_field()
+    phases: Array = fixed_field()
+    scale: Array = fixed_field()
     feature_count: int = eqx.field(static=True)
     component_count: int = eqx.field(static=True)
     in_size: int = eqx.field(static=True)

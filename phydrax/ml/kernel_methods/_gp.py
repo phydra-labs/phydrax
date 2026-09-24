@@ -18,6 +18,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._model._binding import ModelBinding
+from ..._trainable import fixed_field
 from ...uq._gp_classification import (
     BernoulliGaussianProcessPosterior,
     CategoricalGaussianProcessPosterior,
@@ -54,7 +55,7 @@ class GaussianProcessClassifierModel(AbstractFittedModel):
 
     posteriors: tuple[
         BernoulliGaussianProcessPosterior | CategoricalGaussianProcessPosterior, ...
-    ]
+    ] = fixed_field()
     feature_count: int = eqx.field(static=True)
     class_count: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)

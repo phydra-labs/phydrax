@@ -20,6 +20,7 @@ from phydrax.domain import (
     Boundary,
     CallbackDerivativeRule,
     ComponentSum,
+    Domain,
     DomainComponent,
     DomainFunction,
     EnforcementGateMethod,
@@ -136,12 +137,9 @@ class _InitialPolynomialCallable(StrictModule):
         return out
 
 
-def _constant_weight(value: float, /) -> Callable[[Array], Array]:
-    def _w(x, *, key=None, **kwargs):
-        del x, key, kwargs
-        return jnp.asarray(value, dtype=jnp.float64)
-
-    return _w
+def _always(x: Array, /) -> Array:
+    del x
+    return jnp.asarray(True)
 
 
 def _coerce_value(value: Any, u: DomainFunction, /) -> DomainFunction | ArrayLike:
@@ -196,15 +194,16 @@ def _enforcement_weight_fn(
     sampler: str = "latin_hypercube",
     key: Key[Array, ""] = DOC_KEY0,
     on_empty: Literal["error", "zero"] = "error",
-) -> Callable[[Array], Array]:
+) -> Callable[[Array], Array] | float:
     """Compute a boundary-subset weight function using a point BVH.
 
     Computes an oriented MLS distance-to-subset field, then returns an inverse-power
     weight function suitable for blending multiple enforced ansatz pieces via weighted
-    averaging.
+    averaging. A weight that is constant over the geometry is returned as a float so
+    `_enforcement_weight` can bind it without a coordinate dependency.
     """
     if where is None:
-        return _constant_weight(1.0)
+        return 1.0
 
     where_wrapped = _ensure_special_kwonly_args(where)
 
@@ -222,7 +221,7 @@ def _enforcement_weight_fn(
             raise ValueError(
                 "Enforced-constraint subset predicate selects no boundary points."
             )
-        return _constant_weight(0.0)
+        return 0.0
 
     P = jnp.asarray(ref_points[mask], dtype=jnp.float64)
     ref_normals = jnp.asarray(geom._boundary_normals(P), dtype=jnp.float64)
@@ -345,6 +344,14 @@ def _enforcement_weight_fn(
         )
 
     return _weight_point
+
+
+def _enforcement_weight(
+    domain: Domain, var: str, weight: Callable[[Array], Array] | float, /
+) -> DomainFunction:
+    """Bind a boundary weight; constant weights carry no coordinate dependency."""
+    deps = (var,) if callable(weight) else ()
+    return DomainFunction(domain=domain, deps=deps, func=weight, metadata={})
 
 
 def _boundary_ansatz_factor(
@@ -972,7 +979,7 @@ def _complement_where(
     if any(w is None for w in wheres):
         return None
     if not wheres:
-        return _constant_weight(1.0)
+        return _always
 
     wrapped = tuple(_ensure_special_kwonly_args(w) for w in wheres if w is not None)
 
@@ -1068,30 +1075,36 @@ def enforce_blend(
     for component, u_piece in resolved_pieces:
         where_fn = component.where.get(var)
         wheres.append(where_fn)
-        w_fn = _enforcement_weight_fn(
-            geom,
-            where_fn,
-            num_reference=num_reference,
-            sampler=sampler,
-            key=next(key_iter),
-            on_empty="error",
+        w = _enforcement_weight(
+            u.domain,
+            var,
+            _enforcement_weight_fn(
+                geom,
+                where_fn,
+                num_reference=num_reference,
+                sampler=sampler,
+                key=next(key_iter),
+                on_empty="error",
+            ),
         )
-        w = u.domain.Function(var)(w_fn)
         numerator = numerator + w * u_piece
         denominator = denominator + w
 
     if include_identity_remainder:
         rem_where = _complement_where(wheres)
         if rem_where is not None:
-            w_rem_fn = _enforcement_weight_fn(
-                geom,
-                rem_where,
-                num_reference=num_reference,
-                sampler=sampler,
-                key=next(key_iter),
-                on_empty="zero",
+            w_rem = _enforcement_weight(
+                u.domain,
+                var,
+                _enforcement_weight_fn(
+                    geom,
+                    rem_where,
+                    num_reference=num_reference,
+                    sampler=sampler,
+                    key=next(key_iter),
+                    on_empty="zero",
+                ),
             )
-            w_rem = u.domain.Function(var)(w_rem_fn)
             numerator = numerator + w_rem * u
             denominator = denominator + w_rem
 

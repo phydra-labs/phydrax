@@ -18,7 +18,12 @@ from ..._doc import DOC_KEY0
 from ..._model import AbstractArrayModel
 from ..._sampling import materialize_design, SobolDesign
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import (
+    combine_parameters,
+    NonTrainableState,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ...geometry import regularized_delta_values, regularized_heaviside_values
 from ...sampling.collocation import CausalTimeSlabSchedule
 
@@ -599,13 +604,14 @@ def fit_stefan_pinn(
     count = int(steps)
     if count < 0:
         raise ValueError("steps must be nonnegative.")
+    require_parameter_roles(model, context="fit_stefan_pinn")
     transformation = optax.adam(1.0e-3) if optimizer is None else optimizer
-    parameters, fixed = eqx.partition(model, eqx.is_inexact_array)
+    parameters, model_state, fixed = partition_parameters(model)
     state = transformation.init(parameters)
 
     def step(trainable, optimizer_state):
         def objective(current):
-            evaluated = eqx.combine(current, fixed)
+            evaluated = combine_parameters(current, model_state, fixed)
             result = loss(evaluated)
             if not isinstance(result, StefanLoss):
                 raise TypeError("Stefan loss callback must return StefanLoss.")
@@ -620,7 +626,7 @@ def fit_stefan_pinn(
     for _ in range(count):
         parameters, state, value = run_step(parameters, state)
         history.append(value)
-    fitted = eqx.combine(parameters, fixed)
+    fitted = combine_parameters(parameters, model_state, fixed)
     final = loss(fitted)
     return StefanFitResult(
         model=fitted,
@@ -643,6 +649,7 @@ def fit_stefan_time_slabs(
 
     if not isinstance(schedule, CausalTimeSlabSchedule):
         raise TypeError("schedule must be a CausalTimeSlabSchedule.")
+    require_parameter_roles(model, context="fit_stefan_time_slabs")
     current = model
     histories = []
     final = None

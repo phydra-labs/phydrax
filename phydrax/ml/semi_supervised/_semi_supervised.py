@@ -23,6 +23,7 @@ from ..._differentiation import (
 )
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from ...kernels import AbstractPositiveDefiniteKernel, SquaredExponentialKernel
 from .._batch import MLBatch
 from .._contracts import (
@@ -227,12 +228,12 @@ def _target_distributions(
 class LabelPropagationModel(AbstractFittedModel):
     """Blockwise kernel interpolation of propagated class distributions."""
 
-    training_features: Array
+    training_features: Array = fixed_field()
     distributions: Array
-    training_weight: Array
+    training_weight: Array = fixed_field()
     prior: Array
-    class_labels: Array
-    kernel: AbstractPositiveDefiniteKernel
+    class_labels: Array = fixed_field()
+    kernel: AbstractPositiveDefiniteKernel = fixed_field()
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
@@ -954,7 +955,7 @@ class SoftOneClassCompositionModel(AbstractFittedModel):
 class HardOneClassCompositionModel(AbstractFittedModel):
     detector: AbstractArrayModel
     predictor: AbstractArrayModel
-    threshold: Array
+    threshold: Array = fixed_field()
     in_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     _input_binding = ModelBinding.pointwise()

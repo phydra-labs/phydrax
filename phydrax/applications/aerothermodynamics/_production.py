@@ -14,7 +14,6 @@ from jaxtyping import Array, ArrayLike
 from ..._admissibility import AdmissibilityHeader
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
 from ...equations._ablating_material import AblatingMaterialState
 from ...equations._surface_chemistry import SurfaceChemicalState
 from ...solver._continuum_dsmc import (
@@ -84,7 +83,7 @@ class AerothermodynamicStepResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-class AerothermodynamicProductionPlan(StrictModule, NonTrainableState):
+class AerothermodynamicProductionPlan(StrictModule):
     profile: AerothermodynamicProfile
     plan_id: str = eqx.field(static=True)
 

@@ -13,6 +13,7 @@ from jaxtyping import Array
 from phydrax.domain import Domain, DomainFunction
 
 from ...._doc import DOC_KEY0
+from ...._trainable import fixed_field
 from ..._base import _AbstractBaseModel
 from ..._keys import EvalKey
 from ..._loss import ModelWithLoss
@@ -28,10 +29,11 @@ class OperatorContextModel(_AbstractBaseModel):
     and can extract one named field from raw, multi-output, or task-bound operators.
     Scalar coordinate arguments and already-stacked coordinate arrays are both accepted,
     so the resulting callable composes directly with PhydraX differential operators.
+    The source ``batch`` is FIXED data; only the operator's parameters train.
     """
 
     operator: Any
-    batch: OperatorBatch
+    batch: OperatorBatch = fixed_field()
     query_name: str
     field_name: str | None
     coord_dim: int

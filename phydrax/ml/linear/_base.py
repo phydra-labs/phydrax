@@ -23,6 +23,7 @@ from ..._differentiation import (
 )
 from ..._model import ValuePort
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     FitDiagnostics,
@@ -443,7 +444,7 @@ class LinearRegressorModel(AbstractLinearRegressorModel):
 class AbstractLinearScoreClassifierModel(AbstractLinearModel):
     """Shared binary linear classifier state and hard-label operations."""
 
-    labels: Array
+    labels: Array = fixed_field()
 
     def __init__(
         self,
@@ -505,7 +506,7 @@ class MultinomialLogisticModel(AbstractFittedModel):
 
     coefficients: Array
     intercept: Array
-    labels: Array
+    labels: Array = fixed_field()
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)

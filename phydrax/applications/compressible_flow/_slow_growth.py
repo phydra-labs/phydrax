@@ -18,7 +18,7 @@ import phydrax.linalg as la
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
@@ -275,28 +275,28 @@ def _expanded_profile(profile: Array, state: Array, wall_normal_axis: int, /) ->
     return jnp.broadcast_to(profile.reshape(tuple(shape)), state.shape)
 
 
-class CompressiblePlaneBaseflowSnapshot(StrictModule, NonTrainableState):
+class CompressiblePlaneBaseflowSnapshot(StrictModule):
     """Immutable homogeneous statistics and their one-dimensional baseflow."""
 
     case: CompressibleFlowCaseSpec
-    coordinates: Array
-    mean_conserved: Array
-    base_primitive: Array
-    base_conserved: Array
-    mean_density: Array
-    density_variance: Array
-    reynolds_mean_velocity: Array
-    favre_mean_velocity: Array
-    reynolds_stress: Array
-    favre_stress: Array
-    mean_pressure: Array
-    mean_temperature: Array
-    wall_normal_base_derivative: Array
-    streamwise_base_derivative: Array | None
-    displacement_thickness: Array
-    momentum_thickness: Array
-    finite: Array
-    admissible: Array
+    coordinates: Array = fixed_field()
+    mean_conserved: Array = fixed_field()
+    base_primitive: Array = fixed_field()
+    base_conserved: Array = fixed_field()
+    mean_density: Array = fixed_field()
+    density_variance: Array = fixed_field()
+    reynolds_mean_velocity: Array = fixed_field()
+    favre_mean_velocity: Array = fixed_field()
+    reynolds_stress: Array = fixed_field()
+    favre_stress: Array = fixed_field()
+    mean_pressure: Array = fixed_field()
+    mean_temperature: Array = fixed_field()
+    wall_normal_base_derivative: Array = fixed_field()
+    streamwise_base_derivative: Array | None = fixed_field()
+    displacement_thickness: Array = fixed_field()
+    momentum_thickness: Array = fixed_field()
+    finite: Array = fixed_field()
+    admissible: Array = fixed_field()
     dimension: int = eqx.field(static=True)
     wall_normal_axis: int = eqx.field(static=True)
     homogeneous_axes: tuple[int, ...] = eqx.field(static=True)
@@ -307,11 +307,11 @@ class CompressiblePlaneBaseflowSnapshot(StrictModule, NonTrainableState):
     snapshot_id: str = eqx.field(static=True)
 
 
-class CompressiblePlaneBaseflowPlan(StrictModule, NonTrainableState):
+class CompressiblePlaneBaseflowPlan(StrictModule):
     """Freeze Favre-consistent plane statistics as a baseflow snapshot."""
 
     case: CompressibleFlowCaseSpec
-    coordinates: Array
+    coordinates: Array = fixed_field()
     dimension: int = eqx.field(static=True)
     wall_normal_axis: int = eqx.field(static=True)
     homogeneous_axes: tuple[int, ...] = eqx.field(static=True)
@@ -630,18 +630,18 @@ class SlowGrowthFiniteXEvidence(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
 
 
-class PreparedSlowGrowthSource(StrictModule, NonTrainableState):
+class PreparedSlowGrowthSource(StrictModule):
     """One pre-step snapshot shared unchanged by every RK or IMEX stage."""
 
     snapshot: CompressiblePlaneBaseflowSnapshot
-    primitive_source_profile: Array
-    base_conservative_source_profile: Array
-    wall_temperature_source_profile: Array
-    displacement_thickness_rate: Array
-    momentum_thickness_rate: Array
-    target_displacement_thickness_rate: Array
-    target_momentum_thickness_rate: Array
-    wall_thermal_residual: Array
+    primitive_source_profile: Array = fixed_field()
+    base_conservative_source_profile: Array = fixed_field()
+    wall_temperature_source_profile: Array = fixed_field()
+    displacement_thickness_rate: Array = fixed_field()
+    momentum_thickness_rate: Array = fixed_field()
+    target_displacement_thickness_rate: Array = fixed_field()
+    target_momentum_thickness_rate: Array = fixed_field()
+    wall_thermal_residual: Array = fixed_field()
     evidence_tolerance: float = eqx.field(static=True)
     displacement_constrained: bool = eqx.field(static=True)
     momentum_constrained: bool = eqx.field(static=True)
@@ -921,14 +921,14 @@ class SlowGrowthStepEvidence(StrictModule, NonTrainableState):
     resulting_continuation_id: str = eqx.field(static=True)
 
 
-class SlowGrowthRestart(StrictModule, NonTrainableState):
+class SlowGrowthRestart(StrictModule):
     snapshot: CompressiblePlaneBaseflowSnapshot
     accepted_step: int = eqx.field(static=True)
     accepted_time: float = eqx.field(static=True)
     continuation_id: str = eqx.field(static=True)
 
 
-class SlowGrowthContinuation(StrictModule, NonTrainableState):
+class SlowGrowthContinuation(StrictModule):
     """Accepted baseflow state; rejected parent attempts leave it unchanged."""
 
     snapshot: CompressiblePlaneBaseflowSnapshot

@@ -12,10 +12,10 @@ import phydrax as phx
 
 def _geometric_solver():
     domain = phx.domain.Interval1d(0.0, 1.0)
-    target_direction = jnp.array([0.0, 1.0, 0.0])
+    target_direction = (0.0, 1.0, 0.0)
     direction = domain.Parameter(
         jnp.array([1.0, 0.0, 0.0]),
-        transform=lambda value: jnp.sum((value - target_direction) ** 2),
+        transform=lambda value: jnp.sum((value - jnp.asarray(target_direction)) ** 2),
     )
     offset = domain.Parameter(2.0, transform=lambda value: (value - 0.5) ** 2)
 

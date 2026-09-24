@@ -20,7 +20,12 @@ from ..._doc import DOC_KEY0
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._iteration import IterationSession
 from ..._strict import StrictModule
-from ..._trainable import combine_trainable, NonTrainableState, partition_trainable
+from ..._trainable import (
+    combine_parameters,
+    NonTrainableState,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ..._training import (
     TrainingController,
     TrainingIterationKind,
@@ -493,6 +498,7 @@ def fit_learned_piv(
         raise ValueError("Dataset image shape does not match the model plan.")
     if dataset.channel_count != model.plan.input_channels:
         raise ValueError("Dataset channels do not match the model plan.")
+    require_parameter_roles(model, context="fit_learned_piv")
     image_support = np.any(
         np.asarray(dataset.first_valid & dataset.second_valid),
         axis=(1, 2),
@@ -515,7 +521,7 @@ def fit_learned_piv(
         if optimizer is None
         else optimizer
     )
-    parameters, non_trainable = partition_trainable(model)
+    parameters, model_state, fixed = partition_parameters(model)
     optimizer_state = transformation.init(parameters)
     control = TrainingController(
         total_steps=config.maximum_steps,
@@ -527,7 +533,7 @@ def fit_learned_piv(
     control.emit(TrainingIterationKind.RUN_START)
 
     def objective(parameters_: AbstractDensePIVModel, indices: Array):
-        current_model = combine_trainable(parameters_, non_trainable)
+        current_model = combine_parameters(parameters_, model_state, fixed)
         result = _dataset_loss(current_model, dataset, config.loss, indices)
         return result.total, result
 
@@ -578,7 +584,7 @@ def fit_learned_piv(
             metrics={"loss": total, "gradient_norm": gradient_norm},
         )
 
-    fitted_model = combine_trainable(parameters, non_trainable)
+    fitted_model = combine_parameters(parameters, model_state, fixed)
     dtype = dataset.first_images.dtype
 
     def stack_history(values: list[Array]) -> Array:

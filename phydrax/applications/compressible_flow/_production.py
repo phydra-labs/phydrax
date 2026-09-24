@@ -178,7 +178,10 @@ class ExplicitCompressibleFixedStepAdapter(AbstractFixedStepMethod):
         return self.method.step(step_index, time, state, step_size, args)
 
 
-class AdditiveIMEXCompressibleFixedStepAdapter(AbstractFixedStepMethod):
+class AdditiveIMEXCompressibleFixedStepAdapter(
+    AbstractFixedStepMethod,
+    NonTrainableState,
+):
     """Production fixed-step surface for a partitioned conservation IMEX method."""
 
     method: ConservationIMEXMethod
@@ -302,7 +305,7 @@ class CompressibleProductionRestart(StrictModule):
     restart_id: str = eqx.field(static=True)
 
 
-class PreparedCompressibleProduction(StrictModule, NonTrainableState):
+class PreparedCompressibleProduction(StrictModule):
     """Route-bound fixed-step method with exact restart and runtime composition."""
 
     method: AbstractFixedStepMethod
@@ -454,7 +457,7 @@ class PreparedCompressibleProduction(StrictModule, NonTrainableState):
         )
 
 
-class SmoothCompressibleProductionPlan(StrictModule, NonTrainableState):
+class SmoothCompressibleProductionPlan(StrictModule):
     """Tensor DGSEM enabled only by canonical sampled entropy evidence."""
 
     method: DGSEMConservationMethodPlan
@@ -617,7 +620,7 @@ class SmoothCompressibleProductionPlan(StrictModule, NonTrainableState):
         )
 
 
-class NodalDGCompressibleProductionPlan(StrictModule, NonTrainableState):
+class NodalDGCompressibleProductionPlan(StrictModule):
     """Separate non-tensor nodal-DG route with LDG viscous traces."""
 
     method: NodalDGConservationMethodPlan
@@ -680,7 +683,7 @@ class NodalDGCompressibleProductionPlan(StrictModule, NonTrainableState):
         )
 
 
-class StructuredFVCompressibleProductionPlan(StrictModule, NonTrainableState):
+class StructuredFVCompressibleProductionPlan(StrictModule):
     """Structured/mapped high-resolution FV with generic canonical HLL fallback."""
 
     shock: ShockResolvingPolicy

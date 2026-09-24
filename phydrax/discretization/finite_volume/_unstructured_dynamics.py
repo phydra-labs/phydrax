@@ -19,7 +19,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from .._conservation_boundary import (
     AbstractConservationBoundary,
     ALEBoundaryContext,
@@ -118,7 +118,7 @@ class UnstructuredFiniteVolumeBoundarySet(StrictModule, NonTrainableState):
         )
 
 
-class UnstructuredFiniteVolumeMethodPlan(StrictModule, NonTrainableState):
+class UnstructuredFiniteVolumeMethodPlan(StrictModule):
     """Reconstruction and normal numerical flux for unstructured cells."""
 
     reconstruction: PiecewiseConstantReconstruction | PreparedUnstructuredReconstruction
@@ -195,13 +195,13 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     boundaries: UnstructuredFiniteVolumeBoundarySet
     coupling: PreparedUnstructuredFiniteVolumeCoupling
     precision: FiniteVolumePrecisionPolicy
-    boundary_face_indices: tuple[Array, ...]
-    stage_rate_block_templates: tuple[ConservationStageFluxRateBlock, ...]
-    stage_boundary_face_indices: tuple[tuple[Array, ...], ...]
-    source_cell_indices: Array
-    overset_rate_block_template: ConservationStageFluxRateBlock | None
-    overset_active_cell_mask: Array
-    overset_effective_cell_volumes: Array
+    boundary_face_indices: tuple[Array, ...] = fixed_field()
+    stage_rate_block_templates: tuple[ConservationStageFluxRateBlock, ...] = fixed_field()
+    stage_boundary_face_indices: tuple[tuple[Array, ...], ...] = fixed_field()
+    source_cell_indices: Array = fixed_field()
+    overset_rate_block_template: ConservationStageFluxRateBlock | None = fixed_field()
+    overset_active_cell_mask: Array = fixed_field()
+    overset_effective_cell_volumes: Array = fixed_field()
     overset_policy_id: str | None = eqx.field(static=True)
     overset_mapping_id: str | None = eqx.field(static=True)
     overset_epoch_id: str | None = eqx.field(static=True)

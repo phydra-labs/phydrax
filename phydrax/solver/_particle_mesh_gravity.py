@@ -13,7 +13,6 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
 from ..discretization.splatting import PreparedParticleGridSplat, SplatDepositResult
 from ._self_gravity import PreparedNewtonianSelfGravity
 
@@ -51,7 +50,7 @@ class ParticleMeshGravityStepResult(StrictModule):
     successful: Array
 
 
-class ParticleMeshGravityPlan(StrictModule, NonTrainableState):
+class ParticleMeshGravityPlan(StrictModule):
     """Differentiable kick-drift-kick particle-mesh gravity coupling."""
 
     gravity: PreparedNewtonianSelfGravity

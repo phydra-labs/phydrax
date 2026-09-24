@@ -15,6 +15,7 @@ import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from ._linear import Linear
 
 
@@ -208,7 +209,7 @@ def _linear_attention(
     return jnp.where(any_source[:, None, None, None], attended, 0.0)
 
 
-class MeasureAwareAttention(StrictModule):
+class MeasureAwareAttention(StrictModule, ParameterOwner):
     """Projected attention with physical source measure and scalable execution."""
 
     query: Linear

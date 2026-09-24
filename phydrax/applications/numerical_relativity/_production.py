@@ -137,7 +137,7 @@ class Z4cProductionState(StrictModule):
     derivative_valid: Any
 
 
-class FixedGridZ4cProductionMethod(AbstractFixedStepMethod):
+class FixedGridZ4cProductionMethod(AbstractFixedStepMethod, NonTrainableState):
     """Generic fixed-step adapter preserving all Z4c runtime dispositions."""
 
     runtime: FixedGridZ4cRuntime
@@ -289,7 +289,7 @@ def _scientific_state_step_time(
     raise TypeError("Unknown numerical-relativity production state.")
 
 
-class FixedGridGRRMHDProductionMethod(AbstractFixedStepMethod):
+class FixedGridGRRMHDProductionMethod(AbstractFixedStepMethod, NonTrainableState):
     """Fixed-step production adapter preserving GRRMHD dispositions."""
 
     runtime: FixedGridGRRMHDIMEXPlan
@@ -1358,7 +1358,7 @@ def _require_resolved_execution_resources(
             )
 
 
-class NumericalRelativityProductionPlan(StrictModule, NonTrainableState):
+class NumericalRelativityProductionPlan(StrictModule):
     """Compiled exact-domain binding over generic execution and runtime plans."""
 
     domain: NumericalRelativityDomainBinding

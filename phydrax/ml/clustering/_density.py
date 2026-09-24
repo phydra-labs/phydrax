@@ -20,6 +20,7 @@ from ..._differentiation import (
     GradientLevel,
     SurfaceDerivative,
 )
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -44,11 +45,11 @@ from ._common import (
 class DensityClusterModel(AbstractFittedModel):
     """Fixed-capacity core-point model with hard radius labels and smooth memberships."""
 
-    core_points: Array
+    core_points: Array = fixed_field()
     core_labels: Array
     core_active: Array
     cluster_active: Array
-    radius: Array
+    radius: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: Literal["scalar"] = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)

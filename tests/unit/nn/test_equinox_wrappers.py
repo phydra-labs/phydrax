@@ -3,9 +3,12 @@
 #
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
+import phydrax as phx
 from phydrax.nn.layers import Dropout, inference_mode
 from phydrax.nn.models import EquinoxModel, EquinoxStructuredModel
 
@@ -66,6 +69,37 @@ def test_equinox_structured_model_value_layout_concatenates_tuple():
 
     y = model((jnp.array(1.0), jnp.array(2.0)))
     assert y.shape == ()
+
+
+def test_equinox_wrappers_declare_wrapped_module_arrays_as_parameters():
+    module = eqx.nn.MLP(in_size=2, out_size=3, width_size=4, depth=1, key=jr.key(4))
+    arrays = jax.tree_util.tree_leaves(eqx.filter(module, eqx.is_inexact_array))
+
+    with pytest.raises(ValueError, match="EquinoxModel") as raised:
+        phx.require_parameter_roles({"model": module}, context="raw module")
+    assert "['model'].layers[0].weight" in str(raised.value)
+
+    for model in (
+        EquinoxModel(module, in_size=2, out_size=3),
+        EquinoxStructuredModel(module, in_size=2, out_size=3, layout="value"),
+    ):
+        parameters, model_state, fixed = phx.partition_parameters({"model": model})
+        assert jax.tree_util.tree_leaves(model_state) == []
+        assert not any(
+            eqx.is_inexact_array(leaf) for leaf in jax.tree_util.tree_leaves(fixed)
+        )
+        leaves = jax.tree_util.tree_leaves(parameters)
+        assert len(leaves) == len(arrays)
+        assert all(left is right for left, right in zip(leaves, arrays, strict=True))
+
+
+def test_equinox_wrappers_reject_stateful_modules():
+    module, _ = eqx.nn.make_with_state(eqx.nn.BatchNorm)(3, axis_name="batch")
+
+    with pytest.raises(TypeError, match="stateful Equinox modules"):
+        EquinoxModel(module, in_size=3, out_size=3)
+    with pytest.raises(TypeError, match="stateful Equinox modules"):
+        EquinoxStructuredModel(module, in_size=3, out_size=3)
 
 
 def test_inference_mode_switches_mixed_phydrax_and_equinox_tree():

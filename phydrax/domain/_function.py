@@ -20,7 +20,12 @@ from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS
 from .._strict import StrictModule
-from .._trainable import is_non_trainable_leaf, is_trainable_leaf, NonTrainableState
+from .._trainable import (
+    ArrayRole,
+    NonTrainableState,
+    ParameterOwner,
+    resolve_array_roles,
+)
 from ._derivative import (
     DerivativeBackend,
     DerivativeBasis,
@@ -96,7 +101,7 @@ class _ConstCallable(StrictModule, NonTrainableState):
         return jnp.broadcast_to(self.value, grid_shape + self.value.shape)
 
 
-class _TrainableConstCallable(StrictModule):
+class _TrainableConstCallable(StrictModule, ParameterOwner):
     value: jax.Array
 
     def __init__(self, value: ArrayLike | None):
@@ -250,11 +255,25 @@ class _TransposeDerivativeRule(DerivativeRule):
 
 
 def _has_trainable_arrays(function: "DomainFunction", /) -> bool:
-    leaves = jax.tree_util.tree_leaves(
-        function.func,
-        is_leaf=is_non_trainable_leaf,
+    # PARAMETER and still-unclassified leaves may be optimized; declared FIXED
+    # and MODEL_STATE leaves never are.
+    return bool(resolve_array_roles(function.func).selectable_paths)
+
+
+def _reject_model_state(func: Any, /, *, context: str) -> None:
+    """Raise when a domain-bound callable carries MODEL_STATE arrays."""
+    resolution = resolve_array_roles(func)
+    paths = tuple(
+        path
+        for path, role in zip(resolution.paths, resolution.roles, strict=True)
+        if role is ArrayRole.MODEL_STATE
     )
-    return any(is_trainable_leaf(leaf) for leaf in leaves)
+    if paths:
+        raise ValueError(
+            f"{context} cannot bind a callable with MODEL_STATE arrays "
+            f"({', '.join(paths)}): domain functions are evaluated statelessly. "
+            "Keep model state outside the domain-bound callable."
+        )
 
 
 def _domain_has_tracer(domain: Domain, /) -> bool:

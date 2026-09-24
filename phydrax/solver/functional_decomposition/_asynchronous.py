@@ -20,7 +20,7 @@ from ..._iteration import (
     IterationSessionState,
 )
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import NonTrainableState, require_parameter_roles
 from ...domain import LocalFieldFamily
 from .._functional_solver import FunctionalSolver
 from ._prepare import PreparedFunctionalDecomposition
@@ -163,6 +163,7 @@ def solve_asynchronous_schwarz(
         trace_history = list(state.trace_history)
         completed = state.completed_updates
         maximum_observed = state.maximum_observed_staleness
+    require_parameter_roles(functions, context="solve_asynchronous_schwarz")
     iteration_scope = None
     stopped = False
     if session is not None:

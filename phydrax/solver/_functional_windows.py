@@ -16,7 +16,7 @@ from jaxtyping import Array
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from .._trainable import partition_trainable
+from .._trainable import partition_parameters, require_parameter_roles
 from .._training import TrainingProgress
 from ..domain import DomainFunction
 from ..optim._update_alignment import ConflictFreeUpdateStatistics
@@ -207,8 +207,8 @@ def _transfer_training_state(
         raise ValueError(
             "Optimizer-state transfer requires a source FunctionalTrainingPlan."
         )
-    source_parameters, _ = partition_trainable(source.functions)
-    target_parameters, _ = partition_trainable(target.functions)
+    source_parameters, _, _ = partition_parameters(source.functions)
+    target_parameters, _, _ = partition_parameters(target.functions)
     initialized_optimizer_state = optimizer.init(target_parameters)
     parameters_match = jax.tree.structure(source_parameters) == jax.tree.structure(
         target_parameters
@@ -286,6 +286,10 @@ def train_functional_time_windows(
             raise ValueError(
                 "Optimizer-state transfer requires a FunctionalTrainingPlan for every window."
             )
+        require_parameter_roles(
+            built.functions,
+            context=f"train_functional_time_windows (window {index})",
+        )
         optimizer = plan.optimizer(index)
         if plan.transfer_optimizer_state and index > 0:
             built = _transfer_training_state(

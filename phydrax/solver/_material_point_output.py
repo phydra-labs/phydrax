@@ -34,7 +34,7 @@ class MPMOutputManifest(StrictModule, NonTrainableState):
     manifest_id: str = eqx.field(static=True)
 
 
-class MPMOutputPlan(StrictModule, NonTrainableState):
+class MPMOutputPlan(StrictModule):
     compiled: CompiledMaterialPointProblem
     hdf5_path: str = eqx.field(static=True)
     xdmf_path: str = eqx.field(static=True)

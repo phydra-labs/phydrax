@@ -19,7 +19,7 @@ from phydrax.ein import contract
 from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import NonTrainableState, ParameterOwner
 from ...imaging import image_coordinates
 from ..imaging._types import DenseDisplacementField2D, ImagePair2D
 from ._learned_primitives import (
@@ -216,7 +216,7 @@ class LearnedDensePIVResult(StrictModule):
     pair_id: str = eqx.field(static=True)
 
 
-class AbstractDensePIVModel(StrictModule):
+class AbstractDensePIVModel(StrictModule, ParameterOwner):
     """Dense PIV model contract over an explicitly prepared fixed pyramid."""
 
     plan: eqx.AbstractVar[LearnedDensePIVPlan]

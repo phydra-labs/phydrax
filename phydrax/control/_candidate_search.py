@@ -13,6 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ..optim import (
     FiniteAxis,
     FiniteExhaustiveSearch,
@@ -68,9 +69,9 @@ class ControlCandidateSearchResult(StrictModule):
     problem: ControlProblem
     parameterization: AbstractControlParameterization
     evaluation: ControlResult | None
-    coefficients: Array | None
-    objective: Array
-    search: FiniteExhaustiveSearch
+    coefficients: Array | None = fixed_field()
+    objective: Array = fixed_field()
+    search: FiniteExhaustiveSearch = fixed_field()
     valid: bool = eqx.field(static=True)
     termination_reason: str = eqx.field(static=True)
     flat_index: int = eqx.field(static=True)

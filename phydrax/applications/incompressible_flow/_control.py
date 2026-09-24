@@ -478,7 +478,7 @@ def _set_control(method, control: Array, /):
     )
 
 
-class MACFlowControlPlan(StrictModule, NonTrainableState):
+class MACFlowControlPlan(StrictModule):
     """Prepare a finite method-stage response controller for bounded MAC flow."""
 
     method: AbstractSSPRKFixedStepMethod | MACIMEXEulerMethod | MACSBDF2Method
@@ -557,7 +557,7 @@ class MACFlowControlPlan(StrictModule, NonTrainableState):
         return PreparedMACFlowControl(self)
 
 
-class PreparedMACFlowControl(StrictModule, NonTrainableState):
+class PreparedMACFlowControl(StrictModule):
     """Executable, fail-closed MAC method-stage response controller."""
 
     plan: MACFlowControlPlan

@@ -18,7 +18,13 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import (
+    combine_parameters,
+    fixed_field,
+    NonTrainableState,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ..._training import (
     TrainingController,
     TrainingIterationKind,
@@ -299,10 +305,10 @@ class FreeEnergyTrainingPolicy(StrictModule, NonTrainableState):
 
 class FreeEnergyFitResult(StrictModule):
     model: AbstractArrayModel
-    training_loss: Array
-    validation_loss: Array
-    progress: TrainingProgress
-    valid: Array
+    training_loss: Array = fixed_field()
+    validation_loss: Array = fixed_field()
+    progress: TrainingProgress = fixed_field()
+    valid: Array = fixed_field()
     model_id: str = eqx.field(static=True)
     dataset_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
@@ -344,6 +350,7 @@ def fit_free_energy_model(
 ) -> FreeEnergyFitResult:
     if not isinstance(model, AbstractArrayModel) or not isinstance(data, MeanForceData):
         raise TypeError("model and data must satisfy free-energy training contracts.")
+    require_parameter_roles(model, context="fit_free_energy_model")
     if model.in_size != data.centers.shape[1] or model.out_size != 1:
         raise ValueError("Free-energy model must map CV coordinates to one scalar.")
     identifier = str(model_id).strip()
@@ -356,7 +363,7 @@ def fit_free_energy_model(
     if validation.centers.shape[1] != data.centers.shape[1]:
         raise ValueError("Training and validation CV dimensions differ.")
     optimizer_ = optax.adam(policy_.learning_rate) if optimizer is None else optimizer
-    state = optimizer_.init(eqx.filter(model, eqx.is_inexact_array))
+    state = optimizer_.init(partition_parameters(model)[0])
     controller = TrainingController(
         total_steps=policy_.maximum_steps,
         key=key,
@@ -365,14 +372,25 @@ def fit_free_energy_model(
 
     @eqx.filter_jit
     def update(current, optimizer_state):
+        parameters, model_state, fixed = partition_parameters(current)
+
         def objective(candidate):
-            return _free_energy_loss(candidate, data)
+            return _free_energy_loss(
+                combine_parameters(candidate, model_state, fixed), data
+            )
 
         (loss, valid), gradient = eqx.filter_value_and_grad(objective, has_aux=True)(
-            current
+            parameters
         )
-        updates, next_state = optimizer_.update(gradient, optimizer_state, current)
-        return eqx.apply_updates(current, updates), next_state, loss, valid
+        updates, next_state = optimizer_.update(gradient, optimizer_state, parameters)
+        return (
+            combine_parameters(
+                eqx.apply_updates(parameters, updates), model_state, fixed
+            ),
+            next_state,
+            loss,
+            valid,
+        )
 
     current = model
     training_history: list[Array] = []
@@ -456,8 +474,8 @@ class LearnedFreeEnergyBiasPlan(AbstractAtomisticBiasPlan):
     variables: AbstractCollectiveVariableProgram
     models: tuple[AbstractArrayModel, ...]
     model_ids: tuple[str, ...] = eqx.field(static=True)
-    reference: Array
-    offsets: Array
+    reference: Array = fixed_field()
+    offsets: Array = fixed_field()
     bias_fraction: float = eqx.field(static=True)
     trusted_uncertainty: float = eqx.field(static=True)
     rejected_uncertainty: float = eqx.field(static=True)

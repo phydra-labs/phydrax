@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ..control._parameterization import AbstractControlParameterization
 from ._local_hamiltonian import (
     FixedGridLocalHamiltonian,
@@ -56,13 +57,13 @@ class QuantumControlLine(StrictModule):
     """One scalar I/Q envelope and carrier with explicit compact support."""
 
     parameterization: AbstractControlParameterization
-    in_phase_coefficients: Array
-    quadrature_coefficients: Array | None
-    carrier: QuantumCarrier
-    support_start: Array
-    support_stop: Array
-    finite: Array
-    valid: Array
+    in_phase_coefficients: Array = fixed_field()
+    quadrature_coefficients: Array | None = fixed_field()
+    carrier: QuantumCarrier = fixed_field()
+    support_start: Array = fixed_field()
+    support_stop: Array = fixed_field()
+    finite: Array = fixed_field()
+    valid: Array = fixed_field()
     line_id: str = eqx.field(static=True)
 
     def __init__(
@@ -187,9 +188,9 @@ class QuantumControlSchedule(StrictModule):
     """Fixed control lines and their transfer into ordered drive terms."""
 
     lines: tuple[QuantumControlLine, ...]
-    transfer: LinearQuantumControlTransfer
-    finite: Array
-    valid: Array
+    transfer: LinearQuantumControlTransfer = fixed_field()
+    finite: Array = fixed_field()
+    valid: Array = fixed_field()
     schedule_id: str = eqx.field(static=True)
 
     def __init__(

@@ -20,7 +20,7 @@ from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
 from ..._precision import real_precision_dtype_name
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import NonTrainableState, ParameterOwner
 from ...atomistic._types import AtomicStructure
 from ...operators.quantum._amplitude import LogAmplitude
 from ...operators.quantum._electronic_advanced import ElectronicVMCResourcePlan
@@ -468,7 +468,7 @@ class _FermiNetLayer(StrictModule):
     one_bias: Array
 
 
-class FermiNet(StrictModule):
+class FermiNet(StrictModule, ParameterOwner):
     """Rotation-invariant generalized-determinant molecular FermiNet.
 
     The static leading electron block is spin-up and the trailing block is

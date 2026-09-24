@@ -3,16 +3,17 @@
 #
 
 import equinox as eqx
+import jax
+import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 from phydrax.solver._kfac_layout import discover_parameter_layout
 
 
 def _layout(functions, *, exact_block_max_size=64, uncovered="error"):
-    parameters, _ = partition_trainable(functions)
+    parameters, _, _ = phx.partition_parameters(functions)
     return discover_parameter_layout(
         functions,
         parameters,
@@ -153,3 +154,23 @@ def test_parameter_layout_rejects_random_weight_factorization():
 
     with pytest.raises(ValueError, match="disable rwf"):
         _layout({"u": domain.Model("x")(model)})
+
+
+class _StatefulScale(phx.ParameterOwner, eqx.Module):
+    scale: jax.Array
+    calls: jax.Array = phx.model_state_field()
+
+    def __call__(self, x, **_kwargs):
+        return self.scale * x[0]
+
+
+def test_parameter_layout_rejects_model_state():
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    stateful = phx.domain.DomainFunction(
+        domain=domain,
+        deps=("x",),
+        func=_StatefulScale(jnp.asarray(2.0), jnp.asarray(0)),
+    )
+
+    with pytest.raises(ValueError, match=r"KFAC field 'u'.*MODEL_STATE.*calls"):
+        _layout({"u": stateful})

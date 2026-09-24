@@ -10,7 +10,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import NonTrainableState, ParameterOwner
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
 from .._keys import EvalKey
 from ._constitutive import DeformationGradientMinors
@@ -111,7 +111,7 @@ class ReferenceConfiguration(StrictModule, NonTrainableState):
         return determinant
 
 
-class CoercivePolyconvexEnvelope(StrictModule):
+class CoercivePolyconvexEnvelope(StrictModule, ParameterOwner):
     """Positive-coefficient convex energy in lifted relative minors."""
 
     raw_gradient_coefficients: Array
@@ -222,7 +222,7 @@ class MaterialConstraintReport(StrictModule):
     reference_tangent_diagonal_minimum: Array
 
 
-class ConstrainedPolyconvexPotential(StrictModule):
+class ConstrainedPolyconvexPotential(StrictModule, ParameterOwner):
     """Objective, isotropic, coercive polyconvex energy relative to a reference."""
 
     reference: ReferenceConfiguration

@@ -20,6 +20,7 @@ from ..._differentiation import (
 )
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from .._batch import MLBatch
 from .._contracts import (
     _protocol_model,
@@ -206,7 +207,7 @@ def _flat_input_size(model: AbstractArrayModel, owner: str, /) -> int:
 
 class OneVsRestModel(AbstractFittedModel):
     models: tuple[AbstractArrayModel, ...]
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
@@ -285,7 +286,7 @@ class OneVsRestRecipe(AbstractRecipe):
 class OneVsOneModel(AbstractFittedModel):
     models: tuple[AbstractArrayModel, ...]
     pairs: tuple[tuple[int, int], ...] = eqx.field(static=True)
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
@@ -396,7 +397,7 @@ class OneVsOneRecipe(AbstractRecipe):
 class OutputCodeModel(AbstractFittedModel):
     models: tuple[AbstractArrayModel, ...]
     codebook: tuple[tuple[int, ...], ...] = eqx.field(static=True)
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)

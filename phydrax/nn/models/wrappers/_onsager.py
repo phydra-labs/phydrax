@@ -12,14 +12,19 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from ...._strict import StrictModule
-from ...._trainable import NonTrainableState, partition_trainable
+from ...._trainable import (
+    ArrayRole,
+    NonTrainableState,
+    ParameterOwner,
+    require_parameter_roles,
+)
 from ....ml._numerics import fit_weighted_subspace
 from ..._keys import EvalKey, fold_in_eval_key
 from ...parameters import ParameterSubspace
 from .._port_hamiltonian import PortHamiltonianVectorField
 
 
-class PortHamiltonianResidualClosure(StrictModule):
+class PortHamiltonianResidualClosure(StrictModule, ParameterOwner):
     """Compose baseline and residual through energy, skew, PSD, and forcing parts."""
 
     base: PortHamiltonianVectorField
@@ -114,11 +119,14 @@ class PortHamiltonianResidualClosure(StrictModule):
         return rate + loss - power
 
     def residual_parameter_subspace(self) -> ParameterSubspace:
-        trainable, _ = partition_trainable(self.residual)
+        resolution = require_parameter_roles(
+            self.residual,
+            context="PortHamiltonianResidualClosure.residual_parameter_subspace",
+        )
         paths = tuple(
-            jax.tree_util.keystr(path)
-            for path, leaf in jax.tree_util.tree_flatten_with_path(trainable)[0]
-            if eqx.is_inexact_array(leaf)
+            path
+            for path, role in zip(resolution.paths, resolution.roles, strict=True)
+            if role is ArrayRole.PARAMETER
         )
         if not paths:
             raise ValueError("Residual closure has no trainable residual leaves.")
@@ -157,7 +165,7 @@ class FixedOnsagerSubspace(StrictModule, NonTrainableState):
         self.report = report
 
 
-class FixedSubspaceOnsagerModel(StrictModule):
+class FixedSubspaceOnsagerModel(StrictModule, ParameterOwner):
     """Structured latent dynamics restricted to a fixed affine physical subspace."""
 
     subspace: FixedOnsagerSubspace
@@ -295,7 +303,7 @@ class AutoencodedOnsagerDiagnostics(StrictModule):
     pullback_metric_validated: bool = eqx.field(static=True)
 
 
-class AutoencodedOnsagerModel(StrictModule):
+class AutoencodedOnsagerModel(StrictModule, ParameterOwner):
     """Evolve a structured latent model and decode its observable tangent by JVP."""
 
     encoder: Any

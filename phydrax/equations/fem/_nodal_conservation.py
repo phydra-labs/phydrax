@@ -19,7 +19,7 @@ import phydrax.linalg as la
 from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...discretization._cell_complex import (
     PolygonalConnectivity,
     PolyhedralConnectivity,
@@ -78,7 +78,7 @@ from ._viscous_conservation import ViscousDGPlan
 from ._well_balanced import WellBalancedEquilibriumPlan
 
 
-class NodalDGConservationMethodPlan(StrictModule, NonTrainableState):
+class NodalDGConservationMethodPlan(StrictModule):
     interface_flux: AbstractArbitraryNormalNumericalFluxPlan
     volume_quadrature: QuadratureAccuracyPolicy
     interior_facet_quadrature: QuadratureAccuracyPolicy
@@ -1013,7 +1013,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
     entropy_pair: ConvexEntropyPair | None
     source: Callable | None = eqx.field(static=True)
     compiled_finite_element_problem: CompiledFiniteElementProblem
-    mass_inverse: PreparedDiscontinuousMassInverse
+    mass_inverse: PreparedDiscontinuousMassInverse = fixed_field()
     mortar_routes: tuple[PreparedDGTraceRoute, ...]
     mortar_batches: tuple[PreparedDGMortarBatch, ...]
     periodic_routes: tuple[PreparedDGTraceRoute, ...]

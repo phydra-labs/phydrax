@@ -18,6 +18,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._model import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import AbstractRecipe, FitResult
 from .._schema import AbstractFittedModel, FeatureSchema
@@ -42,9 +43,9 @@ def _case_binding(case_shape: tuple[int, ...], /) -> ModelBinding:
 class _AbstractAffineTransform(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    center: Array
-    scale: Array
-    output_offset: Array
+    center: Array = fixed_field()
+    scale: Array = fixed_field()
+    output_offset: Array = fixed_field()
     input_schema: FeatureSchema = eqx.field(static=True)
     output_schema: FeatureSchema = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)

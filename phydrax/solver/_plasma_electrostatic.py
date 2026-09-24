@@ -13,7 +13,7 @@ from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import fixed_field
 from ..equations._ionized_gas import (
     IonizedMultitemperatureEulerSystem,
     IonizedMultitemperatureNavierStokesSystem,
@@ -36,13 +36,13 @@ class ElectrostaticPlasmaCouplingResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-class ElectrostaticPlasmaCouplingPlan(StrictModule, NonTrainableState):
+class ElectrostaticPlasmaCouplingPlan(StrictModule):
     """Project ionized cell charge to a cochain Poisson solve and back."""
 
     system: IonizedMultitemperatureEulerSystem | IonizedMultitemperatureNavierStokesSystem
     electrostatic: CochainElectrostaticPlan
-    cell_to_node: Array
-    edge_to_cell_vector: Array
+    cell_to_node: Array = fixed_field()
+    edge_to_cell_vector: Array = fixed_field()
     cell_shape: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 

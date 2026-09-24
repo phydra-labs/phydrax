@@ -23,6 +23,7 @@ from ..._differentiation import (
 )
 from ..._model import AbstractArrayModel, ValuePort
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -107,7 +108,7 @@ class GaussianNaiveBayesModel(AbstractNaiveBayesModel):
     means: Array
     variances: Array
     log_priors: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -152,7 +153,7 @@ class BernoulliNaiveBayesModel(AbstractNaiveBayesModel):
     feature_log_prob: Array
     feature_log_neg_prob: Array
     log_priors: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     threshold: float = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -200,7 +201,7 @@ class BernoulliNaiveBayesModel(AbstractNaiveBayesModel):
 class MultinomialNaiveBayesModel(AbstractNaiveBayesModel):
     feature_log_prob: Array
     log_priors: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     complement: bool = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -249,7 +250,7 @@ class MultinomialNaiveBayesModel(AbstractNaiveBayesModel):
 class CategoricalNaiveBayesModel(AbstractNaiveBayesModel):
     feature_log_prob: Array
     log_priors: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     category_counts: tuple[int, ...] = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)

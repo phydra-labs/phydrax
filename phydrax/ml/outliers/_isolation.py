@@ -19,6 +19,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._model import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch
 from .._contracts import AbstractRecipe, FitResult
 from .._schema import AbstractFittedModel
@@ -207,10 +208,10 @@ class IsolationForestModel(AbstractFittedModel):
     """Exact hard isolation forest; splits, paths, and predictions are nondifferentiable."""
 
     feature_indices: Array
-    thresholds: Array
+    thresholds: Array = fixed_field()
     splittable: Array
-    leaf_mass: Array
-    normalization: Array
+    leaf_mass: Array = fixed_field()
+    normalization: Array = fixed_field()
     threshold: Array
     max_depth: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -297,10 +298,10 @@ class SmoothIsolationForestModel(AbstractFittedModel):
     """Differentiable sigmoid-routing relaxation of a fitted isolation forest."""
 
     feature_indices: Array
-    thresholds: Array
+    thresholds: Array = fixed_field()
     splittable: Array
-    leaf_mass: Array
-    normalization: Array
+    leaf_mass: Array = fixed_field()
+    normalization: Array = fixed_field()
     threshold: Array
     temperature: float = eqx.field(static=True)
     max_depth: int = eqx.field(static=True)

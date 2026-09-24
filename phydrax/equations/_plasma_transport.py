@@ -15,7 +15,7 @@ from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import fixed_field
 from ..linalg._dense_inverse import dense_inverse
 from ._chemical_species import ChemicalSpeciesSchema
 from ._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
@@ -41,12 +41,12 @@ class PlasmaTransportEvaluation(StrictModule):
     transport_id: str = eqx.field(static=True)
 
 
-class AmbipolarPlasmaTransportPlan(StrictModule, NonTrainableState):
+class AmbipolarPlasmaTransportPlan(StrictModule):
     """Mass- and current-constrained multicomponent Fick plasma transport."""
 
     schema: ChemicalSpeciesSchema
     molecular_transport: AbstractTransportClosure
-    species_diffusivities: Array
+    species_diffusivities: Array = fixed_field()
     electron_thermal_conductivity: float = eqx.field(static=True)
     transport_id: str = eqx.field(static=True)
 

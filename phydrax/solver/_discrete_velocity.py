@@ -15,7 +15,7 @@ import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import fixed_field
 from ..discretization.discrete_velocity._quadrature import (
     CertifiedDiscreteVelocityQuadrature,
 )
@@ -47,14 +47,14 @@ class FiniteVolumeDVMResidualEvidence(StrictModule):
     maximum_absolute_declared_moment_defect: Array
 
 
-class PreparedConservativeFiniteVolumeDVM(StrictModule, NonTrainableState):
+class PreparedConservativeFiniteVolumeDVM(StrictModule):
     """Prepared finite-volume DVM that delegates transport to the FV substrate."""
 
     quadrature: CertifiedDiscreteVelocityQuadrature
     system: DiscreteVelocityAdvectionSystem
     dynamics: PreparedFiniteVolumeDynamics
     source: AbstractConservativeDVMSource | None
-    declared_moment_matrix: Array
+    declared_moment_matrix: Array = fixed_field()
     program_manifest: KineticProgramManifest
     declared_moment_names: tuple[str, ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
@@ -116,7 +116,7 @@ class PreparedConservativeFiniteVolumeDVM(StrictModule, NonTrainableState):
         )
 
 
-class ConservativeFiniteVolumeDVMPlan(StrictModule, NonTrainableState):
+class ConservativeFiniteVolumeDVMPlan(StrictModule):
     """Conservative FV-DVM composition over prepared finite-volume abstractions."""
 
     quadrature: CertifiedDiscreteVelocityQuadrature

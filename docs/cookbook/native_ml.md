@@ -55,10 +55,11 @@ holds the `strain`/`temperature` feature port with its declared dimensions and
 does not bind schemas.
 
 `result.model` is an immutable `FrozenModel`: ordinary JAX differentiation still
-works through its prediction, but Phydrax solvers keep its leaves outside the
-trainable partition. Freezing preserves the wrapped model's exact input binding and
-forwards its available named prediction capabilities (`decision_function`, `predict`,
-`predict_log_proba`, and `predict_proba`) without inventing unsupported methods.
+works through its prediction, but as an `ExplicitFreeze` holder every array below
+it is FIXED, so Phydrax trainers never update it. Freezing preserves the wrapped
+model's exact input binding and forwards its available named prediction capabilities
+(`decision_function`, `predict`, `predict_log_proba`, and `predict_proba`) without
+inventing unsupported methods.
 
 ```python
 input_sensitivity = jax.grad(closure)(jnp.array([0.25, -0.1]))
@@ -137,8 +138,10 @@ To refine the fitted coefficients jointly with physics, opt in explicitly:
 trainable_field = geom.Model("x")(result.as_trainable())
 ```
 
-This changes solver partitioning only. It does not copy the arrays, make a hard fit
-differentiable, or erase the original fit diagnostics.
+This changes array roles only: the fitted coefficients become PARAMETER, while
+retained data and statistics declared with `fixed_field` stay FIXED. It does not
+copy the arrays, make a hard fit differentiable, or erase the original fit
+diagnostics.
 
 ## Use sparse data deliberately
 

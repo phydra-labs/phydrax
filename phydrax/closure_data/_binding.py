@@ -18,7 +18,7 @@ from .._differentiation import BranchDifferentiationPolicy
 from .._fingerprint import canonical_fingerprint
 from .._model import ValuePort
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import ExplicitFreeze, NonTrainableState
 from ..discretization.finite_volume._closure import ConservativeFaceClosurePlan
 from ..discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ..discretization.spectral._dealias import (
@@ -656,8 +656,12 @@ class LearnedStressResult(StrictModule, NonTrainableState):
         self.evidence = evidence
 
 
-class PreparedLearnedStressBinding(StrictModule, NonTrainableState):
-    """JIT-compatible stress evaluation without a backend divergence operator."""
+class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
+    """JIT-compatible stress evaluation without a backend divergence operator.
+
+    The bound predictor is a loaded, artifact-identified deployment and is
+    intentionally frozen (`ExplicitFreeze`); retraining binds a new predictor.
+    """
 
     predictor: Callable
     normalizer: TrainOnlyNormalizer

@@ -20,7 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from .._conservation_boundary import PrescribedNormalFluxBoundary
 from ._boundary import FiniteVolumeBoundarySet
 from ._closure import ConservativeFaceClosurePlan
@@ -63,6 +63,13 @@ if TYPE_CHECKING:
 
 
 SourceFunction = Callable[[Array, Array, Array, Any], ArrayLike]
+FiniteVolumeReconstruction = (
+    AbstractFaceReconstructionPlan
+    | HighResolutionReconstructionPlan
+    | NonuniformWENOReconstructionPlan
+    | CharacteristicReconstructionPlan
+    | WENOReconstructionPlan
+)
 
 
 class ConvexStateLimiterPlan(StrictModule, NonTrainableState):
@@ -104,11 +111,15 @@ class ConvexStateLimiterPlan(StrictModule, NonTrainableState):
         return average_ + lower[..., None] * direction
 
 
-class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
+class FiniteVolumeMethodPlan(StrictModule):
     """Validated composition of reconstruction and one interface method."""
 
-    reconstruction: Any
-    interface_solver: Any
+    reconstruction: FiniteVolumeReconstruction
+    interface_solver: (
+        AbstractNumericalFluxPlan
+        | AbstractWavePropagationPlan
+        | ShallowWaterHydrostaticHLLPlan
+    )
     positivity: ConvexStateLimiterPlan | None
     wave_limiter: WaveFamilyLimiterPlan | None
     viscous: ViscousFluxPlan | None
@@ -357,9 +368,9 @@ class PreparedFiniteVolumeDynamics(StrictModule):
     method: FiniteVolumeMethodPlan
     boundaries: FiniteVolumeBoundarySet
     halo: PreparedFiniteVolumeHaloPlan
-    capacity: Array
+    capacity: Array = fixed_field()
     bathymetry: PreparedShallowWaterBathymetry | None
-    axis_reconstructions: tuple[Any, ...]
+    axis_reconstructions: tuple[FiniteVolumeReconstruction, ...]
     precision: FiniteVolumePrecisionPolicy
     entropy_pair: ConvexEntropyPair | None
     source: SourceFunction | None = eqx.field(static=True)

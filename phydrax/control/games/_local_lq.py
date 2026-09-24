@@ -18,6 +18,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 from ...dynamics import (
     AbstractInputPolicy,
     DiscreteStepContext,
@@ -117,7 +118,7 @@ class _LocalQuadraticGame(StrictModule):
     method_id: str = eqx.field(static=True)
 
 
-class LocalAffineGamePolicy(AbstractInputPolicy):
+class LocalAffineGamePolicy(AbstractInputPolicy, NonTrainableState):
     """Physical local policy around one nominal trajectory.
 
     The stored ``feedback_gain`` and ``feedforward`` act on physical

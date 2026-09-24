@@ -17,7 +17,7 @@ import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ..lattice_boltzmann._program import (
     KineticProgramManifest,
     smooth_compressible_spatial_dvm_manifest,
@@ -184,7 +184,7 @@ class SmoothCompressibleD2VStepResult(StrictModule):
     work: Array
 
 
-class SmoothCompressibleD2V17SpatialPlan(StrictModule, NonTrainableState):
+class SmoothCompressibleD2V17SpatialPlan(StrictModule):
     """Construction plan for fixed-grid periodic D2V17 dynamics."""
 
     method: SmoothCompressibleD2VKineticMethod
@@ -289,7 +289,7 @@ class SmoothCompressibleD2V17SpatialPlan(StrictModule, NonTrainableState):
         )
 
 
-class PreparedSmoothCompressibleD2V17SpatialDynamics(StrictModule, NonTrainableState):
+class PreparedSmoothCompressibleD2V17SpatialDynamics(StrictModule):
     """One atomic local-collision and exact-periodic-transport D2V17 owner."""
 
     method: SmoothCompressibleD2VKineticMethod
@@ -300,7 +300,7 @@ class PreparedSmoothCompressibleD2V17SpatialDynamics(StrictModule, NonTrainableS
         ZeroSmoothCompressibleD2VForcingPlan | SmoothCompressibleD2VBodyForcingPlan | None
     )
     program_manifest: KineticProgramManifest
-    safe_state: SmoothCompressibleKineticState
+    safe_state: SmoothCompressibleKineticState = fixed_field()
     population_floor: float = eqx.field(static=True)
     conservation_tolerance: float = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)

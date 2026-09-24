@@ -340,7 +340,7 @@ class HyperelasticResponse(StrictModule):
         return self.tangent
 
 
-class HyperelasticLaw(StrictModule, NonTrainableState):
+class HyperelasticLaw(StrictModule):
     """Abstract pure pointwise hyperelastic constitutive law."""
 
     __strict_abstract__ = True
@@ -634,7 +634,7 @@ def neo_hookean_response(
     )
 
 
-class NeoHookeanLaw(HyperelasticLaw):
+class NeoHookeanLaw(HyperelasticLaw, NonTrainableState):
     """Canonical logarithmic compressible Neo-Hookean constitutive law."""
 
     parameters: NeoHookeanParameters

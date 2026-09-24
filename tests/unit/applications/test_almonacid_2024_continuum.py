@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phydrax._trainable import combine_trainable, partition_trainable
+from phydrax import combine_parameters, partition_parameters
 from phydrax.applications.skeletal_muscle.continuum import (
     Almonacid2024Control,
     Almonacid2024InputHistory,
@@ -300,10 +300,10 @@ def test_optimizer_changes_control_response_but_not_the_clock(model, history_val
         )
         sample = lambda x: x
         learning_rate = 0.5
-    trainable, fixed = partition_trainable(inputs)
+    trainable, model_state, fixed = partition_parameters(inputs)
 
     def objective(values):
-        control = sample(combine_trainable(values, fixed))
+        control = sample(combine_parameters(values, model_state, fixed))
         return (control.activation - 0.2) ** 2 + (
             control.engineering_strain - 0.0002
         ) ** 2
@@ -312,11 +312,11 @@ def test_optimizer_changes_control_response_but_not_the_clock(model, history_val
     updated = jax.tree_util.tree_map(
         lambda x, g: x - learning_rate * g, trainable, gradient
     )
-    optimized = sample(combine_trainable(updated, fixed))
+    optimized = sample(combine_parameters(updated, model_state, fixed))
     assert float(objective(updated)) < float(objective(trainable)) * 1e-12
     np.testing.assert_array_equal(optimized.time_s, sample(inputs).time_s)
     if history_values:
-        updated_history = combine_trainable(updated, fixed)
+        updated_history = combine_parameters(updated, model_state, fixed)
         np.testing.assert_array_equal(
             updated_history.activation_time_s, inputs.activation_time_s
         )

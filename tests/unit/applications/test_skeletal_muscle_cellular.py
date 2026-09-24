@@ -8,7 +8,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phydrax._trainable import partition_trainable
 from phydrax.applications.skeletal_muscle.cellular import (
     ShortenCellState,
     ShortenFastTwitchModel,
@@ -252,18 +251,6 @@ def test_failed_step_trajectory_pairs_rolled_back_time_and_values():
 def test_integration_schedule_is_fixed_and_identity_is_content_complete():
     model = ShortenFastTwitchModel()
     plan = ShortenIntegrationPlan(model, [0.0, 0.5, 1.0])
-    trainable, fixed = partition_trainable(plan)
-
-    trainable_leaves = jax.tree.leaves(trainable)
-    assert len(trainable_leaves) == 1
-    np.testing.assert_array_equal(trainable_leaves[0], model.parameters)
-    assert trainable.schedule is None
-    assert fixed.schedule is plan.schedule
-
-    protocol_trainable, protocol_fixed = partition_trainable(plan.protocol)
-    assert not jax.tree.leaves(protocol_trainable)
-    assert protocol_fixed is plan.protocol
-
     same = ShortenIntegrationPlan(model, [0.0, 0.5, 1.0])
     different_grid = ShortenIntegrationPlan(model, [0.0, 0.5, 1.5])
     different_timing = ShortenIntegrationPlan(

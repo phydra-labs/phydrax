@@ -30,7 +30,7 @@ from ..._holomorphic_linear import (
     MultivariableHolomorphicPotentialProvider,
 )
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState, ParameterOwner
 from ...linalg import DenseLinearOperator, RankPolicy, SolveResourcePolicy
 from ...linalg._constraint_operators import (
     prepare_constraint_operator,
@@ -726,14 +726,14 @@ class HolomorphicAffineCoefficientMap(StrictModule, NonTrainableState):
         return self.operator.constraint_matrix @ coefficients - self.target
 
 
-class ConstrainedHolomorphicPotential(StrictModule):
+class ConstrainedHolomorphicPotential(StrictModule, ParameterOwner):
     """Holomorphic frame parameterized inside one affine coefficient set."""
 
     __hash__ = object.__hash__
 
     free_coordinates: Array
-    coefficient_map: HolomorphicAffineCoefficientMap
-    _certificate: HolomorphicMapCertificate
+    coefficient_map: HolomorphicAffineCoefficientMap = fixed_field()
+    _certificate: HolomorphicMapCertificate = fixed_field()
 
     def __init__(
         self,

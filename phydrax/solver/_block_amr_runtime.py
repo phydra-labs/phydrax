@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import fixed_field, NonTrainableState
 from ..discretization._conservation_ledger import (
     AcceptedConservationFluxIntegralBlock,
     AcceptedConservationIntegralLedger,
@@ -185,23 +185,23 @@ class BlockAMRRuntimeState(StrictModule):
 class BlockAMRAdvanceResult(StrictModule):
     """Atomic root-interval result with accepted ledgers and synchronization evidence."""
 
-    runtime_state: BlockAMRRuntimeState
-    accepted: Array
-    attempted_step_size: Array
-    accepted_step_size: Array
-    accepted_ledgers: tuple[AcceptedConservationIntegralLedger, ...]
-    edge_accepted_ledgers: tuple[AcceptedConservationIntegralLedger, ...]
-    flux_registers: tuple[FluxRegister, ...]
-    maximum_rate: Array
-    precision_evidence: PrecisionEvidenceEnvelope
-    composite_conservation_defect: Array
-    failed_level: Array
-    failed_phase: Array
-    topology_status: Array
+    runtime_state: BlockAMRRuntimeState = fixed_field()
+    accepted: Array = fixed_field()
+    attempted_step_size: Array = fixed_field()
+    accepted_step_size: Array = fixed_field()
+    accepted_ledgers: tuple[AcceptedConservationIntegralLedger, ...] = fixed_field()
+    edge_accepted_ledgers: tuple[AcceptedConservationIntegralLedger, ...] = fixed_field()
+    flux_registers: tuple[FluxRegister, ...] = fixed_field()
+    maximum_rate: Array = fixed_field()
+    precision_evidence: PrecisionEvidenceEnvelope = fixed_field()
+    composite_conservation_defect: Array = fixed_field()
+    failed_level: Array = fixed_field()
+    failed_phase: Array = fixed_field()
+    topology_status: Array = fixed_field()
     topology_event_request: FiniteVolumeTopologyEventRequest | None
     successor_runtime: PreparedBlockAMRRuntime | None
     synchronization_order: tuple[int, ...] = eqx.field(static=True)
-    stage_times: tuple[tuple[Array, Array, Array], ...]
+    stage_times: tuple[tuple[Array, Array, Array], ...] = fixed_field()
     level_attempt_order: tuple[int, ...] = eqx.field(static=True)
     temporal_method_id: str = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
@@ -307,7 +307,7 @@ SpecialistSynchronization = Callable[
 ]
 
 
-class BlockAMRRuntimePlan(StrictModule, NonTrainableState):
+class BlockAMRRuntimePlan(StrictModule):
     """Solver-owned fixed-topology block finite-volume advancement policy."""
 
     finite_volume: BlockAMRFiniteVolumePlan
@@ -411,14 +411,14 @@ class BlockAMRRuntimePlan(StrictModule, NonTrainableState):
         return PreparedBlockAMRRuntime(self, topology)
 
 
-class PreparedBlockAMRRuntime(StrictModule, NonTrainableState):
+class PreparedBlockAMRRuntime(StrictModule):
     """Prepared N-level SSPRK runtime for one immutable topology epoch."""
 
     plan: BlockAMRRuntimePlan
     dynamics: PreparedBlockAMRFiniteVolumeDynamics
     conservation: BlockAMRConservationPlan
     edge_routes: tuple[_BlockAMREdgeRoute, ...]
-    covered_cell_masks: tuple[Array, ...]
+    covered_cell_masks: tuple[Array, ...] = fixed_field()
     topology_artifacts: FiniteVolumeTopologyArtifacts
     prepared_id: str = eqx.field(static=True)
 

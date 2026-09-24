@@ -49,7 +49,7 @@ def _reflection_routes(
     return tuple(routes)
 
 
-class DiscreteVelocityAdvectionSystem(AbstractAdmissibleSystem):
+class DiscreteVelocityAdvectionSystem(AbstractAdmissibleSystem, NonTrainableState):
     """Diagonal conservative transport for one certified velocity quadrature."""
 
     quadrature: CertifiedDiscreteVelocityQuadrature

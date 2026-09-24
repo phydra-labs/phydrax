@@ -17,7 +17,7 @@ import jax.random as jr
 import optax
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
+from phydrax._trainable import partition_parameters
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -35,10 +35,10 @@ class PINNDomainDecompositionBenchmark:
 
 
 def _parameter_count(tree) -> int:
-    trainable, _ = partition_trainable(tree)
+    parameters, _, _ = partition_parameters(tree)
     return sum(
         leaf.size
-        for leaf in jax.tree_util.tree_leaves(trainable)
+        for leaf in jax.tree_util.tree_leaves(parameters)
         if eqx.is_inexact_array(leaf)
     )
 

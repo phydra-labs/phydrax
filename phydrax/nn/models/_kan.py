@@ -13,6 +13,7 @@ from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from .._base import _AbstractBaseModel
 from .._keys import EvalKey
 from .._scan import pack_scan_modules, scan_apply, stack_scan_dynamics
@@ -31,7 +32,7 @@ def _canonicalize_edge_inputs(inputs: Array, use_tanh: bool) -> Array:
     )
 
 
-class KANEdgeBlock(StrictModule):
+class KANEdgeBlock(StrictModule, ParameterOwner):
     """Shape-homogeneous sparse collection of KAN edges sharing one basis."""
 
     output_indices: tuple[int, ...] = eqx.field(static=True)

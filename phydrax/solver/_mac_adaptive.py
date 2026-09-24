@@ -331,7 +331,7 @@ class MACAdaptiveRolloutResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-class MACAdaptiveRolloutPlan(StrictModule, NonTrainableState):
+class MACAdaptiveRolloutPlan(StrictModule):
     """Bounded transactional MAC adaptation with stopped controller decisions."""
 
     dynamics: CompiledMACIncompressibleDynamics
@@ -849,7 +849,7 @@ class MACFrozenGridReplayResult(StrictModule):
     method_id: str = eqx.field(static=True)
 
 
-class MACFrozenGridReplayPlan(StrictModule, NonTrainableState):
+class MACFrozenGridReplayPlan(StrictModule):
     """Differentiable replay of a stopped, already accepted MAC grid."""
 
     dynamics: CompiledMACIncompressibleDynamics

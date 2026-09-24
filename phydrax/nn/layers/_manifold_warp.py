@@ -16,6 +16,7 @@ import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from .._keys import EvalKey
 from ._linear import Linear
 
@@ -63,7 +64,7 @@ def sphere_retraction(points: Array, tangent: Array, /) -> Array:
     )
 
 
-class ManifoldMultiheadWarp(StrictModule):
+class ManifoldMultiheadWarp(StrictModule, ParameterOwner):
     """Learned tangent-space multihead warp on aligned manifold samples.
 
     The caller supplies the manifold's tangent projector and retraction. Sampling

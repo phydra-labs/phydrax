@@ -18,6 +18,12 @@ import phydrax.ein as ein
 
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
+from .._trainable import (
+    combine_parameters,
+    ParameterOwner,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ..kernels import AbstractPositiveDefiniteKernel
 from ._minibatch_posterior import (
     AbstractObservationFactor,
@@ -27,8 +33,11 @@ from ._minibatch_posterior import (
 from ._variational import VariationalConfig
 
 
-class SparseVariationalGaussianState(StrictModule):
-    """Whitened scalar inducing-point Gaussian variational state."""
+class SparseVariationalGaussianState(StrictModule, ParameterOwner):
+    """Whitened scalar inducing-point Gaussian variational state.
+
+    Inducing points, whitened mean and lower factor are all PARAMETER.
+    """
 
     inducing_points: Array
     mean: Array
@@ -259,6 +268,9 @@ def fit_sparse_variational_gaussian_process(
         raise TypeError("elbo must be a callable sparse variational GP objective.")
     if not isinstance(initial_state, SparseVariationalGaussianState):
         raise TypeError("initial_state must be SparseVariationalGaussianState.")
+    require_parameter_roles(
+        initial_state, context="fit_sparse_variational_gaussian_process"
+    )
     configuration = VariationalConfig() if config is None else config
     if not isinstance(configuration, VariationalConfig):
         raise TypeError("config must be VariationalConfig or None.")
@@ -272,7 +284,7 @@ def fit_sparse_variational_gaussian_process(
     )
     if continuation is None:
         state = initial_state
-        optimizer_state = transformation.init(eqx.filter(state, eqx.is_inexact_array))
+        optimizer_state = transformation.init(partition_parameters(state)[0])
         start_step = 0
         prior_trace = jnp.empty((0,), dtype=jnp.float64)
     else:
@@ -289,8 +301,7 @@ def fit_sparse_variational_gaussian_process(
     )
     batches: dict[int, tuple[LikelihoodBatch, ...]] = {}
     recorded: list[Array] = []
-    trainable = eqx.filter(state, eqx.is_inexact_array)
-    static = eqx.filter(state, lambda value: not eqx.is_inexact_array(value))
+    trainable, model_state, fixed = partition_parameters(state)
     for local_step in range(configuration.num_steps):
         step = start_step + local_step
         epoch = step // source.batches_per_epoch
@@ -301,7 +312,7 @@ def fit_sparse_variational_gaussian_process(
         step_key = derive_key(key, address, step)
 
         def loss(trainable_state: Any) -> Array:
-            complete = eqx.combine(trainable_state, static)
+            complete = combine_parameters(trainable_state, model_state, fixed)
             return -elbo(complete, batch, key=step_key)
 
         value, gradient = eqx.filter_value_and_grad(loss)(trainable)
@@ -309,7 +320,7 @@ def fit_sparse_variational_gaussian_process(
             gradient, optimizer_state, trainable
         )
         trainable = optax.apply_updates(trainable, updates)
-        state = eqx.combine(trainable, static)
+        state = combine_parameters(trainable, model_state, fixed)
         finite_leaves = [
             jnp.all(jnp.isfinite(leaf))
             for leaf in jax.tree_util.tree_leaves(trainable)

@@ -7,7 +7,6 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 
 
 def _dataset(*, cases=6, size=4):
@@ -127,7 +126,7 @@ def test_native_flow_fixed_masks_and_positive_scale_survive_trainable_updates():
         depth=1,
         key=jr.key(40),
     )
-    trainable, _fixed = partition_trainable(layer)
+    trainable, _model_state, _fixed = phx.partition_parameters(layer)
     assert trainable.mask is None
     assert layer.mask.dtype == jnp.bool_
     with pytest.raises(ValueError, match="binary"):

@@ -83,7 +83,7 @@ class NumericalFluxResult(StrictModule):
         self.fallback_activated = fallback
 
 
-class AbstractNumericalFluxPlan(StrictModule, NonTrainableState):
+class AbstractNumericalFluxPlan(StrictModule):
     """Interface solver returning a conservative normal flux density."""
 
     flux_id: str = eqx.field(static=True)
@@ -161,7 +161,7 @@ class AbstractSymmetricTwoPointFluxPlan(AbstractArbitraryNormalNumericalFluxPlan
         raise NotImplementedError
 
 
-class RusanovFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan):
+class RusanovFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan, NonTrainableState):
     """Local Lax–Friedrichs flux with optional smooth wave-speed magnitude."""
 
     smooth_epsilon: float = eqx.field(static=True)
@@ -257,7 +257,7 @@ class RusanovFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan):
         return NumericalFluxResult(flux, speed)
 
 
-class HLLFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan):
+class HLLFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan, NonTrainableState):
     """Two-wave Harten–Lax–van Leer numerical flux."""
 
     def __init__(self):
@@ -364,7 +364,7 @@ class HLLFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan):
         return NumericalFluxResult(flux, jnp.maximum(jnp.abs(lower), jnp.abs(upper)))
 
 
-class HLLCFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan):
+class HLLCFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan, NonTrainableState):
     """Contact-resolving HLLC flux for Euler-compatible state layouts."""
 
     def __init__(self):
@@ -657,7 +657,7 @@ class HLLCFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan):
         return NumericalFluxResult(flux, speed)
 
 
-class HLLDFluxPlan(AbstractNumericalFluxPlan):
+class HLLDFluxPlan(AbstractNumericalFluxPlan, NonTrainableState):
     """Five-wave HLLD flux for the canonical eight-component ideal-MHD layout."""
 
     denominator_epsilon: float = eqx.field(static=True)
@@ -1024,7 +1024,7 @@ class HLLDFluxPlan(AbstractNumericalFluxPlan):
         )
 
 
-class RoeFluxPlan(AbstractNumericalFluxPlan):
+class RoeFluxPlan(AbstractNumericalFluxPlan, NonTrainableState):
     """Roe characteristic flux with a quadratic entropy fix."""
 
     entropy_fix: float = eqx.field(static=True)
@@ -1084,7 +1084,10 @@ def _logarithmic_mean(left: Array, right: Array, /) -> Array:
     return jnp.where(near, average, ratio)
 
 
-class EntropyConservativeEulerFluxPlan(AbstractSymmetricTwoPointFluxPlan):
+class EntropyConservativeEulerFluxPlan(
+    AbstractSymmetricTwoPointFluxPlan,
+    NonTrainableState,
+):
     """Chandrashekar-type symmetric entropy-conservative Euler flux."""
 
     def __init__(self):
@@ -1279,7 +1282,10 @@ class EntropyStableFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
         )
 
 
-class EntropyStableEulerFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
+class EntropyStableEulerFluxPlan(
+    AbstractArbitraryNormalNumericalFluxPlan,
+    NonTrainableState,
+):
     """Entropy-conservative central flux with Rusanov state dissipation."""
 
     central: EntropyConservativeEulerFluxPlan

@@ -18,7 +18,7 @@ from ..._differentiation import AbstractConstructionCertificate
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._holomorphic import ComplexAffineNormalization, HolomorphicJet
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState, ParameterOwner
 from ...continuation import ParameterContinuationProblem
 from ...optim import variable_projection, VariableProjectionProblem
 from ._holomorphic_constraints import HolomorphicAffineCoefficientMap
@@ -59,7 +59,7 @@ class PoleSet(StrictModule, NonTrainableState):
         return sum(self.orders)
 
 
-class TrainablePoleSet(StrictModule):
+class TrainablePoleSet(StrictModule, ParameterOwner):
     """Real Cartesian trainable pole locations with fixed positive orders."""
 
     location_real: Array
@@ -383,14 +383,14 @@ class MeromorphicLinearFrame(StrictModule, NonTrainableState):
         return result
 
 
-class ConstrainedMeromorphicPotential(StrictModule):
+class ConstrainedMeromorphicPotential(StrictModule, ParameterOwner):
     """Meromorphic frame parameterized by one prepared affine coefficient map."""
 
     __hash__ = object.__hash__
 
     free_coordinates: Array
-    coefficient_map: HolomorphicAffineCoefficientMap
-    _certificate: MeromorphicMapCertificate
+    coefficient_map: HolomorphicAffineCoefficientMap = fixed_field()
+    _certificate: MeromorphicMapCertificate = fixed_field()
 
     def __init__(
         self,

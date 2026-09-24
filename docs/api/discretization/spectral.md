@@ -115,10 +115,11 @@ actual sampling/normalization adjoint, not an assumed unweighted inverse.
 
 Recursive recurrence tables are fixed numeric preparation state, not
 differentiable model parameters. Attempting to differentiate those tables
-raises explicitly in either AD direction. This follows the prepared plan's
-`NonTrainableState` solver contract. The precomputed execution retains its native
-array differentiation semantics, including kernel derivatives when explicitly
-requested outside solver trainable partitioning.
+raises explicitly in either AD direction. The prepared plan is
+`NonTrainableState`, so its arrays are FIXED in every training tree. The
+precomputed execution retains its native array differentiation semantics,
+including kernel derivatives when explicitly requested outside solver parameter
+partitioning.
 
 `SphericalSpectralDiscretization.evaluate_angles(
 coefficients, theta, phi, /, *, frame_angle=0)` broadcasts the three real

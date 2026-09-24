@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ..._tree_math import tree_where
 from ...discretization.finite_volume import FaceVelocity, PreparedMACOperators
 from ...discretization.spectral import HermitianSpectralCoordinates
@@ -297,7 +297,7 @@ class _ConstantPowerPeriodicNonlinearDrift(StrictModule):
         return self.base.nonlinear(time, state, args) + forcing
 
 
-class _PreparedConstantPowerPeriodicMethod(AbstractFixedStepMethod):
+class _PreparedConstantPowerPeriodicMethod(AbstractFixedStepMethod, NonTrainableState):
     """ETDRK adapter that makes constant-power forcing evidence transactional."""
 
     base_method: PreparedETDRKMethod
@@ -396,7 +396,7 @@ class OUForcedPeriodicState(StrictModule):
     forcing_state: SolenoidalOUForcingState
 
 
-class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod):
+class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod, NonTrainableState):
     """ETDRK with exact OU transitions and an optional compiled LES guard."""
 
     base: PreparedETDRKMethod | PreparedLESStabilityGuardedETDRKMethod
@@ -677,7 +677,7 @@ class _PeriodicDynamicNonlinearView(StrictModule):
         ).rates.nonlinear_rate
 
 
-class PreparedPeriodicDynamicETDRKMethod(AbstractFixedStepMethod):
+class PreparedPeriodicDynamicETDRKMethod(AbstractFixedStepMethod, NonTrainableState):
     """ETDRK route that transactionally commits dynamic-LES continuation."""
 
     base_method: PreparedETDRKMethod
@@ -838,7 +838,7 @@ class MACDynamicLESProductionState(StrictModule):
     continuation_state: LagrangianDynamicLESState
 
 
-class PreparedMACDynamicExplicitMethod(AbstractFixedStepMethod):
+class PreparedMACDynamicExplicitMethod(AbstractFixedStepMethod, NonTrainableState):
     """Projected explicit-Euler MAC route with transactional dynamic history."""
 
     dynamics: CompiledMACIncompressibleDynamics
@@ -1441,7 +1441,7 @@ class _PreparedProductionRoute:
         return self.runtime.checkpoint(state)
 
 
-class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
+class PeriodicSpectralProductionPlan(StrictModule):
     """Identity-closed periodic production for compiled incompressible dynamics."""
 
     dynamics: CompiledIncompressibleSpectralDynamics
@@ -1450,7 +1450,7 @@ class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
     case: PeriodicSpectralProductionCase
     constant_power_forcing: ConstantPowerFourierForcingPlan | None
     ou_forcing: SolenoidalOUForcingPlan | None
-    ou_realization: OrnsteinUhlenbeckRealization | None
+    ou_realization: OrnsteinUhlenbeckRealization | None = fixed_field()
     statistics_evaluator: _PeriodicStatisticsEvaluator
     manifest: ProductionCaseManifest
     runtime_plan: ProductionRunPlan
@@ -1843,14 +1843,14 @@ class PreparedPeriodicSpectralProduction(_PreparedProductionRoute):
         )
 
 
-class SpectralChannelProductionPlan(StrictModule, NonTrainableState):
+class SpectralChannelProductionPlan(StrictModule):
     """Prepared-object assembly for fixed-lattice spectral channel production."""
 
     method: PreparedChannelSBDF2Method
     velocity_coordinates: HermitianSpectralCoordinates
     pressure_coordinates: HermitianSpectralCoordinates
     statistics: SpectralChannelStatisticsPlan
-    statistics_evaluator: _ChannelStatisticsEvaluator
+    statistics_evaluator: _ChannelStatisticsEvaluator = fixed_field()
     manifest: ProductionCaseManifest
     runtime_plan: ProductionRunPlan
     checkpoint_encoding: RuntimeCheckpointEncodingPlan
@@ -2089,7 +2089,7 @@ class PreparedSpectralChannelProduction(_PreparedProductionRoute):
         return self.plan.statistics_evaluator.snapshot(continuation)
 
 
-class StructuredMACProductionPlan(StrictModule, NonTrainableState):
+class StructuredMACProductionPlan(StrictModule):
     """Prepared-object assembly for fixed-step structured-MAC production."""
 
     method: AbstractFixedStepMethod

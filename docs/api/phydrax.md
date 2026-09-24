@@ -94,6 +94,137 @@ authority, capability evidence) and explicit scientific value ports; see
   smoothing, and sensitivity analysis
 - `phydrax.export`: deployment helpers for learned inference functions
 
+## Array roles and lanes
+
+Every array leaf of a model PyTree has one training role: `ArrayRole.PARAMETER`
+(differentiated and updated), `ArrayRole.FIXED` (never updated), or
+`ArrayRole.MODEL_STATE` (carried forward by the model itself). Trainability is
+declared, never inferred from dtype. `resolve_array_roles(tree)` reads the
+declarations with a path-aware walk (Equinox field metadata is invisible to an
+`eqx.partition` `is_leaf`) and returns a static `RoleResolution` whose `paths`
+and `roles` follow `jax.tree_util` leaf order; it never raises. Precedence,
+top-down:
+
+1. `Domain`, `NonTrainableState` and `ExplicitFreeze` nodes are terminal: every
+   leaf below them is FIXED.
+2. `parameter_field`, `fixed_field` and `model_state_field` declare the role of a
+   module field's whole value subtree; the nearest declaration wins.
+3. A `parameter_field` or `model_state_field` holding a terminal node is a
+   `role-field-on-terminal-value` violation: declarations never unfreeze.
+4. Outside terminal nodes, containers inherit their field's role, and
+   unannotated inexact arrays below a `ParameterOwner` are PARAMETER.
+5. Below a plain `NonTrainableState`, a trainable `ParameterOwner` or a
+   `parameter_field` is a `parameter-under-fixed-ancestor` violation (a silent
+   freeze). An `ExplicitFreeze` holder such as `FrozenModel` ends this audit for
+   its subtree; a nested plain `NonTrainableState` continues it.
+6. Any remaining inexact array is unclassified. Integer arrays and non-array
+   leaves are FIXED unless declared MODEL_STATE.
+
+Role fields accept the keyword arguments of `equinox.field`; combining them with
+`static=True` is a `TypeError` because static fields are structure, not arrays.
+Training boundaries call `require_parameter_roles(tree, context=...)`, which
+raises a `ValueError` naming every violation and unclassified path with its
+remedy. It also rejects callables that hide inexact arrays from the tree: a
+callable reachable in a training tree must be a stateless function (no inexact
+array in its closure cells, defaults or bound arguments), a visible module whose
+arrays are role-declared leaves, a provider below an `ExplicitFreeze` holder, or
+a host-only callback that captures no inexact array. Arrays hidden in static
+fields are rejected the same way. `partition_parameters` applies the role check
+and splits a tree into `(parameters, model_state, fixed)` lanes with `None`
+holes (terminal nodes stay whole in `fixed`); `combine_parameters` restores the
+tree. An explicit
+`phydrax.nn.parameters.ParameterSubspace` selection is itself a role
+declaration for one request.
+
+```python
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+import phydrax as phx
+
+
+class ScaledFeature(phx.StrictModule, phx.ParameterOwner):
+    weight: jax.Array
+    shift: jax.Array = phx.fixed_field()
+    calls: jax.Array = phx.model_state_field()
+
+    def __call__(self, x):
+        return self.weight * (x - self.shift)
+
+
+model = ScaledFeature(jnp.ones(3), jnp.zeros(3), jnp.zeros((), jnp.int32))
+parameters, model_state, fixed = phx.partition_parameters(model)
+assert eqx.tree_equal(phx.combine_parameters(parameters, model_state, fixed), model)
+```
+
+`LaneLayout` declares, independently of roles, which leaves carry a leading lane
+axis for items, cases, or ensemble members. Roles decide what is differentiated
+and committed; the layout decides what is mapped, so FIXED data such as
+per-member normalizers may be mapped while parameters are shared. `in_axes`
+returns an `equinox.filter_vmap` axis tree after checking that every mapped leaf
+exists and shares one lane size.
+
+```python
+shifts = jnp.stack([jnp.full(3, float(member)) for member in range(4)])
+members = eqx.tree_at(lambda m: m.shift, model, shifts)
+layout = phx.LaneLayout("member", (".shift",))
+outputs = eqx.filter_vmap(
+    lambda member, x: member(x),
+    in_axes=(layout.in_axes(members), None),
+)(members, jnp.linspace(0.0, 1.0, 3))
+assert outputs.shape == (4, 3)
+```
+
+::: phydrax.ArrayRole
+
+---
+
+::: phydrax.NonTrainableState
+
+---
+
+::: phydrax.ExplicitFreeze
+
+---
+
+::: phydrax.ParameterOwner
+
+---
+
+::: phydrax.parameter_field
+
+---
+
+::: phydrax.fixed_field
+
+---
+
+::: phydrax.model_state_field
+
+---
+
+::: phydrax.RoleResolution
+
+---
+
+::: phydrax.resolve_array_roles
+
+---
+
+::: phydrax.require_parameter_roles
+
+---
+
+::: phydrax.partition_parameters
+
+---
+
+::: phydrax.combine_parameters
+
+---
+
+::: phydrax.LaneLayout
+
 ## Sparse execution substrate
 
 `phydrax.sparse` factors out the gather–message–reduce mechanics shared by

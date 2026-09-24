@@ -14,10 +14,9 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from .._temporal_precision import TemporalPrecisionPolicy
-from .._trainable import NonTrainableState
 
 
-class AbstractSSPRKStageTransform(StrictModule, NonTrainableState):
+class AbstractSSPRKStageTransform(StrictModule):
     transform_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod

@@ -21,6 +21,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._model import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
@@ -50,11 +51,11 @@ from ._common import (
 class SpectralEmbeddingModel(AbstractFittedModel):
     """Normalized-graph eigenmap with conditional Nyström extension."""
 
-    training_features: Array
-    eigenvectors: Array
-    eigenvalues: Array
-    degrees: Array
-    training_weights: Array
+    training_features: Array = fixed_field()
+    eigenvectors: Array = fixed_field()
+    eigenvalues: Array = fixed_field()
+    degrees: Array = fixed_field()
+    training_weights: Array = fixed_field()
     active: Array
     bandwidth: float = eqx.field(static=True)
     n_neighbors: int = eqx.field(static=True)
@@ -286,12 +287,12 @@ MDSMethod = Literal["classical", "smacof"]
 class MultidimensionalScalingModel(AbstractFittedModel):
     """Metric MDS coordinates; only classical MDS has a Gower transform."""
 
-    training_features: Array
-    training_embedding: Array
-    training_weights: Array
-    training_row_mean: Array
-    grand_mean: Array
-    eigenvalues: Array
+    training_features: Array = fixed_field()
+    training_embedding: Array = fixed_field()
+    training_weights: Array = fixed_field()
+    training_row_mean: Array = fixed_field()
+    grand_mean: Array = fixed_field()
+    eigenvalues: Array = fixed_field()
     method: str = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -541,13 +542,13 @@ class MultidimensionalScalingRecipe(AbstractRecipe):
 class IsomapModel(AbstractFittedModel):
     """Geodesic landmark embedding with hard-neighbor out-of-sample extension."""
 
-    training_features: Array
-    training_embedding: Array
-    geodesic_distances: Array
-    training_weights: Array
-    training_row_mean: Array
-    grand_mean: Array
-    eigenvalues: Array
+    training_features: Array = fixed_field()
+    training_embedding: Array = fixed_field()
+    geodesic_distances: Array = fixed_field()
+    training_weights: Array = fixed_field()
+    training_row_mean: Array = fixed_field()
+    grand_mean: Array = fixed_field()
+    eigenvalues: Array = fixed_field()
     active: Array
     n_neighbors: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)

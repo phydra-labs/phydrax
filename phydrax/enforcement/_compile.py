@@ -44,7 +44,7 @@ from ..operators.differential._hooks import (
     nth_quotient_rule,
     with_derivative_rule,
 )
-from ._ansatz import _enforcement_weight_fn, enforce_initial
+from ._ansatz import _enforcement_weight, _enforcement_weight_fn, enforce_initial
 from ._lifecycle import (
     EnforcementState,
     PreparedEnforcementStep,
@@ -895,33 +895,35 @@ class _BoundaryBlendOverlay(StrictModule):
         for c in self.pieces:
             where_fn = _boundary_piece_where(c.component, self.var)
             wheres.append(where_fn)
-            w_fn = _enforcement_weight_fn(
-                geom,
-                where_fn,
-                num_reference=int(num_reference),
-                sampler=str(sampler),
-                key=next(key_iter),
-                on_empty="error",
-            )
             weights.append(
-                DomainFunction(
-                    domain=u_base.domain, deps=(self.var,), func=w_fn, metadata={}
+                _enforcement_weight(
+                    u_base.domain,
+                    self.var,
+                    _enforcement_weight_fn(
+                        geom,
+                        where_fn,
+                        num_reference=int(num_reference),
+                        sampler=str(sampler),
+                        key=next(key_iter),
+                        on_empty="error",
+                    ),
                 )
             )
 
         if include_identity_remainder:
             rem_where = _complement_where(wheres)
             if rem_where is not None:
-                w_rem_fn = _enforcement_weight_fn(
-                    geom,
-                    rem_where,
-                    num_reference=int(num_reference),
-                    sampler=str(sampler),
-                    key=next(key_iter),
-                    on_empty="zero",
-                )
-                remainder_weight = DomainFunction(
-                    domain=u_base.domain, deps=(self.var,), func=w_rem_fn, metadata={}
+                remainder_weight = _enforcement_weight(
+                    u_base.domain,
+                    self.var,
+                    _enforcement_weight_fn(
+                        geom,
+                        rem_where,
+                        num_reference=int(num_reference),
+                        sampler=str(sampler),
+                        key=next(key_iter),
+                        on_empty="zero",
+                    ),
                 )
 
         self.weights = tuple(weights)

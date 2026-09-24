@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import phydrax.atomistic._training as atomistic_training
+from phydrax import partition_parameters
 from phydrax._training import TrainingIterationKind
 from phydrax.atomistic import (
     AtomisticBatch,
@@ -90,7 +91,7 @@ def _assert_optimizer_state_matches_checkpoint(result):
     )
     optimizer_potentials = tuple(leaf for leaf in optimizer_leaves if is_potential(leaf))
     assert optimizer_potentials
-    trainable, _ = atomistic_training.partition_trainable(result.potential)
+    trainable, _, _ = partition_parameters(result.potential)
     expected_structure = jax.tree_util.tree_structure(trainable)
     for optimizer_potential in optimizer_potentials:
         assert jax.tree_util.tree_structure(optimizer_potential) == expected_structure

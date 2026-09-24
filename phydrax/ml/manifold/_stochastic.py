@@ -21,6 +21,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._model import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch
 from .._contracts import AbstractRecipe, FitResult, ML_NONCONVERGED
 from .._numerics import pairwise_distances
@@ -156,7 +157,7 @@ class TSNEModel(AbstractFittedModel):
     """Transductive t-SNE coordinates; no mathematically defined transform is claimed."""
 
     embedding: Array
-    training_features: Array
+    training_features: Array = fixed_field()
     active: Array
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -420,8 +421,8 @@ def _optimize_umap_one(
 class FuzzyGraphEmbeddingModel(AbstractFittedModel):
     """UMAP-like embedding with a conditional fuzzy barycentric transform."""
 
-    training_features: Array
-    embedding: Array
+    training_features: Array = fixed_field()
+    embedding: Array = fixed_field()
     active: Array
     n_neighbors: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)

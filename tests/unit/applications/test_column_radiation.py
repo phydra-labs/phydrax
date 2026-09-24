@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phydrax._trainable import combine_trainable, partition_trainable
+from phydrax import combine_parameters, partition_parameters
 from phydrax.applications.atmosphere._radiation import (
     ColumnOpticalProperties,
     ColumnRadiationPlan,
@@ -289,8 +289,8 @@ def test_optical_zero_boundary_has_finite_correct_native_derivative():
     np.testing.assert_allclose(
         derivative, [-1600.0, -4 * SIGMA * (300.0**4 - 250.0**4)], rtol=2e-12
     )
-    trainable, fixed = partition_trainable(plan)
-    restored = combine_trainable(trainable, fixed)
+    parameters, model_state, fixed = partition_parameters(plan)
+    restored = combine_parameters(parameters, model_state, fixed)
     differentiated = eqx.filter_grad(
         lambda p: (
             p.evaluate([250.0], [2.0], [0.0], [0.0], [0.0], 300.0, 400.0).space_heating

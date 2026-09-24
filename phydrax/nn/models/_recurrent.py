@@ -16,6 +16,7 @@ from jaxtyping import Array
 from ..._callable import _ensure_special_kwonly_args
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from .._keys import EvalKey, split_eval_key
 from ..layers import (
     AbstractRecurrentCell,
@@ -154,7 +155,7 @@ def _reverse_recurrent_batch(batch: RecurrentBatch, /) -> tuple[RecurrentBatch, 
     )
 
 
-class RecurrentSequenceModel(StrictModule):
+class RecurrentSequenceModel(StrictModule, ParameterOwner):
     """User-facing sequence model backed by the packed recurrent executor."""
 
     cell: AbstractRecurrentCell
@@ -227,7 +228,7 @@ class RecurrentSequenceModel(StrictModule):
         return predictions
 
 
-class BidirectionalRecurrentSequenceModel(StrictModule):
+class BidirectionalRecurrentSequenceModel(StrictModule, ParameterOwner):
     """Segment-aware forward/backward recurrent model with explicit merge policy."""
 
     forward_cell: AbstractRecurrentCell

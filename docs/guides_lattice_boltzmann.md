@@ -239,10 +239,12 @@ it accepts only a conservative, post-collision-realizable candidate and otherwis
 retains the complete input state.
 
 Learned parameters never enter the prepared kinetic method, which is
-`NonTrainableState`. `LearnedEnergyEquilibriumBindingPlan` binds the ordered
-four-component state schema, exact D2V quadrature and ideal-gas material,
-train-only normalizer, primitive-state support, semantic lineage, and numeric
-model revision. Its prepared deployment freezes a `4 -> 2` pointwise model.
+`NonTrainableState`, so its arrays are FIXED. `LearnedEnergyEquilibriumBindingPlan`
+binds the ordered four-component state schema, exact D2V quadrature and ideal-gas
+material, train-only normalizer, primitive-state support, semantic lineage, and
+numeric model revision. Its prepared deployment freezes a `4 -> 2` pointwise model
+in a `FrozenModel`, an `ExplicitFreeze` holder, so the deployment is legal FIXED
+state and none of the model's arrays train.
 Predictions outside the qualified density, velocity, temperature, Mach,
 energy-hull, or particle-equilibrium support are explicit failures.
 `write_learned_energy_equilibrium_artifact` and

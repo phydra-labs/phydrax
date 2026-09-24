@@ -30,7 +30,7 @@ from ..._polynomial._orthogonal import (
     standard_series_value,
 )
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import NonTrainableState, ParameterOwner
 
 
 EdgeInitialization = Literal["default", "identity"]
@@ -469,7 +469,7 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
         return penalty
 
 
-class RationalBSplineEdgeParameters(StrictModule):
+class RationalBSplineEdgeParameters(StrictModule, ParameterOwner):
     """Trainable control values and bounded log-weights for rational spline edges."""
 
     control_values: Array

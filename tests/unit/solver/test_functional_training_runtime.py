@@ -7,10 +7,11 @@ import pytest
 
 import phydrax as phx
 import phydrax.solver._functional_checkpoint as functional_checkpoint
-from phydrax._trainable import partition_trainable
+from phydrax._trainable import partition_parameters
 from phydrax._training import DelayedTargetPolicy, TargetParameterState
 from phydrax.solver._functional_checkpoint import load_functional_training_checkpoint
 from phydrax.solver._functional_residual import prepare_functional_residual
+from phydrax.solver._functional_run import partition_functional_parameters
 from phydrax.solver._functional_surrogate import (
     prepare_functional_update,
     PreparedFunctionalUpdate,
@@ -134,7 +135,7 @@ def test_rejected_optimizer_step_preserves_target_and_accepted_progress(
     solver = _rejected_update_solver()
     policy = DelayedTargetPolicy(2)
     initial_target = TargetParameterState.initialize(
-        partition_trainable(solver.functions)[0],
+        partition_parameters(solver.functions)[0],
         policy,
     )
     plan = phx.solver.FunctionalTrainingPlan(
@@ -182,7 +183,7 @@ def test_rejected_optimizer_step_preserves_target_and_accepted_progress(
 def test_residual_block_layout_preserves_authored_loss_and_root_partition():
     layout = phx.terms.ResidualBlockLayout(("first", "second"))
     solver = _fixed_interval_solver(blocks=layout)
-    params, fixed = partition_trainable(solver.functions)
+    params, fixed = partition_functional_parameters(solver.functions)
     prepared = solver.objective.prepare_training(
         (0,),
         scale=1.0,
@@ -201,7 +202,7 @@ def test_residual_block_layout_preserves_authored_loss_and_root_partition():
 
 def test_prepared_update_separates_equal_physical_and_untransformed_surrogate():
     solver = _fixed_interval_solver()
-    params, fixed = partition_trainable(solver.functions)
+    params, fixed = partition_functional_parameters(solver.functions)
     prepared = solver.objective.prepare_training(
         (0,),
         scale=1.0,
@@ -280,7 +281,7 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(
         lambda state: state.target_state,
         template,
         TargetParameterState.initialize(
-            partition_trainable(interrupted.functions)[0],
+            partition_parameters(interrupted.functions)[0],
             DelayedTargetPolicy(2),
         ),
     )
@@ -847,7 +848,7 @@ def test_exact_nonlinear_correction_freezes_base_and_restores_physical_scale():
         epsilon=0.1,
     )
 
-    correction_params, _ = partition_trainable(problem.training_solver.functions)
+    correction_params, _, _ = partition_parameters(problem.training_solver.functions)
     expected = solver.functions["u"].func() + 0.1 * correction.func()
     scaled_loss = problem.training_solver.loss(key=jr.key(9))
     finalized = problem.finalize(problem.training_solver)

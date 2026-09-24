@@ -14,7 +14,7 @@ import numpy as np
 from jax.flatten_util import ravel_pytree
 from jaxtyping import PyTree
 
-from phydrax._trainable import partition_trainable
+from phydrax._trainable import partition_parameters
 from phydrax.domain import ConcatenatedModelEvaluator, DomainFunction
 
 from .._model import KFACAffineBlock, KFACLayoutProvider
@@ -26,6 +26,7 @@ from ..optim._kfac._types import (
     ParameterLayout,
     UncoveredBlockSpec,
 )
+from ._functional_run import require_empty_model_state
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,13 +108,18 @@ def validate_model_coverage(
     functions: Mapping[str, DomainFunction],
     /,
 ) -> tuple[tuple[str, tuple[KFACAffineBlock, ...]], ...]:
-    """Validate and return explicitly declared affine blocks covered by KFAC."""
+    """Validate and return explicitly declared affine blocks covered by KFAC.
+
+    KFAC curvature covers PARAMETER leaves only; a field with MODEL_STATE leaves
+    raises `ValueError`.
+    """
 
     layouts: list[tuple[str, tuple[KFACAffineBlock, ...]]] = []
     seen_parameter_ids: set[int] = set()
     for field_name, function in functions.items():
         evaluator = function.func
-        trainable_function, _ = partition_trainable(function)
+        require_empty_model_state(function, context=f"KFAC field {field_name!r}")
+        trainable_function, _, _ = partition_parameters(function)
         trainable_leaves = tuple(jax.tree_util.tree_leaves(trainable_function))
         if not isinstance(evaluator, ConcatenatedModelEvaluator):
             if trainable_leaves and any(

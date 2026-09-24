@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._model import ModelBinding, ValuePort
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 
 
@@ -327,20 +328,20 @@ class TreeEnsemble(AbstractFittedModel):
     """
 
     feature_index: Array
-    threshold: Array
+    threshold: Array = fixed_field()
     left_child: Array
     right_child: Array
     default_left: Array
     split_kind: Array
-    category_values: Array
+    category_values: Array = fixed_field()
     category_mask: Array
     leaf_value: Array
     node_mask: Array
     leaf_mask: Array
     tree_mask: Array
     tree_weight: Array
-    node_gain: Array
-    node_cover: Array
+    node_gain: Array = fixed_field()
+    node_cover: Array = fixed_field()
     base_score: Array
     feature_schema: FeatureSchema = eqx.field(static=True)
     target_schema: TargetSchema = eqx.field(static=True)

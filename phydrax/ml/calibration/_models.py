@@ -22,6 +22,7 @@ from ..._differentiation import (
 )
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     _protocol_model,
@@ -242,7 +243,7 @@ def _contract(
 class PlattCalibrationModel(AbstractFittedModel):
     slope: Array
     intercept: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -297,7 +298,7 @@ class PlattCalibrationModel(AbstractFittedModel):
 
 class TemperatureCalibrationModel(AbstractFittedModel):
     temperature: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -348,7 +349,7 @@ class TemperatureCalibrationModel(AbstractFittedModel):
 class VectorCalibrationModel(AbstractFittedModel):
     scale: Array
     bias: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -402,7 +403,7 @@ class VectorCalibrationModel(AbstractFittedModel):
 class MatrixCalibrationModel(AbstractFittedModel):
     matrix: Array
     bias: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -456,7 +457,7 @@ class MatrixCalibrationModel(AbstractFittedModel):
 class MulticlassCalibrationModel(AbstractFittedModel):
     slope: Array
     intercept: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -892,10 +893,10 @@ def _pav_one(scores: Array, targets: Array, weights: Array) -> tuple[Array, Arra
 
 
 class IsotonicCalibrationModel(AbstractFittedModel):
-    thresholds: Array
+    thresholds: Array = fixed_field()
     values: Array
     block_count: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -963,10 +964,10 @@ class IsotonicCalibrationModel(AbstractFittedModel):
 
 
 class SmoothIsotonicCalibrationModel(AbstractFittedModel):
-    thresholds: Array
+    thresholds: Array = fixed_field()
     values: Array
     block_count: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     bandwidth: Array
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -1182,7 +1183,7 @@ def _calibration_input(model: AbstractArrayModel, x: Any, in_size: int) -> Array
 class CalibratedClassifierModel(AbstractFittedModel):
     base_model: AbstractArrayModel
     calibration_model: AbstractArrayModel
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)

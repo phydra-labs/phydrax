@@ -15,10 +15,9 @@ from jaxtyping import Array
 from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
 
 
-class ConservativeFaceClosurePlan(StrictModule, NonTrainableState):
+class ConservativeFaceClosurePlan(StrictModule):
     """Static shared-face correction whose trainable parameters live in ``args``."""
 
     correction: Callable = eqx.field(static=True)

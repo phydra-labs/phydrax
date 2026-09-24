@@ -13,6 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._trainable import fixed_field
 from ...equations import (
     AbstractImplicitMPMConstitutivePlan,
     MPMConstitutiveCapabilities,
@@ -33,11 +34,11 @@ from ._plane_stress import (
 
 class _MPMPointHyperelasticLaw(HyperelasticLaw):
     base: AbstractImplicitMPMConstitutivePlan
-    history: Array
-    reference_density: Array
+    history: Array = fixed_field()
+    reference_density: Array = fixed_field()
     parameters: Any
-    time: Array
-    step_size: Array
+    time: Array = fixed_field()
+    step_size: Array = fixed_field()
 
     def __init__(
         self,

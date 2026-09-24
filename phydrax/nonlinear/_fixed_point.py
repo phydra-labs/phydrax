@@ -16,6 +16,7 @@ from jaxtyping import Array, PyTree
 from .._fingerprint import canonical_fingerprint
 from .._iteration import IterationPlan
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from .._tree_math import (
     tree_add_scaled,
     tree_allfinite,
@@ -1175,7 +1176,7 @@ class PicardIteration(StrictModule):
 
     inverse_action: Callable[[PyTree[Any]], PyTree[Any]] | AbstractPreconditioner
     damping: float = eqx.field(static=True)
-    acceleration: AndersonAcceleration | None
+    acceleration: AndersonAcceleration | None = fixed_field()
     precision: NonlinearPrecisionPolicy
 
     def __init__(

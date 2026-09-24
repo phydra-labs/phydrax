@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...control import (
     ControlProblem,
     ControlResult,
@@ -671,15 +671,15 @@ class BatteryCurrentControlReplayEvidence(StrictModule):
         return self.feasible
 
 
-class PreparedBatteryCurrentControl(StrictModule, NonTrainableState):
+class PreparedBatteryCurrentControl(StrictModule):
     """Native control problem, lowering, and independent replay binding."""
 
     plan: BatteryCurrentControlPlan
-    initial_state: Array
-    phase_time_grid: TimeGrid
+    initial_state: Array = fixed_field()
+    phase_time_grid: TimeGrid = fixed_field()
     parameterization: PiecewiseConstantControlParameterization
     control_problem: ControlProblem
-    replay_output_indices: Array
+    replay_output_indices: Array = fixed_field()
     path_constraint_names: tuple[str, ...] = eqx.field(static=True)
     terminal_constraint_names: tuple[str, str] = eqx.field(static=True)
     replay_plan_id: str = eqx.field(static=True)

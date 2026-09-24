@@ -24,6 +24,7 @@ from ..._differentiation import (
 )
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
@@ -92,7 +93,7 @@ class FeatureSelectionDiagnostics(StrictModule):
 class ExactFeatureSelectorModel(AbstractFittedModel):
     """Exact fixed-capacity gather, smooth in values conditional on fitted indices."""
 
-    selection: ExactSelection
+    selection: ExactSelection = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     _input_binding = ModelBinding.pointwise()

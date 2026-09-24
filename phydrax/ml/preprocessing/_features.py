@@ -24,7 +24,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._interpolation import bspline_stencil, linear_interpolate
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...sparse import EdgeRelation, SparseLinearMap
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
@@ -197,7 +197,7 @@ class PolynomialFeatures(AbstractRecipe):
 class FittedSplineTransformer(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    knots: Array
+    knots: Array = fixed_field()
     degree: int = eqx.field(static=True)
     n_basis: int = eqx.field(static=True)
     bounds: Literal["clip", "error"] = eqx.field(static=True)
@@ -389,8 +389,8 @@ class SplineTransformer(AbstractRecipe):
 class FittedFourierFeatures(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    origin: Array
-    period: Array
+    origin: Array = fixed_field()
+    period: Array = fixed_field()
     n_frequencies: int = eqx.field(static=True)
     include_bias: bool = eqx.field(static=True)
     include_original: bool = eqx.field(static=True)
@@ -606,8 +606,8 @@ class FourierFeatures(AbstractRecipe):
 class FittedRandomFourierFeatures(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    frequencies: Array
-    phases: Array
+    frequencies: Array = fixed_field()
+    phases: Array = fixed_field()
     input_schema: FeatureSchema = eqx.field(static=True)
     output_schema: FeatureSchema = eqx.field(static=True)
 
@@ -864,7 +864,7 @@ class FeatureHasher(AbstractRecipe):
 class _AbstractRandomProjection(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    projection: Array
+    projection: Array = fixed_field()
     input_schema: FeatureSchema = eqx.field(static=True)
     output_schema: FeatureSchema = eqx.field(static=True)
 
@@ -964,7 +964,7 @@ class GaussianRandomProjection(AbstractRecipe):
 class FittedSparseRandomProjection(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    projection: SparseLinearMap
+    projection: SparseLinearMap = fixed_field()
     density: float = eqx.field(static=True)
     input_schema: FeatureSchema = eqx.field(static=True)
     output_schema: FeatureSchema = eqx.field(static=True)
@@ -1154,7 +1154,7 @@ def _yeo_johnson_inverse(values: Array, lambdas: Array) -> Array:
 class FittedPowerTransformer(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    lambdas: Array
+    lambdas: Array = fixed_field()
     method: Literal["yeo-johnson", "box-cox"] = eqx.field(static=True)
     input_schema: FeatureSchema = eqx.field(static=True)
     output_schema: FeatureSchema = eqx.field(static=True)
@@ -1358,8 +1358,8 @@ class PowerTransformer(AbstractRecipe):
 class FittedQuantileTransformer(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    quantiles: Array
-    references: Array
+    quantiles: Array = fixed_field()
+    references: Array = fixed_field()
     output_distribution: Literal["uniform", "normal"] = eqx.field(static=True)
     input_schema: FeatureSchema = eqx.field(static=True)
     output_schema: FeatureSchema = eqx.field(static=True)

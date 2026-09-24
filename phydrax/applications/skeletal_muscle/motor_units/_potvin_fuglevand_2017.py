@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
-from ...._trainable import NonTrainableState
+from ...._trainable import NonTrainableState, parameter_field
 from ....dynamics import (
     DiscreteSystem,
     DiscreteTransitionResult,
@@ -361,7 +361,7 @@ class PreparedPotvinFuglevand2017(StrictModule):
     """Prepared model with fixed topology and differentiable numeric parameters."""
 
     plan: PotvinFuglevand2017Plan
-    parameters: PotvinFuglevand2017Parameters
+    parameters: PotvinFuglevand2017Parameters = parameter_field()
     prepared_id: str = eqx.field(static=True)
 
     def __init__(

@@ -20,6 +20,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ..dynamics import DiscreteStepContext, StateLayout, TimeGrid
 from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
 from ._parameterization import AbstractControlParameterization
@@ -70,7 +71,7 @@ class DifferentialControlFlow(StrictModule):
         return jnp.asarray(self.step(t0, t1, state, control, args))
 
 
-class ILQRPolicy(AbstractControlParameterization):
+class ILQRPolicy(AbstractControlParameterization, NonTrainableState):
     """Time-indexed affine feedback around an iLQR nominal trajectory.
 
     The policy has no free coefficients: pass an empty array to ``evaluate`` or

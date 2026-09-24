@@ -15,7 +15,6 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
 from ..discretization.finite_volume import UpwindConstrainedTransportPlan
 
 
@@ -68,7 +67,7 @@ class ConstrainedMHDStepResult(StrictModule):
     accepted_integrals: ConstrainedMHDAcceptedIntegralLedger
 
 
-class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
+class ConstrainedMHDSSPRK3Plan(StrictModule):
     """Coupled SSPRK3 update of cell conservation and face magnetic flux."""
 
     spatial: UpwindConstrainedTransportPlan

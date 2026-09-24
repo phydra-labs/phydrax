@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+import phydrax as phx
 from phydrax.execution import (
     evaluate_execution_worksets_filter_vmap,
     evaluate_execution_worksets_serial,
@@ -132,6 +133,46 @@ def test_filter_vmap_worksets_broadcast_static_module_leaves() -> None:
     )
     assert jnp.array_equal(result.values, expected)
     assert bool(result.evidence.successful)
+
+
+def test_filter_vmap_worksets_map_only_the_declared_item_lane() -> None:
+    class Normalized(phx.StrictModule, phx.ParameterOwner):
+        weight: jax.Array
+        shift: jax.Array = phx.fixed_field()
+
+    prepared = _plan().prepare()
+    shifts = jnp.arange(10, dtype=jnp.float32).reshape((5, 2))
+    items = Normalized(jnp.asarray([2.0, 3.0]), shifts)
+    counters = jnp.zeros((5,), dtype=jnp.uint32)
+
+    def operation(signature, item, key, semantic_index):
+        del signature, key, semantic_index
+        return item.weight * (1.0 - item.shift)
+
+    # FIXED per-item normalizers are mapped while the parameter is shared.
+    result = evaluate_execution_worksets_filter_vmap(
+        prepared,
+        operation,
+        items,
+        jax.random.key(0),
+        counters,
+        layout=phx.LaneLayout("item", (".shift",)),
+    )
+    assert jnp.array_equal(result.values, items.weight * (1.0 - shifts))
+    assert jnp.array_equal(result.next_rng_counters, counters + 1)
+    with pytest.raises(ValueError, match="share one lane size"):
+        evaluate_execution_worksets_filter_vmap(
+            prepared, operation, items, jax.random.key(0), counters
+        )
+    with pytest.raises(TypeError, match="kind 'item'"):
+        evaluate_execution_worksets_filter_vmap(
+            prepared,
+            operation,
+            items,
+            jax.random.key(0),
+            counters,
+            layout=phx.LaneLayout("member", (".shift",)),
+        )
 
 
 def test_semantic_rng_keys_survive_a_bucket_capacity_change() -> None:

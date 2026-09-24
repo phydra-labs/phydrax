@@ -176,7 +176,7 @@ class _ChannelSBDF2Transition(StrictModule):
     status: Array
 
 
-class PreparedChannelSBDF2Method(AbstractFixedStepMethod):
+class PreparedChannelSBDF2Method(AbstractFixedStepMethod, NonTrainableState):
     """Channel SBDF2 bound to one dynamics compilation and exact time step."""
 
     dynamics: _CompiledChannelDynamics

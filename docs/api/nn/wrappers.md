@@ -15,6 +15,15 @@ Composable model transforms that add structure or change output interpretation.
 Use these wrappers when you already have an `equinox.Module` (or any JAX callable) and
 want it to participate in Phydrax's solver/training APIs.
 
+Both wrappers are `phydrax.ParameterOwner`s: every inexact array of the wrapped module
+is a PARAMETER (see [array roles](../phydrax.md#array-roles-and-lanes)). A raw
+`equinox.Module` placed directly in a training tree has no declared role, so training
+entries such as `FunctionalSolver.solve` and `fit_operator` reject its arrays with a
+`ValueError` naming each path; wrap it in `EquinoxModel`, or declare its fields with
+`phydrax.parameter_field` / `phydrax.fixed_field`. Modules holding
+`eqx.nn.StateIndex` state are rejected with `TypeError` ("stateful Equinox modules are
+not supported").
+
 `layout="value"` (default for `EquinoxModel`) treats `in_size/out_size` as the **value shape**
 of a single (unbatched) sample. Inputs are flattened to a vector, the wrapped module is called,
 and outputs are reshaped back to the declared value shape.

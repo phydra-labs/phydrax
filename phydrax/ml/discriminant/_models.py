@@ -22,6 +22,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -212,7 +213,7 @@ class LinearDiscriminantModel(AbstractFittedModel):
 
     coefficients: Array
     intercepts: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -273,7 +274,7 @@ class QuadraticDiscriminantModel(AbstractFittedModel):
     precisions: Array
     log_priors: Array
     log_determinants: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)

@@ -158,7 +158,7 @@ class MPMLinearizedConstitutiveResponse(StrictModule):
     tangent_successful: Array
 
 
-class AbstractMPMConstitutivePlan(StrictModule, NonTrainableState):
+class AbstractMPMConstitutivePlan(StrictModule):
     """Fixed-shape material update required by explicit material-point dynamics."""
 
     dimension: eqx.AbstractVar[int]
@@ -214,7 +214,7 @@ class MaterialPointArguments(StrictModule):
         self.external_arguments = external_arguments
 
 
-class MaterialPointProblemIR(StrictModule, NonTrainableState):
+class MaterialPointProblemIR(StrictModule):
     """One homogeneous constitutive family and optional body acceleration."""
 
     name: str = eqx.field(static=True)
@@ -280,7 +280,7 @@ class MaterialPointProblemIR(StrictModule, NonTrainableState):
         self.problem_id = identifier
 
 
-class CompiledMaterialPointProblem(StrictModule, NonTrainableState):
+class CompiledMaterialPointProblem(StrictModule):
     problem: MaterialPointProblemIR
     dynamics: PreparedMPMDynamics
     discretization_bundle: DiscretizationBundle

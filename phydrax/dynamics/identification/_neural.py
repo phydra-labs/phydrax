@@ -28,7 +28,11 @@ from ..._fingerprint import (
 from ..._frozendict import frozendict
 from ..._iteration import IterationSession
 from ..._model import AbstractArrayModel
-from ..._trainable import combine_trainable, partition_trainable
+from ..._trainable import (
+    combine_parameters,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ..._training import (
     _update_validation_selection,
     DelayedTargetPolicy,
@@ -950,7 +954,7 @@ def _tree_finite(tree: Any, /) -> Array:
 
 def _validate_precision(model: AbstractArrayModel, *datasets: TrajectoryData) -> None:
     allowed = (jnp.dtype(jnp.float32), jnp.dtype(jnp.float64))
-    parameters, _ = partition_trainable(model)
+    parameters, _, _ = partition_parameters(model)
     for leaf in jax.tree_util.tree_leaves(parameters):
         if eqx.is_array(leaf) and (
             jnp.issubdtype(leaf.dtype, jnp.complexfloating) or leaf.dtype not in allowed
@@ -1059,6 +1063,7 @@ def _resolve_discrete_fit_request(
 ):
     if not isinstance(model, AbstractArrayModel):
         raise TypeError("fit_discrete_model requires an AbstractArrayModel.")
+    require_parameter_roles(model, context="fit_discrete_model")
     if not isinstance(rollout_policy, DiscreteModelRolloutPolicy):
         raise TypeError("rollout_policy must be a DiscreteModelRolloutPolicy.")
     if not isinstance(state_layout, StateLayout):
@@ -1461,7 +1466,7 @@ def fit_discrete_model(
         linear_refinement=linear_refinement,
     )
 
-    parameters, fixed = partition_trainable(model)
+    parameters, model_state, fixed = partition_parameters(model)
     accumulation_dtype = _tree_real_result_dtype(parameters)
     optimizer_state = optimizer.init(parameters)
     evaluated_parameters = resolve_evaluation_parameters(
@@ -1481,7 +1486,7 @@ def fit_discrete_model(
         else TargetParameterState.initialize(initial_target_parameters, target_policy)
     )
     evaluation_model = eqx.nn.inference_mode(
-        combine_trainable(evaluated_parameters, fixed)
+        combine_parameters(evaluated_parameters, model_state, fixed)
     )
     best_model = evaluation_model
     master_key = jr.key(seed) if key is None else key
@@ -1587,9 +1592,9 @@ def fit_discrete_model(
         execution_control,
     ):
         def objective(candidate):
-            current_model = combine_trainable(candidate, fixed)
+            current_model = combine_parameters(candidate, model_state, fixed)
             target_model = (
-                combine_trainable(target_parameters, fixed)
+                combine_parameters(target_parameters, model_state, fixed)
                 if target_state is not None
                 else None
             )
@@ -1648,7 +1653,7 @@ def fit_discrete_model(
         metric_accumulators = [_ObjectiveAccumulator() for _ in metric_names]
         evaluation_key = control.key_for(int(step), site=1000)
         target_model = (
-            combine_trainable(target_state.target, fixed)
+            combine_parameters(target_state.target, model_state, fixed)
             if target_state is not None
             else None
         )
@@ -1725,7 +1730,7 @@ def fit_discrete_model(
                 ProgressiveLinearRefinementRecord(**dict(value))
                 for value in metadata["linear_refinement_records"]
             ]
-        parameters, fixed = partition_trainable(model)
+        parameters, model_state, fixed = partition_parameters(model)
     else:
         initial_metrics = evaluate(
             evaluation_model,
@@ -1921,7 +1926,7 @@ def fit_discrete_model(
                         raise FloatingPointError("Optimizer produced nonfinite state.")
                     parameters = candidate_parameters
                     optimizer_state = candidate_state
-                    model = combine_trainable(parameters, fixed)
+                    model = combine_parameters(parameters, model_state, fixed)
                     update_step = control.progress.update_step + 1
                     control.complete_update(update_step)
                     if target_state is not None:
@@ -1968,7 +1973,7 @@ def fit_discrete_model(
                             parameters,
                         )
                         evaluation_model = eqx.nn.inference_mode(
-                            combine_trainable(evaluated_parameters, fixed)
+                            combine_parameters(evaluated_parameters, model_state, fixed)
                         )
                         validation_metrics = evaluate(
                             evaluation_model,
@@ -2028,7 +2033,7 @@ def fit_discrete_model(
         parameters,
     )
     evaluation_model = eqx.nn.inference_mode(
-        combine_trainable(evaluated_parameters, fixed)
+        combine_parameters(evaluated_parameters, model_state, fixed)
     )
     if (
         validation_source is not None

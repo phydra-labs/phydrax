@@ -31,7 +31,7 @@ from .._sampling import (
     sample_markov,
 )
 from .._strict import StrictModule
-from .._trainable import partition_trainable
+from .._trainable import ArrayRole, require_parameter_roles
 from .._training import TrainingController, TrainingIterationKind, TrainingProgress
 from ..integration import integrate, markov_chain_measure
 from ..linalg import (
@@ -161,9 +161,8 @@ def _surrogate(amplitude: LogAmplitude, /) -> Array:
 
 
 def _default_parameter_subspace(model: Any, /) -> ParameterSubspace:
-    trainable, _non_trainable = partition_trainable(model)
-    paths = ParameterSubspace.array_leaf_paths(trainable)
-    return ParameterSubspace.from_leaf_paths(model, paths)
+    resolution = require_parameter_roles(model, context="VariationalMonteCarloProblem")
+    return ParameterSubspace(model, resolution.filter_spec(ArrayRole.PARAMETER))
 
 
 class VariationalMonteCarloProblem(StrictModule):

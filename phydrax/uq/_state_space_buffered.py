@@ -15,6 +15,11 @@ import optax
 from jaxtyping import Array
 
 from .._strict import StrictModule
+from .._trainable import (
+    combine_parameters,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ..stochastic import StateSpaceProblem
 from ._state_space_amortized import AmortizedGaussianMarkovFamily
 from ._state_space_path_density import state_space_path_log_density
@@ -209,17 +214,18 @@ def fit_buffered_state_space_variational(
     )
     if not isinstance(family_, AmortizedGaussianMarkovFamily):
         raise TypeError("family must be AmortizedGaussianMarkovFamily or None.")
+    require_parameter_roles(family_, context="fit_buffered_state_space_variational")
     optimizer = optax.chain(
         optax.clip_by_global_norm(config.optimization.gradient_clip),
         optax.adam(config.optimization.learning_rate),
     )
-    dynamic_family, static_family = eqx.partition(family_, eqx.is_inexact_array)
+    dynamic_family, model_state, static_family = partition_parameters(family_)
     optimizer_state = optimizer.init(dynamic_family)
     case_shape = problem.observations.case_shape
     step_valid = problem.observations.step_valid
 
     def loss_function(current_dynamic, sample_key, window):
-        current_family = eqx.combine(current_dynamic, static_family)
+        current_family = combine_parameters(current_dynamic, model_state, static_family)
         context_mask = (
             jnp.broadcast_to(
                 window.context_mask,
@@ -309,7 +315,7 @@ def fit_buffered_state_space_variational(
             gradient_history.append(gradient_norm)
             finite_history.append(finite)
 
-    fitted_family = eqx.combine(dynamic_family, static_family)
+    fitted_family = combine_parameters(dynamic_family, model_state, static_family)
     states, log_variational = fitted_family.sample_and_log_prob(
         jr.fold_in(key, 0xF17A1),
         sample_shape=(draws,),

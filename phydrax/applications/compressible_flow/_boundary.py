@@ -13,7 +13,7 @@ import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
@@ -172,13 +172,13 @@ class CompressibleSpongeResult(StrictModule):
     ledger: CompressibleSpongeLedger
 
 
-class CompressibleSpongePlan(StrictModule, NonTrainableState):
+class CompressibleSpongePlan(StrictModule):
     """Conserved-variable relaxation with conservative and entropy ledgers."""
 
     system: (
         HomogeneousMixtureEulerSystem | HomogeneousMixtureCompressibleNavierStokesSystem
     )
-    target_state: Array
+    target_state: Array = fixed_field()
     strength: float = eqx.field(static=True)
     start_coordinate: float = eqx.field(static=True)
     end_coordinate: float = eqx.field(static=True)

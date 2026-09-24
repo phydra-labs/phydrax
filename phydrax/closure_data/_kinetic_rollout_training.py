@@ -23,7 +23,12 @@ from .._numerics._checkpointed_scan import (
     PreparedReplaySchedule,
 )
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import (
+    combine_parameters,
+    fixed_field,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ..discretization.discrete_velocity._smooth_compressible import (
     SmoothCompressibleKineticState,
 )
@@ -77,7 +82,7 @@ def _tree_finite(tree: Any, /) -> Array:
     return jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in leaves)))
 
 
-class KineticRolloutTrainingPlan(StrictModule, NonTrainableState):
+class KineticRolloutTrainingPlan(StrictModule):
     """Static curriculum, optimizer, replay, and physical-runtime contract."""
 
     dynamics: PreparedSmoothCompressibleD2V17SpatialDynamics
@@ -637,8 +642,8 @@ class KineticRolloutTrainingState(StrictModule):
     model: AbstractArrayModel
     optimizer_state: Any
     best_model: AbstractArrayModel
-    key: Array
-    best_loss: Array
+    key: Array = fixed_field()
+    best_loss: Array = fixed_field()
     attempt_count: int = eqx.field(static=True)
     accepted_update_count: int = eqx.field(static=True)
     rejection_count: int = eqx.field(static=True)
@@ -761,14 +766,14 @@ class KineticRolloutTrainingState(StrictModule):
 
 class KineticRolloutUpdateResult(StrictModule):
     state: KineticRolloutTrainingState
-    training_evidence: KineticRolloutObjectiveEvidence
-    guard_evidence: KineticRolloutObjectiveEvidence
-    selection_evidence: KineticRolloutObjectiveEvidence
-    training_loss: Array
-    guard_loss: Array
-    selection_loss: Array
-    gradient_finite: Array
-    proposal_finite: Array
+    training_evidence: KineticRolloutObjectiveEvidence = fixed_field()
+    guard_evidence: KineticRolloutObjectiveEvidence = fixed_field()
+    selection_evidence: KineticRolloutObjectiveEvidence = fixed_field()
+    training_loss: Array = fixed_field()
+    guard_loss: Array = fixed_field()
+    selection_loss: Array = fixed_field()
+    gradient_finite: Array = fixed_field()
+    proposal_finite: Array = fixed_field()
     accepted: bool = eqx.field(static=True)
     horizon: int = eqx.field(static=True)
 
@@ -845,11 +850,11 @@ def initialize_kinetic_rollout_training(
     if not isinstance(plan, KineticRolloutTrainingPlan):
         raise TypeError("plan must be KineticRolloutTrainingPlan.")
     _validate_dataset(plan, dataset)
+    require_parameter_roles(model, context="initialize_kinetic_rollout_training")
     raw_key = jnp.asarray(jr.key_data(key), dtype=jnp.uint32)
     if raw_key.shape != (2,):
         raise ValueError("Stage-two training requires one scalar PRNG key.")
-    trainable = eqx.filter(model, eqx.is_inexact_array)
-    optimizer_state = plan.optimizer().init(trainable)
+    optimizer_state = plan.optimizer().init(partition_parameters(model)[0])
     selection_windows = _guard_windows(dataset)
     initial_loss, evidence = kinetic_rollout_objective(
         model,
@@ -917,6 +922,7 @@ def attempt_kinetic_rollout_update(
     """Attempt one proposal and atomically commit model and optimizer on guard success."""
 
     _validate_state_binding(state, plan, dataset)
+    require_parameter_roles(state.model, context="attempt_kinetic_rollout_update")
     horizon = plan.curriculum_horizons[state.curriculum_index]
     training_key, guard_key, next_key = jr.split(jr.wrap_key_data(state.key), num=3)
     training_start = (
@@ -935,21 +941,29 @@ def attempt_kinetic_rollout_update(
         guard_pool, plan.guard_batch_size, guard_start
     )
 
-    def objective(candidate: AbstractArrayModel):
+    parameters, model_state, fixed = partition_parameters(state.model)
+
+    def objective(candidate: Any):
         return kinetic_rollout_objective(
-            candidate, plan, dataset.statistics, training_batch, horizon
+            combine_parameters(candidate, model_state, fixed),
+            plan,
+            dataset.statistics,
+            training_batch,
+            horizon,
         )
 
     (training_loss, training_evidence), gradient = eqx.filter_value_and_grad(
         objective, has_aux=True
-    )(state.model)
+    )(parameters)
     gradient_finite = _tree_finite(gradient) & jnp.isfinite(training_loss)
     updates, candidate_optimizer_state = plan.optimizer().update(
         gradient,
         state.optimizer_state,
-        params=eqx.filter(state.model, eqx.is_inexact_array),
+        params=parameters,
     )
-    candidate_model = eqx.apply_updates(state.model, updates)
+    candidate_model = combine_parameters(
+        eqx.apply_updates(parameters, updates), model_state, fixed
+    )
     proposal_finite = (
         gradient_finite
         & _tree_finite(updates)

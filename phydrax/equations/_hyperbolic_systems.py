@@ -28,7 +28,7 @@ ScalarFlux = Callable[[Array, int, Any], ArrayLike]
 ScalarWaveSpeed = Callable[[Array, Array, int, Any], ArrayLike]
 
 
-class AbstractConservationSystem(StrictModule, NonTrainableState):
+class AbstractConservationSystem(StrictModule):
     """Physical conservation system independent of a numerical method."""
 
     dimension: int = eqx.field(static=True)
@@ -289,7 +289,9 @@ class AbstractEntropySystem(AbstractConservationSystem):
 
 
 class ScalarConservationSystem(
-    AbstractConservationSystem, AbstractNormalReflectionSystem
+    AbstractConservationSystem,
+    AbstractNormalReflectionSystem,
+    NonTrainableState,
 ):
     flux: ScalarFlux = eqx.field(static=True)
     wave_speed: ScalarWaveSpeed = eqx.field(static=True)
@@ -383,6 +385,7 @@ class EulerSystem(
     AbstractEntropySystem,
     AbstractNormalReflectionSystem,
     AbstractNormalCharacteristicSystem,
+    NonTrainableState,
 ):
     """Ideal-gas Euler equations in one, two, or three dimensions."""
 
@@ -1048,7 +1051,11 @@ class CompressibleNavierStokesSystem(
         return self.inviscid.entropy_variables(state)
 
 
-class IdealMHDSystem(AbstractAdmissibleSystem, AbstractNormalReflectionSystem):
+class IdealMHDSystem(
+    AbstractAdmissibleSystem,
+    AbstractNormalReflectionSystem,
+    NonTrainableState,
+):
     """Ideal MHD with three-vector momentum and magnetic field."""
 
     material: IdealGasMaterial
@@ -1271,7 +1278,7 @@ class IdealMHDSystem(AbstractAdmissibleSystem, AbstractNormalReflectionSystem):
         return result.at[..., 5:8].set(reflected_magnetic)
 
 
-class ShallowWaterSystem(AbstractAdmissibleSystem):
+class ShallowWaterSystem(AbstractAdmissibleSystem, NonTrainableState):
     """One- or two-dimensional shallow-water conservation system."""
 
     gravity: float = eqx.field(static=True)

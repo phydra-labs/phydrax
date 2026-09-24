@@ -24,6 +24,7 @@ from .._model import TRIAL_SPACE_CERTIFICATE_KEY
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm, AbstractScalarTerm
+from .._trainable import partition_parameters, require_parameter_roles
 from .._training import (
     DelayedTargetPolicy,
     EvaluationParametersFn,
@@ -362,16 +363,18 @@ class FunctionalSolver(StrictModule):
 
         return save_onnx(self[var], path, **kwargs)
 
-    def partition_functions(self) -> tuple[Any, Any]:
-        """Return `(trainable, non_trainable)` function PyTrees used by `solve()`."""
-        from .._trainable import partition_trainable
+    def partition_functions(self) -> tuple[Any, Any, Any]:
+        """Return the `(parameters, model_state, fixed)` role lanes of `functions`.
 
-        return partition_trainable(self.functions)
+        The lanes follow `phydrax.partition_parameters`; undeclared inexact leaves
+        raise `ValueError`. `phydrax.combine_parameters` recombines them.
+        """
+        return partition_parameters(self.functions)
 
     def trainable_functions(self) -> Any:
-        """Return the trainable function PyTree used as optimizer/evolution state."""
-        trainable, _non_trainable = self.partition_functions()
-        return trainable
+        """Return the PARAMETER lane used as optimizer/evolution state."""
+        parameters, _model_state, _fixed = self.partition_functions()
+        return parameters
 
     def loss(
         self,
@@ -451,9 +454,12 @@ class FunctionalSolver(StrictModule):
     ) -> "FunctionalSolver":
         """Run the training loop and return an updated solver.
 
-        The optimization updates trainable inexact-array leaves of `self.functions`.
-        Domains and fixed observed-data state are kept non-trainable. An explicit
-        `parameter_subspace` restricts supported Optax runs to exact selected leaves.
+        The optimization updates the declared PARAMETER leaves of `self.functions`
+        (see `phydrax.resolve_array_roles`). FIXED leaves, including domains and
+        observed data, are never trained, and MODEL_STATE leaves are carried
+        unchanged. Undeclared inexact leaves raise `ValueError` before training.
+        An explicit `parameter_subspace` is itself the parameter declaration and
+        restricts supported Optax runs to exact selected leaves.
 
         - Standard and extra-argument Optax transformations are accepted.
         - `phydrax.optim.kfac(...)` configurations are accepted and receive frozen
@@ -524,6 +530,7 @@ class FunctionalSolver(StrictModule):
         if num_iter == 0:
             return self
         if parameter_subspace is None:
+            require_parameter_roles(self.functions, context="FunctionalSolver.solve")
             parameter_paths: tuple[str, ...] | None = None
             parameter_shapes: tuple[tuple[int, ...], ...] = ()
             parameter_alias_groups: tuple[tuple[str, ...], ...] = ()

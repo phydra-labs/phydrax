@@ -14,6 +14,11 @@ import optax
 from jaxtyping import Array, ArrayLike, Key
 
 from .._strict import StrictModule
+from .._trainable import (
+    combine_parameters,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ._belief_propagation import SumProductBeliefPropagationResult
 from ._elimination import (
     plan_variable_elimination,
@@ -122,8 +127,9 @@ def initialize_persistent_training(
     chains: GibbsState,
     /,
 ) -> PersistentFactorGraphTrainingState:
-    """Initialize optimizer state over only trainable inexact graph leaves."""
-    parameters = eqx.filter(graph, eqx.is_inexact_array)
+    """Initialize optimizer state over the graph's PARAMETER leaves."""
+    require_parameter_roles(graph, context="initialize_persistent_training")
+    parameters, _, _ = partition_parameters(graph)
     return PersistentFactorGraphTrainingState(
         graph=graph,
         optimizer_state=optimizer.init(parameters),
@@ -151,10 +157,12 @@ def persistent_contrastive_divergence_step(
         raise ValueError("prepared Gibbs plan must match the training graph.")
     if state.chains.positions.shape[1:] != (state.graph.num_variables,):
         raise ValueError("Persistent chains must match the training graph.")
+    require_parameter_roles(state.graph, context="persistent_contrastive_divergence_step")
+    parameters, model_state, fixed = partition_parameters(state.graph)
 
-    def objective(graph):
+    def objective(candidate):
         return contrastive_divergence_loss(
-            graph,
+            combine_parameters(candidate, model_state, fixed),
             positive_assignments,
             state.chains.positions,
         )
@@ -162,14 +170,13 @@ def persistent_contrastive_divergence_step(
     (value, diagnostics), gradients = eqx.filter_value_and_grad(
         objective,
         has_aux=True,
-    )(state.graph)
-    parameters = eqx.filter(state.graph, eqx.is_inexact_array)
+    )(parameters)
     updates, optimizer_state = optimizer.update(
         gradients,
         state.optimizer_state,
         parameters,
     )
-    graph = eqx.apply_updates(state.graph, updates)
+    graph = combine_parameters(eqx.apply_updates(parameters, updates), model_state, fixed)
     refreshed = refresh_chromatic_gibbs(prepared, graph)
     sampled = sample_gibbs(
         refreshed,

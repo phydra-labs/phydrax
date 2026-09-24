@@ -18,7 +18,11 @@ import jax.random as jr
 import optax
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
+from phydrax._trainable import (
+    combine_parameters,
+    partition_parameters,
+    require_parameter_roles,
+)
 
 
 def _array_count(tree: Any, /) -> int:
@@ -54,7 +58,8 @@ def _resource_benchmark(
         key=jr.key(1),
     )
     subspace = phx.nn.parameters.low_rank_parameter_subspace(adapted)
-    dense_parameters, dense_fixed = partition_trainable(base)
+    require_parameter_roles(base, context="_resource_benchmark")
+    dense_parameters, dense_model_state, dense_fixed = partition_parameters(base)
     adapter_parameters = subspace.initial
     adapter_fixed = subspace.frozen
     inputs = jr.normal(jr.key(2), (batch_size, dimension))
@@ -66,7 +71,7 @@ def _resource_benchmark(
 
     def dense_step(parameters, state):
         def objective(candidate):
-            model = eqx.combine(candidate, dense_fixed)
+            model = combine_parameters(candidate, dense_model_state, dense_fixed)
             return jnp.mean((model(inputs) - targets) ** 2)
 
         loss, gradient = eqx.filter_value_and_grad(objective)(parameters)
@@ -227,7 +232,7 @@ def _transfer_benchmark() -> dict[str, Any]:
         learning_rate=2e-2,
         parameter_subspace=subspace,
     )
-    full_parameters, _ = partition_trainable(pretrained)
+    full_parameters, _, _ = partition_parameters(pretrained)
     return {
         "base_coefficient": 2.0,
         "target_coefficient": 3.0,

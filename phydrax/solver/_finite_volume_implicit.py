@@ -14,7 +14,7 @@ from .._fingerprint import canonical_fingerprint
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import fixed_field
 from ..discretization.finite_volume import (
     PreparedFiniteVolumeDynamics,
     PreparedTriangleFiniteVolumeDynamics,
@@ -78,7 +78,7 @@ class FiniteVolumeImplicitStage(StrictModule):
         self.dynamics_args = dynamics_args
 
 
-class _FiniteVolumeBackwardEulerResidual(StrictModule, NonTrainableState):
+class _FiniteVolumeBackwardEulerResidual(StrictModule):
     dynamics: ImplicitFVDynamics
 
     def __init__(self, dynamics: ImplicitFVDynamics, /):
@@ -131,14 +131,14 @@ class FiniteVolumeImplicitStepResult(StrictModule):
         return self.nonlinear.successful
 
 
-class FiniteVolumeBackwardEulerPlan(StrictModule, NonTrainableState):
+class FiniteVolumeBackwardEulerPlan(StrictModule):
     """Matrix-free backward Euler using the canonical nonlinear solver stack."""
 
     dynamics: ImplicitFVDynamics
     residual_operator: _FiniteVolumeBackwardEulerResidual
-    problem: NonlinearSystemProblem
-    method: ImplicitFVMethod
-    termination: NonlinearTermination
+    problem: NonlinearSystemProblem = fixed_field()
+    method: ImplicitFVMethod = fixed_field()
+    termination: NonlinearTermination = fixed_field()
     nonlinear_precision: NonlinearPrecisionPolicy
     temporal_method_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -280,12 +280,12 @@ class FiniteVolumeBackwardEulerPlan(StrictModule, NonTrainableState):
         ).solve()
 
 
-class PreparedFiniteVolumeBackwardEulerStep(StrictModule, NonTrainableState):
+class PreparedFiniteVolumeBackwardEulerStep(StrictModule):
     """Reusable symbolic Newton plan bound to one implicit FV stage."""
 
     plan: FiniteVolumeBackwardEulerPlan
     stage: FiniteVolumeImplicitStage
-    nonlinear: PreparedNonlinearSolve
+    nonlinear: PreparedNonlinearSolve = fixed_field()
 
     def __init__(
         self,

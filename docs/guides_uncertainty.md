@@ -766,10 +766,13 @@ Use `phx.nn.layers.inference_mode(model)` to return an immutable copy with dropo
 
 ## Deep ensembles and randomized priors
 
-`HomogeneousFunctionEnsemble` stores one member-axis-stacked PyTree and evaluates it
-with `equinox.filter_vmap`. Every array leaf must carry the member axis and static
-configuration must be shared. `HeterogeneousFunctionEnsemble` is the tuple fallback
-for different architectures, graph topologies, conditions, or solver settings.
+`HomogeneousFunctionEnsemble` stores one member-stacked PyTree and evaluates it with
+`equinox.filter_vmap` over its member `LaneLayout`. By default every array leaf
+carries the member axis; pass `layout=phx.LaneLayout("member", paths)` to stack only
+the declared leaves and share the rest across members. Lanes are independent of array
+roles, so per-member FIXED normalizers may be mapped while parameters are shared.
+Static configuration must be shared. `HeterogeneousFunctionEnsemble` is the tuple
+fallback for different architectures, graph topologies, conditions, or solver settings.
 
 Train members independently with `fit_ensemble`; do not vectorize high-level solver
 logging or adaptive-collocation state. `RandomizedPriorModel` adds an independently

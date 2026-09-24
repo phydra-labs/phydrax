@@ -14,6 +14,11 @@ from jaxtyping import Array, ArrayLike
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from .._trainable import (
+    combine_parameters,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ..geometry.complex import (
     HypersurfaceKahlerEvaluation,
     HypersurfaceKahlerGeometry,
@@ -213,7 +218,8 @@ def solve_calabi_yau_metric(
     policy_ = CalabiYauSolvePolicy() if policy is None else policy
     if not isinstance(policy_, CalabiYauSolvePolicy):
         raise TypeError("policy must be a CalabiYauSolvePolicy.")
-    model = problem.potential_model
+    require_parameter_roles(problem.potential_model, context="solve_calabi_yau_metric")
+    parameters, model_state, fixed = partition_parameters(problem.potential_model)
     objectives = []
     residuals = []
     margins = []
@@ -227,13 +233,13 @@ def solve_calabi_yau_metric(
             problem.weights,
             problem.normalization,
             problem.positivity_floor,
-            candidate,
+            combine_parameters(candidate, model_state, fixed),
             problem.precision,
         )
 
     value_and_grad = eqx.filter_value_and_grad(objective, has_aux=True)
     for _ in range(policy_.iterations):
-        (value, auxiliary), gradient = value_and_grad(model)
+        (value, auxiliary), gradient = value_and_grad(parameters)
         residual, margin, validity = auxiliary
         gradient_norm = problem.precision.decision(
             jnp.sqrt(
@@ -249,13 +255,13 @@ def solve_calabi_yau_metric(
             )
         )
         step = policy_.learning_rate
-        candidate = model
+        candidate = parameters
         candidate_value = value
         candidate_auxiliary = auxiliary
         did_accept = False
         for _ in range(policy_.maximum_backtracks + 1):
             candidate = eqx.apply_updates(
-                model,
+                parameters,
                 jax.tree.map(
                     lambda leaf: None if leaf is None else -step * leaf,
                     gradient,
@@ -280,7 +286,7 @@ def solve_calabi_yau_metric(
                 break
             step *= policy_.contraction
         if did_accept:
-            model = candidate
+            parameters = candidate
             value = candidate_value
             residual, margin, _ = candidate_auxiliary
         objectives.append(value)
@@ -295,7 +301,7 @@ def solve_calabi_yau_metric(
             converged = True
             break
     return CalabiYauMetricResult(
-        model,
+        combine_parameters(parameters, model_state, fixed),
         problem.normalization,
         problem.precision.output(
             jnp.stack(objectives) if objectives else jnp.zeros((0,))

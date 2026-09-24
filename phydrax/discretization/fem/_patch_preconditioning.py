@@ -14,7 +14,7 @@ import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...linalg import (
     AbstractLinearOperator,
     AbstractPreconditioner,
@@ -154,7 +154,7 @@ def one_ring_patch_plan(
 
 class FiniteElementPatchPreconditioner(AbstractPreconditioner):
     plan: FiniteElementPatchPlan
-    local_inverse: Array | None
+    local_inverse: Array | None = fixed_field()
     local_solvers: tuple[AbstractPreconditioner, ...]
     builder_id: str | None = eqx.field(static=True)
 

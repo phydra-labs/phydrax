@@ -20,6 +20,7 @@ from phydrax.ein import contract
 from ..._sampling import derive_key, SampleAddress
 from ..._sampling._targets import IncrementalMarkovTarget
 from ..._strict import StrictModule
+from ..._trainable import fixed_field, ParameterOwner
 from ...linalg import DenseLinearOperator, FactorizationPolicy, factorize
 from ...operators.quantum._amplitude import LogAmplitude
 from ...tensor_network import MatrixProductState
@@ -52,7 +53,7 @@ class JastrowSpinCache(StrictModule):
     valid: Array
 
 
-class JastrowSpinAmplitude(StrictModule):
+class JastrowSpinAmplitude(StrictModule, ParameterOwner):
     """Finite complex symmetric spin Jastrow amplitude."""
 
     fields: Array
@@ -115,7 +116,7 @@ class RestrictedBoltzmannCache(StrictModule):
     valid: Array
 
 
-class RestrictedBoltzmannAmplitude(StrictModule):
+class RestrictedBoltzmannAmplitude(StrictModule, ParameterOwner):
     """Finite complex RBM amplitude with exact hidden-preactivation flip cache."""
 
     visible_bias: Array
@@ -248,7 +249,7 @@ def rbm_incremental_target(
     return _spin_cache_incremental_target(model, target_id)
 
 
-class AutoregressiveSpinAmplitude(StrictModule):
+class AutoregressiveSpinAmplitude(StrictModule, ParameterOwner):
     """Exactly normalized finite ordered binary-spin amplitude."""
 
     conditional_bias: Array
@@ -360,11 +361,11 @@ class SlaterJastrowAmplitude(StrictModule):
         return LogAmplitude(value, total_phase, valid=valid)
 
 
-class CircuitAmplitude(StrictModule):
+class CircuitAmplitude(StrictModule, ParameterOwner):
     """Finite basis-amplitude adapter over the canonical dense QuantumProgram."""
 
     prepared: Any
-    initial_state: Array
+    initial_state: Array = fixed_field()
     maximum_dimension: int = eqx.field(static=True)
 
     def __init__(
@@ -421,7 +422,7 @@ class CircuitAmplitude(StrictModule):
         )
 
 
-class TensorNetworkAmplitude(StrictModule):
+class TensorNetworkAmplitude(StrictModule, ParameterOwner):
     """Direct finite-configuration contraction of an existing MPS."""
 
     state: MatrixProductState

@@ -9,10 +9,11 @@ import jax
 from jaxtyping import Array, PyTree
 
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from ._transforms import AbstractParameterTransform
 
 
-class TransformedParameter(StrictModule):
+class TransformedParameter(StrictModule, ParameterOwner):
     """Trainable unconstrained coordinates with a physical-value transformation."""
 
     raw: PyTree[Array]

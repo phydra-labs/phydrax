@@ -8,9 +8,11 @@ import pytest
 
 import phydrax as phx
 import phydrax.axes as cx
-from phydrax._trainable import partition_trainable
 from phydrax.linalg import MaterializationPolicy, materialize
-from phydrax.solver._functional_run import FunctionalSolveConfig
+from phydrax.solver._functional_run import (
+    FunctionalSolveConfig,
+    partition_functional_parameters,
+)
 from phydrax.solver._functional_surrogate import prepare_functional_update
 
 
@@ -78,7 +80,7 @@ def test_functional_session_rejects_sharding_execution_group_mismatch():
 
 def test_sharded_functional_ntk_matches_unsharded_global_kernel():
     solver = _scalar_solver()
-    params, non_trainable = partition_trainable(solver.functions)
+    params, non_trainable = partition_functional_parameters(solver.functions)
     prepared = solver.objective.prepare_training(
         (0,),
         scale=1.0,
@@ -88,6 +90,9 @@ def test_sharded_functional_ntk_matches_unsharded_global_kernel():
     )
     policy = phx.solver.FunctionalShardingPolicy({"__phydra_blk__x": "data"})
     sharded = policy.place_prepared(prepared)
+    sharded_params, sharded_held = partition_functional_parameters(
+        solver.functions, sharding=policy
+    )
     unsharded_update = prepare_functional_update(
         prepared,
         params,
@@ -96,8 +101,8 @@ def test_sharded_functional_ntk_matches_unsharded_global_kernel():
     )
     sharded_update = prepare_functional_update(
         sharded,
-        policy.place_parameters(params),
-        policy.place_tree(non_trainable),
+        sharded_params,
+        sharded_held,
         solver.enforcement,
     )
     unsharded_ntk = phx.solver.prepare_functional_ntk(

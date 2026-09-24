@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from .._tree_math import validate_inexact_tree
 from ..linalg import PyTreeSpace
 from ._precision import NonlinearPrecisionPolicy
@@ -52,26 +53,26 @@ class _RichardsonSearch(StrictModule):
 
 
 class _RichardsonRun(StrictModule):
-    state: Array
-    residual: Array
-    initial_residual_norm: Array
-    residual_norm: Array
-    step_norm: Array
-    iteration: Array
-    residual_evaluations: Array
-    jvp_evaluations: Array
-    vjp_evaluations: Array
-    jacobian_preparations: Array
-    linear_solves: Array
-    linear_iterations: Array
-    setup_refreshes: Array
-    numeric_refreshes: Array
-    accepted_steps: Array
-    rejected_steps: Array
-    domain_failures: Array
-    nonfinite_trials: Array
+    state: Array = fixed_field()
+    residual: Array = fixed_field()
+    initial_residual_norm: Array = fixed_field()
+    residual_norm: Array = fixed_field()
+    step_norm: Array = fixed_field()
+    iteration: Array = fixed_field()
+    residual_evaluations: Array = fixed_field()
+    jvp_evaluations: Array = fixed_field()
+    vjp_evaluations: Array = fixed_field()
+    jacobian_preparations: Array = fixed_field()
+    linear_solves: Array = fixed_field()
+    linear_iterations: Array = fixed_field()
+    setup_refreshes: Array = fixed_field()
+    numeric_refreshes: Array = fixed_field()
+    accepted_steps: Array = fixed_field()
+    rejected_steps: Array = fixed_field()
+    domain_failures: Array = fixed_field()
+    nonfinite_trials: Array = fixed_field()
     prepared_update: PreparedNonlinearUpdate
-    status: Array
+    status: Array = fixed_field()
 
 
 class NonlinearRichardson(AbstractNonlinearMethod):

@@ -14,7 +14,6 @@ from .._array_archive import read_array_archive, write_array_archive
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
 from .._validation import canonical_identifier as _require_identifier
 from ..discretization import TopologyEpoch
 from ..discretization.amr import (
@@ -207,7 +206,7 @@ def _validate_initial_epoch(
         )
 
 
-class FiniteVolumeCheckpointPlan(StrictModule, NonTrainableState):
+class FiniteVolumeCheckpointPlan(StrictModule):
     """Compatibility contract for one ordinary or block finite-volume runtime."""
 
     case: FiniteVolumeCaseSpec | None

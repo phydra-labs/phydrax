@@ -20,6 +20,7 @@ from ..._numerics._ssp_runge_kutta import (
     StageTransformResult,
 )
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from ...discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ...dynamics import DiscreteStepContext, InputLayout, StateLayout
 from ...dynamics.identification._neural_transition import (
@@ -113,8 +114,8 @@ class FixedGridStressOperatorModel(AbstractArrayModel):
 
 class _CurrentStressPredictor(StrictModule):
     model: AbstractArrayModel
-    key: Array | None
-    iteration: Array | None
+    key: Array | None = fixed_field()
+    iteration: Array | None = fixed_field()
     output_shape: tuple[int, ...] = eqx.field(static=True)
 
     def __init__(

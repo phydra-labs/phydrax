@@ -42,7 +42,7 @@ from .._numerics._ssp_runge_kutta import (
     StageTransformResult,
 )
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import fixed_field, NonTrainableState
 from .._tree_math import tree_where
 from ..discretization import DiscretizationBundle
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
@@ -117,7 +117,7 @@ class AcceptedStepTransformResult(StrictModule):
     correction_norm: Array
 
 
-class AbstractAcceptedStepTransform(StrictModule, NonTrainableState):
+class AbstractAcceptedStepTransform(StrictModule):
     transform_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
@@ -133,7 +133,7 @@ class AbstractAcceptedStepTransform(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
-class IdentityAcceptedStepTransform(AbstractAcceptedStepTransform):
+class IdentityAcceptedStepTransform(AbstractAcceptedStepTransform, NonTrainableState):
     transform_id: str = "accepted-step-transform:identity"
 
     def apply(
@@ -198,7 +198,7 @@ class CompositeAcceptedStepTransform(AbstractAcceptedStepTransform):
         return AcceptedStepTransformResult(state, applied, successful, correction)
 
 
-class IdentitySSPRKStageTransform(AbstractSSPRKStageTransform):
+class IdentitySSPRKStageTransform(AbstractSSPRKStageTransform, NonTrainableState):
     transform_id: str = "ssprk-stage-transform:identity"
 
     def apply(
@@ -218,7 +218,7 @@ class IdentitySSPRKStageTransform(AbstractSSPRKStageTransform):
         )
 
 
-class CallableSSPRKStageTransform(AbstractSSPRKStageTransform):
+class CallableSSPRKStageTransform(AbstractSSPRKStageTransform, NonTrainableState):
     transform: Callable[[int, Array, Array, Any], StageTransformResult] = eqx.field(
         static=True
     )
@@ -296,7 +296,7 @@ class RetriedFixedStepResult(StrictModule):
     decision_id: str = eqx.field(static=True)
 
 
-class AbstractFixedStepMethod(StrictModule, NonTrainableState):
+class AbstractFixedStepMethod(StrictModule):
     method_id: eqx.AbstractVar[str]
 
     @property
@@ -528,12 +528,12 @@ def _enforce_required_step_size(
     return step_size
 
 
-class FixedStepProblem(StrictModule, NonTrainableState):
+class FixedStepProblem(StrictModule):
     method: AbstractFixedStepMethod
-    initial_state: PyTree[Array]
-    args: Any
-    state_geometry: AbstractStateGeometry
-    discretization_bundle: DiscretizationBundle | None
+    initial_state: PyTree[Array] = fixed_field()
+    args: Any = fixed_field()
+    state_geometry: AbstractStateGeometry = fixed_field()
+    discretization_bundle: DiscretizationBundle | None = fixed_field()
     t0: float = eqx.field(static=True)
     t1: float = eqx.field(static=True)
     step_size: float = eqx.field(static=True)
@@ -885,13 +885,13 @@ class FixedStepRolloutResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
 
-class FixedStepRolloutPlan(StrictModule, NonTrainableState):
+class FixedStepRolloutPlan(StrictModule):
     """Fixed-step retention, replay, and transform-safe iteration observation."""
 
     retention: FixedStepRetentionPolicy = eqx.field(static=True)
     checkpoint_stride: int = eqx.field(static=True)
-    replay: FixedStepReplayPolicy
-    iteration: IterationPlan | None
+    replay: FixedStepReplayPolicy = fixed_field()
+    iteration: IterationPlan | None = fixed_field()
     plan_id: str = eqx.field(static=True)
 
     def __init__(

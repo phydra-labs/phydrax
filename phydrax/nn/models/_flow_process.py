@@ -14,6 +14,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from ...stochastic._process import (
     AbstractMarginalTransitionLaw,
     AbstractProcessDistribution,
@@ -199,7 +200,7 @@ class FlowProcessDistribution(AbstractProcessDistribution):
         return self.flow.log_prob(residual, condition=self.condition)
 
 
-class LatentFlowCoefficientProcess(AbstractMarginalTransitionLaw):
+class LatentFlowCoefficientProcess(AbstractMarginalTransitionLaw, ParameterOwner):
     """A learned conditional marginal law in finite coefficient space.
 
     This class intentionally exposes no pathwise ``realize`` method: repeated marginal

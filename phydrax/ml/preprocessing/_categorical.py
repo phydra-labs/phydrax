@@ -21,7 +21,7 @@ from ..._differentiation import (
 )
 from ..._model import ModelBinding
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -219,7 +219,7 @@ def _categorical_fit_diagnostics(
 class FittedSimpleImputer(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    fill_values: Array
+    fill_values: Array = fixed_field()
     missing_values: Number | float = eqx.field(static=True)
     missing_is_nan: bool = eqx.field(static=True)
     add_indicator: bool = eqx.field(static=True)
@@ -761,8 +761,8 @@ class FittedTargetEncoder(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     category_schema: CategoricalSchema = eqx.field(static=True)
-    encodings: Array
-    global_mean: Array
+    encodings: Array = fixed_field()
+    global_mean: Array = fixed_field()
     unknown_policy: UnknownPolicy = eqx.field(static=True)
     input_schema: FeatureSchema = eqx.field(static=True)
     output_schema: FeatureSchema = eqx.field(static=True)

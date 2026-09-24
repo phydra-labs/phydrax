@@ -18,7 +18,7 @@ from phydrax._differentiation import AbstractConstructionCertificate
 from phydrax._doc import DOC_KEY0
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
-from phydrax._trainable import NonTrainableState
+from phydrax._trainable import NonTrainableState, parameter_field
 from phydrax.ein import contract
 from phydrax.metrix.clifford import (
     CliffordProductPlan,
@@ -90,8 +90,8 @@ class CliffordGradeLinear(StrictModule):
 
     input_representation: CliffordGradeRepresentation
     output_representation: CliffordGradeRepresentation
-    weights: tuple[Array | None, ...]
-    scalar_bias: Array | None
+    weights: tuple[Array | None, ...] = parameter_field()
+    scalar_bias: Array | None = parameter_field()
     certificate: CliffordEquivarianceCertificate
 
     def __init__(
@@ -186,7 +186,7 @@ class CliffordGeometricProductLayer(StrictModule):
     pair_grades: tuple[tuple[int, int], ...]
     pair_plans: tuple[CliffordProductPlan, ...]
     routes: tuple[tuple[int, int], ...]
-    route_weights: Array
+    route_weights: Array = parameter_field()
     certificate: CliffordEquivarianceCertificate
 
     def __init__(

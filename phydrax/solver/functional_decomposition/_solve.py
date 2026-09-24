@@ -28,7 +28,7 @@ from ..._iteration import (
     IterationSessionState,
 )
 from ..._strict import StrictModule
-from ..._trainable import partition_trainable
+from ..._trainable import ArrayRole, require_parameter_roles, resolve_array_roles
 from ...conditions import SubdomainValueJump
 from ...domain import (
     broken_field,
@@ -396,15 +396,15 @@ def _terms_for_patch(
     return tuple(terms)
 
 
-def _trainable_paths(
+def _parameter_paths(
     functions: Mapping[str, DomainFunction],
     /,
 ) -> tuple[str, ...]:
-    trainable, _ = partition_trainable(functions)
+    resolution = resolve_array_roles(functions)
     return tuple(
-        jax.tree_util.keystr(path)
-        for path, leaf in jax.tree_util.tree_flatten_with_path(trainable)[0]
-        if eqx.is_inexact_array(leaf)
+        path
+        for path, role in zip(resolution.paths, resolution.roles, strict=True)
+        if role is ArrayRole.PARAMETER
     )
 
 
@@ -420,7 +420,7 @@ def _patch_parameter_subspace(
         token = f"['{problem.family.field_name(patch_id)}']"
     else:
         token = f"['{problem.field_name}'].func.fields[{patch_index}].func.source"
-    selected = tuple(path for path in _trainable_paths(functions) if token in path)
+    selected = tuple(path for path in _parameter_paths(functions) if token in path)
     if not selected:
         raise ValueError(
             f"Patch {problem.cover.patch_ids[patch_index]!r} has no trainable inexact-array parameters."
@@ -729,6 +729,9 @@ def solve_functional_decomposition(
     """Execute one prepared native functional domain-decomposition problem."""
     if not isinstance(prepared, PreparedFunctionalDecomposition):
         raise TypeError("prepared must be a PreparedFunctionalDecomposition.")
+    require_parameter_roles(
+        prepared.solver.functions, context="solve_functional_decomposition"
+    )
     if session is not None and not isinstance(session, IterationSession):
         raise TypeError("session must be IterationSession or None.")
     strategy = prepared.plan.training

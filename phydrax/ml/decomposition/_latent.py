@@ -22,6 +22,7 @@ from ..._differentiation import (
 )
 from ..._model import ModelBinding
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from ...linalg import FactorizationPolicy, pseudoinverse, RankPolicy
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
@@ -115,7 +116,7 @@ def _apply_matrix(
 class FactorAnalysisModel(AbstractFittedModel):
     """Diagonal-noise latent Gaussian factor encoder and affine decoder."""
 
-    mean: Array
+    mean: Array = fixed_field()
     loadings: Array
     noise_variance: Array
     posterior_matrix: Array
@@ -348,7 +349,7 @@ class FactorAnalysis(AbstractRecipe):
 class ICAModel(AbstractFittedModel):
     """Fixed independent-component encoder and affine mixing decoder."""
 
-    mean: Array
+    mean: Array = fixed_field()
     unmixing: Array
     mixing: Array
     in_size: int = eqx.field(static=True)

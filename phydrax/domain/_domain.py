@@ -203,7 +203,7 @@ class Domain(StrictModule):
             FunctionBinding,
             PointwiseEvaluator,
         )
-        from ._function import DomainFunction
+        from ._function import _reject_model_state, DomainFunction
 
         if binding is not None and not isinstance(binding, FunctionBinding):
             raise TypeError("binding must be a FunctionBinding or None.")
@@ -226,6 +226,7 @@ class Domain(StrictModule):
                 evaluator = function
             else:
                 evaluator = PointwiseEvaluator(function, binding=binding)
+            _reject_model_state(evaluator, context="Domain.Function")
             return DomainFunction(domain=self, deps=deps, func=evaluator)
 
         return decorator
@@ -237,7 +238,7 @@ class Domain(StrictModule):
     ):
         """Bind a model with an explicit domain input contract."""
         from .._model import ModelBinding, ModelEvaluator, ModelMetadataProvider
-        from ._function import DomainFunction
+        from ._function import _reject_model_state, DomainFunction
         from ._model_function import ConcatenatedModelEvaluator
 
         if binding is not None and not isinstance(binding, ModelBinding):
@@ -251,6 +252,7 @@ class Domain(StrictModule):
                 )
 
         def decorator(model):
+            _reject_model_state(model, context="Domain.Model")
             if isinstance(model, ModelEvaluator):
                 declared_binding = model.input_binding()
                 if binding is not None and binding != declared_binding:

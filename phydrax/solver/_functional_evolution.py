@@ -17,7 +17,6 @@ from jax import core as jcore
 
 from .._frozendict import frozendict
 from .._iteration import IterationSession
-from .._trainable import combine_trainable, partition_trainable
 from .._training import (
     emit_training_signal_stop as _emit_training_signal_stop,
     tensorboard_every as _tensorboard_every,
@@ -40,7 +39,7 @@ from ._functional_reporting import (
     training_scalars as _training_scalars,
     write_tensorboard_scalars as _write_tensorboard_scalars,
 )
-from ._functional_run import replace_solver_state
+from ._functional_run import partition_functional_parameters, replace_solver_state
 from ._model_losses import function_model_loss_labels
 
 
@@ -73,7 +72,7 @@ def _solve_distribution_evolution(
             "train_term_sample_size is currently supported only for Optax optimizers."
         )
 
-    params, non_trainable = partition_trainable(self.functions)
+    params, non_trainable = partition_functional_parameters(self.functions)
     log_every_ = int(log_every)
     if log_every_ < 0:
         raise ValueError("log_every must be >= 0.")
@@ -96,15 +95,15 @@ def _solve_distribution_evolution(
     algo_runtime = algo
 
     def _loss_for_params(p, non_trainable_, prepared_):
-        functions = combine_trainable(p, non_trainable_)
+        functions = eqx.combine(p, non_trainable_)
         return evaluate_prepared_objective(prepared_, functions).total
 
     def _values_for_params(p, non_trainable_, prepared_):
-        functions = combine_trainable(p, non_trainable_)
+        functions = eqx.combine(p, non_trainable_)
         return evaluate_prepared_objective(prepared_, functions).flat_values
 
     def _evaluation_term_values_for_params(p, non_trainable_, prepared_):
-        functions = combine_trainable(p, non_trainable_)
+        functions = eqx.combine(p, non_trainable_)
         return evaluate_prepared_objective(
             prepared_,
             functions,
@@ -112,7 +111,7 @@ def _solve_distribution_evolution(
         ).term_values
 
     def _data_metrics_for_terms(p, non_trainable_, prepared_):
-        functions = combine_trainable(p, non_trainable_)
+        functions = eqx.combine(p, non_trainable_)
         return prepared_data_metrics(prepared_, functions)
 
     loss_fn = eqx.filter_jit(_loss_for_params) if jit else _loss_for_params
@@ -173,7 +172,7 @@ def _solve_distribution_evolution(
                     )
 
                 iter_ = jnp.asarray(epoch + 1, dtype=jnp.float64)
-                functions_snapshot = combine_trainable(
+                functions_snapshot = eqx.combine(
                     control.selected(params),
                     non_trainable,
                 )
@@ -332,7 +331,7 @@ def _solve_distribution_evolution(
                 )
                 break
 
-        functions = combine_trainable(control.selected(params), non_trainable)
+        functions = eqx.combine(control.selected(params), non_trainable)
         settle_started = time.perf_counter() if profile_adaptive else 0.0
         objective = objective.settle(
             functions,

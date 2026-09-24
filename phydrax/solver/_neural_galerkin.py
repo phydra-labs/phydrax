@@ -23,7 +23,7 @@ from .._doc import DOC_KEY0
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from .._trainable import partition_trainable
+from .._trainable import ArrayRole, require_parameter_roles
 from ..dynamics import TimeGrid
 from ..enforcement import EnforcementProgram
 from ..integration import (
@@ -93,15 +93,10 @@ def _qualified_type_name(value: Any, /) -> str:
 
 
 def _default_parameter_subspace(functions: frozendict[str, DomainFunction]):
-    trainable, _ = partition_trainable(functions)
-    paths = tuple(
-        jax.tree_util.keystr(path)
-        for path, leaf in jax.tree_util.tree_flatten_with_path(trainable)[0]
-        if eqx.is_inexact_array(leaf)
-    )
-    if not paths:
-        raise ValueError("Neural Galerkin evolution requires trainable function leaves.")
-    return ParameterSubspace.from_leaf_paths(functions, paths)
+    resolution = require_parameter_roles(functions, context="NeuralGalerkinProblem")
+    if ArrayRole.PARAMETER not in resolution.roles:
+        raise ValueError("Neural Galerkin evolution requires PARAMETER function leaves.")
+    return ParameterSubspace(functions, resolution.filter_spec(ArrayRole.PARAMETER))
 
 
 def _copy_linear_policy(

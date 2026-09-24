@@ -21,7 +21,7 @@ from ...._precision import (
     real_precision_dtype_name,
     RealPrecisionDType,
 )
-from ...._trainable import combine_trainable, partition_trainable
+from ...._trainable import combine_parameters, partition_parameters
 from ..data import FunctionSamples, OperatorBatch, OperatorTargetBatch
 
 
@@ -223,12 +223,16 @@ class OperatorDTypePolicy:
         return _cast_parameter_tree(parameters, _dtype(self.compute_dtype))
 
     def cast_model(self, model: Any, /) -> Any:
-        parameters, fixed = partition_trainable(model)
-        return combine_trainable(self.cast_parameters(parameters), fixed)
+        """Cast the PARAMETER lane; model state and fixed arrays are untouched."""
+        parameters, model_state, fixed = partition_parameters(model)
+        return combine_parameters(self.cast_parameters(parameters), model_state, fixed)
 
     def compute_model(self, model: Any, /) -> Any:
-        parameters, fixed = partition_trainable(model)
-        return combine_trainable(self.cast_compute_parameters(parameters), fixed)
+        """Create a compute-precision view of the PARAMETER lane."""
+        parameters, model_state, fixed = partition_parameters(model)
+        return combine_parameters(
+            self.cast_compute_parameters(parameters), model_state, fixed
+        )
 
     def _samples(self, samples: FunctionSamples, /) -> FunctionSamples:
         dtype = _dtype(self.compute_dtype)

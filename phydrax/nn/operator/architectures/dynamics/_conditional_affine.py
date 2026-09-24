@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax._model import AbstractArrayModel, register_artifact_value
 from phydrax._strict import StrictModule
+from phydrax._trainable import fixed_field, NonTrainableState
 from phydrax.ein import contract
 from phydrax.equations import (
     ChemicalConditionalAffineDrivers,
@@ -32,7 +33,7 @@ from phydrax.nn.operator.engine import AbstractOperatorModel
 DriverOutputTransform = Literal["direct", "softplus"]
 
 
-class ChemicalConditionalAffineScaling(StrictModule):
+class ChemicalConditionalAffineScaling(StrictModule, NonTrainableState):
     state_scale: Array
     driver_scale: Array
     duration_scale: Array
@@ -105,8 +106,8 @@ class ChemicalConditionalAffineScaling(StrictModule):
 class StoichiometricRateCorrection(StrictModule):
     context_model: AbstractArrayModel
     species_model: AbstractArrayModel
-    species_features: Array
-    net_stoichiometry: Array
+    species_features: Array = fixed_field()
+    net_stoichiometry: Array = fixed_field()
     strength: Array
     log_multiplier_bound: float | None = eqx.field(static=True)
     correction_id: str = eqx.field(static=True)
@@ -220,12 +221,12 @@ class StoichiometricRateCorrection(StrictModule):
 class ChemicalConditionalAffineOperator(AbstractOperatorModel):
     operator_architecture = "ChemicalConditionalAffineOperator"
 
-    chemistry: PreparedChemicalConditionalAffine
+    chemistry: PreparedChemicalConditionalAffine = fixed_field()
     driver_model: AbstractOperatorModel
     scaling: ChemicalConditionalAffineScaling
     rate_correction: StoichiometricRateCorrection | None
     matrix_function_policy: MatrixFunctionPolicy
-    runtime: ChemicalRateRuntime
+    runtime: ChemicalRateRuntime = fixed_field()
     state_name: str = eqx.field(static=True)
     temperature_name: str = eqx.field(static=True)
     pressure_name: str = eqx.field(static=True)

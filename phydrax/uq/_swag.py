@@ -17,6 +17,7 @@ import phydrax.ein as ein
 
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
+from .._trainable import require_parameter_roles
 from ..nn.parameters import ParameterSubspace
 from ..solver._functional_solver import FunctionalSolver
 
@@ -295,11 +296,11 @@ def fit_swag(
     iterations = int(num_iter)
     if iterations < collection.start_step:
         raise ValueError("num_iter must reach the SWAG collection start step.")
-    subspace = (
-        ParameterSubspace(solver.functions, eqx.is_inexact_array)
-        if parameter_subspace is None
-        else parameter_subspace
-    )
+    if parameter_subspace is None:
+        require_parameter_roles(solver.functions, context="fit_swag")
+        subspace = ParameterSubspace(solver.functions, eqx.is_inexact_array)
+    else:
+        subspace = parameter_subspace
     if not isinstance(subspace, ParameterSubspace):
         raise TypeError("parameter_subspace must be ParameterSubspace or None.")
     subspace.validate_root(solver.functions)

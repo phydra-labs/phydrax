@@ -9,7 +9,6 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 
 
 def test_constraint_operator_reuses_factorization_across_affine_targets():
@@ -47,8 +46,8 @@ def test_constraint_operator_reuses_factorization_across_affine_targets():
     )
     assert jnp.allclose(jnp.real(potential(-1.0)[0]), 0.0, atol=1e-12)
     assert jnp.allclose(jnp.real(potential(1.0)[0]), 0.0, atol=1e-12)
-    trainable, _ = partition_trainable(potential)
-    leaves = jax.tree.leaves(trainable)
+    parameters, _, _ = phx.partition_parameters(potential)
+    leaves = jax.tree.leaves(parameters)
     assert len(leaves) == 1
     assert leaves[0].shape == (operator.evidence.nullity,)
     certificate = potential.holomorphic_certificate()

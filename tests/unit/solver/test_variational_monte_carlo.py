@@ -10,7 +10,7 @@ import phydrax as phx
 
 
 class _TableModel(eqx.Module):
-    parameters: jax.Array
+    parameters: jax.Array = phx.parameter_field()
 
     def __call__(self, configuration):
         bits = (configuration > 0).astype(jnp.int32)
@@ -24,7 +24,7 @@ class _TableModel(eqx.Module):
 
 
 class _StaticTableModel(eqx.Module):
-    parameters: jax.Array
+    parameters: jax.Array = phx.parameter_field()
     offset: float = eqx.field(static=True)
 
     def __call__(self, configuration):
@@ -37,7 +37,7 @@ class _StaticTableModel(eqx.Module):
 
 
 class _ActivatedTableModel(eqx.Module):
-    parameters: jax.Array
+    parameters: jax.Array = phx.parameter_field()
     activation: Callable[[jax.Array], jax.Array] = eqx.field(static=True)
 
     def __call__(self, configuration):

@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phydrax._trainable import partition_trainable
+from phydrax import partition_parameters
 from phydrax.applications.skeletal_muscle.motor_units import (
     potvin_fuglevand_2017_default_parameters,
     POTVIN_FUGLEVAND_2017_DOI,
@@ -274,6 +274,7 @@ def test_jit_vmap_pathwise_gradient_and_parameter_partitioning():
     assert eager.evidence.minimum_recruitment_margin > 0.0
     assert eager.evidence.minimum_saturation_margin > 0.0
 
-    trainable, fixed = partition_trainable(runtime)
-    assert trainable.parameters.rested_twitch_force is not None
+    parameters, _, fixed = partition_parameters(runtime)
+    assert parameters.parameters.rested_twitch_force is not None
+    assert parameters.plan is None
     assert fixed.plan is runtime.plan

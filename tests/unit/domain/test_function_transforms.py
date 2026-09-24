@@ -9,7 +9,6 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 from phydrax.domain import (
     expectation_field,
     Interval1d,
@@ -29,12 +28,8 @@ def _sample_batch(domain: Interval1d):
 
 
 def _trainable_arrays(tree):
-    trainable, _ = partition_trainable(tree)
-    return tuple(
-        leaf
-        for leaf in jax.tree_util.tree_leaves(trainable)
-        if eqx.is_inexact_array(leaf)
-    )
+    parameters, _, _ = phx.partition_parameters(tree)
+    return tuple(jax.tree_util.tree_leaves(parameters))
 
 
 def test_field_transforms_preserve_values_axes_and_semantics():
@@ -129,7 +124,7 @@ def test_expectation_validates_values_axis_and_runtime_class_count():
 
 
 class _LinearLogits(eqx.Module):
-    weight: jax.Array
+    weight: jax.Array = phx.parameter_field()
 
     def __call__(self, inputs, *, key):
         del key

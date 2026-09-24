@@ -33,6 +33,18 @@ Every outer update performs the following lifecycle:
 This prevents line searches from comparing candidates evaluated on different
 samples, weights, or causal gates.
 
+## Parameter lanes
+
+Every backend updates only the PARAMETER lane of `solver.functions`, as returned by
+`solver.partition_functions()` (see
+[array roles](api/phydrax.md#array-roles-and-lanes)). FIXED leaves are never
+trained, and MODEL_STATE leaves are carried unchanged because no functional
+objective returns a next model state. Optimizer state, delayed and EMA target
+state (`target_policy`), and best-iterate selection all hold parameter-lane trees.
+Undeclared inexact leaves fail before the first update; an explicit
+`parameter_subspace` declares its own selection. KFAC and
+`solve_linear_trial_space(...)` reject a non-empty model-state lane.
+
 ## Optimizer choice
 
 The training plan is optimizer-neutral. Standard Optax transformations,
@@ -226,7 +238,9 @@ accumulated Optax update; transient gradient buffers are never serialized.
 ## Named sharding
 
 `FunctionalShardingPolicy` maps native sample-axis names onto a caller-owned
-JAX mesh. Parameters are replicated; prepared sample fields are sharded.
+JAX mesh. Placement follows array roles: parameters and model state are
+replicated, fixed data shards its named sample axes and replicates its other
+arrays, and prepared sample fields are sharded.
 Ordinary global-array reductions therefore compute one global weighted
 numerator divided by one global support. Phydrax never averages already
 normalized local means.
@@ -243,7 +257,8 @@ extrapolation is rejected.
 
 ## Defect and fidelity correction
 
-`prepare_functional_correction(...)` freezes a base field and trains only the
+`prepare_functional_correction(...)` freezes a base field inside an `ExplicitFreeze`
+holder, so its model parameters are FIXED, and trains only the
 supplied correction fields against the exact nonlinear scaled residual
 `R(u_base + epsilon * delta_u) / epsilon`. Optional `replacement_functions`
 remain independently trainable for target-owned coefficients or fields. The returned

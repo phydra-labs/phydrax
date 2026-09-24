@@ -20,7 +20,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ..finite_volume._riemann import (
     AbstractSymmetricTwoPointFluxPlan,
     EntropyConservativeEulerFluxPlan,
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from ...equations import ConvexEntropyPair
 
 
-class SpectralSplitFormPlan(StrictModule, NonTrainableState):
+class SpectralSplitFormPlan(StrictModule):
     """Certified periodic Fourier flux-differencing plan."""
 
     volume_flux: AbstractSymmetricTwoPointFluxPlan
@@ -91,17 +91,17 @@ class SpectralSplitFormReport(StrictModule, NonTrainableState):
     report_id: str = eqx.field(static=True)
 
 
-class PreparedSpectralSplitForm(StrictModule, NonTrainableState):
+class PreparedSpectralSplitForm(StrictModule):
     plan: SpectralSplitFormPlan
-    differentiation_matrices: tuple[Array, ...]
-    quadrature_norms: tuple[Array, ...]
-    pair_rows: tuple[Array, ...]
-    pair_columns: tuple[Array, ...]
+    differentiation_matrices: tuple[Array, ...] = fixed_field()
+    quadrature_norms: tuple[Array, ...] = fixed_field()
+    pair_rows: tuple[Array, ...] = fixed_field()
+    pair_columns: tuple[Array, ...] = fixed_field()
     report: SpectralSplitFormReport
     prepared_id: str = eqx.field(static=True)
 
 
-class SpectralConservationMethodPlan(StrictModule, NonTrainableState):
+class SpectralConservationMethodPlan(StrictModule):
     """Periodic conservative projected flux or certified Fourier split form."""
 
     pseudospectral: PseudospectralMethodPlan | None
@@ -200,7 +200,7 @@ class SpectralConservationMethodPlan(StrictModule, NonTrainableState):
         )
 
 
-class PreparedSpectralConservationMethod(StrictModule, NonTrainableState):
+class PreparedSpectralConservationMethod(StrictModule):
     plan: SpectralConservationMethodPlan
     discretization: TensorSpectralDiscretization
     pseudospectral: PreparedPseudospectralMethod | None

@@ -20,7 +20,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState, parameter_field
 from ...ein import contract
 
 
@@ -213,19 +213,19 @@ def _longwave_fluxes(absorption, temperature, surface_temperature, emissivity, i
 class ColumnRadiationPlan(StrictModule):
     """Native differentiable gray column transfer with explicitly fixed optics.
 
-    Numeric calibration scales and surface parameters are trainable array leaves;
-    ``optics`` is excluded by native ``partition_trainable``. Scales are scalar
+    Numeric calibration scales and surface parameters are declared ``parameter_field``
+    leaves; ``optics`` is declared ``fixed_field``. Scales are scalar
     or four-species vectors; albedo/emissivity may carry broadcast batch axes.
     ``plan_id`` identifies immutable optics and closure, not current trainable
     parameter values. No hidden spectral lookup, unit conversion or provider runs.
     """
 
-    optics: ColumnOpticalProperties
-    shortwave_absorption_scale: Array
-    shortwave_scattering_scale: Array
-    longwave_absorption_scale: Array
-    surface_albedo: Array
-    surface_emissivity: Array
+    optics: ColumnOpticalProperties = fixed_field()
+    shortwave_absorption_scale: Array = parameter_field()
+    shortwave_scattering_scale: Array = parameter_field()
+    longwave_absorption_scale: Array = parameter_field()
+    surface_albedo: Array = parameter_field()
+    surface_emissivity: Array = parameter_field()
     plan_id: str = eqx.field(static=True)
 
     def __init__(

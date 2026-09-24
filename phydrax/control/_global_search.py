@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike, Key
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ..optim import DifferentialEvolutionSearch
 from ..optim._differential_evolution import _bounded_differential_evolution
 from ._multiple_shooting import _evaluate_held_control
@@ -87,14 +88,14 @@ class ControlSearchResult(StrictModule):
     problem: ControlProblem
     parameterization: AbstractControlParameterization
     evaluation: ControlResult
-    coefficients: Array
-    objective: Array
-    population_coefficients: Array
-    population_objectives: Array
-    best_objective_history: Array
-    lower_bounds: Array
-    upper_bounds: Array
-    key: Key[Array, ""]
+    coefficients: Array = fixed_field()
+    objective: Array = fixed_field()
+    population_coefficients: Array = fixed_field()
+    population_objectives: Array = fixed_field()
+    best_objective_history: Array = fixed_field()
+    lower_bounds: Array = fixed_field()
+    upper_bounds: Array = fixed_field()
+    key: Key[Array, ""] = fixed_field()
     search: DifferentialEvolutionSearch
     population_converged: bool = eqx.field(static=True)
     termination_reason: str = eqx.field(static=True)

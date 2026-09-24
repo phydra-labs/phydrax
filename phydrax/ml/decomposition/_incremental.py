@@ -18,6 +18,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._model import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import AbstractRecipe, FitResult
 from .._schema import AbstractFittedModel
@@ -28,7 +29,7 @@ class IncrementalPCAModel(AbstractFittedModel):
     """Principal subspace summary that can be immutably merged with later batches."""
 
     subspace: SubspaceModel
-    total_weight: Array
+    total_weight: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)

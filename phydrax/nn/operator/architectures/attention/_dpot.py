@@ -17,6 +17,7 @@ from jaxtyping import Array, Key
 import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
+from phydrax._trainable import fixed_field
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
 from phydrax.nn.layers._linear import Linear
@@ -306,7 +307,7 @@ class _DPOTBlock(StrictModule):
 
 class _TemporalAggregator(StrictModule):
     weight: Array
-    frequencies: Array
+    frequencies: Array = fixed_field()
     history_steps: int
     width: int
     exponential_embedding: bool

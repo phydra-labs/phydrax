@@ -78,7 +78,11 @@ class ExponentialMovingAverageTargetPolicy:
 
 
 class TargetParameterState(StrictModule):
-    """Checkpointable stopped target tree and exact update cursor."""
+    """Checkpointable stopped target of the PARAMETER lane and exact update cursor.
+
+    Delayed and EMA targets track parameters only; target functions take their
+    MODEL_STATE and FIXED leaves from the current functions.
+    """
 
     target: Any
     history: Any

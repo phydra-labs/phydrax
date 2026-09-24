@@ -18,7 +18,11 @@ from jaxtyping import Array, ArrayLike
 from .._data_plane import EPOCH_ORDER_ALGORITHM, IndexEpochPlan
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import combine_trainable, partition_trainable
+from .._trainable import (
+    combine_parameters,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ._diffrax_cde import solve_diffrax_cde
 from ._driving_path import AbstractDifferentiableDrivingPath
 from ._rough import RoughDifferentialProblem
@@ -437,7 +441,8 @@ def train_neural_cde(
     if state is None:
         if vector_field is None or not callable(vector_field):
             raise TypeError("An initial callable vector_field is required without state.")
-        parameters, fixed = partition_trainable(vector_field)
+        require_parameter_roles(vector_field, context="train_neural_cde")
+        parameters, model_state, fixed = partition_parameters(vector_field)
         optimizer_state = optimizer.init(parameters)
         epoch = 0
         batch_index = 0
@@ -452,15 +457,16 @@ def train_neural_cde(
             raise ValueError(
                 "Training state provenance does not match this run configuration."
             )
-        parameters, fixed = partition_trainable(state.vector_field)
+        require_parameter_roles(state.vector_field, context="train_neural_cde")
+        parameters, model_state, fixed = partition_parameters(state.vector_field)
         optimizer_state = state.optimizer_state
         epoch = state.epoch
         batch_index = state.batch_index
         update_step = state.update_step
         last_loss = state.last_loss
 
-    def objective(trainable, fixed_tree, batch_indices):
-        model = combine_trainable(trainable, fixed_tree)
+    def objective(trainable, model_state_tree, fixed_tree, batch_indices):
+        model = combine_parameters(trainable, model_state_tree, fixed_tree)
         return neural_cde_loss(
             model,
             data,
@@ -492,7 +498,9 @@ def train_neural_cde(
                 False,
             )
         batch_indices = plan.batch(batch_index)
-        last_loss, gradients = value_and_grad(parameters, fixed, batch_indices)
+        last_loss, gradients = value_and_grad(
+            parameters, model_state, fixed, batch_indices
+        )
         last_loss = jax.block_until_ready(last_loss)
         updates, optimizer_state = optimizer.update(
             gradients, optimizer_state, parameters
@@ -504,7 +512,7 @@ def train_neural_cde(
             epoch += 1
             batch_index = 0
 
-    trained = combine_trainable(parameters, fixed)
+    trained = combine_parameters(parameters, model_state, fixed)
     return NeuralCDETrainingState(
         trained,
         optimizer_state,

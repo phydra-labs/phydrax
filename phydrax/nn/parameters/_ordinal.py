@@ -10,6 +10,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 
 
 OrdinalCutpointAnchor = Literal["mean", "fixed_first"]
@@ -19,7 +20,7 @@ def _inverse_softplus(value: Array, /) -> Array:
     return jnp.where(value > 20.0, value, jnp.log(jnp.expm1(value)))
 
 
-class OrderedOrdinalCutpoints(StrictModule):
+class OrderedOrdinalCutpoints(StrictModule, ParameterOwner):
     """Strictly ordered trainable ordinal cutpoints with a location anchor."""
 
     raw_gaps: Array

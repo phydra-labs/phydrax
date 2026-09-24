@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import NonTrainableState, ParameterOwner
 from ..graph import HypergraphBipartiteGraph, incidence_to_bipartite_graph
 from ._kernel import AbstractDiscreteFactorKernel, FactorKernelCapabilities
 
@@ -169,7 +169,7 @@ class VariableSelection(StrictModule, NonTrainableState):
         return self.indices.shape[0]
 
 
-class DenseTableFactorGroup(StrictModule):
+class DenseTableFactorGroup(StrictModule, ParameterOwner):
     """Batch of equal-signature factors represented by dense log-potential tables."""
 
     selections: tuple[VariableSelection, ...]
@@ -201,7 +201,7 @@ class DenseTableFactorGroup(StrictModule):
         )
 
 
-class EnumeratedFactorGroup(StrictModule):
+class EnumeratedFactorGroup(StrictModule, ParameterOwner):
     """Batch of factors with a common explicit set of supported configurations."""
 
     selections: tuple[VariableSelection, ...]
@@ -243,7 +243,7 @@ class EnumeratedFactorGroup(StrictModule):
         )
 
 
-class IsingFactorGroup(StrictModule):
+class IsingFactorGroup(StrictModule, ParameterOwner):
     """Batch of binary spin-product log potentials."""
 
     selections: tuple[VariableSelection, ...]
@@ -266,7 +266,7 @@ class IsingFactorGroup(StrictModule):
         )
 
 
-class PottsFactorGroup(StrictModule):
+class PottsFactorGroup(StrictModule, ParameterOwner):
     """Unary or pairwise categorical log-potential tables."""
 
     selections: tuple[VariableSelection, ...]
@@ -322,7 +322,7 @@ class LogicalFactorGroup(StrictModule, NonTrainableState):
         self.factor_id = _factor_id(f"logical-{kind}", scope, {})
 
 
-class BinaryCardinalityFactorGroup(StrictModule):
+class BinaryCardinalityFactorGroup(StrictModule, ParameterOwner):
     """Batch of binary factors whose log potential depends only on active count."""
 
     selections: tuple[VariableSelection, ...]
@@ -351,7 +351,7 @@ class BinaryCardinalityFactorGroup(StrictModule):
         )
 
 
-class KernelFactorGroup(StrictModule):
+class KernelFactorGroup(StrictModule, ParameterOwner):
     """Batch of factors driven by one open local-score kernel and parameter PyTree."""
 
     selections: tuple[VariableSelection, ...]

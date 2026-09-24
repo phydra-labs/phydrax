@@ -18,6 +18,7 @@ from jaxtyping import Array
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 from ...graph._operator_topology import (
     broadcast_operator_topology,
     operator_topology_fingerprint,
@@ -67,7 +68,7 @@ OperatorBasis = Literal[
 ]
 
 
-class OperatorAxis(StrictModule):
+class OperatorAxis(StrictModule, NonTrainableState):
     """One named coordinate axis with its integration and basis metadata."""
 
     name: str
@@ -123,7 +124,7 @@ class OperatorAxis(StrictModule):
         )
 
 
-class FunctionSamples(StrictModule):
+class FunctionSamples(StrictModule, NonTrainableState):
     """A discretized function or query set used by a neural operator.
 
     Tensor-product grids use shared ``axes`` and leave ``coordinates`` as
@@ -515,7 +516,7 @@ def _validate_sample_values(
     return (tuple(array.shape[:case_ndim]),)
 
 
-class OperatorBatch(StrictModule):
+class OperatorBatch(StrictModule, NonTrainableState):
     """Canonical named source/query representation for neural-operator evaluation."""
 
     inputs: frozendict[str, FunctionSamples]
@@ -1000,7 +1001,7 @@ class OperatorOutputSpec(StrictModule):
         )
 
 
-class OperatorFieldBatch(StrictModule):
+class OperatorFieldBatch(StrictModule, NonTrainableState):
     """Values for one named output field bound to one named query branch."""
 
     values: Array
@@ -1025,7 +1026,7 @@ class OperatorFieldBatch(StrictModule):
         self.spec = spec
 
 
-class OperatorTargetBatch(StrictModule):
+class OperatorTargetBatch(StrictModule, NonTrainableState):
     """Named supervised fields bound to query branches and case axes."""
 
     fields: frozendict[str, OperatorFieldBatch]
@@ -1208,7 +1209,7 @@ class OperatorTargetBatch(StrictModule):
         )
 
 
-class OperatorPrediction(StrictModule):
+class OperatorPrediction(StrictModule, NonTrainableState):
     """Named output fields retaining query and case-axis semantics."""
 
     fields: frozendict[str, OperatorFieldBatch]

@@ -21,7 +21,7 @@ import jax.random as jr
 import numpy as np
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
+from phydrax._trainable import partition_parameters
 
 
 RMD17_GATES = {
@@ -143,7 +143,7 @@ def _tree_bytes(tree: Any, /) -> int:
 
 
 def _parameter_count(potential, /) -> int:
-    trainable, _ = partition_trainable(potential)
+    trainable, _, _ = partition_parameters(potential)
     return sum(
         leaf.size
         for leaf in jax.tree_util.tree_leaves(trainable)

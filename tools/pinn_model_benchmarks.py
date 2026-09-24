@@ -18,7 +18,11 @@ import numpy as np
 import optax
 
 import phydrax as phx
-from phydrax._trainable import combine_trainable, partition_trainable
+from phydrax._trainable import (
+    combine_parameters,
+    partition_parameters,
+    require_parameter_roles,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,10 +103,10 @@ _SCENARIOS = {
 
 
 def _parameter_count(model: eqx.Module, /) -> int:
-    trainable, _ = partition_trainable(model)
+    parameters, _, _ = partition_parameters(model)
     return sum(
         leaf.size
-        for leaf in jax.tree_util.tree_leaves(trainable)
+        for leaf in jax.tree_util.tree_leaves(parameters)
         if isinstance(leaf, jax.Array)
     )
 
@@ -304,10 +308,11 @@ def run_pinn_model_benchmark(
     initial_total, initial_residual, initial_boundary = _loss_components(
         model, scenario, interior, boundary
     )
-    parameters, fixed = partition_trainable(model)
+    require_parameter_roles(model, context="run_pinn_model_benchmark")
+    parameters, model_state, fixed = partition_parameters(model)
 
     def objective(candidate):
-        current = combine_trainable(candidate, fixed)
+        current = combine_parameters(candidate, model_state, fixed)
         return _loss_components(current, scenario, interior, boundary)[0]
 
     initial_gradient = eqx.filter_grad(objective)(parameters)
@@ -339,7 +344,7 @@ def run_pinn_model_benchmark(
             losses.append(float(loss))
     training_seconds = time.perf_counter() - training_started
 
-    trained = combine_trainable(parameters, fixed)
+    trained = combine_parameters(parameters, model_state, fixed)
     final_total = _loss_components(trained, scenario, interior, boundary)[0]
     evaluation = jnp.linspace(
         -1.0, 1.0, int(scenario.evaluation_points), dtype="float64"

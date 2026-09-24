@@ -17,16 +17,19 @@ from ..._fingerprint import canonical_fingerprint
 from ..._holomorphic import HolomorphicPotentialProvider
 from ..._model import AbstractArrayModel, TRIAL_SPACE_CERTIFICATE_KEY
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState, partition_trainable
+from ..._trainable import ArrayRole, NonTrainableState, resolve_array_roles
 from ._core import TrialSpaceCertificate
 
 
 def _parameter_count(value: Any, /) -> int:
-    trainable, _ = partition_trainable(value)
     return sum(
         leaf.size
-        for leaf in jax.tree_util.tree_leaves(trainable)
-        if eqx.is_inexact_array(leaf)
+        for leaf, role in zip(
+            jax.tree_util.tree_leaves(value),
+            resolve_array_roles(value).roles,
+            strict=True,
+        )
+        if role is ArrayRole.PARAMETER
     )
 
 

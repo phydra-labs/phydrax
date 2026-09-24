@@ -639,7 +639,7 @@ class AMREpochResult(StrictModule):
     partition_id: str = eqx.field(static=True)
 
 
-class BlockAMREpochPlan(StrictModule, NonTrainableState):
+class BlockAMREpochPlan(StrictModule):
     """Commit one solver-owned block-AMR interval and particle update atomically.
 
     A plan is bound to one immutable topology epoch. Regridding is activated

@@ -19,6 +19,12 @@ from jaxtyping import Array, PyTree
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from .._trainable import (
+    combine_parameters,
+    ParameterOwner,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ._checkpoint import (
     checkpoint_compatibility,
     CheckpointCorruptionError,
@@ -50,8 +56,12 @@ def _tree_all_finite(tree: Any, /) -> Array:
     return jnp.all(jnp.stack([jnp.all(jnp.isfinite(leaf)) for leaf in leaves]))
 
 
-class AbstractVariationalFamily(StrictModule):
-    """Normalized distribution over unconstrained posterior coordinates."""
+class AbstractVariationalFamily(StrictModule, ParameterOwner):
+    """Normalized distribution over unconstrained posterior coordinates.
+
+    Unannotated inexact array leaves are the variational parameters
+    (`ParameterOwner`); data held by a family is declared with `fixed_field`.
+    """
 
     @property
     @abstractmethod
@@ -440,6 +450,7 @@ def fit_variational(
     )
     if not isinstance(family_, AbstractVariationalFamily):
         raise TypeError("family must implement AbstractVariationalFamily or be None.")
+    require_parameter_roles(family_, context="fit_variational")
     config_ = VariationalConfig() if config is None else config
     if not isinstance(config_, VariationalConfig):
         raise TypeError("config must be VariationalConfig or None.")
@@ -485,7 +496,7 @@ def fit_variational(
         optax.clip_by_global_norm(config_.gradient_clip),
         optax.adam(config_.learning_rate),
     )
-    dynamic_family, static_family = eqx.partition(family_, eqx.is_inexact_array)
+    dynamic_family, model_state, static_family = partition_parameters(family_)
     optimizer_state = optimizer.init(dynamic_family)
     started = perf_counter()
 
@@ -516,12 +527,10 @@ def fit_variational(
         )
         if completed > config_.num_steps:
             raise ValueError("Checkpoint exceeds the configured variational steps.")
-        dynamic_family, static_family = eqx.partition(
-            restored_family, eqx.is_inexact_array
-        )
+        dynamic_family, model_state, static_family = partition_parameters(restored_family)
 
     def loss_function(current_dynamic, step_key):
-        current_family = eqx.combine(current_dynamic, static_family)
+        current_family = combine_parameters(current_dynamic, model_state, static_family)
         positions, log_variational = current_family.sample_and_log_prob(
             step_key,
             sample_shape=(config_.samples_per_step,),
@@ -585,7 +594,7 @@ def fit_variational(
                 destination,
                 compatibility=compatibility,
                 completed=completed,
-                family=eqx.combine(dynamic_family, static_family),
+                family=combine_parameters(dynamic_family, model_state, static_family),
                 optimizer_state=optimizer_state,
                 recorded_steps=recorded_steps,
                 elbo_history=elbo_history,
@@ -594,7 +603,7 @@ def fit_variational(
                 duration_seconds=(previous_duration + perf_counter() - started),
             )
     optimization_duration = perf_counter() - optimization_started
-    fitted_family = eqx.combine(dynamic_family, static_family)
+    fitted_family = combine_parameters(dynamic_family, model_state, static_family)
     sampling_started = perf_counter()
     unconstrained_samples, log_variational = fitted_family.sample_and_log_prob(
         jr.fold_in(key, _FINAL_SAMPLING_TAG),

@@ -9,7 +9,7 @@ import numpy as np
 import phydrax as phx
 
 
-class _AffineBijector(phx.uq.AbstractBijector):
+class _AffineBijector(phx.uq.AbstractBijector, phx.ParameterOwner):
     log_scale: jax.Array
     shift: jax.Array
 

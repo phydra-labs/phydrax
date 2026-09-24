@@ -14,7 +14,7 @@ from phydrax.stochastic._feynman_kac import FeynmanKacSamplingPlan
 
 
 class _TimeCoefficient(eqx.Module):
-    coefficient: jnp.ndarray
+    coefficient: jnp.ndarray = phx.parameter_field()
 
     def __call__(self, time, state, *, key=None):
         del state, key
@@ -22,7 +22,7 @@ class _TimeCoefficient(eqx.Module):
 
 
 class _QuadraticTimeCoefficient(eqx.Module):
-    coefficient: jnp.ndarray
+    coefficient: jnp.ndarray = phx.parameter_field()
 
     def __call__(self, time, state, *, key=None):
         del key
@@ -30,7 +30,7 @@ class _QuadraticTimeCoefficient(eqx.Module):
 
 
 class _ConstantControl(eqx.Module):
-    coefficient: jnp.ndarray
+    coefficient: jnp.ndarray = phx.parameter_field()
 
     def __call__(self, time, state, *, key=None):
         del time, state, key

@@ -12,7 +12,7 @@ import phydrax as phx
 
 
 class _TrainableFront(eqx.Module):
-    offset: jnp.ndarray
+    offset: jnp.ndarray = phx.parameter_field()
 
     def __call__(self, time):
         return time[0] + self.offset

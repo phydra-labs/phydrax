@@ -14,7 +14,7 @@ import phydrax.linalg as la
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
-from ...._trainable import NonTrainableState
+from ...._trainable import fixed_field, NonTrainableState
 from ....discretization import TopologyEpochTransition
 
 
@@ -25,11 +25,11 @@ class SecondOrderWaveState(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-class SpectralElementWavePlan(StrictModule, NonTrainableState):
+class SpectralElementWavePlan(StrictModule):
     """Explicit second-order wave backend over prepared hp mass/stiffness actions."""
 
-    mass: la.AbstractLinearOperator
-    stiffness: la.AbstractLinearOperator
+    mass: la.AbstractLinearOperator = fixed_field()
+    stiffness: la.AbstractLinearOperator = fixed_field()
     mass_inverse: la.AbstractPreconditioner
     time_step_s: float = eqx.field(static=True)
     maximum_angular_frequency: float = eqx.field(static=True)

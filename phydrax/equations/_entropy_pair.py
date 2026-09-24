@@ -780,7 +780,7 @@ def _euler_entropy_flux(
     return velocity[..., _axis(axis, system.dimension)] * _euler_entropy(system, value)
 
 
-class _IdealGasEntropyPotential(StrictModule, NonTrainableState):
+class _IdealGasEntropyPotential(StrictModule):
     system: EulerSystem | CompressibleNavierStokesSystem
 
     def __init__(self, system: EulerSystem | CompressibleNavierStokesSystem, /):
@@ -790,7 +790,7 @@ class _IdealGasEntropyPotential(StrictModule, NonTrainableState):
         return _euler_entropy(self.system, state)
 
 
-class _IdealGasEntropyFlux(StrictModule, NonTrainableState):
+class _IdealGasEntropyFlux(StrictModule):
     system: EulerSystem | CompressibleNavierStokesSystem
 
     def __init__(self, system: EulerSystem | CompressibleNavierStokesSystem, /):

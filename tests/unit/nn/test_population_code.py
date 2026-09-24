@@ -1,10 +1,11 @@
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import pytest
 
-from phydrax._trainable import partition_trainable
+import phydrax as phx
 from phydrax.applications import electrophysiology as ep
 from phydrax.domain import HyperRectangle
 from phydrax.nn import population as pc
@@ -192,9 +193,16 @@ def test_held_out_nonlinear_approximation_is_frozen_and_callable_under_jit():
     np.testing.assert_allclose(
         jax.jit(lambda points: code(points))(held_out), report.prediction, atol=1e-10
     )
-    trainable, _ = partition_trainable({"code": code, "coefficient": jnp.asarray(0.5)})
-    assert trainable["code"] is None
-    assert trainable["coefficient"] is not None
+
+    class _Readout(eqx.Module):
+        code: pc.PopulationCode
+        coefficient: jax.Array = phx.parameter_field()
+
+    trainable, _model_state, _fixed = phx.partition_parameters(
+        _Readout(code, jnp.asarray(0.5))
+    )
+    assert trainable.code is None
+    assert trainable.coefficient is not None
 
 
 def test_filtered_spikes_preserve_streaming_and_separate_temporal_errors():

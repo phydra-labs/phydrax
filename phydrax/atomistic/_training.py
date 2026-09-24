@@ -19,7 +19,13 @@ from .._doc import DOC_KEY0
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._iteration import IterationSession
 from .._strict import StrictModule
-from .._trainable import combine_trainable, NonTrainableState, partition_trainable
+from .._trainable import (
+    combine_parameters,
+    ExplicitFreeze,
+    NonTrainableState,
+    partition_parameters,
+    require_parameter_roles,
+)
 from .._training import (
     TrainingController,
     TrainingIterationKind,
@@ -289,8 +295,12 @@ class AtomisticTrainingNormalization(StrictModule, NonTrainableState):
     normalization_id: str = eqx.field(static=True)
 
 
-class AtomisticTrainingResult(StrictModule, NonTrainableState):
-    """Complete continuation, best/final model, histories, and terminal status."""
+class AtomisticTrainingResult(StrictModule, ExplicitFreeze):
+    """Complete continuation, best/final model, histories, and terminal status.
+
+    A trained-artifact holder: it freezes the embedded potentials on purpose
+    (`ExplicitFreeze`); continue training from `potential` explicitly.
+    """
 
     potential: _AtomisticPotential
     best_potential: _AtomisticPotential
@@ -564,13 +574,14 @@ def _synchronize_optimizer_state_identity(
 
 def _parameter_loss(
     parameters: Any,
+    model_state: Any,
     fixed: Any,
     problem: AtomisticTrainingProblem,
     normalization: AtomisticTrainingNormalization,
     policy: AtomisticTrainingPolicy,
     /,
 ) -> tuple[Array, tuple[Array, Array]]:
-    candidate = combine_trainable(parameters, fixed)
+    candidate = combine_parameters(parameters, model_state, fixed)
     return _training_loss(candidate, problem, normalization, policy)
 
 
@@ -618,6 +629,7 @@ def fit_atomistic_potential(
         raise TypeError("problem must be an AtomisticTrainingProblem.")
     if not isinstance(policy, AtomisticTrainingPolicy):
         raise TypeError("policy must be an AtomisticTrainingPolicy.")
+    require_parameter_roles(potential, context="fit_atomistic_potential")
     if potential.scale.scale_id != problem.training_batch.scale.scale_id:
         raise ValueError("Potential and training problem must share one scale contract.")
     if problem.training_energy is None and policy.force_weight <= 0.0:
@@ -631,7 +643,7 @@ def fit_atomistic_potential(
     optimizer = optax.adam(policy.learning_rate)
     if continuation is None:
         current = potential
-        trainable, _ = partition_trainable(current)
+        trainable, _, _ = partition_parameters(current)
         optimizer_state = optimizer.init(trainable)
         progress = TrainingProgress()
         master_key = jnp.asarray(key)
@@ -724,12 +736,12 @@ def fit_atomistic_potential(
     for step in range(progress.update_step + 1, policy.maximum_steps + 1):
         if terminal_status != AtomisticStatus.SUCCESS or control.stop_requested:
             break
-        trainable, fixed = partition_trainable(current)
+        trainable, model_state, fixed = partition_parameters(current)
         (loss_value, _), gradients = jax.value_and_grad(
             _parameter_loss,
             argnums=0,
             has_aux=True,
-        )(trainable, fixed, problem, normalization, policy)
+        )(trainable, model_state, fixed, problem, normalization, policy)
         if not bool(np.asarray(jnp.isfinite(loss_value))) or not _tree_finite(gradients):
             training_history.append(float("nan"))
             energy_history.append(float("nan"))
@@ -741,7 +753,7 @@ def fit_atomistic_potential(
             gradients, optimizer_state, params=trainable
         )
         trainable = optax.apply_updates(trainable, updates)
-        current = combine_trainable(trainable, fixed)
+        current = combine_parameters(trainable, model_state, fixed)
         post_loss, post_components = _training_loss(
             current, problem, normalization, policy
         )

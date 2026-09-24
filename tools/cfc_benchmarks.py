@@ -27,7 +27,11 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
-from phydrax._trainable import combine_trainable, partition_trainable
+from phydrax._trainable import (
+    combine_parameters,
+    partition_parameters,
+    require_parameter_roles,
+)
 
 
 Architecture = Literal["cfc", "gru-dt", "lstm-dt", "selective"]
@@ -144,8 +148,15 @@ def _event_dataset(
 
 
 def _parameter_count(model: Any, /) -> int:
-    trainable, _ = partition_trainable(model)
-    return sum(leaf.size for leaf in jax.tree.leaves(trainable))
+    parameters, _, _ = partition_parameters(model)
+    return sum(leaf.size for leaf in jax.tree.leaves(parameters))
+
+
+def _readout(width: int, /, *, key: Key[Array, ""]) -> phx.nn.models.EquinoxModel:
+    linear = eqx.nn.Linear(width, 2, dtype=jnp.float32, key=key)
+    return phx.nn.models.EquinoxModel(
+        linear, in_size=width, out_size=2, layout="passthrough"
+    )
 
 
 def _build_model(
@@ -164,15 +175,15 @@ def _build_model(
             dtype=jnp.float32,
             key=cell_key,
         )
-        readout = eqx.nn.Linear(width, 2, dtype=jnp.float32, key=readout_key)
+        readout = _readout(width, key=readout_key)
         return phx.nn.models.RecurrentSequenceModel(cell, readout=readout)
     if architecture == "gru-dt":
         cell = phx.nn.layers.GRUCell(3, width, dtype=jnp.float32, key=cell_key)
-        readout = eqx.nn.Linear(width, 2, dtype=jnp.float32, key=readout_key)
+        readout = _readout(width, key=readout_key)
         return phx.nn.models.RecurrentSequenceModel(cell, readout=readout)
     if architecture == "lstm-dt":
         cell = phx.nn.layers.LSTMCell(3, width, dtype=jnp.float32, key=cell_key)
-        readout = eqx.nn.Linear(width, 2, dtype=jnp.float32, key=readout_key)
+        readout = _readout(width, key=readout_key)
         return phx.nn.models.RecurrentSequenceModel(cell, readout=readout)
     if architecture == "selective":
         return phx.nn.models.SelectiveSequenceModel(
@@ -244,10 +255,11 @@ def _train_candidate(
 ) -> tuple[Any, dict[str, float]]:
     train_batch = _model_batch(architecture, train)
     validation_batch = _model_batch(architecture, validation)
-    parameters, fixed = partition_trainable(model)
+    require_parameter_roles(model, context="_train_candidate")
+    parameters, model_state, fixed = partition_parameters(model)
 
     def objective(candidate):
-        current = combine_trainable(candidate, fixed)
+        current = combine_parameters(candidate, model_state, fixed)
         return _masked_mse(
             current,
             train_batch,
@@ -280,7 +292,7 @@ def _train_candidate(
             compilation_seconds = time.perf_counter() - step_started
             first_loss = float(loss)
     training_seconds = time.perf_counter() - training_started
-    trained = combine_trainable(parameters, fixed)
+    trained = combine_parameters(parameters, model_state, fixed)
     final_loss = float(objective(parameters))
     validation_loss = float(
         _masked_mse(
@@ -308,10 +320,10 @@ def _inference_evidence(
     *,
     repetitions: int,
 ) -> dict[str, Any]:
-    parameters, fixed = partition_trainable(model)
+    parameters, model_state, fixed = partition_parameters(model)
 
     def predict(candidate):
-        return combine_trainable(candidate, fixed)(batch)
+        return combine_parameters(candidate, model_state, fixed)(batch)
 
     jitted = jax.jit(predict)
     compiled, compilation = measure_lower_and_compile(

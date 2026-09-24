@@ -12,7 +12,6 @@ import pytest
 
 import phydrax as phx
 from phydrax._numerics import smolyak_axis_data
-from phydrax._trainable import partition_trainable
 from phydrax.operators.interpolation import _smolyak as smolyak_module
 
 
@@ -154,8 +153,8 @@ def test_interpolant_is_fixed_state_and_does_not_retain_source_callable():
         phx.operators.SmolyakInterpolationPlan(1, 3),
     )
     fit_count = source.count
-    trainable, _ = partition_trainable(approximation)
-    leaves = jax.tree_util.tree_leaves(trainable)
+    parameters, _, _ = phx.partition_parameters(approximation)
+    leaves = jax.tree_util.tree_leaves(parameters)
 
     assert fit_count == 1
     assert not any(eqx.is_inexact_array(leaf) for leaf in leaves)

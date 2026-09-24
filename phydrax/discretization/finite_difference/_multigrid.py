@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...linalg import (
     AbstractLinearOperator,
     AbstractPreconditioner,
@@ -441,7 +441,7 @@ def _point_interpolation(source: np.ndarray, target: np.ndarray, /) -> np.ndarra
     return matrix
 
 
-class _DenseCoarsePreconditioner(AbstractPreconditioner):
+class _DenseCoarsePreconditioner(AbstractPreconditioner, NonTrainableState):
     inverse: Array
 
     def __init__(self, operator: AbstractLinearOperator, /):
@@ -509,7 +509,7 @@ class StructuredMultigridResult(StrictModule, NonTrainableState):
         self.precision_evidence = precision_evidence
 
 
-class _RedBlackPreconditioner(AbstractPreconditioner):
+class _RedBlackPreconditioner(AbstractPreconditioner, NonTrainableState):
     operator: AbstractLinearOperator
     inverse_diagonal: Array
     color_masks: tuple[Array, Array]
@@ -564,7 +564,7 @@ class _RedBlackPreconditioner(AbstractPreconditioner):
         return estimate
 
 
-class _LinePreconditioner(AbstractPreconditioner):
+class _LinePreconditioner(AbstractPreconditioner, NonTrainableState):
     lower: Array
     diagonal: Array
     upper: Array
@@ -838,11 +838,11 @@ class StructuredMultigridPlan(StrictModule, NonTrainableState):
         return PreparedStructuredMultigrid(self)
 
 
-class PreparedStructuredMultigrid(StrictModule, NonTrainableState):
+class PreparedStructuredMultigrid(StrictModule):
     plan: StructuredMultigridPlan
     grids: tuple[PreparedTensorGrid, ...]
-    diffusion_operators: tuple[PreparedConservativeDiffusion, ...]
-    level_operators: tuple[AbstractLinearOperator, ...]
+    diffusion_operators: tuple[PreparedConservativeDiffusion, ...] = fixed_field()
+    level_operators: tuple[AbstractLinearOperator, ...] = fixed_field()
     transfers: tuple[StructuredTransferPlan, ...]
     hierarchy: MultigridHierarchy
     preconditioner: MultigridPreconditioner

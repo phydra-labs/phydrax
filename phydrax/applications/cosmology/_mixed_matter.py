@@ -18,7 +18,7 @@ from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field
 from ...discretization.splatting import ParticleGridSplatState
 from ...solver import ParticleMeshGravityPlan
 from ._coupled import ComovingEulerPlan, ComovingEulerState
@@ -68,12 +68,12 @@ class MixedDensityAssembly(StrictModule):
     assembler_id: str = eqx.field(static=True)
 
 
-class MixedDensityAssembler(StrictModule, NonTrainableState):
+class MixedDensityAssembler(StrictModule):
     """Bind wave density and the existing matched PM deposit to one cell layout."""
 
     wave: PreparedPeriodicWaveDarkMatter
     particle_gravity: ParticleMeshGravityPlan
-    cell_volumes: Array
+    cell_volumes: Array = fixed_field()
     include_gas: bool = eqx.field(static=True)
     assembler_id: str = eqx.field(static=True)
 
@@ -237,12 +237,12 @@ class SharedPeriodicGravityResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-class SharedPeriodicGravityPlan(StrictModule, NonTrainableState):
+class SharedPeriodicGravityPlan(StrictModule):
     """Apply one existing periodic PM Poisson owner to one mixed density assembly."""
 
     assembler: MixedDensityAssembler
     particle_gravity: ParticleMeshGravityPlan
-    cell_volumes: Array
+    cell_volumes: Array = fixed_field()
     gravitational_constant: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -510,7 +510,7 @@ def _validate_owner_bindings(
             raise ValueError("Gas and PM transfer must share one prepared grid.")
 
 
-class WaveParticleCosmologyPlan(StrictModule, NonTrainableState):
+class WaveParticleCosmologyPlan(StrictModule):
     """Prepare symmetric fixed-grid wave-particle evolution on the wave schedule."""
 
     wave: PreparedPeriodicWaveDarkMatter
@@ -547,7 +547,7 @@ class WaveParticleCosmologyPlan(StrictModule, NonTrainableState):
         return PreparedWaveParticleCosmology(self)
 
 
-class WaveParticleGasCosmologyPlan(StrictModule, NonTrainableState):
+class WaveParticleGasCosmologyPlan(StrictModule):
     """Prepare symmetric fixed-grid wave-particle-gas predictor/corrector evolution."""
 
     wave: PreparedPeriodicWaveDarkMatter
@@ -816,7 +816,7 @@ def _diagnostics(recorded: tuple[Array, ...], accepted_steps: Array, completed: 
     )
 
 
-class PreparedWaveParticleCosmology(StrictModule, NonTrainableState):
+class PreparedWaveParticleCosmology(StrictModule):
     """Prepared atomic wave-particle evolution using one shared potential per stage."""
 
     plan: WaveParticleCosmologyPlan
@@ -1111,7 +1111,7 @@ class PreparedWaveParticleCosmology(StrictModule, NonTrainableState):
         )
 
 
-class PreparedWaveParticleGasCosmology(StrictModule, NonTrainableState):
+class PreparedWaveParticleGasCosmology(StrictModule):
     """Prepared atomic wave-particle-gas evolution with endpoint gravity correction."""
 
     plan: WaveParticleGasCosmologyPlan

@@ -8,7 +8,6 @@ from collections.abc import Mapping
 from typing import Any, ClassVar, Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -19,7 +18,7 @@ from ..._holomorphic_linear import (
     MultivariableHolomorphicPotentialProvider,
 )
 from ..._model import AbstractArrayModel, TRIAL_SPACE_CERTIFICATE_KEY
-from ..._trainable import partition_trainable
+from ._complex_potential_2d import _parameter_count
 from ._core import TrialSpaceCertificate
 
 
@@ -92,15 +91,7 @@ class PluriharmonicPotential(AbstractArrayModel):
             branch=branch_,
             holomorphic_certificate_id=holomorphic.certificate_id,
         )
-        trainable, _ = partition_trainable(provider)
-        parameter_count = max(
-            sum(
-                leaf.size
-                for leaf in jax.tree_util.tree_leaves(trainable)
-                if eqx.is_inexact_array(leaf)
-            ),
-            1,
-        )
+        parameter_count = max(_parameter_count(provider), 1)
         self.provider = provider
         self.index_set = HolomorphicMultiIndexSet.total_degree(dimension, 2)
         self.pluriharmonic_certificate = pluriharmonic

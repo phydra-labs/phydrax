@@ -18,11 +18,12 @@ from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from ...operators.quantum import LogAmplitude
 from ._complex_determinant import complex_determinant_mixture
 
 
-class MonopoleAttentionAmplitude(StrictModule):
+class MonopoleAttentionAmplitude(StrictModule, ParameterOwner):
     """Finite attention ansatz with exact monopole-harmonic orbital phases."""
 
     input_weights: Array

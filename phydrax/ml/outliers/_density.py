@@ -19,6 +19,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._model import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch
 from .._contracts import AbstractRecipe, FitResult, ML_NONCONVERGED
 from .._numerics import pairwise_distances, weighted_mean
@@ -93,8 +94,8 @@ def _kde_leave_one_out_one(
 class KernelDensityOutlierModel(AbstractFittedModel):
     """Gaussian KDE negative-log-density anomaly score."""
 
-    training_features: Array
-    training_weights: Array
+    training_features: Array = fixed_field()
+    training_weights: Array = fixed_field()
     threshold: Array
     bandwidth: float = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)

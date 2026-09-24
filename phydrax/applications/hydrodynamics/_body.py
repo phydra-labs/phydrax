@@ -558,7 +558,7 @@ class RigidHydroelasticContinuationState(StrictModule):
     body_energy: Array
 
 
-class RigidHydroelasticALEMethod(AbstractFixedStepMethod):
+class RigidHydroelasticALEMethod(AbstractFixedStepMethod, NonTrainableState):
     """Mapped free-surface fluid step followed by monolithic marker/body KKT."""
 
     fluid_method: OnePhaseFreeSurfaceALEMethod

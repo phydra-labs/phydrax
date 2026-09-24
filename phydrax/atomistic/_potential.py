@@ -14,7 +14,7 @@ import equinox as eqx
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import NonTrainableState, ParameterOwner
 
 
 _AtomisticPotentialT = TypeVar("_AtomisticPotentialT", bound="AbstractAtomisticPotential")
@@ -128,7 +128,7 @@ class AbstractPreparedAtomisticPotential(StrictModule):
         raise NotImplementedError
 
 
-class AbstractAtomisticPotential(StrictModule):
+class AbstractAtomisticPotential(StrictModule, ParameterOwner):
     """Atomistic scalar-energy model with checkpointable parameter provenance."""
 
     configuration: eqx.AbstractVar[Any]

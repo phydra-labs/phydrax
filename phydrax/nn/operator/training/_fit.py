@@ -23,7 +23,11 @@ import optax
 from ...._execution_runtime import ExecutionGroup
 from ...._frozendict import frozendict
 from ...._iteration import IterationSession
-from ...._trainable import combine_trainable, partition_trainable
+from ...._trainable import (
+    combine_parameters,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ...._training import (
     _update_validation_selection,
     DelayedTargetPolicy,
@@ -667,6 +671,7 @@ def _resolve_operator_parameter_paths(
             raise ValueError(
                 "Low-rank operator fitting requires an explicit parameter_subspace."
             )
+        require_parameter_roles(model, context="fit_operator")
     else:
         if not isinstance(parameter_subspace, ParameterSubspace):
             raise TypeError("parameter_subspace must be a ParameterSubspace or None.")
@@ -1086,7 +1091,8 @@ def fit_operator(
 
     def partition_fit_model(current_model):
         if parameter_paths is None:
-            return partition_trainable(current_model)
+            parameters, model_state, fixed = partition_parameters(current_model)
+            return parameters, (model_state, fixed)
         current_subspace = ParameterSubspace.from_leaf_paths(
             current_model,
             parameter_paths,
@@ -1101,7 +1107,7 @@ def fit_operator(
 
     def reconstruct_fit_model(current_parameters, current_fixed):
         if parameter_paths is None:
-            return combine_trainable(current_parameters, current_fixed)
+            return combine_parameters(current_parameters, *current_fixed)
         if not isinstance(current_fixed, ParameterSubspace):
             raise TypeError("Low-rank fit fixed state must be ParameterSubspace.")
         return current_fixed.reconstruct(current_parameters)

@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._interpolation import bspline_evaluate, BSplineGrid
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import fixed_field, NonTrainableState, parameter_field
 
 
 DrivingPathSide: TypeAlias = Literal["left", "right"]
@@ -204,8 +204,8 @@ class AbstractDifferentiableDrivingPath(StrictModule):
     polynomial or spline derivative at a breakpoint.
     """
 
-    breakpoints: Array
-    breakpoint_mask: Array
+    breakpoints: Array = fixed_field()
+    breakpoint_mask: Array = fixed_field()
     value_shape: tuple[int, ...] = eqx.field(static=True)
     path_id: str = eqx.field(static=True)
 
@@ -664,8 +664,8 @@ class FixedBSplineDrivingPath(AbstractDifferentiableDrivingPath):
     """
 
     grid: BSplineGrid
-    coefficients: Array
-    _support: Array
+    coefficients: Array = parameter_field()
+    _support: Array = fixed_field()
 
     def __init__(
         self,

@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from .._conservation_boundary import PrescribedNormalFluxBoundary
 from .._conservation_ledger import (
     ConservationStageFluxRateBlock,
@@ -88,7 +88,7 @@ class BlockAMRFiniteVolumeStageResult(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope
 
 
-class BlockAMRFiniteVolumePlan(StrictModule, NonTrainableState):
+class BlockAMRFiniteVolumePlan(StrictModule):
     """Cartesian cell-centered FV method bound to one prepared fixed-block hierarchy."""
 
     hierarchy: PreparedFDAMRHierarchy
@@ -188,7 +188,7 @@ class BlockAMRFiniteVolumePlan(StrictModule, NonTrainableState):
         return PreparedBlockAMRFiniteVolumeDynamics(self, topology)
 
 
-class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
+class PreparedBlockAMRFiniteVolumeDynamics(StrictModule):
     """Topology-bound block-local Cartesian finite-volume dynamics."""
 
     plan: BlockAMRFiniteVolumePlan
@@ -199,8 +199,8 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
     physical_boundary_slots: tuple[
         tuple[tuple[tuple[int, ...], tuple[int, ...]], ...], ...
     ] = eqx.field(static=True)
-    cell_coordinates: tuple[Array, ...]
-    active_cell_mask: Array
+    cell_coordinates: tuple[Array, ...] = fixed_field()
+    active_cell_mask: Array = fixed_field()
     level_cell_offsets: tuple[int, ...] = eqx.field(static=True)
     dynamics_id: str = eqx.field(static=True)
 

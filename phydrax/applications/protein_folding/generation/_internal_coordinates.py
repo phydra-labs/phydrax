@@ -241,7 +241,7 @@ class ProteinDecodedCoordinates(StrictModule):
         )
 
 
-class PreparedProteinCoordinateDecoder(AbstractCoordinateDecoder):
+class PreparedProteinCoordinateDecoder(AbstractCoordinateDecoder, NonTrainableState):
     """Differentiable periodic-torsion decoder; no minimization or resampling."""
 
     plan: ProteinInternalCoordinatePlan

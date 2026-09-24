@@ -13,7 +13,7 @@ from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import fixed_field
 from ..discretization.finite_volume._unstructured_dynamics import (
     PreparedUnstructuredFiniteVolumeDynamics,
 )
@@ -30,14 +30,14 @@ from ._finite_volume_runtime import (
 
 
 class FiniteVolumePhaseChangeStrangResult(StrictModule):
-    runtime_state: FiniteVolumeRuntimeState
+    runtime_state: FiniteVolumeRuntimeState = fixed_field()
     transport: FiniteVolumeAdvanceResult
-    first_half: VOFPhaseChangeStageEvaluation
-    second_half: VOFPhaseChangeStageEvaluation
-    attempted_step_size: Array
-    exact_transport_step: Array
-    finite: Array
-    accepted: Array
+    first_half: VOFPhaseChangeStageEvaluation = fixed_field()
+    second_half: VOFPhaseChangeStageEvaluation = fixed_field()
+    attempted_step_size: Array = fixed_field()
+    exact_transport_step: Array = fixed_field()
+    finite: Array = fixed_field()
+    accepted: Array = fixed_field()
     method_id: str = eqx.field(static=True)
 
     @property
@@ -45,7 +45,7 @@ class FiniteVolumePhaseChangeStrangResult(StrictModule):
         return self.accepted
 
 
-class FiniteVolumePhaseChangeStrangMethod(StrictModule, NonTrainableState):
+class FiniteVolumePhaseChangeStrangMethod(StrictModule):
     transport_runtime: PreparedFiniteVolumeRuntime
     phase_change: VOFPhaseChangePlan
     method_id: str = eqx.field(static=True)

@@ -13,7 +13,6 @@ from jaxtyping import Array, Key, PyTree
 
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
-from .._trainable import partition_trainable
 from ..linalg import ArraySpace, LinearizationPolicy
 from ..nn.neural_tangent import (
     analyze_ntk,
@@ -25,6 +24,7 @@ from ..nn.neural_tangent import (
 from ..nn.parameters import ParameterSubspace
 from ..terms import ResidualBlockRef
 from ._functional_residual import prepare_functional_residual, PreparedFunctionalResidual
+from ._functional_run import partition_functional_parameters
 from ._functional_surrogate import PreparedFunctionalUpdate
 
 
@@ -146,7 +146,7 @@ def prepare_functional_ntk(
             "An already prepared update owns its exact parameter partition; parameter_subspace must be None."
         )
     if parameter_subspace is None:
-        parameters, non_trainable = partition_trainable(solver.functions)
+        parameters, non_trainable = partition_functional_parameters(solver.functions)
         paths = ()
     else:
         if not isinstance(parameter_subspace, ParameterSubspace):

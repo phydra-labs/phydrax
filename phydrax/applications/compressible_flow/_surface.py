@@ -170,7 +170,7 @@ class CompressibleSurfaceObservation(StrictModule):
     successful: Array
 
 
-class CompressibleSurfaceObservationPlan(StrictModule, NonTrainableState):
+class CompressibleSurfaceObservationPlan(StrictModule):
     """Discrete aerodynamic loads from the same face traces used by FV."""
 
     dynamics: PreparedFiniteVolumeDynamics

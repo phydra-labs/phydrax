@@ -8,7 +8,6 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 from phydrax.equations.trefftz._polynomial import _critical_construction_audit
 
 
@@ -77,9 +76,9 @@ def test_canonical_harmonic_basis_is_deterministic_and_exact():
     point = jnp.asarray([0.2, -0.3, 0.4])
     assert jnp.allclose(_laplacian(model, point), 0.0, atol=2e-11, rtol=2e-11)
 
-    trainable, fixed = partition_trainable(model)
-    assert trainable.coefficients is not None
-    assert trainable.basis is None
+    parameters, _, fixed = phx.partition_parameters(model)
+    assert parameters.coefficients is not None
+    assert parameters.basis is None
     assert fixed.coefficients is None
     assert fixed.basis is first
 

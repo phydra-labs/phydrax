@@ -14,7 +14,7 @@ import phydrax.ein as ein
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
-from ...._trainable import NonTrainableState
+from ...._trainable import fixed_field, NonTrainableState, parameter_field
 from ....discretization import (
     MixedFiniteElementConstraintPlan,
     PreparedMixedFiniteElementConstraint,
@@ -352,8 +352,8 @@ class PreparedEngelhardtGasam2025Material(StrictModule):
     """
 
     plan: EngelhardtGasam2025Plan
-    parameters: EngelhardtGasam2025Parameters
-    architecture: PreparedUniformFiberArchitecture
+    parameters: EngelhardtGasam2025Parameters = parameter_field()
+    architecture: PreparedUniformFiberArchitecture = fixed_field()
     state: GasamMaterialState
     prepared_id: str = eqx.field(static=True)
 

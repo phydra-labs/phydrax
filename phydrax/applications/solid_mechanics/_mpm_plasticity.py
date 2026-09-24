@@ -61,7 +61,10 @@ class FiniteStrainJ2Parameters(StrictModule, NonTrainableState):
         ) = values
 
 
-class FiniteStrainJ2MPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
+class FiniteStrainJ2MPMConstitutivePlan(
+    AbstractImplicitMPMConstitutivePlan,
+    NonTrainableState,
+):
     """Multiplicative finite-strain J2 update with Hencky elasticity."""
 
     dimension: int = eqx.field(static=True)

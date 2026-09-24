@@ -21,6 +21,7 @@ from ..._differentiation import (
 )
 from ..._model import ModelBinding
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -62,12 +63,12 @@ class SubspaceDiagnostics(StrictModule):
 class SubspaceModel(AbstractFittedModel):
     """Fixed affine subspace with metric-correct encoding and decoding."""
 
-    offset: Array
+    offset: Array = fixed_field()
     components: Array
     weighted_components: Array
-    feature_metric: Array
+    feature_metric: Array = fixed_field()
     feature_support: Array
-    singular_values: Array
+    singular_values: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)

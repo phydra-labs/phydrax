@@ -10,6 +10,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ...._strict import StrictModule
+from ...._trainable import NonTrainableState, ParameterOwner
 from ..._keys import EvalKey
 from ...layers import (
     AbstractRecurrentCell,
@@ -20,7 +21,7 @@ from ...layers import (
 )
 
 
-class CausalCoordinatePlan(StrictModule):
+class CausalCoordinatePlan(StrictModule, NonTrainableState):
     coordinates: Array
     order: Array
     inverse_order: Array
@@ -79,7 +80,7 @@ class CausalCoordinateResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-class CausalCoordinateNetwork(StrictModule):
+class CausalCoordinateNetwork(StrictModule, ParameterOwner):
     cell: AbstractRecurrentCell
 
     def __init__(self, cell: AbstractRecurrentCell, /):
