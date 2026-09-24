@@ -6,16 +6,26 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Sequence
+from math import prod
+from typing import Any, ClassVar
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._differentiation import ComponentAuthority
 from .._interpolation import (
     bspline_evaluate,
     BSplineGrid,
     BSplineGridTransfer,
     ProjectionMethod,
+)
+from .._model import (
+    AbstractArrayModel,
+    AbstractComponentSlot,
+    bind_component,
+    ComponentContract,
 )
 from .._strict import StrictModule
 from .._trainable import fixed_field
@@ -54,8 +64,19 @@ def _query(value: ArrayLike, /) -> Array:
     return query.astype(jnp.result_type(query, jnp.float64))
 
 
-class AbstractControlParameterization(StrictModule):
-    """Fixed-shape map from coefficients to physical controls."""
+class AbstractControlParameterization(AbstractComponentSlot):
+    """Fixed-shape map from coefficients to physical controls.
+
+    The base is the neutral `DECISION` slot of control problems: a
+    parameterization decides the applied control, and every rollout evaluates
+    the controlled dynamics on the returned control. Analytic parameterizations
+    carry no trainable arrays of their own; their coefficients are decision
+    variables supplied at evaluation. A learned policy (`NeuralFeedbackPolicy`)
+    holds its model as a dynamic child.
+    """
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.DECISION
+    slot_semantic_id: ClassVar[str] = "phydrax.control.parameterization"
 
     control_shape: tuple[int, ...] = eqx.field(static=True)
     time_grid: eqx.AbstractVar[TimeGrid | None]
@@ -435,11 +456,145 @@ class BSplineControlParameterization(AbstractControlParameterization):
         )
 
 
+def _model_value_shape(size: Any, /) -> tuple[int, ...]:
+    if size == "scalar":
+        return ()
+    if isinstance(size, int):
+        return (int(size),)
+    return tuple(size)
+
+
+class NeuralFeedbackPolicy(AbstractControlParameterization):
+    """Learned stationary state feedback ``u(t, x) = model(x)``.
+
+    The model reads one flat point per case: the current state flattened,
+    followed by the physical time when `time_input` is set. Its sizes are
+    exact: `in_size` is `prod(state_shape)` (plus one with `time_input`) and
+    `out_size` produces `control_shape`; it must use a pointwise flat binding and
+    is evaluated without a key. The current state is required, times are
+    scalar, and the coefficient shape is empty: coefficients are a
+    `case_shape` token because the decision lives in the model's arrays.
+    Feedback policies cannot be sampled without a state trajectory.
+
+    The model is a dynamic child whose arrays keep their own roles, so a
+    learned policy stays PARAMETER. It is bound to the
+    `AbstractControlParameterization` `DECISION` slot; `component_contract()`
+    returns the bound contract.
+    """
+
+    model: AbstractArrayModel
+    time_grid: TimeGrid | None
+    state_shape: tuple[int, ...] = eqx.field(static=True)
+    time_input: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        model: AbstractArrayModel,
+        /,
+        *,
+        state_shape: Sequence[int],
+        control_shape: Sequence[int],
+        policy_id: str,
+        time_input: bool = False,
+    ):
+        if not isinstance(model, AbstractArrayModel):
+            raise TypeError("model must be an AbstractArrayModel.")
+        if not isinstance(time_input, bool):
+            raise TypeError("time_input must be bool.")
+        states = _shape(state_shape, "state_shape")
+        controls = _shape(control_shape, "control_shape")
+        binding = model.input_binding()
+        if binding.batch_mode != "pointwise" or binding.input_mode != "flat":
+            raise ValueError(
+                "Neural feedback policies require a pointwise flat model binding."
+            )
+        input_size = prod(states) + int(time_input)
+        if model.in_size != input_size:
+            raise ValueError(
+                f"Neural feedback policy in_size must be {input_size}; got "
+                f"{model.in_size!r}."
+            )
+        if _model_value_shape(model.out_size) != controls:
+            raise ValueError(
+                f"Neural feedback policy out_size must produce shape {controls}; got "
+                f"{model.out_size!r}."
+            )
+        bind_component(model, AbstractControlParameterization)
+        self.model = model
+        self.time_grid = None
+        self.state_shape = states
+        self.time_input = time_input
+        self.control_shape = controls
+        self.parameter_shape = ()
+        self.parameterization_id = _identifier(policy_id, "policy_id")
+        self.approximation_id = (
+            "control:neural-state-feedback:time-dependent"
+            if time_input
+            else "control:neural-state-feedback:stationary"
+        )
+
+    def component_contract(self) -> ComponentContract:
+        """Return the model's contract bound to the control-parameterization slot."""
+        return bind_component(self.model, AbstractControlParameterization).contract()
+
+    def evaluate(
+        self,
+        coefficients: ArrayLike,
+        time: ArrayLike,
+        /,
+        *,
+        case_shape: tuple[int, ...] = (),
+        state: ArrayLike | None = None,
+    ) -> Array:
+        cases = _case_shape(case_shape)
+        _coefficient_array(coefficients, cases, self.parameter_shape)
+        query = _query(time)
+        if query.shape != ():
+            raise ValueError("NeuralFeedbackPolicy.evaluate requires a scalar time.")
+        if state is None:
+            raise ValueError("NeuralFeedbackPolicy.evaluate requires the current state.")
+        state_ = jnp.asarray(state)
+        expected_state = cases + self.state_shape
+        if tuple(state_.shape) != expected_state:
+            raise ValueError(
+                f"Feedback state must have shape {expected_state}; got {state_.shape}."
+            )
+        if not jnp.issubdtype(state_.dtype, jnp.inexact):
+            state_ = state_.astype("float64")
+        state_ = eqx.error_if(
+            state_, jnp.any(~jnp.isfinite(state_)), "Feedback state must be finite."
+        )
+        points = state_.reshape((-1, prod(self.state_shape)))
+        if self.time_input:
+            times = jnp.broadcast_to(query.astype(points.dtype), (points.shape[0], 1))
+            points = jnp.concatenate((points, times), axis=-1)
+        binding = self.model.input_binding()
+        values = jax.vmap(
+            lambda point: binding.call(self.model, point, key=None, iter_=None, kwargs={})
+        )(points)
+        return values.reshape(cases + self.control_shape)
+
+    def sample(
+        self,
+        coefficients: ArrayLike,
+        times: ArrayLike,
+        /,
+        *,
+        case_shape: tuple[int, ...] = (),
+    ) -> Array:
+        del coefficients, times, case_shape
+        raise ValueError(
+            "NeuralFeedbackPolicy cannot be sampled without states; evaluate it "
+            "online or roll it out through ControlProblem."
+        )
+
+
 __all__ = [
     "AbstractControlParameterization",
     "BSplineControlBoundCertificate",
     "BSplineControlParameterization",
     "BSplineControlRefinement",
+    "NeuralFeedbackPolicy",
     "PiecewiseConstantControlParameterization",
     "PiecewiseLinearControlParameterization",
 ]

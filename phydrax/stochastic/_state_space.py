@@ -8,7 +8,7 @@ import hashlib
 from abc import abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from math import prod
-from typing import Any, cast
+from typing import Any, cast, ClassVar
 
 import equinox as eqx
 import jax
@@ -19,7 +19,14 @@ from jaxtyping import Array, ArrayLike, Key
 
 import phydrax.ein as ein
 
+from .._differentiation import ComponentAuthority
 from .._frozendict import frozendict
+from .._model import (
+    AbstractArrayModel,
+    AbstractComponentSlot,
+    bind_component,
+    ComponentContract,
+)
 from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState
 from ._linear_gaussian import (
@@ -496,8 +503,17 @@ class TransitionSample(StrictModule):
     approximation_id: str = eqx.field(static=True)
 
 
-class AbstractTransitionKernel(StrictModule):
-    """Markov transition sampler with optional normalized transition density."""
+class AbstractTransitionKernel(AbstractComponentSlot):
+    """Markov transition sampler with optional normalized transition density.
+
+    The base is the neutral `MODEL` slot of state-space models: a transition
+    kernel defines the latent dynamics every filter and smoother trusts.
+    Analytic kernels are fixed `NonTrainableState` leaves or declare their
+    arrays; a learned kernel holds its model as a dynamic child.
+    """
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.MODEL
+    slot_semantic_id: ClassVar[str] = "phydrax.stochastic.transition-kernel"
 
     state_shape: eqx.AbstractVar[tuple[int, ...]]
     process_id: eqx.AbstractVar[str]
@@ -850,8 +866,17 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         return degenerate_gaussian_log_prob(residual, covariance)
 
 
-class AbstractObservationModel(StrictModule):
-    """Observation location, normalized likelihood, and sampler."""
+class AbstractObservationModel(AbstractComponentSlot):
+    """Observation location, normalized likelihood, and sampler.
+
+    The base is the neutral `MODEL` slot of state-space models: the observation
+    model defines the likelihood every filter and smoother trusts. A learned
+    location enters `GaussianObservationModel` through
+    `ModelObservationLocation`, a dynamic child whose model stays PARAMETER.
+    """
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.MODEL
+    slot_semantic_id: ClassVar[str] = "phydrax.stochastic.observation-model"
 
     state_shape: eqx.AbstractVar[tuple[int, ...]]
     observation_shape: eqx.AbstractVar[tuple[int, ...]]
@@ -980,7 +1005,108 @@ def _masked_gaussian_log_prob(
     return degenerate_gaussian_log_prob(residual, covariance)
 
 
+def _model_value_shape(size: Any, /) -> tuple[int, ...]:
+    if size == "scalar":
+        return ()
+    if isinstance(size, int):
+        return (int(size),)
+    return tuple(size)
+
+
+class ModelObservationLocation(StrictModule):
+    """Adapt one pointwise array model to the `(state, time, context)` location ABI.
+
+    The model reads one flat point per state: the state's trailing `state_shape`
+    flattened, followed by the observation time when `time_input` is set. It
+    returns one `observation_shape` value, so its sizes are exact: `in_size` is
+    `prod(state_shape)` (plus one with `time_input`) and `out_size` is
+    `observation_shape`. Leading state axes are batch axes evaluated pointwise;
+    the context is never a model input and the model is evaluated without a key.
+
+    The model is a dynamic child whose arrays keep their own roles, so a learned
+    location held by `GaussianObservationModel` stays PARAMETER. It is bound to
+    the `AbstractObservationModel` `MODEL` slot; `component_contract()` returns
+    the bound contract. Filters use the location exactly as any other location
+    callable: ensemble-transform numerics are unchanged.
+    """
+
+    model: AbstractArrayModel
+    state_shape: tuple[int, ...] = eqx.field(static=True)
+    observation_shape: tuple[int, ...] = eqx.field(static=True)
+    time_input: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        model: AbstractArrayModel,
+        /,
+        *,
+        state_shape: Sequence[int],
+        observation_shape: Sequence[int],
+        time_input: bool = False,
+    ):
+        if not isinstance(model, AbstractArrayModel):
+            raise TypeError("model must be an AbstractArrayModel.")
+        if not isinstance(time_input, bool):
+            raise TypeError("time_input must be bool.")
+        states = _shape(state_shape, owner="state_shape")
+        observations = _shape(observation_shape, owner="observation_shape")
+        binding = model.input_binding()
+        if binding.batch_mode != "pointwise" or binding.input_mode != "flat":
+            raise ValueError(
+                "Model observation locations require a pointwise flat model binding."
+            )
+        input_size = _event_size(states) + int(time_input)
+        if model.in_size != input_size:
+            raise ValueError(
+                f"Model observation location in_size must be {input_size}; got "
+                f"{model.in_size!r}."
+            )
+        if _model_value_shape(model.out_size) != observations:
+            raise ValueError(
+                f"Model observation location out_size must produce shape "
+                f"{observations}; got {model.out_size!r}."
+            )
+        bind_component(model, AbstractObservationModel)
+        self.model = model
+        self.state_shape = states
+        self.observation_shape = observations
+        self.time_input = time_input
+
+    def component_contract(self) -> ComponentContract:
+        """Return the model's contract bound to the observation-model slot."""
+        return bind_component(self.model, AbstractObservationModel).contract()
+
+    def __call__(
+        self, state: ArrayLike, time: ArrayLike, context: StateSpaceStepContext, /
+    ) -> Array:
+        del context
+        states = jnp.asarray(state)
+        _ends_with(states, self.state_shape, owner="state")
+        batch_shape = states.shape[: states.ndim - len(self.state_shape)]
+        binding = self.model.input_binding()
+
+        def evaluate(point: Array, /) -> Array:
+            flat = point.reshape((_event_size(self.state_shape),))
+            if self.time_input:
+                flat = jnp.concatenate((flat, jnp.asarray(time, dtype=flat.dtype)[None]))
+            return binding.call(self.model, flat, key=None, iter_=None, kwargs={})
+
+        if not batch_shape:
+            # Filters vectorize over members themselves; one state is one call.
+            return jnp.asarray(evaluate(states)).reshape(self.observation_shape)
+        points = states.reshape((-1,) + self.state_shape)
+        values = jax.vmap(evaluate)(points)
+        return values.reshape(batch_shape + self.observation_shape)
+
+
 class GaussianObservationModel(AbstractObservationModel):
+    """Gaussian likelihood around a nonlinear observation location.
+
+    `location(state, time, context)` is a stateless operation or a callable
+    module held as a dynamic child; `ModelObservationLocation` adapts a learned
+    array model, whose arrays stay PARAMETER. The covariance is FIXED.
+    """
+
     location_fn: Callable[[Array, Array, StateSpaceStepContext], Array]
     covariance: Array | Callable[[Array, StateSpaceStepContext], ArrayLike] = (
         fixed_field()
@@ -1415,6 +1541,7 @@ __all__ = [
     "LinearGaussianObservationModel",
     "LinearGaussianTransitionKernel",
     "MarginalTransitionKernel",
+    "ModelObservationLocation",
     "ObservationSequence",
     "state_space_key",
     "StateSpaceModel",

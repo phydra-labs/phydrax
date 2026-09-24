@@ -706,6 +706,21 @@ is stationary but nonlinear and therefore eligible for `FGMRES`, not GMRES,
 PCG, or MINRES. Regardless of preconditioner provenance, success is certified
 against the original `LinearSystem` residual.
 
+`AbstractPreconditioner` is the neutral `ACCELERATOR` component slot
+(`slot_semantic_id="phydrax.linalg.preconditioner"`). An accelerator may change
+how fast a Krylov or fixed-point solve converges, never the equation it solves.
+Built-in analytic actions such as `DiagonalPreconditioner`,
+`IncompleteFactorizationPreconditioner`, and `GaussSeidelPreconditioner` are
+fixed leaves. Composites stay neutral: `MultigridLevel` smoothers,
+`SubspaceCorrectionTerm` local solvers, the Schur action of
+`BlockFactorizationPreconditioner`, and the inner action of a precision-cast
+adapter keep the roles of their children. A learned action that holds its model
+as a dynamic child therefore contributes PARAMETER arrays even inside a
+multigrid hierarchy, while every operator, transfer, and analytic sibling stays
+FIXED under `partition_parameters`. A learned action must claim linearity only
+with construction evidence; without it, hierarchies and block factorizations
+derive a nonlinear contract and remain `FGMRES`-only.
+
 `BlockJacobiPreconditionerBuilder(block_size, ...)` extracts fixed-size
 canonical diagonal blocks, factors them once, and returns a
 `LocalBlockPreconditioner`. Dense and structured operators use exact block

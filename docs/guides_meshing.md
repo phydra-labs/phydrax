@@ -214,6 +214,27 @@ achieved. Use an appropriate external metric provider for those requests.
 Mesh promotion does not implicitly transfer PDE fields: consume the exposed
 transition/transfer through the solver topology transaction.
 
+`AbstractMeshProposer` is the neutral `DECISION` component slot
+(`slot_semantic_id="phydrax.meshing.mesh-proposer"`). A proposer decides where
+and how a mesh should adapt; it never produces a mesh. `LearnedMeshProposer`
+maps one feature row per scope entity (sorted global-ID order) to a marking
+score per cell, a size per vertex, or a metric tensor per vertex, and
+`propose(source, features)` wraps the values in the typed proposal of its
+`kind`. The typed proposal rejects non-finite values and stale scopes, and
+identical values from any proposer project identically: protected entities,
+size bounds, gradation, capacity limits, native refinement, safety audit, and
+compliance all apply unchanged. The model is a dynamic child whose arrays stay
+PARAMETER; `evaluate(features)` is the differentiable per-entity map for
+supervised training.
+
+Supervised marking targets come from native estimators, reordered to the
+proposal scope's sorted global IDs: `FiniteElementDWRIndicators.absolute` from
+`phydrax.discretization.fem.local_dual_weighted_residual` for goal-oriented
+finite-element refinement, and the `refine_mask` (or the per-channel
+`indicators`) of the high-enthalpy AMR indicator evidence for
+aerothermodynamic refinement. Size or metric targets are likewise native
+projected fields; a learned proposer imitates them but is always re-certified.
+
 ## Additional optional backends
 
 | Provider | Dependency | Supported execution boundary |

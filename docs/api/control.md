@@ -133,6 +133,29 @@ and the canonical `BSplineGridTransfer`; inspect its resolved `method`,
 `condition_estimate`, and `projection_error_bound`. Nested equal-degree refinement can be
 exact, while an L2 transfer is an explicitly diagnosed approximation.
 
+`AbstractControlParameterization` is the neutral `DECISION` component slot
+(`slot_semantic_id="phydrax.control.parameterization"`): it decides the applied
+control, and every rollout evaluates the controlled dynamics on that control.
+Open-loop parameterizations carry no trainable arrays; their coefficients are
+the decision variables. `NeuralFeedbackPolicy` is the learned state-feedback
+implementation `u(t, x) = model(x)` (or `model(x, t)` with `time_input=True`).
+Its model is a dynamic child whose arrays stay PARAMETER, bound to the decision
+slot through `component_contract()`. The model must use a pointwise flat
+binding with exact sizes (`in_size = prod(state_shape)` plus one for time,
+`out_size` producing `control_shape`) and is evaluated without a key. Like
+`AffineFeedbackPolicy`, it requires the current state, accepts only a scalar
+time, has an empty `parameter_shape` (coefficients are a `case_shape` token),
+and cannot be sampled open loop. It is JIT- and `vmap`-compatible, so
+`ControlProblem.evaluate` differentiates the rollout cost with respect to the
+policy parameters directly.
+
+```python
+policy = phx.control.NeuralFeedbackPolicy(
+    network, state_shape=(1,), control_shape=(1,), policy_id="neural-feedback"
+)
+cost = problem.evaluate(policy, jnp.asarray(0.0)).sampled_loss.total
+```
+
 ::: phydrax.control.AbstractControlParameterization
 
 ::: phydrax.control.PiecewiseConstantControlParameterization
@@ -144,6 +167,8 @@ exact, while an L2 transfer is an explicitly diagnosed approximation.
 ::: phydrax.control.BSplineControlBoundCertificate
 
 ::: phydrax.control.BSplineControlRefinement
+
+::: phydrax.control.NeuralFeedbackPolicy
 
 ## Local linearization
 
