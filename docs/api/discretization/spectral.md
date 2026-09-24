@@ -47,6 +47,19 @@
 
 ::: phydrax.discretization.TensorSpectralDiscretization
 
+### Field views
+
+`TensorSpectralDiscretization.evaluate` and `derivative_at` synthesize modal
+coefficients at arbitrary points; `prepare_spectral_field_reconstruction`
+wraps that synthesis as a smooth `PreparedFieldReconstruction` for
+`DiscreteFieldFunctionView`.
+
+::: phydrax.discretization.prepare_spectral_field_reconstruction
+
+---
+
+::: phydrax.discretization.SpectralFieldReconstructionKernel
+
 ## Transfer and diagnostics
 
 ::: phydrax.discretization.SpectralModalTransferPlan

@@ -364,6 +364,59 @@ they no longer carry the bound model's value.
 
 
 
+## Discrete field views
+
+A discretization's coefficients become a `DomainFunction` only through a
+`DiscreteFieldFunctionView` bound to an explicit, equivalent `GeometryDomain`.
+The view's `PreparedFieldReconstruction` owns coordinate evaluation, support,
+regularity, the evidenced maximum derivative order, and the trace policy;
+there is no generic conversion from discrete arrays to domain functions.
+
+```python
+domain = phx.domain.GeometryDomain(reconstruction.support_geometry, label="x")
+view = phx.discretization.DiscreteFieldFunctionView(
+    reconstruction, coefficients, domain, variable="x"
+)
+u_discrete = view.as_domain_function()
+```
+
+`as_domain_function()` requires a reconstruction that defines an evaluation at
+every point of its support; partial-coverage reconstructions (for example
+point clouds) are queried through `view.query(points)`, which returns values
+with pointwise `FieldQueryEvidence` (status, conditioning, support count).
+Coordinate derivatives of the view are the reconstruction's own exact
+derivatives: a request above `maximum_derivative_order` or at an invalid query
+point (outside the support, or a non-smooth locus without a trace side) raises
+`ValueError` eagerly and fails at runtime under `jit`; it never falls back to
+generic differentiation. Reconstruction data is FIXED; only the coefficients and
+query coordinates carry derivatives.
+
+Views participate in ordinary field algebra. Adding a view to another field,
+such as a network bound with `Domain.Model`, requires the other operand to
+declare its value port with the same units, event shape, frame, semantic axes,
+normalization, and variance; constants are read in the view's units. Operands
+on colliding supports are refused by domain joining:
+
+```python
+kelvin = phx.units.DimensionSignature({"temperature": 1})
+temperature = phx.ValuePort(
+    "temperature",
+    event_shape=(),
+    component_ids=("T",),
+    representation="scalar-field",
+    dimensions=(kelvin,),
+)
+u_fe = phx.discretization.DiscreteFieldFunctionView(
+    fe_reconstruction, coefficients, domain, variable="x"
+).as_domain_function()
+u_total = u_fe + domain.Model("x", port_mapping=mapping)(ported_network)
+```
+
+The declared regularity of the view enters derivative admission like a model's
+regularity, so, for example, the Laplacian of a piecewise-linear view is
+rejected as degenerate. Integrated functionals of discrete fields keep using
+`phydrax.variational.Functional` and its prepared-local compilers.
+
 ## Components: interior, boundary, and fixed slices
 
 Conditions, penalties, and integrals are typically evaluated over a **domain

@@ -106,8 +106,8 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
                     "enclosure": None
                     if enclosure is None
                     else {
-                        "evaluation_error": enclosure.evaluation_error,
-                        "lipschitz_upper_bound": enclosure.lipschitz_upper_bound,
+                        "evaluation_error": enclosure.field.evaluation_error,
+                        "lipschitz_upper_bound": enclosure.field.lipschitz_upper_bound,
                         "geometry_owner": canonical_fingerprint(
                             {
                                 "kernel_type": (
@@ -172,8 +172,8 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
             ) / self.grid.address_plan.resolution
             radius = 0.5 * jnp.sqrt(jnp.sum(cell_width**2))
             error = jnp.asarray(
-                self.enclosure.evaluation_error
-                + self.enclosure.lipschitz_upper_bound * radius,
+                self.enclosure.field.evaluation_error
+                + self.enclosure.field.lipschitz_upper_bound * radius,
                 dtype=sampled.dtype,
             )
             lower = jnp.where(active, sampled - error, 0.0)

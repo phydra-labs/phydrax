@@ -228,6 +228,55 @@ reference iterates as JAX inputs. Its paired evaluation returns physical
 points, Jacobians, left inverses, determinant/measure, and validity margins;
 curved particle location and other consumers must reuse this map.
 
+## Field views
+
+`prepare_finite_element_field_reconstruction(discretization, field)` turns one
+scalar-basis H1 or L2 field into a `PreparedFieldReconstruction`. Evaluation
+uses native tabulation and oriented DOF routes: values and first physical
+derivatives are exact inside each cell, the regularity is `C^0` (H1) or
+`C^-1` (L2) with polynomial pieces of the element degree on affine cells, and
+the coefficient adjoint is the exact transpose scatter
+(`reconstruction.transpose`, `reconstruction.duality_evidence`).
+
+Arbitrary points on triangle and tetrahedron blocks are located by a
+`PreparedSimplicialCellLocator`; every containing cell is reported, and no
+nearest cell is ever substituted. Other cell kinds need an explicit
+`AbstractCellLocator` inverse provider; their own quadrature and node points
+remain available through `prepare_finite_element_point_interpolation`, which
+also evaluates physical derivatives with `derivative_axis=`.
+
+A view binds coefficients to an explicit, equivalent `GeometryDomain`:
+
+```python
+reconstruction = phx.discretization.fem.prepare_finite_element_field_reconstruction(
+    discretization, "u"
+)
+domain = phx.domain.GeometryDomain(reconstruction.support_geometry, label="x")
+view = phx.discretization.DiscreteFieldFunctionView(
+    reconstruction, coefficients, domain, variable="x"
+)
+u = view.as_domain_function()
+du = phx.operators.grad(u, var="x")
+```
+
+The support geometry of an affine simplicial mesh is derived from the mesh; an
+explicit analytic `support_geometry` is accepted when the mesh evidences that
+it covers it (vertices inside, equal measure). `C^0` gradients are defined in
+cell interiors only: at a point shared by several cells the gradient raises
+`ValueError` (`FieldQueryStatus.SIDE_REQUIRED`), and higher orders than the
+tabulation provides are refused instead of being differentiated generically.
+Facet gradients use a side-bound trace:
+
+```python
+owner = view.trace(facet_points, side="owner", cell_ids=owner_cells)
+neighbor = view.trace(facet_points, side="neighbor", cell_ids=neighbor_cells)
+flux_jump = phx.operators.grad(owner, var="x") - phx.operators.grad(neighbor, var="x")
+```
+
+`side="average"` averages every containing cell's limit. Views compose with
+other domain fields through ordinary `DomainFunction` algebra; see
+[Domains](guides_domain.md#discrete-field-views).
+
 ## Current limits
 
 Execution remains single-device unless a caller supplies a JAX named-axis

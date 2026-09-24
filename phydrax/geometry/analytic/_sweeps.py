@@ -56,6 +56,8 @@ def _extrusion_certificate(certificate: FieldCertificate) -> FieldCertificate:
         validity_region=certificate.validity_region,
         parameter_differentiable=certificate.parameter_differentiable,
         provenance=(*certificate.provenance, "straight_extrusion"),
+        lipschitz_upper_bound=1.0 if exact else None,
+        evaluation_error=certificate.evaluation_error if exact else None,
     )
 
 
@@ -72,6 +74,8 @@ def _revolution_certificate(certificate: FieldCertificate) -> FieldCertificate:
         validity_region="profile remains in the non-negative radial half-plane",
         parameter_differentiable=certificate.parameter_differentiable,
         provenance=(*certificate.provenance, "axisymmetric_revolution"),
+        lipschitz_upper_bound=1.0 if exact else None,
+        evaluation_error=certificate.evaluation_error if exact else None,
     )
 
 

@@ -30,8 +30,6 @@ class ExactSDFEnclosureCertificate(Protocol):
     """Structural exact-SDF enclosure data owned by the geometry package."""
 
     field: Any
-    evaluation_error: float
-    lipschitz_upper_bound: float
 
     @property
     def certifies_global_enclosure(self) -> bool: ...
@@ -232,8 +230,8 @@ class MACExactSDFMeasurePlan(StrictModule, NonTrainableState):
                     "sign": certificate.field.sign_reliability.value,
                     "distance": certificate.field.distance_semantics.value,
                     "validity": certificate.field.validity_region,
-                    "evaluation_error": certificate.evaluation_error,
-                    "lipschitz": certificate.lipschitz_upper_bound,
+                    "evaluation_error": certificate.field.evaluation_error,
+                    "lipschitz": certificate.field.lipschitz_upper_bound,
                 },
                 "subdivisions": list(counts),
                 "maximum_measure_error_fraction": maximum_error,
@@ -255,8 +253,8 @@ class MACExactSDFMeasurePlan(StrictModule, NonTrainableState):
         if phi.shape != points.shape[:-1]:
             raise ValueError("Exact SDF must return one value per enclosure point.")
         uncertainty = (
-            self.certificate.lipschitz_upper_bound * radii
-            + self.certificate.evaluation_error
+            self.certificate.field.lipschitz_upper_bound * radii
+            + self.certificate.field.evaluation_error
         )
         fluid = phi - uncertainty >= 0.0
         solid = (~fluid) & (phi + uncertainty <= 0.0)

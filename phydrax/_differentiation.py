@@ -448,6 +448,34 @@ class DerivativeRegularity(StrictModule, NonTrainableState):
             )
         return GradientLevel.ALMOST_EVERYWHERE, conditions
 
+    def differentiate(self, order: int, /) -> DerivativeRegularity:
+        """Regularity of the order-`order` value derivative of this map.
+
+        The derivative is the classical derivative inside pieces; singular parts on
+        the non-smooth locus are not represented (see `admits_order`). Continuity
+        drops by `order` (to at most `-1`), polynomial degree bounds drop by
+        `order`, and a proven-degenerate order raises `ValueError`.
+        """
+        order_ = _derivative_order(order)
+        level, _ = self.admits_order(order_)
+        if level is GradientLevel.NONE:
+            raise ValueError(
+                f"An order-{order_} derivative of this regularity is degenerate."
+            )
+        continuity = (
+            "smooth" if self.continuity == "smooth" else max(self.continuity - order_, -1)
+        )
+        degree = (
+            None if self.pieces != "polynomial" else max(self.degree_bound - order_, 0)
+        )
+        return DerivativeRegularity(
+            continuity=continuity,
+            pieces=self.pieces,
+            degree_bound=degree,
+            conditions=self.conditions,
+            support=self.support,
+        )
+
     def add(self, other: DerivativeRegularity, /) -> DerivativeRegularity:
         """Regularity of a sum or juxtaposition: the maximum degree bound."""
         return self._combine(other, max)
