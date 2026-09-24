@@ -218,12 +218,14 @@ def prepare_functional_correction(
         terms=tuple(scaled_terms),
         evaluation_terms=solver.evaluation_terms,
         enforcement=solver.enforcement,
+        regularity_policy=solver.regularity_policy,
     )
     physical_solver = FunctionalSolver(
         functions=composed,
         terms=solver.terms,
         evaluation_terms=solver.evaluation_terms,
         enforcement=solver.enforcement,
+        regularity_policy=solver.regularity_policy,
     )
     return FunctionalCorrectionProblem(
         training_solver,

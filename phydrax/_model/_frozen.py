@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from .._trainable import ExplicitFreeze
 from ._array import AbstractArrayModel
+from ._component import ModelExecutionContract
 
 
 class FrozenModel(AbstractArrayModel, ExplicitFreeze):
@@ -22,7 +23,13 @@ class FrozenModel(AbstractArrayModel, ExplicitFreeze):
     out_size: int | tuple[int, ...] | Literal["scalar"]
     _input_binding = staticmethod(lambda wrapper: wrapper.model.input_binding())
     _delegated_methods = frozenset(
-        {"decision_function", "predict", "predict_log_proba", "predict_proba"}
+        {
+            "decision_function",
+            "model_ports",
+            "predict",
+            "predict_log_proba",
+            "predict_proba",
+        }
     )
 
     def __init__(self, model: AbstractArrayModel, /):
@@ -40,6 +47,10 @@ class FrozenModel(AbstractArrayModel, ExplicitFreeze):
             raise AttributeError(name)
         model = object.__getattribute__(self, "model")
         return getattr(model, name)
+
+    def model_execution_contract(self) -> ModelExecutionContract:
+        """Return the wrapped model's contract; freezing changes no evaluation claim."""
+        return self.model.model_execution_contract()
 
     def as_trainable(self, /) -> AbstractArrayModel:
         """Return the wrapped model without copying its array leaves."""

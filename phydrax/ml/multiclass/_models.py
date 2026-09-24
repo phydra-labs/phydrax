@@ -13,6 +13,7 @@ from jaxtyping import Array
 
 from ..._differentiation import (
     DerivativeContract,
+    DerivativeRegularity,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
@@ -30,10 +31,43 @@ from .._contracts import (
     LogProbabilityModel,
     ML_INFEASIBLE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 from .._sparse_features import SparseFeatures
 from ..discriminant._models import _labels_for
+
+
+# Input features, which a classifier chain augments with its link outputs.
+_FEATURES = DerivativeContract(
+    (SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.smooth(degree_bound=1),
+)
+
+# `jnp.clip` of a probability before its logit: a C^0 map with smooth pieces.
+_CLIPPED_LOGIT = DerivativeContract(
+    (SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE),),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.piecewise_smooth(continuity=0),
+)
+
+# Sigmoid probabilities appended by a smooth classifier chain.
+_SIGMOID_LINK = DerivativeContract.smooth((DerivativeSurface.INPUT,))
+
+# Thresholded labels appended by an exact classifier chain.
+_HARD_LINK = DerivativeContract(
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.piecewise_polynomial(continuity=-1, degree_bound=0),
+)
+
+# Sigmoid, or softplus evidence and softmax, of the stacked binary scores.
+_PROBABILITIES = DerivativeContract(
+    (SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.smooth(),
+    nondifferentiable_outputs=("predict", "predict_indices"),
+)
 
 
 class CompositionDiagnostics(StrictModule):
@@ -117,6 +151,38 @@ def _binary_score(model: AbstractArrayModel, x: Any) -> Array:
     return jnp.log(clipped) - jnp.log1p(-clipped)
 
 
+def _score_contract(model: AbstractArrayModel) -> DerivativeContract:
+    """Prediction contract of `_binary_score(model, ·)`.
+
+    A decision function or log-probability is a smooth reparametrization of the
+    child's probabilities, so it shares the child's contract; plain probabilities
+    are clipped before their logit.
+    """
+    contract = model.model_execution_contract().derivative
+    if isinstance(_protocol_model(model), DecisionFunctionModel | LogProbabilityModel):
+        return contract
+    return contract.compose(_CLIPPED_LOGIT)
+
+
+def _parallel_contract(models: tuple[AbstractArrayModel, ...]) -> DerivativeContract:
+    """Probabilities from the stacked binary scores of parallel components."""
+    scores = tuple(_score_contract(model) for model in models)
+    return scores[0].meet(*scores[1:]).compose(_PROBABILITIES)
+
+
+def _chain_contract(
+    models: tuple[AbstractArrayModel, ...], link: DerivativeContract
+) -> DerivativeContract:
+    """Probabilities of a classifier chain whose links append `link(score)`."""
+    features = _FEATURES
+    scores = []
+    for model in models:
+        score = features.compose(_score_contract(model))
+        scores.append(score)
+        features = features.meet(score.compose(link))
+    return scores[0].meet(*scores[1:]).compose(_PROBABILITIES)
+
+
 def _scalar_vocabulary_valid(batch: MLBatch, targets: Array, labels: Array) -> Array:
     target_valid = (
         batch.target_mask
@@ -139,11 +205,10 @@ def _multilabel_domain_valid(batch: MLBatch, targets: Array) -> Array:
 
 
 def _composition_result(
-    model: AbstractArrayModel,
+    model: AbstractFittedModel,
     results: tuple[FitResult, ...],
     *,
     method: str,
-    prediction_inputs: GradientLevel = GradientLevel.SMOOTH,
     semantic_valid: Any = None,
 ) -> FitResult:
     component_valid = jnp.stack(tuple(result.valid for result in results), axis=-1)
@@ -156,15 +221,9 @@ def _composition_result(
             (component_status, semantic_status[..., None]), axis=-1
         )
     diagnostics = CompositionDiagnostics(component_valid, component_status, method=method)
-    contract = DerivativeContract(
+    contract = prediction_fit_contract(
+        model._prediction_contract(),
         (
-            SurfaceDerivative(DerivativeSurface.INPUT, prediction_inputs),
-            SurfaceDerivative(
-                DerivativeSurface.MODEL_PARAMETER,
-                GradientLevel.CONDITIONAL
-                if prediction_inputs is GradientLevel.NONE
-                else GradientLevel.SMOOTH,
-            ),
             SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
             SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
             SurfaceDerivative(
@@ -172,7 +231,6 @@ def _composition_result(
             ),
         ),
         route=DerivativeRoute.DIRECT,
-        nondifferentiable_outputs=("predict", "predict_indices"),
         conditions=("all binary component fits valid", "fixed class vocabulary"),
     )
     return FitResult(
@@ -245,6 +303,9 @@ class OneVsRestModel(AbstractFittedModel):
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         return self.predict_proba(x)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _parallel_contract(self.models)
 
 
 class OneVsRestRecipe(AbstractRecipe):
@@ -346,6 +407,9 @@ class OneVsOneModel(AbstractFittedModel):
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         return self.predict_proba(x)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _parallel_contract(self.models)
 
 
 class OneVsOneRecipe(AbstractRecipe):
@@ -451,6 +515,9 @@ class OutputCodeModel(AbstractFittedModel):
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         return self.predict_proba(x)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _parallel_contract(self.models)
 
 
 class OutputCodeRecipe(AbstractRecipe):
@@ -574,6 +641,9 @@ class MultilabelModel(AbstractFittedModel):
         del key
         return self.predict_proba(x)
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _parallel_contract(self.models)
+
 
 class MultilabelRecipe(AbstractRecipe):
     base_recipe: AbstractRecipe
@@ -695,6 +765,9 @@ class ClassifierChainModel(AbstractFittedModel):
         del key
         return self.predict_proba(x)
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _chain_contract(self.models, _HARD_LINK)
+
 
 class SmoothClassifierChainModel(AbstractFittedModel):
     models: tuple[AbstractArrayModel, ...]
@@ -749,6 +822,9 @@ class SmoothClassifierChainModel(AbstractFittedModel):
         del key
         return self.predict_proba(x)
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _chain_contract(self.models, _SIGMOID_LINK)
+
 
 def _fit_chain(
     base_recipe: AbstractRecipe, batch: MLBatch, key: Any, *, smooth: bool
@@ -787,7 +863,7 @@ def _fit_chain(
         )
     )
     models = tuple(result.as_trainable() for result in result_tuple)
-    model: AbstractArrayModel
+    model: AbstractFittedModel
     if smooth:
         model = SmoothClassifierChainModel(models, schema, in_size=batch.feature_count)
     else:
@@ -796,7 +872,6 @@ def _fit_chain(
         model,
         result_tuple,
         method="smooth-classifier-chain" if smooth else "classifier-chain",
-        prediction_inputs=GradientLevel.SMOOTH if smooth else GradientLevel.NONE,
         semantic_valid=_multilabel_domain_valid(batch, targets),
     )
 

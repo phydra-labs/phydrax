@@ -9,8 +9,11 @@ from typing import Any, ClassVar
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from .._differentiation import DerivativeRegularity
 from .._doc import DOC_KEY0
 from .._model import AbstractArrayModel, ModelBinding, ModelObjectiveProvider
+from .._model._component import ModelExecutionContract
+from ._contracts import network_execution_contract
 from ._keys import EvalKey
 
 
@@ -57,6 +60,17 @@ class _AbstractBaseModel(AbstractArrayModel, ModelObjectiveProvider):
         from ._loss import add_model_loss
 
         return add_model_loss(self, penalty, weight=weight, label=label)
+
+    def model_execution_contract(self) -> ModelExecutionContract:
+        """Return the network's execution contract from its declared regularity.
+
+        See `network_execution_contract`; families declare `_value_regularity`.
+        """
+        return network_execution_contract(self, self._value_regularity())
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        """Declared value regularity of this network (`None`: undeclared)."""
+        return None
 
 
 class _AbstractStructuredInputModel(_AbstractBaseModel):

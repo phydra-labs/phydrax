@@ -17,19 +17,18 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._model import (
-    AbstractArrayModel,
-    StructuredDerivativeProvider,
-    TRIAL_SPACE_CERTIFICATE_KEY,
-)
+from ..._model import StructuredDerivativeProvider, TRIAL_SPACE_CERTIFICATE_KEY
 from ...metrix.clifford import (
     basis_blade_product,
     CliffordAlgebraSpec,
     CliffordBladeLayout,
 )
 from ._core import (
+    _AbstractTrialSpaceField,
+    _trial_space_regularity,
     AbstractTrefftzBasis,
     SimilarityNormalization,
     TrefftzResourceBudget,
@@ -342,8 +341,11 @@ class MonogenicPolynomialBasis(AbstractTrefftzBasis):
             )
         return jnp.concatenate(features, axis=0)
 
+    def _value_regularity(self) -> DerivativeRegularity:
+        return _trial_space_regularity(self.certificate, degree_bound=self.maximum_degree)
 
-class LinearMonogenicField(AbstractArrayModel, StructuredDerivativeProvider):
+
+class LinearMonogenicField(_AbstractTrialSpaceField, StructuredDerivativeProvider):
     """Trainable real coefficients over a fixed monogenic multivector basis."""
 
     basis: MonogenicPolynomialBasis
@@ -410,6 +412,9 @@ class LinearMonogenicField(AbstractArrayModel, StructuredDerivativeProvider):
                 self.basis.layout,
             ),
         }
+
+    def _value_regularity(self) -> DerivativeRegularity:
+        return self.basis._value_regularity()
 
     def try_structured_partial(
         self,

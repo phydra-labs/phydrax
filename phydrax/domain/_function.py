@@ -18,7 +18,7 @@ import phydrax.ein as ein
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from .._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS
+from .._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS, PortBindingEvidence
 from .._strict import StrictModule
 from .._trainable import (
     ArrayRole,
@@ -36,17 +36,26 @@ from ._domain import Domain
 from ._evaluation import BatchEvaluator, evaluate_domain_function
 
 
+# Metadata key under which `Domain.Model` records the `PortBindingEvidence` of a
+# model with intrinsic ports. Like construction certificates, it describes the
+# bound model's value, so transforms producing a different value drop it.
+PORT_BINDING_METADATA_KEY = "port_binding"
+_BOUND_MODEL_METADATA_KEYS = MODEL_CONSTRUCTION_CERTIFICATE_KEYS | {
+    PORT_BINDING_METADATA_KEY
+}
+
+
 def _drop_model_construction_certificates(
     metadata: Mapping[str, Any],
     /,
 ) -> frozendict[str, Any]:
-    if not any(name in metadata for name in MODEL_CONSTRUCTION_CERTIFICATE_KEYS):
+    if not any(name in metadata for name in _BOUND_MODEL_METADATA_KEYS):
         return frozendict(metadata)
     return frozendict(
         {
             name: value
             for name, value in metadata.items()
-            if name not in MODEL_CONSTRUCTION_CERTIFICATE_KEYS
+            if name not in _BOUND_MODEL_METADATA_KEYS
         }
     )
 
@@ -515,6 +524,11 @@ class DomainFunction(StrictModule):
     def depends_on(self, var: str, /) -> bool:
         """Return whether this function depends on the labeled variable `var`."""
         return var in self.deps
+
+    @property
+    def port_binding(self) -> PortBindingEvidence | None:
+        """`PortBindingEvidence` recorded by `Domain.Model`, or `None` when unbound."""
+        return self.metadata.get(PORT_BINDING_METADATA_KEY)
 
     def promote(self, new_domain: Domain, /) -> "DomainFunction":
         r"""View this function as defined on a larger domain.

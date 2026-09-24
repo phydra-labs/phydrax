@@ -7,10 +7,16 @@ from typing import Literal
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0
 from ..._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..._contracts import compose_regularity, model_regularity, product_regularity
 from ..._keys import EvalKey, split_eval_key
 from ..._utils import _get_size
+
+
+# d / |d| (zero at d = 0) is smooth away from the origin and jumps there.
+_UNIT_DIRECTION = DerivativeRegularity.piecewise_smooth(continuity=-1)
 
 
 class MagnitudeDirectionModel(_AbstractStructuredInputModel):
@@ -99,3 +105,9 @@ class MagnitudeDirectionModel(_AbstractStructuredInputModel):
             mag = jnp.expand_dims(mag, axis=-1)
 
         return mag * unit_dir
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        direction = model_regularity(self.direction_model)
+        if _get_size(self.out_size) != 1:
+            direction = compose_regularity(direction, _UNIT_DIRECTION)
+        return product_regularity((model_regularity(self.magnitude_model), direction))

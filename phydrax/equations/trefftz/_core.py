@@ -15,10 +15,12 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
-from ..._differentiation import AbstractConstructionCertificate
+from ..._differentiation import AbstractConstructionCertificate, DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._model import AbstractArrayModel, TRIAL_SPACE_CERTIFICATE_KEY
+from ..._model._array import native_parameter_precision, value_derivative_contract
+from ..._model._component import ModelExecutionContract, RandomnessContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -346,6 +348,20 @@ class TrialSpaceCertificate(AbstractConstructionCertificate):
         )
 
 
+def _trial_space_regularity(
+    certificate: TrialSpaceCertificate,
+    /,
+    *,
+    degree_bound: int | None = None,
+) -> DerivativeRegularity:
+    # Solutions of the certified homogeneous elliptic equations are real-analytic
+    # wherever the equation holds: everywhere, or off the singular source support.
+    support = (
+        None if certificate.validity_region == "all-space" else "off-source-singularities"
+    )
+    return DerivativeRegularity.smooth(degree_bound=degree_bound, support=support)
+
+
 def trial_target_fingerprint(
     points: ArrayLike,
     ambient_dimension: int,
@@ -486,8 +502,29 @@ class AbstractTrefftzBasis(StrictModule, NonTrainableState):
     def evaluate(self, point: ArrayLike, /) -> Array:
         raise NotImplementedError
 
+    def _value_regularity(self) -> DerivativeRegularity:
+        return _trial_space_regularity(self.certificate)
 
-class LinearTrefftzField(AbstractArrayModel):
+
+class _AbstractTrialSpaceField(AbstractArrayModel):
+    """Deterministic array model certified by one `TrialSpaceCertificate`."""
+
+    @abc.abstractmethod
+    def model_metadata(self) -> Mapping[str, Any]:
+        raise NotImplementedError
+
+    def model_execution_contract(self) -> ModelExecutionContract:
+        return self._execution_contract(
+            value_derivative_contract(self._value_regularity()),
+            precision=native_parameter_precision(self),
+            randomness=RandomnessContract("deterministic"),
+        )
+
+    def _value_regularity(self) -> DerivativeRegularity:
+        return _trial_space_regularity(self.model_metadata()[TRIAL_SPACE_CERTIFICATE_KEY])
+
+
+class LinearTrefftzField(_AbstractTrialSpaceField):
     """Trainable real linear combination of one fixed Trefftz basis."""
 
     basis: AbstractTrefftzBasis
@@ -543,6 +580,9 @@ class LinearTrefftzField(AbstractArrayModel):
                 field_shape
             )
         }
+
+    def _value_regularity(self) -> DerivativeRegularity:
+        return self.basis._value_regularity()
 
 
 __all__ = [

@@ -14,7 +14,6 @@ from jaxtyping import Array
 import phydrax.ein as ein
 
 from ..._differentiation import (
-    DerivativeContract,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
@@ -27,6 +26,7 @@ from .._contracts import (
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from ._common import (
     active_data,
@@ -196,12 +196,9 @@ class SpectralClustering(AbstractRecipe):
             degeneracy=disconnected,
             method="spectral-clustering",
         )
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),
@@ -213,7 +210,7 @@ class SpectralClustering(AbstractRecipe):
                 ),
             ),
             route=DerivativeRoute.SPECTRAL,
-            nondifferentiable_outputs=("hard_labels", "eigenvector ordering"),
+            nondifferentiable_outputs=("eigenvector ordering",),
             conditions=(
                 "separated retained eigenspace",
                 "fixed graph support",
@@ -371,10 +368,10 @@ class AgglomerativeClustering(AbstractRecipe):
             converged=final_count == self.cluster_count,
             method="agglomerative-clustering",
         )
-        contract = DerivativeContract(
-            (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             route=DerivativeRoute.STOPPED,
-            nondifferentiable_outputs=("labels", "merge tree"),
+            nondifferentiable_outputs=("merge tree",),
             conditions=("deterministic lexicographic merge ties",),
         )
         return FitResult(

@@ -15,8 +15,16 @@ from phydrax.applications.geophysics import (
     HybridPressureCoordinate,
     TemporalSupport,
 )
+from phydrax.discretization import DiscreteFieldSpace, TensorDofLayout
 from phydrax.dynamics import StateLayout
-from phydrax.units import KELVIN, KILOPASCAL, ONE, PASCAL
+from phydrax.linalg import ArraySpace
+from phydrax.nn.operator import (
+    OperatorFieldSpec,
+    OperatorProblemSpec,
+    OperatorQuerySpec,
+    OperatorTask,
+)
+from phydrax.units import KELVIN, KILOPASCAL, ONE, PASCAL, PRESSURE, TEMPERATURE
 
 
 def test_exchange_compatibility_is_physical_not_local_storage_or_unit_scale():
@@ -60,6 +68,58 @@ def test_archive_binding_requires_actual_original_storage_and_untampered_semanti
         GeophysicalFieldBinding.from_dict(forged, state_layout=layout)
     with pytest.raises(ValueError, match="component"):
         GeophysicalFieldBinding(quantity, state_layout=layout, components=("missing",))
+
+
+def _column_task(dimension):
+    return OperatorTask(
+        "column-task",
+        fields=(
+            OperatorFieldSpec("state", role="source", dimension=dimension),
+            OperatorFieldSpec(
+                "temperature", role="target", query_name="column", dimension=dimension
+            ),
+        ),
+        dimension_basis=("temperature", "mass", "length", "time"),
+        queries=(
+            OperatorQuerySpec(
+                "column", geometry_kind="point_cloud", coordinate_components=("level",)
+            ),
+        ),
+        problem=OperatorProblemSpec(
+            source_query_relation="coincident", query_is_fixed=False
+        ),
+    )
+
+
+def test_binding_checks_quantity_dimension_against_declaring_owner_port():
+    quantity = GeophysicalQuantity("temperature", "temperature", KELVIN)
+    binding = GeophysicalFieldBinding(
+        quantity, operator_task=_column_task(TEMPERATURE), field_name="temperature"
+    )
+    assert binding.dimensions_verified
+    with pytest.raises(ValueError, match="dimension does not match"):
+        GeophysicalFieldBinding(
+            quantity, operator_task=_column_task(PRESSURE), field_name="temperature"
+        )
+
+
+def test_owners_without_declared_dimensions_record_unverified_bindings():
+    quantity = GeophysicalQuantity("temperature", "temperature", KELVIN)
+    layout = StateLayout((2,), component_names=("temperature", "pressure"))
+    state = GeophysicalFieldBinding(
+        quantity, state_layout=layout, components=("temperature",)
+    )
+    space = DiscreteFieldSpace(
+        "temperature",
+        "physical-columns",
+        TensorDofLayout(("column",), (2,)),
+        ArraySpace((2,), dtype=jnp.float32),
+        representation="point_value",
+    )
+    field = GeophysicalFieldBinding(quantity, field_space=space)
+    assert not state.dimensions_verified
+    assert not field.dimensions_verified
+    assert "dimensions_verified" not in state.to_dict()
 
 
 @pytest.mark.parametrize(

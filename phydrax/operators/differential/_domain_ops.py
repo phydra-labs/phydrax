@@ -46,6 +46,7 @@ from ._hooks import (
 )
 from ._jet import jet_d1_d2, jet_dn, jet_dn_multi
 from ._requests import (
+    admit_direct_derivative,
     DerivativeRequest,
     evaluate_fused_coordinate_derivatives,
     plan_derivative_execution,
@@ -2490,6 +2491,7 @@ def partial_n(
     if order_i == 0:
         return u
     _ensure_ad_engine_backend(backend, ad_engine)
+    admit_direct_derivative(u, var, order_i)
     planned_strategy = get_derivative_execution_strategy(u.func, var)
     if (
         backend == "ad"

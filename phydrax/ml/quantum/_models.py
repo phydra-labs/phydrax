@@ -14,6 +14,14 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._fingerprint import canonical_fingerprint
 from ..._model import AbstractArrayModel, register_artifact_value
 from ..._strict import StrictModule
@@ -43,6 +51,37 @@ from .._schema import AbstractFittedModel
 
 
 CircuitGradientMethod: TypeAlias = Literal["autodiff", "parameter-shift"]
+
+
+def _circuit_stage(*conditions: str) -> DerivativeContract:
+    # Fixed unitaries and channels interleaved with Pauli rotations make the exact
+    # dense state, and every local expectation, trigonometric polynomials of the
+    # rotation angles.
+    return DerivativeContract(
+        (SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),),
+        route=DerivativeRoute.DIRECT,
+        regularity=DerivativeRegularity.smooth(),
+        conditions=(
+            "The dense quantum program and local observables remain valid.",
+            *conditions,
+        ),
+    )
+
+
+_CIRCUIT_STAGE = _circuit_stage()
+_PARAMETER_SHIFT_CIRCUIT_STAGE = _circuit_stage(
+    "Parameter-shift mode certifies first-order Pauli-angle derivatives only."
+)
+# Sigmoid of an affine readout of the circuit expectations.
+_LOGISTIC_HEAD = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.smooth(),
+    nondifferentiable_outputs=("predict",),
+)
 
 
 class _DenseCircuitExecution(StrictModule, NonTrainableState):
@@ -155,6 +194,11 @@ class DenseCircuitStateModel(AbstractFittedModel):
             }
         )
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return self.angle_model.model_execution_contract().derivative.compose(
+            _CIRCUIT_STAGE
+        )
+
     def evaluate(
         self,
         x: Any,
@@ -240,6 +284,13 @@ class DenseCircuitExpectationModel(AbstractFittedModel):
             }
         )
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return self.angle_model.model_execution_contract().derivative.compose(
+            _PARAMETER_SHIFT_CIRCUIT_STAGE
+            if self.gradient_method == "parameter-shift"
+            else _CIRCUIT_STAGE
+        )
+
     def evaluate(
         self,
         x: Any,
@@ -321,6 +372,9 @@ class BinaryVariationalCircuitClassifier(AbstractFittedModel):
         self.positive_label = labels[1]
         self.in_size = feature_model.in_size
         self.out_size = "scalar"
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return self.feature_model._prediction_contract().compose(_LOGISTIC_HEAD)
 
     def _logit_one(self, x: Array, /, *, key: Any = None) -> Array:
         features = self.feature_model(x, key=key)

@@ -27,6 +27,7 @@ from ._common import (
     _canonical_feature_output,
     _combine_results,
     _composition_binding,
+    _declared_contract,
     _feature_width,
     _predict_values,
     _prepare_input,
@@ -325,6 +326,13 @@ class FittedTransformedTargetRegressor(AbstractFittedModel):
     @property
     def regressor_result(self) -> FitResult:
         return self.fit_results[1]
+
+    def _prediction_contract(self) -> DerivativeContract | None:
+        regressor = _declared_contract(self.regressor)
+        transform = _declared_contract(self.transformer)
+        if regressor is None or transform is None:
+            return None
+        return regressor.compose(_inverse_target_view(transform))
 
     def __call__(self, x: Any, /, *, key: Any = None):
         regressor_key, inverse_key = _split_key(key, 2)

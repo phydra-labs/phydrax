@@ -11,8 +11,10 @@ import jax.nn as jnn
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._uncertainty import UncertaintySource, validate_uncertainty_source
+from phydrax.nn._contracts import model_regularity
 from phydrax.nn._keys import EvalKey
 from phydrax.nn.operator.capabilities import ConfiguredOperatorContract
 from phydrax.nn.operator.data import OperatorBatch, OperatorOutputSpec
@@ -174,6 +176,10 @@ class GaussianFunctionOperator(AbstractProbabilisticOperatorModel):
             case_shape=batch.case_shape,
             uncertainty_source=self.uncertainty_source,
         )
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # The evaluated value is the mean, a channel of the base parameters.
+        return model_regularity(self.base)
 
 
 def gaussian_operator_nll(

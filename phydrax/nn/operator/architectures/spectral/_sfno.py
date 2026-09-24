@@ -13,6 +13,7 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._model import register_artifact_value
 from phydrax._strict import StrictModule
@@ -20,8 +21,10 @@ from phydrax.discretization import (
     SphericalHarmonicPlan,
     SphericalSpectralDiscretization,
 )
+from phydrax.nn._contracts import AFFINE, compose_regularity, sum_regularity
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
 from phydrax.nn._utils import _get_size
+from phydrax.nn.activations import activation_regularity
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
@@ -124,6 +127,14 @@ class _SFNOBlock(StrictModule):
     ) -> Array:
         hidden = self.spectral(values, plan) + self.pointwise(values, key=key)
         return (values + jax.nn.gelu(hidden)) / jnp.sqrt(2.0)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Spherical harmonic analysis, mixing, and synthesis are linear.
+        hidden = compose_regularity(
+            sum_regularity((AFFINE, self.pointwise._value_regularity())),
+            activation_regularity(jax.nn.gelu),
+        )
+        return sum_regularity((AFFINE, hidden))
 
 
 def _validate_axis(
@@ -319,6 +330,13 @@ class SFNO(AbstractOperatorModel):
         if not isinstance(x, OperatorBatch):
             raise TypeError("SFNO requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return compose_regularity(
+            self.lift._value_regularity(),
+            *(block._value_regularity() for block in self.blocks),
+            self.projection._value_regularity(),
+        )
 
 
 register_artifact_value(

@@ -14,7 +14,6 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from ..._differentiation import (
-    DerivativeContract,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
@@ -29,6 +28,7 @@ from .._contracts import (
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._numerics import MetricName
 from ._common import (
@@ -196,20 +196,17 @@ def _fit_result(
     )
     if soft_temperature is None:
         model = HardClusterModel(centers, active, method=method)
-        contract = DerivativeContract(
-            (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             route=DerivativeRoute.STOPPED,
-            nondifferentiable_outputs=("labels", "assignments"),
+            nondifferentiable_outputs=("assignments",),
             conditions=("deterministic lowest-index tie breaking",),
         )
     else:
         model = SoftClusterModel(centers, active, soft_temperature, method=method)
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),
@@ -221,7 +218,6 @@ def _fit_result(
                 ),
             ),
             route=DerivativeRoute.UNROLLED,
-            nondifferentiable_outputs=("hard_labels",),
             conditions=(
                 "positive temperature",
                 "fixed active mask",
@@ -457,10 +453,10 @@ class KMedoids(AbstractRecipe):
             converged=converged,
             method="k-medoids",
         )
-        contract = DerivativeContract(
-            (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             route=DerivativeRoute.STOPPED,
-            nondifferentiable_outputs=("labels", "medoid indices"),
+            nondifferentiable_outputs=("medoid indices",),
             conditions=("deterministic lowest-index tie breaking",),
         )
         return FitResult(
@@ -684,10 +680,10 @@ class MiniBatchKMeans(AbstractRecipe):
             converged=jnp.ones_like(valid),
             method="mini-batch-k-means",
         )
-        contract = DerivativeContract(
-            (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             route=DerivativeRoute.STOPPED,
-            nondifferentiable_outputs=("labels", "sampled mini-batches"),
+            nondifferentiable_outputs=("sampled mini-batches",),
             conditions=("explicit random key", "fixed iteration count"),
         )
         return FitResult(

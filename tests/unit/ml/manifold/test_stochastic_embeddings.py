@@ -182,8 +182,12 @@ def test_fuzzy_graph_embedding_key_transform_jit_vmap_and_gradient_surfaces():
     assert any(jnp.any(jnp.abs(leaf) > 1e-8) for leaf in leaves)
 
     contract = first.derivative_contract
-    assert contract.level(DerivativeSurface.INPUT) is GradientLevel.CONDITIONAL
-    assert contract.level(DerivativeSurface.MODEL_PARAMETER) is GradientLevel.CONDITIONAL
+    # The fuzzy barycentric transform jumps when the hard neighbor set changes.
+    assert contract.level(DerivativeSurface.INPUT) is GradientLevel.NONE
+    assert contract.level(DerivativeSurface.MODEL_PARAMETER) is (
+        GradientLevel.ALMOST_EVERYWHERE
+    )
+    assert contract.regularity.continuity == -1
     assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
     assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
     assert (

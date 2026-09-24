@@ -200,11 +200,16 @@ def run_quick(*, size=31, modes=4, warmup=1, repeats=3):
         },
         queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
     )
+    task = _operator_task()
+    correction_port = task.field_by_name["correction"].value_port()
     trained = phx.nn.operator.training.TrainedOperator(
         _MatrixCorrectionOperator(direct_matrix),
-        _operator_task(),
+        task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "correction"},
+        output_ports={"output": correction_port},
+        port_mapping=phx.PortMapping(
+            outputs=((correction_port.port_id, correction_port.port_id),)
+        ),
         fixed_query_fingerprints={
             "query": template.query("query").geometry_fingerprint()
         },

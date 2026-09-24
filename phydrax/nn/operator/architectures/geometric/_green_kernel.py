@@ -13,8 +13,15 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax.nn._base import _AbstractBaseModel
+from phydrax.nn._contracts import (
+    AFFINE,
+    compose_regularity,
+    product_regularity,
+    sum_regularity,
+)
 from phydrax.nn._keys import EvalKey, split_eval_key
 from phydrax.nn._utils import _get_size
 from phydrax.nn.models._mlp import MLP
@@ -332,6 +339,22 @@ class GreenKernelOperator(AbstractOperatorModel):
         if not isinstance(x, OperatorBatch):
             raise TypeError("GreenKernelOperator requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # The kernels see the source-query distance, whose norm has a cone point
+        # where a query coincides with a source sample.
+        features = sum_regularity(
+            (AFFINE, DerivativeRegularity.piecewise_smooth(continuity=0))
+        )
+        states = (
+            product_regularity(
+                (compose_regularity(features, kernel._value_regularity()), AFFINE)
+            )
+            for kernel in (self.forcing_kernel, self.boundary_kernel)
+        )
+        return compose_regularity(
+            sum_regularity((*states, AFFINE)), self.head._value_regularity()
+        )
 
 
 __all__ = ["GreenKernelOperator"]

@@ -15,6 +15,7 @@ import phydrax.ein as ein
 
 from ..._differentiation import (
     DerivativeContract,
+    DerivativeRegularity,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
@@ -218,6 +219,21 @@ def _input_sample_ndim(values: Array, case_shape: tuple[int, ...], in_size: int)
     return values.ndim - minimum_rank
 
 
+def _contract(route: DerivativeRoute = DerivativeRoute.DIRECT, /) -> DerivativeContract:
+    # The squared Mahalanobis distance is a quadratic form in the input.
+    return DerivativeContract(
+        (
+            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+        ),
+        route=route,
+        regularity=DerivativeRegularity.smooth(degree_bound=2),
+        conditions=("fixed active mask", "positive regularized covariance"),
+    )
+
+
 class CovarianceModel(AbstractFittedModel):
     """Immutable Gaussian covariance geometry; calls return squared Mahalanobis distance."""
 
@@ -264,6 +280,9 @@ class CovarianceModel(AbstractFittedModel):
         self.out_size = "scalar"
         self.case_shape = case_shape
         self.method = str(method)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _contract()
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -385,16 +404,7 @@ def _result(
         diagonal=diagonal,
         method=method,
     )
-    gradient = DerivativeContract(
-        (
-            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
-            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
-            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
-        ),
-        route=route,
-        conditions=("fixed active mask", "positive regularized covariance"),
-    )
+    gradient = _contract(route)
     return FitResult(
         model,
         diagnostics,

@@ -10,8 +10,10 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from .._base import _AbstractBaseModel
+from .._contracts import compose_regularity, product_regularity, sum_regularity
 from .._keys import EvalKey, fold_in_eval_key
 from .._scan import (
     pack_scan_modules,
@@ -19,8 +21,21 @@ from .._scan import (
     stack_scan_dynamics,
 )
 from .._utils import _canonical_size, _identity, SizeLike
+from ..activations import activation_regularity
 from ..layers._dropout import _dropout_probabilities, Dropout
 from ..layers._linear import Linear
+
+
+def _gated_regularity(
+    gate: DerivativeRegularity | None,
+    encoder_u: DerivativeRegularity | None,
+    encoder_v: DerivativeRegularity | None,
+    /,
+) -> DerivativeRegularity | None:
+    # (1 - g) * u + g * v: an affine map of the gate times each encoder, summed.
+    return sum_regularity(
+        (product_regularity((gate, encoder_u)), product_regularity((gate, encoder_v)))
+    )
 
 
 class ModifiedMLP(_AbstractBaseModel):
@@ -184,6 +199,22 @@ class ModifiedMLP(_AbstractBaseModel):
     @staticmethod
     def _mix(gate: Array, encoder_u: Array, encoder_v: Array, /) -> Array:
         return (1.0 - gate) * encoder_u + gate * encoder_v
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Dropout is affine in the value; every hidden layer is gated by the
+        # persistent input encoders.
+        encoder_u = self.encoder_u._value_regularity()
+        encoder_v = self.encoder_v._value_regularity()
+        first, *repeated, output = self.layers
+        hidden = _gated_regularity(first._value_regularity(), encoder_u, encoder_v)
+        for layer in repeated:
+            gate = compose_regularity(hidden, layer._value_regularity())
+            hidden = _gated_regularity(gate, encoder_u, encoder_v)
+        return compose_regularity(
+            hidden,
+            output._value_regularity(),
+            activation_regularity(self.final_activation),
+        )
 
     def __call__(
         self,

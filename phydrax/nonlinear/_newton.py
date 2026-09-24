@@ -49,6 +49,7 @@ from ..linalg import (
     solve_recycled,
     TolerancePolicy,
 )
+from ._components import admit_residual_components
 from ._linearization import (
     _jacobian_solve_direction,
     _jacobian_solve_operator,
@@ -820,8 +821,10 @@ def _initial_root_state(
     trust_radius: float,
     args: Any,
     precision: NonlinearPrecisionPolicy,
+    termination: NonlinearTermination,
     /,
 ) -> tuple[NonlinearSystemProblem, PyTree[Array], _RootState, Any]:
+    admit_residual_components(problem, args, implicit=False)
     state = problem.validate_state(initial_state)
     prepared_jacobian = prepare_jacobian(problem, state, jacobian_policy, args)
     if prepared_jacobian.operator.source.size != prepared_jacobian.operator.target.size:
@@ -830,7 +833,10 @@ def _initial_root_state(
     problem = problem.bind_spaces(state, residual)
     state_space = _bound_space(problem.state_space, "state")
     residual_space = _bound_space(problem.residual_space, "residual")
-    precision.validate_trees(state, residual)
+    _, residual_dtype = precision.validate_trees(state, residual)
+    precision.validate_tolerance(
+        termination.absolute_residual, residual_dtype=residual_dtype
+    )
     precision.validate_accumulation_space(state_space)
     precision.validate_accumulation_space(residual_space)
     residual_norm = _space_norm(residual_space, residual, precision)
@@ -1636,6 +1642,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
                 jnp.nan,
                 args,
                 precision_,
+                termination,
             )
         else:
             problem, state, run, prepared_jacobian = _prepared_start
@@ -2096,6 +2103,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                 self.trust_region.initial_radius,
                 args,
                 precision_,
+                termination,
             )
         else:
             problem, state, run, prepared_jacobian = _prepared_start

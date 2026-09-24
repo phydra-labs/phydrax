@@ -40,6 +40,7 @@ from .._contracts import (
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from ._base import (
     AbstractLinearRegressorModel,
@@ -51,7 +52,6 @@ from ._base import (
     prepare_supervised,
     PreparedBatch,
     restore_case_shape,
-    unrolled_contract,
     weighted_rank_condition,
 )
 from ._least_squares import _normal_solve
@@ -249,7 +249,7 @@ def _fit_robust_loss(recipe, batch: MLBatch, /, *, family: str) -> FitResult:
             case_shape=prepared.case_shape,
             target_shape=prepared.target_shape,
         ),
-        derivative_contract=unrolled_contract(nonsmooth=True),
+        nonsmooth=True,
     )
 
 
@@ -487,12 +487,9 @@ class QuantileRegressorRecipe(AbstractRecipe):
             case_shape=prepared.case_shape,
             target_shape=prepared.target_shape,
         )
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),
@@ -545,12 +542,11 @@ def _subset_prepared(prepared: PreparedBatch, weights: Array) -> PreparedBatch:
     )
 
 
-def _hard_contract(method: str) -> DerivativeContract:
-    return DerivativeContract(
-        (
-            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
-        ),
+def _hard_contract(
+    model: AbstractLinearRegressorModel, method: str, /
+) -> DerivativeContract:
+    return prediction_fit_contract(
+        model._prediction_contract(),
         route=DerivativeRoute.STOPPED,
         nondifferentiable_outputs=(
             "selected_subset",
@@ -698,7 +694,7 @@ class RANSACRegressorRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="ransac-hard-consensus-refit",
-            derivative_contract=_hard_contract("RANSAC"),
+            derivative_contract=_hard_contract(model, "RANSAC"),
         )
 
 
@@ -838,7 +834,7 @@ class TheilSenRegressorRecipe(AbstractRecipe):
             valid=valid_cases,
             status=status_cases,
             method="theil-sen-hard-subset-median",
-            derivative_contract=_hard_contract("Theil-Sen"),
+            derivative_contract=_hard_contract(model, "Theil-Sen"),
         )
 
 

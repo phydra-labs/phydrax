@@ -17,7 +17,21 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
+from ..._admissibility import (
+    AdmissibilityHeader,
+    AdmissibilityReason,
+    DOMAIN_REASON_SHIFT,
+    guard_derivative_validity,
+    reason_bits_where,
+)
+from ..._differentiation import (
+    branch_policy_contract,
+    BranchDifferentiationPolicy,
+    DerivativeContract,
+    DerivativeSurface,
+)
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._identity import SemanticProvenance
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...equations._chemical_mechanism import PreparedChemicalMechanism
@@ -25,6 +39,13 @@ from ...qualification import ReferenceArtifactManifest
 
 
 class LearnedChemicalFallbackReason(IntEnum):
+    """Prioritized fallback code; domain reasons also set header reason bits.
+
+    A domain reason `r` sets bit `DOMAIN_REASON_SHIFT + r` of the
+    `AdmissibilityHeader` reason bits; support, uncertainty, and finiteness use
+    the common `AdmissibilityReason` bits instead.
+    """
+
     NONE = 0
     OUT_OF_SUPPORT = 1
     UNCERTAIN = 2
@@ -32,6 +53,17 @@ class LearnedChemicalFallbackReason(IntEnum):
     NEGATIVE_SPECIES = 4
     INVARIANT_FAILURE = 5
     EXACT_FAILURE = 6
+
+
+# Derivatives of the executed transition with the learned/exact selection frozen.
+_DERIVATIVE_CONTRACT = branch_policy_contract(
+    BranchDifferentiationPolicy.FROZEN_DECISION,
+    surfaces=(DerivativeSurface.PRIMAL_STATE, DerivativeSurface.PHYSICAL_PARAMETER),
+)
+
+
+def _domain_reason_bits(predicate: Array, reason: LearnedChemicalFallbackReason) -> Array:
+    return reason_bits_where(predicate, 1 << (DOMAIN_REASON_SHIFT + int(reason)))
 
 
 class LearnedChemicalFeatureSchema(StrictModule, NonTrainableState):
@@ -98,6 +130,18 @@ class LearnedChemicalFeatureSchema(StrictModule, NonTrainableState):
 
 
 class LearnedChemicalTransitionResult(StrictModule):
+    """Lane-wise learned/exact transition with domain and common evidence.
+
+    `header` is the learned component's admissibility per lane: its margin is
+    the smaller of the feature-support margin and the uncertainty margin, it is
+    eligible exactly where the learned transition was selected, and its reason
+    bits record every failed predicate (not only the prioritized
+    `fallback_reason`). `header.model_id` is the plan's `component_id` and
+    `header.evidence_id` its `plan_id`. Where `derivative_valid` is false the
+    candidate and accepted concentrations keep their primal values but carry
+    NaN derivatives.
+    """
+
     candidate_concentrations: Array
     accepted_concentrations: Array
     learned_concentrations: Array
@@ -110,6 +154,8 @@ class LearnedChemicalTransitionResult(StrictModule):
     charge_residual: Array
     derivative_valid: Array
     successful: Array
+    header: AdmissibilityHeader
+    derivative_contract: DerivativeContract
     plan_id: str = eqx.field(static=True)
 
 
@@ -125,6 +171,7 @@ class LearnedChemicalTransitionPlan(StrictModule, NonTrainableState):
     exact_subcycles: int = eqx.field(static=True)
     exact_iterations: int = eqx.field(static=True)
     invariant_tolerance: float = eqx.field(static=True)
+    component_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -199,6 +246,14 @@ class LearnedChemicalTransitionPlan(StrictModule, NonTrainableState):
         self.exact_subcycles = subcycles
         self.exact_iterations = iterations
         self.invariant_tolerance = tolerance
+        self.component_id = SemanticProvenance(
+            {
+                "kind": "learned-chemical-extent-component",
+                "model_id": identifier,
+                "features": feature_schema.schema_id,
+            },
+            resource_ids={"model_manifest": model_manifest.manifest_id},
+        ).semantic_id
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "learned-chemical-transition-with-exact-fallback",
@@ -354,6 +409,31 @@ class LearnedChemicalTransitionPlan(StrictModule, NonTrainableState):
         derivative_valid = successful & (
             boundary_distance > 32.0 * jnp.finfo(concentration.dtype).eps
         )
+        candidate, accepted = guard_derivative_validity(
+            (candidate, accepted),
+            derivative_valid[..., None],
+            dependencies=(concentration, temperature_, pressure_, step),
+        )
+        reasons = (
+            reason_bits_where(supported, AdmissibilityReason.OUTSIDE_SUPPORT)
+            | reason_bits_where(certain, AdmissibilityReason.UNCERTAINTY_UNRESOLVED)
+            | reason_bits_where(finite_model, AdmissibilityReason.NONFINITE)
+            | _domain_reason_bits(
+                positive, LearnedChemicalFallbackReason.NEGATIVE_SPECIES
+            )
+            | _domain_reason_bits(
+                invariant, LearnedChemicalFallbackReason.INVARIANT_FAILURE
+            )
+            | _domain_reason_bits(
+                ~fallback | exact_success, LearnedChemicalFallbackReason.EXACT_FAILURE
+            )
+        )
+        header = AdmissibilityHeader(
+            jnp.minimum(support_margin, self.maximum_uncertainty - uncertainty),
+            reasons,
+            self.component_id,
+            self.plan_id,
+        )
         return LearnedChemicalTransitionResult(
             candidate,
             accepted,
@@ -367,6 +447,8 @@ class LearnedChemicalTransitionPlan(StrictModule, NonTrainableState):
             charge_residual,
             derivative_valid,
             successful,
+            header,
+            _DERIVATIVE_CONTRACT,
             self.plan_id,
         )
 

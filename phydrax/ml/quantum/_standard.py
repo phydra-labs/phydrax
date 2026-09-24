@@ -13,6 +13,14 @@ import jax.numpy as jnp
 from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike, PRNGKeyArray
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._fingerprint import canonical_fingerprint
 from ..._trainable import NonTrainableState
 from ...operators.quantum._observables import LocalObservable
@@ -144,6 +152,16 @@ class IQPAngleMap(AbstractFittedModel, NonTrainableState):
             }
         )
 
+    def _prediction_contract(self) -> DerivativeContract:
+        # The inputs and their pairwise products, tiled per repetition.
+        return DerivativeContract(
+            (SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),),
+            route=DerivativeRoute.DIRECT,
+            regularity=DerivativeRegularity.smooth(
+                degree_bound=2 if self.pair_indices else 1
+            ),
+        )
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         value = jnp.asarray(x)
@@ -206,6 +224,18 @@ class ReuploadingAngleMap(AbstractFittedModel):
         self.feature_indices = indices
         self.in_size = size
         self.out_size = len(indices)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
+            regularity=DerivativeRegularity.smooth(degree_bound=1),
+        )
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key

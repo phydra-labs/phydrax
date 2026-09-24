@@ -319,6 +319,49 @@ def u_mean_in_t(inputs):
 Reduced layouts describe whole dependency blocks, so they require singleton
 sampling blocks; pointwise evaluation of such a model raises `ValueError`.
 
+### Binding models with intrinsic ports
+
+Each dense coordinate label publishes a `ValuePort` through
+`domain.value_port(label)` (`domain.value_ports()` lists them in label order).
+Ports are label-scoped: equal coordinate schemas under different labels never
+share a port. Domains declare no coordinate units, frames, normalizations, or
+spaces.
+
+Plain neural networks carry no scientific ports and bind as above. A model that
+declares intrinsic ports (a `PortProvider`, such as a fitted `phx.ml` executable,
+also when frozen) requires `port_mapping=phx.PortMapping(inputs=...)` binding each
+model input port to the port of one dependency label:
+
+```python
+x_port, t_port = domain.value_port("x"), domain.value_port("t")
+width = len(x_port.component_ids) + len(t_port.component_ids)
+samples = jr.uniform(jr.key(1), (32, width))
+fitted = phx.ml.fit(
+    phx.ml.linear.RidgeRecipe(alpha=1e-6),
+    samples,
+    jnp.sum(samples, axis=-1),
+    feature_schema=phx.ml.FeatureSchema.from_ports((x_port, t_port)),
+)
+mapping = phx.PortMapping(
+    inputs=[(x_port.port_id, x_port.port_id), (t_port.port_id, t_port.port_id)]
+)
+closure = domain.Model("x", "t", port_mapping=mapping)(fitted.model)
+evidence = closure.port_binding
+```
+
+Binding is checked before any evaluation. Semantic ID, components, event shape,
+representation, and variance must match exactly; dimensions, semantic axes,
+frames, normalizations, and spaces must match when both sides declare them and
+are otherwise recorded in `closure.port_binding.unverified`. Dependencies are
+packed in `deps` order and never repacked, so the labels mapped from the model's
+ordered input ports must equal `deps`. A missing mapping, a mapping for a model
+without ports, a mapping onto a mismatched port, and a mapping in a different
+order all raise `ValueError`. The field publishes the model's own output ports,
+so the mapping binds inputs only. Fit a model on a domain's coordinates with
+`phx.ml.FeatureSchema.from_ports(...)` so that its input ports are the domain's
+ports. Derived fields (arithmetic, transposition) drop `port_binding`, because
+they no longer carry the bound model's value.
+
 
 
 ## Components: interior, boundary, and fixed slices

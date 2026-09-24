@@ -2,10 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax._admissibility import AdmissibilityReason, DOMAIN_REASON_SHIFT
 
 
 def _manifest(name, *, training=True):
@@ -123,3 +125,84 @@ def test_out_of_support_and_nonphysical_models_use_exact_mechanism():
     assert int(out_of_support.fallback_reason) == int(
         phx.applications.reacting_flow.LearnedChemicalFallbackReason.OUT_OF_SUPPORT
     )
+
+
+def _small_extent_plan(model_id="extent-model"):
+    def model(features):
+        return 0.01 * jnp.ones(features.shape[:-1] + (1,))
+
+    return phx.applications.reacting_flow.LearnedChemicalTransitionPlan(
+        _mechanism(),
+        _schema(),
+        model,
+        _uncertainty,
+        _manifest("model"),
+        (_manifest("training"),),
+        model_id=model_id,
+        maximum_uncertainty=0.1,
+    )
+
+
+_LANES = jnp.asarray(((0.9, 0.1), (0.9, 0.1)))
+_TEMPERATURES = jnp.asarray((1000.0, 3000.0))
+
+
+def test_header_marks_learned_lanes_eligible_and_records_out_of_support_fallback():
+    plan = _small_extent_plan()
+    result = plan.advance(_LANES, _TEMPERATURES, 101325.0, 0.01)
+
+    np.testing.assert_array_equal(result.fallback_used, (False, True))
+    np.testing.assert_array_equal(result.header.eligible, ~result.fallback_used)
+    np.testing.assert_array_equal(
+        result.header.reason_bits,
+        (0, int(AdmissibilityReason.OUTSIDE_SUPPORT)),
+    )
+    assert float(result.header.margin[0]) >= 0.0 > float(result.header.margin[1])
+    assert result.header.model_id == plan.component_id
+    assert result.header.evidence_id == plan.plan_id
+    assert _small_extent_plan("other-model").component_id != plan.component_id
+    assert result.derivative_contract.conditions == ("decisions-frozen",)
+
+
+def test_header_sets_domain_bit_for_nonphysical_learned_extent():
+    def bad_model(features):
+        return 2.0 * jnp.ones(features.shape[:-1] + (1,))
+
+    plan = phx.applications.reacting_flow.LearnedChemicalTransitionPlan(
+        _mechanism(),
+        _schema(),
+        bad_model,
+        _uncertainty,
+        _manifest("model"),
+        (_manifest("training"),),
+        model_id="bad-extent-model",
+        maximum_uncertainty=0.1,
+    )
+    result = plan.advance(jnp.asarray((0.9, 0.1)), 1000.0, 101325.0, 0.01)
+    negative_bit = 1 << (
+        DOMAIN_REASON_SHIFT
+        + int(
+            phx.applications.reacting_flow.LearnedChemicalFallbackReason.NEGATIVE_SPECIES
+        )
+    )
+
+    assert not bool(result.header.eligible)
+    assert int(result.header.reason_bits) & negative_bit
+    assert not int(result.header.reason_bits) & int(AdmissibilityReason.OUTSIDE_SUPPORT)
+
+
+def test_invalid_derivative_lanes_are_poisoned_without_changing_primals():
+    plan = _small_extent_plan()
+    result = plan.advance(_LANES, _TEMPERATURES, 101325.0, 0.01)
+
+    np.testing.assert_array_equal(result.derivative_valid, (True, False))
+    np.testing.assert_allclose(result.accepted_concentrations[0], (0.89, 0.11))
+    assert bool(jnp.all(jnp.isfinite(result.accepted_concentrations)))
+
+    jacobian = jax.jacfwd(
+        lambda values: (
+            plan.advance(values, _TEMPERATURES, 101325.0, 0.01).accepted_concentrations
+        )
+    )(_LANES)
+    assert bool(jnp.all(jnp.isfinite(jacobian[0])))
+    assert bool(jnp.all(jnp.isnan(jacobian[1])))

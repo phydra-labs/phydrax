@@ -9,6 +9,13 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from ..._model import AbstractArrayModel
+from ..._model._component import ModelExecutionContract
+from .._contracts import (
+    AFFINE,
+    compose_regularity,
+    model_regularity,
+    network_execution_contract,
+)
 from ..parameters import OrderedOrdinalCutpoints
 
 
@@ -57,6 +64,13 @@ class OrdinalCumulativeLinkHead(AbstractArrayModel):
         if location.ndim >= 1 and location.shape[-1] == 1:
             location = location[..., 0]
         return self.cutpoints() - location[..., None]
+
+    def model_execution_contract(self) -> ModelExecutionContract:
+        # The cumulative logits shift the location by learned constant cutpoints.
+        return network_execution_contract(
+            self,
+            compose_regularity(model_regularity(self.location_model), AFFINE),
+        )
 
 
 __all__ = ["OrdinalCumulativeLinkHead"]

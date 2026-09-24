@@ -64,6 +64,17 @@ def _fields():
     )
 
 
+def _field_binding():
+    # The cochain operator is built from `_fields()`: each output is the field port.
+    ports = {field.name: field.value_port() for field in _fields() if field.is_target}
+    return {
+        "output_ports": ports,
+        "port_mapping": phx.PortMapping(
+            outputs=tuple((port.port_id, port.port_id) for port in ports.values())
+        ),
+    }
+
+
 def _task(fields=None):
     resolved_fields = _fields() if fields is None else tuple(fields)
     query_names = tuple(field.query_name for field in resolved_fields if field.is_target)
@@ -480,6 +491,7 @@ def test_multi_field_training_and_checkpoint_resume_are_exact(tmp_path):
         "training_evidence": phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
+        **_field_binding(),
         "learning_rate": 1e-3,
         "batch_size": 3,
         "epochs": 2,
@@ -687,6 +699,7 @@ def test_targetless_cochain_pino_update_and_checkpoint_resume_are_exact(tmp_path
         "training_evidence": phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
+        **_field_binding(),
         "loss_terms": (term,),
         "learning_rate": 1e-3,
         "batch_size": 2,
@@ -756,6 +769,7 @@ def test_targetless_operator_fit_requires_explicit_physics_and_scaling():
         "training_evidence": phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
+        **_field_binding(),
         "batch_size": 2,
         "steps": 1,
         "shuffle": False,

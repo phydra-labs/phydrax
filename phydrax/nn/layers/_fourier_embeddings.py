@@ -13,9 +13,11 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._trainable import fixed_field
 from .._base import _AbstractBaseModel
+from .._contracts import SMOOTH
 from .._keys import EvalKey
 from .._utils import _canonical_size, _get_size, _get_value_shape, _tuple, SizeLike
 
@@ -219,6 +221,10 @@ class _AbstractFourierFeatureEmbeddings(_AbstractBaseModel):
         if self.include_constant:
             features.append(jnp.ones((1,), dtype=periodic.dtype))
         return periodic if len(features) == 1 else jnp.concatenate(features)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # cos/sin of an affine map juxtaposed with affine passthrough features.
+        return SMOOTH
 
 
 class ExplicitFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):

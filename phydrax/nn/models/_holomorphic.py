@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
 from ..._holomorphic import (
@@ -24,7 +25,9 @@ from ..._holomorphic_linear import (
 )
 from ..._holomorphic_taylor import multijet_from_normalized, taylor_exp
 from .._base import _AbstractBaseModel
+from .._contracts import AFFINE, compose_regularity
 from .._keys import EvalKey
+from ..activations import activation_regularity
 from ..layers._complex_linear import ComplexLinear
 from ..layers._low_rank_complex_linear import LowRankComplexLinear
 
@@ -169,6 +172,15 @@ class HolomorphicMLP(_AbstractBaseModel):
         for layer in self.layers[:-1]:
             value = jnp.exp(layer(value))
         return self.layers[-1](value)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Complex-affine normalization and layers around the entire exponential.
+        exp = activation_regularity(jnp.exp)
+        hidden = (
+            compose_regularity(layer._value_regularity(), exp)
+            for layer in self.layers[:-1]
+        )
+        return compose_regularity(AFFINE, *hidden, self.layers[-1]._value_regularity())
 
     def _linear_taylor(
         self,

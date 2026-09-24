@@ -12,8 +12,10 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
+from phydrax.nn._contracts import SMOOTH
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
 from phydrax.nn.layers import AffineRecurrence, RecurrentBatch, run_affine_recurrence
@@ -625,6 +627,11 @@ class SelectiveStateSpaceMixer(AbstractOperatorModel):
             initial_state=initial_state,
             execution=execution,
         )[0]
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Softplus step scales, sigmoid gates, and exact exponential (phi)
+        # coefficients are smooth; masks and resets are fixed schedule data.
+        return SMOOTH
 
 
 __all__ = ["SelectiveStateSpaceDiagnostics", "SelectiveStateSpaceMixer"]

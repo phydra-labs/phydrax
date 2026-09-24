@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from math import isfinite
 from typing import Any
 
@@ -11,7 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from ._differentiation import ComponentAuthority
 from ._fingerprint import canonical_fingerprint
+from ._model._component import ComponentContract
 from ._precision import (
     complex_precision_dtype,
     precision_dtype_name,
@@ -74,8 +77,60 @@ def _effective_dtype(
     return precision_dtype_name(requested)
 
 
+def _defines_residual(component: ComponentContract, /) -> bool:
+    match component.authority:
+        case (
+            ComponentAuthority.MODEL
+            | ComponentAuthority.DISCRETIZATION
+            | ComponentAuthority.SURROGATE
+        ):
+            return True
+        case ComponentAuthority.ACCELERATOR | ComponentAuthority.DECISION:
+            # Accelerators only propose iterates and decisions only select
+            # branches; the owner re-evaluates the residual that certifies them.
+            return False
+        case _:
+            raise ValueError(f"Unknown component authority {component.authority!r}.")
+
+
+def _residual_components(
+    components: Iterable[ComponentContract], /
+) -> tuple[ComponentContract, ...]:
+    if isinstance(components, ComponentContract):
+        raise TypeError("components must be a collection of ComponentContract values.")
+    values = tuple(components)
+    if any(not isinstance(component, ComponentContract) for component in values):
+        raise TypeError("components must contain ComponentContract values.")
+    for component in values:
+        if _defines_residual(component) and component.model_contract.precision is None:
+            raise ValueError(
+                f"A {component.authority.value} component defining the nonlinear "
+                "residual declares no ComponentPrecisionContract, so its residual "
+                "error floor cannot be derived."
+            )
+    return values
+
+
+def _coarser_than(compute: str, reference: str, /) -> bool:
+    compute_dtype = jnp.dtype(compute)
+    if not jnp.issubdtype(compute_dtype, jnp.inexact):
+        return False
+    return float(jnp.finfo(compute_dtype).eps) > float(
+        jnp.finfo(jnp.dtype(reference)).eps
+    )
+
+
 class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
-    """State, residual, reduction, decision, and output precision for nonlinear work."""
+    """State, residual, reduction, decision, and output precision for nonlinear work.
+
+    `components` are the bound `ComponentContract` values that take part in the
+    nonlinear work. `MODEL`, `DISCRETIZATION`, and `SURROGATE` components define
+    the residual and must declare a `ComponentPrecisionContract`; `ACCELERATOR`
+    and `DECISION` components do not define residual values and never raise the
+    residual floor. `model_dtype` may differ from explicit state and residual
+    dtypes only when a residual-defining component computing in `model_dtype`
+    declares its `cast_boundary_evidence`.
+    """
 
     state_dtype: str | None = eqx.field(static=True)
     residual_dtype: str | None = eqx.field(static=True)
@@ -86,6 +141,7 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
     certificate_dtype: str | None = eqx.field(static=True)
     output_dtype: str | None = eqx.field(static=True)
     linear: MixedPrecisionPolicy | None
+    components: tuple[ComponentContract, ...]
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -100,7 +156,9 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
         certificate_dtype: Any | None = None,
         output_dtype: Any | None = None,
         linear: MixedPrecisionPolicy | None = None,
+        components: Iterable[ComponentContract] = (),
     ):
+        components_ = _residual_components(components)
         model = None if model_dtype is None else precision_dtype_name(model_dtype)
         state = (
             model
@@ -114,12 +172,24 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
                 None if residual_dtype is None else precision_dtype_name(residual_dtype)
             )
         )
-        if model is not None and (
-            (state is not None and state != model)
-            or (residual is not None and residual != model)
+        if (
+            model is not None
+            and (
+                (state is not None and state != model)
+                or (residual is not None and residual != model)
+            )
+            and not any(
+                _defines_residual(component)
+                and component.model_contract.precision.compute_dtype == model
+                and component.model_contract.precision.cast_boundary_evidence
+                for component in components_
+            )
         ):
             raise ValueError(
-                "model_dtype must match explicit state_dtype and residual_dtype."
+                "model_dtype differs from the explicit state_dtype or residual_dtype; "
+                "declare the cast boundary with a residual-defining component whose "
+                "ComponentPrecisionContract computes in model_dtype and records "
+                "cast_boundary_evidence."
             )
         direction = (
             state if direction_dtype is None else precision_dtype_name(direction_dtype)
@@ -211,12 +281,16 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
         self.decision_dtype = decision
         self.output_dtype = output
         self.linear = linear
-        self.policy_id = canonical_fingerprint(
-            {
-                "request": request.request_id,
-                "linear": None if linear is None else repr(linear),
-            }
-        )
+        self.components = components_
+        identity: dict[str, Any] = {
+            "request": request.request_id,
+            "linear": None if linear is None else repr(linear),
+        }
+        if components_:
+            identity["components"] = [
+                component.bound_semantic_id for component in components_
+            ]
+        self.policy_id = canonical_fingerprint(identity)
 
     @property
     def request(self) -> PrecisionRequest:
@@ -285,10 +359,70 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
             return policy
         return eqx.tree_at(lambda value: value.precision, policy, self.linear)
 
-    def validate_tolerance(self, tolerance: Any, /) -> None:
+    def residual_floor(self, scale: float = 0.0, /) -> float | None:
+        """Return the residual error floor composed from the declared components.
+
+        The floor is the sum of the declared `ComponentPrecisionContract` floors
+        of the residual-defining (`MODEL`, `DISCRETIZATION`, `SURROGATE`)
+        components at residual magnitude `scale`, each expressed in residual
+        units. `ACCELERATOR` and `DECISION` components are excluded. The result is
+        `None` when no residual-defining component declares a floor; machine
+        epsilon is never substituted for an undeclared floor.
+        """
+        floors = tuple(
+            floor
+            for component in self.components
+            if _defines_residual(component)
+            if (floor := component.model_contract.precision.residual_floor(scale))
+            is not None
+        )
+        return sum(floors) if floors else None
+
+    def validate_tolerance(
+        self,
+        tolerance: Any,
+        /,
+        *,
+        residual_dtype: Any | None = None,
+    ) -> None:
+        """Reject an absolute residual tolerance the declared precision cannot meet.
+
+        A positive `tolerance` must not lie below certificate precision epsilon
+        or below the component floor `residual_floor()`. Against the residual
+        dtype (the declared `residual_dtype`, else the observed `residual_dtype`),
+        a residual-defining component computing in a coarser dtype must declare
+        an error floor: without one no achievable tolerance can be derived.
+        """
         value = float(tolerance)
         if not isfinite(value) or value < 0.0:
             raise ValueError("tolerance must be finite and non-negative.")
+        reference = (
+            self.residual_dtype
+            if self.residual_dtype is not None or residual_dtype is None
+            else precision_dtype_name(residual_dtype)
+        )
+        if reference is not None:
+            for component in self.components:
+                precision = component.model_contract.precision
+                if (
+                    _defines_residual(component)
+                    and _coarser_than(precision.compute_dtype, reference)
+                    and precision.absolute_error_floor is None
+                    and precision.relative_error_floor is None
+                ):
+                    raise ValueError(
+                        f"A {component.authority.value} component computes the "
+                        f"residual in {precision.compute_dtype}, coarser than the "
+                        f"{reference} residual, and declares no error floor; declare "
+                        "absolute_error_floor or relative_error_floor in its "
+                        "ComponentPrecisionContract."
+                    )
+        floor = self.residual_floor()
+        if floor is not None and 0.0 < value < floor:
+            raise ValueError(
+                f"Requested tolerance {value:g} is below the declared component "
+                f"residual error floor {floor:g}."
+            )
         if self.certificate_dtype is None:
             return
         epsilon = float(jnp.finfo(jnp.dtype(self.certificate_dtype)).eps)

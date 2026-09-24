@@ -81,6 +81,25 @@ rejects intervals outside that step contract before calling the model. Axis
 models and variable-duration or stochastic transitions require different
 contracts and are not inferred from array inheritance.
 
+A model declaring intrinsic ports (for example a `phx.ml.fit` result whose
+`FeatureSchema.from_ports` and `TargetSchema.from_port` name these owner ports)
+binds only through an explicit `port_mapping: PortMapping`; a model without
+intrinsic ports takes no mapping and keeps the size checks above as its contract.
+Owner input ports follow the exact order the adapter passes values: the state
+`value_port(role="point")`, then any step-time ports, then
+`InputLayout.value_port()`. The continuous owner output is the state
+`value_port(role="tangent")`; the discrete owner output is the state
+`value_port(role="point")`. The mapping must bind the model's ordered ports to
+exactly that order — values are never repacked — and dimensions, axes, frames,
+normalizations, and spaces must agree whenever both sides declare them. The
+resulting `PortBindingEvidence`, including every aspect left unverified, is
+`ContinuousModelVectorField.port_binding` or `DiscreteModelTransition.port_binding`
+(`None` for portless models). Step-time ports are scalar, neutral, representation
+`"step-time"`, and declare nothing else; each has one component named by its
+semantic-ID suffix: `input_mode="duration"` adds `"discrete-step:duration"`, and
+`input_mode="interval"` adds `"discrete-step:source-time"` then
+`"discrete-step:target-time"`.
+
 `TimeGrid` requires finite, strictly increasing physical times. `IterationGrid` requires
 strictly increasing integer iteration labels. Both are `EvolutionGrid` contracts, but
 physical-time normalization and iteration normalization remain distinct. An evolution

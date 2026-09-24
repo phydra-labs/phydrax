@@ -25,6 +25,7 @@ from ..linalg import (
     transpose,
 )
 from ..linalg._runtime import _callable_gmres_for_policy
+from ._components import admit_residual_components
 from ._newton import NewtonKrylov, NewtonTrustRegion
 from ._prepared import PreparedNonlinearSolve, solve_prepared_nonlinear
 from ._types import (
@@ -265,6 +266,13 @@ def implicit_root_result(
     nondifferentiable evidence, while state, residual, and auxiliary values are
     evaluated at the implicitly differentiated root. A failed solve remains a failed
     result; implicit derivatives are meaningful only when ``successful`` is true.
+
+    Before solving, the residual's model components (in a structured residual
+    callable or in ``args``) are admitted for the implicit root map: their
+    randomness must be deterministic or a `FrozenRealization`, and their value
+    regularity classical ``C^1`` (or certified by a branch margin). The result's
+    ``component_evidence`` records the admission, and an opaque residual closure
+    as undeclared determinism and regularity.
     """
     if isinstance(problem_or_prepared, PreparedNonlinearSolve):
         if initial_state is not None or method is not None or termination is not None:
@@ -301,6 +309,7 @@ def implicit_root_result(
         method_,
         derivative_policy,
     )
+    component_evidence = admit_residual_components(problem, runtime_args, implicit=True)
 
     initial_residual = problem.residual(initial, runtime_args)
     source = PyTreeSpace(initial) if problem.state_space is None else problem.state_space
@@ -401,6 +410,7 @@ def implicit_root_result(
         status=status,
         diagnostics=_restore_diagnostic_types(diagnostics),
         provenance=provenance,
+        component_evidence=component_evidence,
     )
 
 

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 import equinox as eqx
@@ -11,7 +12,58 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model._array import value_derivative_contract
 from ...kernels import AbstractPositiveDefiniteKernel
+
+
+def kernel_regularity(kernel: Any, /) -> DerivativeRegularity | None:
+    """Value regularity of the kernel sections `x -> kernel(x, y)`.
+
+    A certified mean-square derivative order `k` makes every function of the
+    kernel's RKHS, hence every finite kernel expansion, `C^k`; no finite order is
+    smooth. Plain callables carry no certificate and stay undeclared.
+    """
+    if not isinstance(kernel, AbstractPositiveDefiniteKernel):
+        return None
+    order = kernel.max_derivative_order
+    if order is None:
+        return DerivativeRegularity.smooth()
+    return DerivativeRegularity(continuity=order, pieces="none")
+
+
+def linear_expansion_contract(
+    regularity: DerivativeRegularity | None,
+    /,
+    *,
+    nondifferentiable_outputs: Iterable[str] = (),
+) -> DerivativeContract:
+    """Prediction contract of a map linear in its fitted coefficients.
+
+    The `INPUT` level follows the value `regularity`; the coefficients enter
+    linearly, so `MODEL_PARAMETER` derivatives are smooth.
+    """
+    (value_input,) = (
+        entry
+        for entry in value_derivative_contract(regularity).surfaces
+        if entry.surface is DerivativeSurface.INPUT
+    )
+    return DerivativeContract(
+        (
+            value_input,
+            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+        ),
+        route=DerivativeRoute.DIRECT,
+        regularity=regularity,
+        nondifferentiable_outputs=nondifferentiable_outputs,
+    )
 
 
 def validate_kernel(kernel: Any) -> Any:
@@ -124,6 +176,8 @@ __all__ = [
     "flatten_targets",
     "kernel_diagonal",
     "kernel_matrix",
+    "kernel_regularity",
+    "linear_expansion_contract",
     "query_kernel_matrix",
     "validate_kernel",
     "validated_weights",

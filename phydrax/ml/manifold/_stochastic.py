@@ -23,7 +23,12 @@ from ..._differentiation import (
 from ..._model import ModelBinding
 from ..._trainable import fixed_field
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, ML_NONCONVERGED
+from .._contracts import (
+    AbstractRecipe,
+    FitResult,
+    ML_NONCONVERGED,
+    prediction_fit_contract,
+)
 from .._numerics import pairwise_distances
 from .._schema import AbstractFittedModel
 from ._common import (
@@ -32,8 +37,10 @@ from ._common import (
     _euclidean_distances,
     _fit_arrays,
     _fit_status,
+    _HARD_NEIGHBOR_EXTENSION_CONTRACT,
     _prepare_queries,
     _restore_queries,
+    _TRANSDUCTIVE_CONTRACT,
     build_neighbor_graph,
     ManifoldDiagnostics,
 )
@@ -181,6 +188,9 @@ class TSNEModel(AbstractFittedModel):
         self.in_size = train.shape[-1]
         self.out_size = coordinates.shape[-1]
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _TRANSDUCTIVE_CONTRACT
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del x, key
         raise ValueError(
@@ -284,9 +294,9 @@ class TSNERecipe(AbstractRecipe):
             method="tsne-exact",
         )
         model = TSNEModel(x, embedding, active, case_shape=batch.case_shape)
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),
@@ -449,6 +459,9 @@ class FuzzyGraphEmbeddingModel(AbstractFittedModel):
         self.in_size = train.shape[-1]
         self.out_size = coordinates.shape[-1]
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _HARD_NEIGHBOR_EXTENSION_CONTRACT
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         queries, query_shape, _point = _prepare_queries(
@@ -604,12 +617,9 @@ class FuzzyGraphEmbeddingRecipe(AbstractRecipe):
             n_neighbors=self.n_neighbors,
             case_shape=batch.case_shape,
         )
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),
@@ -621,12 +631,7 @@ class FuzzyGraphEmbeddingRecipe(AbstractRecipe):
                 ),
             ),
             route=DerivativeRoute.UNROLLED,
-            nondifferentiable_outputs=(
-                "neighbor_indices",
-                "connectivity",
-                "valid",
-                "status",
-            ),
+            nondifferentiable_outputs=("connectivity", "valid", "status"),
             conditions=(
                 "hard k-NN topology is held fixed",
                 "fixed explicit initialization key and iteration count",

@@ -13,8 +13,16 @@ from jaxtyping import Array, Key
 
 import phydrax.ein as ein
 
+from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
+from ..._contracts import (
+    AFFINE,
+    compose_regularity,
+    product_regularity,
+    SMOOTH,
+)
+from ...activations import activation_regularity
 from ...layers._linear import Linear
 from ...layers._measure_attention import (
     AttentionExecution,
@@ -50,6 +58,35 @@ def _sample_values(
     return array.reshape(
         (prod(case_shape) if case_shape else 1, prod(shape), channels)
     ), case_shape
+
+
+def _measure_attention_regularity(
+    attention: MeasureAwareAttention, /
+) -> DerivativeRegularity | None:
+    """Joint value regularity of `attention` in its source and query features.
+
+    Quadrature weights and masks are fixed geometry. Softmax weights are smooth
+    in the query-key products; the linear kernels use shifted ELU features,
+    which are strictly positive, so the normalizer never vanishes on observed
+    sources.
+    """
+    query = attention.query._value_regularity()
+    key = attention.key._value_regularity()
+    value = attention.value._value_regularity()
+    if attention.kernel == "identity":
+        mixed = value
+    elif attention.kernel == "softmax":
+        weights = compose_regularity(product_regularity((query, key)), SMOOTH)
+        mixed = product_regularity((weights, value))
+    else:
+        feature = activation_regularity(jnn.elu)
+        query_features = compose_regularity(query, feature)
+        key_features = compose_regularity(key, feature)
+        mixed = product_regularity((query_features, key_features, value))
+        if attention.kernel == "kernel_linear":
+            normalizer = product_regularity((query_features, key_features))
+            mixed = product_regularity((mixed, compose_regularity(normalizer, SMOOTH)))
+    return compose_regularity(mixed, attention.output._value_regularity())
 
 
 _AttentionCore = MeasureAwareAttention
@@ -128,6 +165,9 @@ class OperatorAttention(StrictModule):
         if self.source_channels != self.query_channels:
             raise ValueError("Self-attention requires equal source and query channels.")
         return self.cross(values, values, samples, samples)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return _measure_attention_regularity(self.core)
 
 
 class SliceAttention(StrictModule):
@@ -208,6 +248,19 @@ class SliceAttention(StrictModule):
         )
         return output.reshape(case_shape + samples.sample_shape + (self.out_channels,))
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Softmax slice memberships pool the points into tokens and scatter the
+        # attended tokens back.
+        memberships = compose_regularity(self.assignment._value_regularity(), SMOOTH)
+        tokens = product_regularity((memberships, AFFINE))
+        attended = compose_regularity(
+            tokens, _measure_attention_regularity(self.attention)
+        )
+        return compose_regularity(
+            product_regularity((memberships, attended)),
+            self.projection._value_regularity(),
+        )
+
 
 class CodomainAttention(StrictModule):
     """Self-attention over a variable set of physical fields at every sample."""
@@ -266,6 +319,9 @@ class CodomainAttention(StrictModule):
         )
         return output.reshape(leading + (field_count, self.out_channels))
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return _measure_attention_regularity(self.core)
+
 
 class AxialOperatorAttention(StrictModule):
     """Factorized quadrature-aware attention along tensor-product axes."""
@@ -316,6 +372,10 @@ class AxialOperatorAttention(StrictModule):
             moved = attended.reshape(leading + (axis.size, self.channels))
             output = jnp.moveaxis(moved, -2, array_axis)
         return output
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Repeating one attention class once per axis keeps that class.
+        return _measure_attention_regularity(self.core)
 
 
 __all__ = [

@@ -11,15 +11,34 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model._array import value_derivative_contract
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
+from .._contracts import prediction_fit_contract
 from .._numerics import MetricName
 from .._schema import AbstractFittedModel
+from ..neighbors._utils import distance_softmax_regularity
 
 
 ClusterInitialization: TypeAlias = Literal["random", "first", "k-means++"]
 EmptyClusterPolicy: TypeAlias = Literal["retain", "reseed", "error"]
+
+# Hard labels are locally constant between assignment boundaries and stopped.
+_HARD_LABEL_CONTRACT = DerivativeContract(
+    (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.piecewise_polynomial(continuity=-1, degree_bound=0),
+    nondifferentiable_outputs=("labels",),
+)
 
 
 def real_dtype(dtype: jnp.dtype) -> jnp.dtype:
@@ -266,6 +285,9 @@ class HardClusterModel(AbstractFittedModel):
         )
         return jnp.where(active, distances, jnp.inf)
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _HARD_LABEL_CONTRACT
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         return jax.lax.stop_gradient(
@@ -305,6 +327,13 @@ class SoftClusterModel(AbstractFittedModel):
         self.case_shape = self.centers.shape[:-2]
         self.metric = metric
         self.method = str(method)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return prediction_fit_contract(
+            value_derivative_contract(distance_softmax_regularity(self.metric)),
+            route=DerivativeRoute.DIRECT,
+            nondifferentiable_outputs=("hard_labels",),
+        )
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key

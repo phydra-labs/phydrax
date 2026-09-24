@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax._admissibility import DOMAIN_REASON_SHIFT
 from phydrax._model import AbstractArrayModel
 from phydrax.equations._learned_stress import (
     LEARNED_STRESS_FEATURE_NAME,
@@ -224,3 +225,77 @@ def test_periodic_learned_stress_is_evaluated_inside_every_ssprk_stage():
             iteration=context.step_index,
         ).accepted_state,
     )
+
+
+def _periodic_transition(base_rate):
+    space, prepared, coordinates = _periodic_prepared()
+    transition = (
+        phx.applications.incompressible_flow.PeriodicLearnedStressRolloutTransition(
+            prepared,
+            coordinates,
+            base_rate,
+            base_rate_id="periodic-base-rate",
+            state_layout=phx.dynamics.StateLayout((coordinates.coordinate_size,)),
+            step_size=0.01,
+            step_rtol=0.0,
+            step_atol=0.0,
+        )
+    )
+    model = _ViscosityStressModel(
+        0.1,
+        space.physical_shape,
+        jnp.dtype(space.plan.precision.physical_dtype),
+    )
+    context = phx.dynamics.DiscreteStepContext(
+        jnp.asarray(0.0),
+        jnp.asarray(0.01),
+        jnp.asarray(0, dtype=jnp.int32),
+    )
+
+    def evaluate(candidate):
+        return transition.evaluate(
+            candidate,
+            context,
+            _initial_state(space, prepared, coordinates),
+            None,
+            key=None,
+            iteration=jnp.asarray(0),
+        )
+
+    return transition, model, evaluate
+
+
+def test_periodic_transition_header_and_derivative_poisoning_on_failure():
+    def zero_rate(time, modal, inputs):
+        del time, inputs
+        return jnp.zeros_like(modal)
+
+    def nonfinite_rate(time, modal, inputs):
+        del time, inputs
+        return jnp.full_like(modal, jnp.nan)
+
+    transition, model, evaluate = _periodic_transition(zero_rate)
+    accepted = evaluate(model)
+    assert bool(accepted.header.eligible)
+    assert int(accepted.header.reason_bits) == 0
+    assert bool(accepted.derivative_valid)
+    assert accepted.header.model_id == evaluate(model).header.model_id
+    assert transition.transition_id != accepted.header.evidence_id
+    assert accepted.derivative_contract.supported_surfaces == (
+        phx.DerivativeSurface.PRIMAL_STATE,
+        phx.DerivativeSurface.MODEL_PARAMETER,
+    )
+
+    _, _, failing = _periodic_transition(nonfinite_rate)
+    rejected = failing(model)
+    assert not bool(rejected.training_usable)
+    assert not bool(rejected.header.eligible)
+    assert not bool(rejected.derivative_valid)
+    # A failed stage keeps the finite SSPRK state; only the stage bit is set.
+    assert int(rejected.header.reason_bits) == 1 << DOMAIN_REASON_SHIFT
+    np.testing.assert_array_equal(rejected.accepted_state, 0.0)
+
+    gradient = eqx.filter_grad(
+        lambda candidate: jnp.sum(failing(candidate).accepted_state)
+    )(model)
+    assert bool(jnp.isnan(gradient.coefficient))

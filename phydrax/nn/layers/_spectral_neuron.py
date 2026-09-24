@@ -18,13 +18,17 @@ from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.ein import contract
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
+from ..._model._array import value_derivative_contract
+from ..._model._component import ModelExecutionContract
 from ..._strict import StrictModule
 from ..._symmetric_coordinates import smat, svec, symmetric_packed_dimension
 from ..._trainable import NonTrainableState
 from ...linalg import HermitianPrecisionPolicy
 from .._base import _AbstractBaseModel
+from .._contracts import AFFINE, network_randomness
 from .._initializers import _initializer_dict
 from .._keys import EvalKey
 from .._utils import _canonical_size, _get_size, _get_value_shape, SizeLike
@@ -415,6 +419,22 @@ class SpectralNeuron(_AbstractBaseModel):
     ) -> Array:
         del key
         return self.eigenvalues(value)[..., self.eigen_index]
+
+    def _value_regularity(self) -> DerivativeRegularity:
+        if self.matrix_size == 1:
+            return AFFINE
+        # An ordered eigenvalue of an affine symmetric pencil is Lipschitz and
+        # smooth wherever it is simple; eigenvalue crossings are kinks.
+        return DerivativeRegularity.piecewise_smooth(continuity=0)
+
+    def model_execution_contract(self) -> ModelExecutionContract:
+        if self.precision.policy_id == HermitianPrecisionPolicy().policy_id:
+            return super().model_execution_contract()
+        # A requested Hermitian precision casts away from the parameter dtype.
+        return self._execution_contract(
+            value_derivative_contract(self._value_regularity()),
+            randomness=network_randomness(self),
+        )
 
 
 __all__ = ["SpectralNeuron", "SpectralNeuronInitializationReport"]

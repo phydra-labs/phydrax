@@ -16,6 +16,7 @@ from jaxtyping import Array, Key
 
 from phydrax.domain import DomainFunction
 
+from .._differentiation import ComponentAuthority, RegularityPolicy
 from .._doc import DOC_KEY0
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
@@ -30,6 +31,7 @@ from .._training import (
     EvaluationParametersFn,
     ExponentialMovingAverageTargetPolicy,
 )
+from ..conditions._base import AbstractResidualCondition
 from ..discretization import (
     DiscretizationBundle,
     DiscretizationKey,
@@ -44,6 +46,10 @@ from ..nn.parameters._low_rank import (
     contains_low_rank_updates,
     validate_low_rank_subspace,
 )
+from ..operators.differential._requests import (
+    DerivativeRequest,
+    trace_derivative_requests,
+)
 from ..optim._evolution_strategy import AbstractDistributionEvolutionMethod
 from ..optim._kfac._config import KFAC
 from ..optim._mirror_descent import AbstractMirrorOptimizer
@@ -57,6 +63,9 @@ from ._functional_objective import (
 )
 from ._functional_precision import FunctionalPrecisionPolicy
 from ._functional_training import FunctionalTrainingPlan, FunctionalTrainingState
+
+
+EXPLORATORY_REGULARITY_POLICY = RegularityPolicy(allow_undeclared=True)
 
 
 def _has_signed_randomized_objective(
@@ -177,11 +186,42 @@ def _functional_discretization_bundle(
     return DiscretizationBundle(records)
 
 
+def _admitted_training_derivatives(
+    functions: Mapping[str, DomainFunction],
+    terms: Sequence[AbstractScalarTerm],
+    policy: RegularityPolicy,
+    /,
+) -> tuple[DerivativeRequest, ...]:
+    requests = []
+    for term in terms:
+        condition = getattr(term, "condition", None)
+        if isinstance(condition, AbstractResidualCondition):
+            requests.extend(
+                trace_derivative_requests(
+                    condition.residual,
+                    functions,
+                    authority=ComponentAuthority.SURROGATE,
+                    policy=policy,
+                )
+            )
+    return tuple(dict.fromkeys(requests))
+
+
 class FunctionalSolver(StrictModule):
     """Optimize one ordered collection of real scalar terms over named fields.
 
     Penalties and signed objectives share the same term contract. A precompiled
     `EnforcementProgram`, when supplied, is applied before every term evaluation.
+
+    Functional training is exploratory surrogate training: every value derivative
+    a training residual requests is admitted at construction, before any batch is
+    traced, with `SURROGATE` authority under `regularity_policy`. The default
+    policy is the frontend's declared exploratory policy
+    `RegularityPolicy(allow_undeclared=True)`: fields whose regularity is
+    undeclared train with a recorded `"regularity-undeclared"` condition, while
+    almost-everywhere derivatives require `allow_almost_everywhere=True` and
+    proven degeneracy is always rejected. `derivative_requests` records the
+    admitted requests.
     """
 
     functions: frozendict[str, DomainFunction]
@@ -191,6 +231,7 @@ class FunctionalSolver(StrictModule):
     precision: FunctionalPrecisionPolicy | None
     precision_evidence: PrecisionEvidenceEnvelope | None
     training_state: FunctionalTrainingState | None
+    regularity_policy: RegularityPolicy
 
     def __init__(
         self,
@@ -200,8 +241,11 @@ class FunctionalSolver(StrictModule):
         evaluation_terms: AbstractScalarTerm | Sequence[AbstractScalarTerm] = (),
         enforcement: EnforcementProgram | None = None,
         collocation_key: Key[Array, ""] = DOC_KEY0,
+        regularity_policy: RegularityPolicy = EXPLORATORY_REGULARITY_POLICY,
     ):
         """Create a solver from fields, scalar terms, and optional enforcement."""
+        if not isinstance(regularity_policy, RegularityPolicy):
+            raise TypeError("regularity_policy must be a RegularityPolicy.")
         self.functions = frozendict(functions)
         self.objective = _FunctionalObjective(
             terms=terms,
@@ -216,6 +260,11 @@ class FunctionalSolver(StrictModule):
         self.discretization_bundle = _functional_discretization_bundle(
             self.functions,
             self.objective.terms + self.objective.evaluation_terms,
+        )
+        self.regularity_policy = regularity_policy
+        # Admission runs before any batch is traced; rejected derivatives raise here.
+        _admitted_training_derivatives(
+            self.ansatz_functions(), self.objective.terms, regularity_policy
         )
 
     @property
@@ -237,6 +286,17 @@ class FunctionalSolver(StrictModule):
     def collocation(self) -> tuple[Any | None, ...]:
         """Return the population aligned with each training term."""
         return self.objective.populations
+
+    @property
+    def derivative_requests(self) -> tuple[DerivativeRequest, ...]:
+        """Return the admitted value-derivative requests of the training terms.
+
+        Each request carries its `SURROGATE`-authority regularity admission under
+        `regularity_policy`, including the conditions it was admitted with.
+        """
+        return _admitted_training_derivatives(
+            self.ansatz_functions(), self.objective.terms, self.regularity_policy
+        )
 
     def _with_collocation(
         self,
@@ -298,6 +358,9 @@ class FunctionalSolver(StrictModule):
     ) -> "FunctionalSolver":
         objective = self.objective.append_training_terms(terms, key=key)
         updated = eqx.tree_at(lambda solver: solver.objective, self, objective)
+        _admitted_training_derivatives(
+            updated.ansatz_functions(), objective.terms, updated.regularity_policy
+        )
         updated = eqx.tree_at(
             lambda solver: solver.discretization_bundle,
             updated,

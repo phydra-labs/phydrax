@@ -218,3 +218,121 @@ records every aspect a side left undeclared in `PortBindingEvidence`.
     options:
       show_root_heading: true
       show_source: false
+
+## Model execution contracts
+
+A `ModelExecutionContract` describes what a model is, independent of any owner:
+its `DerivativeContract` (whose regularity is the model's value regularity),
+`ExecutionCapabilities`, `ComponentPrecisionContract`, `RandomnessContract`,
+intrinsic ports, construction certificates, and semantic provenance. `None`
+means undeclared. It never declares authority.
+
+`AbstractArrayModel.model_execution_contract()` returns a conservative default:
+regularity, precision, and randomness are undeclared; `INPUT` and
+`MODEL_PARAMETER` derivatives are `CONDITIONAL` on `"regularity-undeclared"`
+through the `DIRECT` route; execution is native JAX with `jit` and `vmap`. Ports
+come from `model_ports()` for a `PortProvider`, and certificates from the
+construction-certificate entries of `model_metadata()`. Model families with
+declared regularity override it.
+
+Execution capabilities carry no JVP or VJP flags: `supports_derivative` derives
+forward- and reverse-mode support from the derivative contract. A host-only
+model supports neither `jit` nor `vmap`, and its contract offers no JAX
+derivative route.
+
+A precision contract never substitutes machine epsilon for an undeclared error
+floor: `residual_floor` is `None` unless an absolute or relative floor is
+declared. `admit_randomness` admits deterministic randomness, fixed realizations
+bound by the owner, and resampled randomness only outside implicit or
+authoritative use; undeclared randomness is rejected there and recorded
+elsewhere. `FrozenRealization(model, key, realization_id=...)` is the owner's
+explicit realization binding: it evaluates the model with one bound key and
+declares a fixed realization, which implicit and certified nonlinear owners admit.
+
+::: phydrax.ModelExecutionContract
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: phydrax.ExecutionCapabilities
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: phydrax.ExecutionTier
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: phydrax.supports_derivative
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: phydrax.ComponentPrecisionContract
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: phydrax.RandomnessContract
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: phydrax.RandomnessMode
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: phydrax.admit_randomness
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: phydrax.FrozenRealization
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: phydrax.CertificateRecord
+    options:
+      show_root_heading: true
+      show_source: false
+
+## Component binding
+
+Authority is conferred by binding, never by the model. An inline component
+takes it from its owner slot class (`AbstractComponentSlot`), which declares
+the authority, a slot semantic ID, and admissibility requirements without
+fixing a call signature. A model held separately from its owner is bound
+explicitly with `bind_component`, which returns a `ComponentBinding`: the model
+stays a dynamic child whose arrays keep their roles, while authority, slot
+identity, port mapping, and requirements are static. `ComponentBinding.contract()`
+forms the bound `ComponentContract`, resolving ports through
+`resolve_port_mapping` and failing closed when a requirement lacks the
+required evidence. Binding validates the contract once at construction.
+
+::: phydrax.AbstractComponentSlot
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: phydrax.ComponentSlotContract
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: phydrax.ComponentContract
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: phydrax.ComponentBinding
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: phydrax.bind_component
+    options:
+      show_root_heading: true
+      show_source: false

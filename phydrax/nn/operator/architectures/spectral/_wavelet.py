@@ -18,12 +18,20 @@ from jax import core as jax_core
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._model import register_artifact_value
 from phydrax._spectral._multiwavelet import AlpertMultiwaveletTransform
 from phydrax._strict import StrictModule
+from phydrax.nn._contracts import (
+    AFFINE,
+    compose_regularity,
+    product_regularity,
+    sum_regularity,
+)
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
 from phydrax.nn._utils import _get_size
+from phydrax.nn.activations import activation_regularity
 from phydrax.nn.layers import sample_rectilinear_grid
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
@@ -365,6 +373,27 @@ def _validate_tensor_grid(
     return spatial_shape
 
 
+def _grid_regularity(
+    model: WaveletNeuralOperator | MultiwaveletOperator,
+    decoder: DerivativeRegularity,
+    /,
+) -> DerivativeRegularity | None:
+    # Wavelet analysis, subband mixing, and synthesis are linear. The decoder weights
+    # the source-grid output by coordinate-dependent interpolation weights.
+    activation = activation_regularity(model.activation)
+    grid = compose_regularity(
+        model.lift._value_regularity(),
+        *(
+            compose_regularity(
+                sum_regularity((AFFINE, pointwise._value_regularity())), activation
+            )
+            for pointwise in model.pointwise_layers
+        ),
+        model.projection._value_regularity(),
+    )
+    return product_regularity((grid, decoder))
+
+
 class WaveletNeuralOperator(AbstractOperatorModel):
     """Resolution-variable WNO with exact separable wavelet reconstruction."""
 
@@ -548,6 +577,13 @@ class WaveletNeuralOperator(AbstractOperatorModel):
             raise TypeError("WaveletNeuralOperator requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Mask-renormalized multilinear interpolation jumps where a query stencil
+        # loses its observed support.
+        return _grid_regularity(
+            self, DerivativeRegularity.piecewise_smooth(continuity=-1)
+        )
+
 
 class MultiwaveletOperator(AbstractOperatorModel):
     """Resolution-variable one-dimensional polynomial multiwavelet operator."""
@@ -693,6 +729,13 @@ class MultiwaveletOperator(AbstractOperatorModel):
         if not isinstance(x, OperatorBatch):
             raise TypeError("MultiwaveletOperator requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Cell-local Lagrange polynomials jump across multiwavelet cells.
+        decoder = DerivativeRegularity.piecewise_polynomial(
+            continuity=-1, degree_bound=self.transform.order - 1
+        )
+        return _grid_regularity(self, decoder)
 
 
 register_artifact_value(

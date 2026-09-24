@@ -337,6 +337,35 @@ array systems. Completed batch members stop updating independently.
 local or collective; distributed semantics are never inferred from an array
 that merely happens to be sharded.
 
+### Component precision floor
+
+`NonlinearPrecisionPolicy(components=...)` takes the bound `ComponentContract`
+values of the learned or discretized components in the nonlinear work. `MODEL`,
+`DISCRETIZATION`, and `SURROGATE` components define the residual and must declare
+a `ComponentPrecisionContract`. `ACCELERATOR` and `DECISION` components never
+raise the floor: the owner re-evaluates the residual that certifies their
+proposals. `residual_floor(scale=0.0)` is the sum of the declared absolute and
+relative (times `scale`) evaluation-error floors of the residual-defining
+components. It is `None` when no floor is declared. Machine epsilon is never
+substituted for an undeclared floor, so the achievable tolerance comes only from
+declared floors.
+
+`validate_tolerance(tolerance, residual_dtype=...)` rejects a positive absolute
+tolerance below the component floor or below certificate precision epsilon. It
+also rejects a residual-defining component whose compute dtype is coarser than the
+residual dtype and that declares no error floor. Newton solves,
+`prepare_nonlinear`, and prepared solves run with an overriding termination
+validate the tolerance against the observed residual dtype before iterating. A
+`model_dtype` distinct from the explicit state or residual dtype is accepted
+only when a residual-defining component that computes in `model_dtype` records
+its `cast_boundary_evidence`.
+
+```python
+surrogate = phx.bind_component(model, phx.ComponentAuthority.SURROGATE)
+policy = phx.nonlinear.NonlinearPrecisionPolicy(components=(surrogate.contract(),))
+tolerance = policy.residual_floor()  # None unless the model declares a floor
+```
+
 ## Solution-map derivatives
 
 `SensitivityPolicy` selects implicit forward/reverse, unrolled, truncated, or
@@ -381,6 +410,16 @@ declared. The primal method must declare
 not admit a method that declares it unsupported. Singular or incompatible derivative
 systems fail through certified derivative solves instead of returning an unverified
 gradient.
+
+Before solving, the model components of a structured residual callable and of
+`args` are admitted for the implicit root map. Each component needs classical
+`C¹` value regularity near the root, or a `"branch-margin"` regularity condition,
+under its bound authority (`MODEL` for a bare model). Its randomness must be
+deterministic, evaluated in its inference state, or bound to one
+`phydrax.FrozenRealization`; resampled or undeclared randomness is rejected. Newton
+preparation applies the same randomness admission to the certified primal solve.
+An opaque residual closure hides its components and is recorded as undeclared
+determinism and regularity in `NonlinearResult.component_evidence`.
 
 ## Causal nonlinear recurrence
 

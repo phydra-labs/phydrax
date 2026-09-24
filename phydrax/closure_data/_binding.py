@@ -14,9 +14,24 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from .._differentiation import BranchDifferentiationPolicy
+from .._admissibility import AdmissibilityHeader, guard_derivative_validity
+from .._differentiation import (
+    branch_policy_contract,
+    BranchDifferentiationPolicy,
+    DerivativeContract,
+    DerivativeSurface,
+)
 from .._fingerprint import canonical_fingerprint
+from .._identity import SemanticProvenance
 from .._model import ValuePort
+from .._model._ports import (
+    bind_model_ports,
+    intrinsic_model_ports,
+    ModelPorts,
+    PortBindingEvidence,
+    PortMapping,
+    require_mapped_order,
+)
 from .._strict import StrictModule
 from .._trainable import ExplicitFreeze, NonTrainableState
 from ..discretization.finite_volume._closure import ConservativeFaceClosurePlan
@@ -67,6 +82,14 @@ class LearnedClosureBindingPlan(StrictModule, NonTrainableState):
     ):
         if not callable(predictor):
             raise TypeError("predictor must be callable.")
+        # Face corrections and modal drifts are structured callables over native
+        # solver values; they expose no owner value ports a model could bind to.
+        if intrinsic_model_ports(predictor) is not None:
+            raise ValueError(
+                "LearnedClosureBindingPlan deployment ABIs declare no owner value "
+                f"ports; {type(predictor).__name__} declares model ports and cannot "
+                "be bound as a face-correction or spectral-drift predictor."
+            )
         if not isinstance(differentiability, BranchDifferentiationPolicy):
             raise TypeError("differentiability must be a BranchDifferentiationPolicy.")
         match differentiability:
@@ -512,8 +535,13 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
         model_artifact_id: str,
         target_id: str,
         output_units: str,
+        port_mapping: PortMapping | None = None,
     ) -> PreparedLearnedStressBinding:
-        """Bind loaded runtime objects only when their artifact metadata is exact."""
+        """Bind loaded runtime objects only when their artifact metadata is exact.
+
+        `port_mapping` binds a port-declaring predictor to the plan's owner ports;
+        see `PreparedLearnedStressBinding`.
+        """
 
         if not callable(predictor):
             raise TypeError("predictor must be callable.")
@@ -540,7 +568,9 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
             raise ValueError("Loaded predictor target does not match the binding plan.")
         if units != self.output_contract.units:
             raise ValueError("Loaded predictor output units do not match the contract.")
-        return PreparedLearnedStressBinding(predictor, normalizer, self)
+        return PreparedLearnedStressBinding(
+            predictor, normalizer, self, port_mapping=port_mapping
+        )
 
 
 class LearnedStressEvidence(StrictModule, NonTrainableState):
@@ -636,24 +666,46 @@ class LearnedStressEvidence(StrictModule, NonTrainableState):
 
 
 class LearnedStressResult(StrictModule, NonTrainableState):
-    """Specific deviatoric stress and Π = -τᵢⱼSᵢⱼ, positive for forward transfer."""
+    """Specific deviatoric stress and Π = -τᵢⱼSᵢⱼ, positive for forward transfer.
+
+    Beside the domain `evidence`, every sample lane carries the common
+    `header` (margin: distance of the selected stress to the output contract's
+    symmetry and trace tolerances; `model_id`: the bound predictor's component
+    identity; `evidence_id`: the prepared binding identity), the canonical
+    `derivative_contract` of the energy policy, and `derivative_valid`. Lanes
+    whose selected energy branch sits on a branch boundary keep their primal
+    stress and transfer but carry NaN derivatives.
+    """
 
     stress: Array
     local_transfer: Array
     evidence: LearnedStressEvidence
+    header: AdmissibilityHeader
+    derivative_contract: DerivativeContract
+    derivative_valid: Array
 
     def __init__(
         self,
         stress: ArrayLike,
         local_transfer: ArrayLike,
         evidence: LearnedStressEvidence,
+        header: AdmissibilityHeader,
+        derivative_contract: DerivativeContract,
+        derivative_valid: ArrayLike,
         /,
     ):
         if not isinstance(evidence, LearnedStressEvidence):
             raise TypeError("evidence must be LearnedStressEvidence.")
+        if not isinstance(header, AdmissibilityHeader):
+            raise TypeError("header must be an AdmissibilityHeader.")
+        if not isinstance(derivative_contract, DerivativeContract):
+            raise TypeError("derivative_contract must be a DerivativeContract.")
         self.stress = jnp.asarray(stress)
         self.local_transfer = jnp.asarray(local_transfer)
         self.evidence = evidence
+        self.header = header
+        self.derivative_contract = derivative_contract
+        self.derivative_valid = jnp.asarray(derivative_valid, dtype=jnp.bool_)
 
 
 class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
@@ -661,11 +713,20 @@ class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
 
     The bound predictor is a loaded, artifact-identified deployment and is
     intentionally frozen (`ExplicitFreeze`); retraining binds a new predictor.
+
+    The owner ports are the plan's feature port
+    (`feature_schema.value_port()`), consumed as the predictor's single
+    positional feature input, and its stress port (`output_contract.value_port()`),
+    the single predictor output. A predictor declaring model ports requires an
+    explicit `port_mapping` binding its ordered inputs and outputs to exactly
+    those owner ports; `port_binding` holds the resulting `PortBindingEvidence`
+    and is `None` for predictors without intrinsic ports, which take no mapping.
     """
 
     predictor: Callable
     normalizer: TrainOnlyNormalizer
     plan: LearnedStressBindingPlan
+    port_binding: PortBindingEvidence | None = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
@@ -674,6 +735,8 @@ class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
         normalizer: TrainOnlyNormalizer,
         plan: LearnedStressBindingPlan,
         /,
+        *,
+        port_mapping: PortMapping | None = None,
     ):
         if not callable(predictor):
             raise TypeError("predictor must be callable.")
@@ -681,9 +744,26 @@ class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
             raise TypeError("normalizer must be a TrainOnlyNormalizer.")
         if not isinstance(plan, LearnedStressBindingPlan):
             raise TypeError("plan must be a LearnedStressBindingPlan.")
+        site = "PreparedLearnedStressBinding"
+        feature_port = plan.feature_schema.value_port()
+        stress_port = plan.output_contract.value_port()
+        port_binding = bind_model_ports(
+            predictor,
+            ModelPorts(inputs=(feature_port,), outputs=(stress_port,)),
+            port_mapping,
+            site=site,
+        )
+        if port_binding is not None:
+            require_mapped_order(
+                port_binding, "input", (feature_port.port_id,), site=site
+            )
+            require_mapped_order(
+                port_binding, "output", (stress_port.port_id,), site=site
+            )
         self.predictor = predictor
         self.normalizer = normalizer
         self.plan = plan
+        self.port_binding = port_binding
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-learned-stress-binding",
@@ -734,6 +814,7 @@ class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
                 "Learned stress predictor output does not match the bound dtype."
             )
         nonfinite_count = jnp.sum(~jnp.isfinite(raw_stress))
+        branch_tolerance = 32.0 * jnp.finfo(raw_stress.dtype).eps
         symmetry_defect = jnp.max(jnp.abs(raw_stress - jnp.swapaxes(raw_stress, -1, -2)))
         trace_defect = jnp.max(jnp.abs(jnp.trace(raw_stress, axis1=-2, axis2=-1)))
         raw_stress = eqx.error_if(
@@ -755,6 +836,20 @@ class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
         raw_transfer = _stress_transfer(raw_stress, strain_deviatoric)
         selected_transfer = raw_transfer
         backscatter_limit = jnp.asarray(jnp.inf, dtype=raw_transfer.dtype)
+        strain_norm_squared = ein.contract(
+            "...ij,...ij->...", strain_deviatoric, strain_deviatoric, backend="jax"
+        )
+        # A lane's derivative is branch-local: invalid where the executed energy
+        # branch sits on its boundary (zero local transfer, or the aggregate
+        # backscatter cap switching on) relative to the lane's transfer scale.
+        derivative_valid = jnp.ones(raw_transfer.shape, dtype=jnp.bool_)
+        if self.plan.energy_policy != "signed":
+            stress_norm_squared = ein.contract(
+                "...ij,...ij->...", raw_stress, raw_stress, backend="jax"
+            )
+            derivative_valid = jnp.abs(raw_transfer) > branch_tolerance * jnp.sqrt(
+                stress_norm_squared * strain_norm_squared
+            )
         if self.plan.energy_policy == "dissipative":
             selected_transfer = jnp.maximum(raw_transfer, 0.0)
             backscatter_limit = jnp.asarray(0.0, dtype=raw_transfer.dtype)
@@ -769,10 +864,11 @@ class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
                 backscatter_scale * raw_transfer,
                 raw_transfer,
             )
+            cap_resolved = jnp.abs(
+                backscatter_limit - raw_backscatter
+            ) > branch_tolerance * jnp.maximum(backscatter_limit, raw_backscatter)
+            derivative_valid = derivative_valid & ((raw_transfer > 0.0) | cap_resolved)
         transfer_delta = raw_transfer - selected_transfer
-        strain_norm_squared = ein.contract(
-            "...ij,...ij->...", strain_deviatoric, strain_deviatoric, backend="jax"
-        )
         safe_strain_norm = jnp.where(strain_norm_squared > 0.0, strain_norm_squared, 1.0)
         correction_coefficient = jnp.where(
             strain_norm_squared > 0.0,
@@ -787,12 +883,13 @@ class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
             "Learned stress energy projection produced nonfinite values.",
         )
         local_transfer = _stress_transfer(selected_stress, strain_deviatoric)
-        selected_symmetry_defect = jnp.max(
-            jnp.abs(selected_stress - jnp.swapaxes(selected_stress, -1, -2))
+        lane_symmetry_defect = jnp.max(
+            jnp.abs(selected_stress - jnp.swapaxes(selected_stress, -1, -2)),
+            axis=(-2, -1),
         )
-        selected_trace_defect = jnp.max(
-            jnp.abs(jnp.trace(selected_stress, axis1=-2, axis2=-1))
-        )
+        lane_trace_defect = jnp.abs(jnp.trace(selected_stress, axis1=-2, axis2=-1))
+        selected_symmetry_defect = jnp.max(lane_symmetry_defect)
+        selected_trace_defect = jnp.max(lane_trace_defect)
         selected_stress = eqx.error_if(
             selected_stress,
             (selected_symmetry_defect > output_contract.symmetry_tolerance)
@@ -817,7 +914,35 @@ class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
             valid=jnp.asarray(True),
             plan=self.plan,
         )
-        return LearnedStressResult(selected_stress, local_transfer, evidence)
+        header = AdmissibilityHeader(
+            jnp.minimum(
+                output_contract.symmetry_tolerance - lane_symmetry_defect,
+                output_contract.trace_tolerance - lane_trace_defect,
+            ),
+            jnp.zeros(raw_transfer.shape, dtype=jnp.uint32),
+            _stress_component_id(self.plan),
+            self.prepared_id,
+        )
+        dependencies = (feature_array, strain_array)
+        selected_stress = guard_derivative_validity(
+            selected_stress,
+            derivative_valid[..., None, None],
+            dependencies=dependencies,
+        )
+        local_transfer = guard_derivative_validity(
+            local_transfer, derivative_valid, dependencies=dependencies
+        )
+        return LearnedStressResult(
+            selected_stress,
+            local_transfer,
+            evidence,
+            header,
+            branch_policy_contract(
+                self.plan.differentiation_semantics,
+                surfaces=(DerivativeSurface.INPUT, DerivativeSurface.PRIMAL_STATE),
+            ),
+            derivative_valid,
+        )
 
     def __call__(
         self,
@@ -827,6 +952,21 @@ class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
         /,
     ) -> LearnedStressResult:
         return self.apply(features, strain, args)
+
+
+def _stress_component_id(plan: LearnedStressBindingPlan, /) -> str:
+    """Declared artifact identity of the predictor bound by `plan`."""
+    return SemanticProvenance(
+        {
+            "kind": "learned-stress-component",
+            "features": plan.feature_schema.feature_schema_id,
+            "target": plan.output_contract.target_id,
+        },
+        resource_ids={
+            "model_artifact": plan.model_artifact_id,
+            "normalizer": plan.normalizer_id,
+        },
+    ).semantic_id
 
 
 def _symmetric_deviatoric(tensor: Array, /) -> Array:

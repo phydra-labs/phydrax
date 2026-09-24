@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added model execution contracts (`ModelExecutionContract`,
+  `ExecutionCapabilities`, `ComponentPrecisionContract`, `RandomnessContract`)
+  separate from bound component contracts (`AbstractComponentSlot`,
+  `ComponentContract`, `ComponentBinding`). Network, fitted ML, Trefftz,
+  layer-potential, and Equinox-wrapped families declare regularity from their
+  layers and activations; learned chemistry, learned stress, MHD closures, and
+  learned transitions return admissibility headers and derivative contracts.
 - Added one canonical derivative vocabulary at the package root: derivative
   surfaces, gradient levels, routes, regularity with polynomial-degree algebra,
   `DerivativeContract` meet/compose/admission, branch-differentiation policies,
@@ -32,6 +39,18 @@
   and bounded rendering/video adapters.
 
 ### Changed
+- Models with intrinsic ports require an explicit `PortMapping` at
+  `Domain.Model`, model systems, operator context/execution plans, geophysical
+  bindings, and learned-stress bindings. Operator output name maps are replaced
+  by port mappings; fitted ML schemas can be built from owner ports.
+- Derivative planning admits field regularity before tracing: proven
+  degeneracy (for example a ReLU network with linear output under a Laplacian)
+  is rejected, and `FunctionalSolver(regularity_policy=...)` declares whether
+  almost-everywhere and undeclared regularity are admitted.
+- Nonlinear precision policies compose declared component error floors,
+  excluding accelerators, and reject unreachable tolerances. Implicit roots
+  and Newton preparation admit component randomness only when deterministic,
+  in inference state, or bound to a `FrozenRealization`.
 - Trainability is declared, not inferred from dtype. Arrays carry an
   `ArrayRole` (parameter, fixed, model state) from field declarations
   (`parameter_field`, `fixed_field`, `model_state_field`), `ParameterOwner`

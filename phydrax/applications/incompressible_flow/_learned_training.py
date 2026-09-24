@@ -13,6 +13,20 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from ..._admissibility import (
+    AdmissibilityReason,
+    DOMAIN_REASON_SHIFT,
+    reason_bits_where,
+)
+from ..._differentiation import (
+    branch_policy_contract,
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._fingerprint import canonical_fingerprint
 from ..._model import AbstractArrayModel
 from ..._numerics._ssp_runge_kutta import (
@@ -32,6 +46,24 @@ from ...equations._mac_incompressible import CompiledMACIncompressibleDynamics
 from ...linalg import LinearSolveControl, LinearSolveStatus
 from ...nn.operator.data import FunctionSamples, OperatorBatch
 from ...nn.operator.engine import AbstractOperatorModel
+
+
+# Domain reason bits of the incompressible learned transitions.
+_STAGE_FAILURE = 1 << DOMAIN_REASON_SHIFT
+_BOUNDARY_FAILURE = 1 << (DOMAIN_REASON_SHIFT + 1)
+_PROJECTION_FAILURE = 1 << (DOMAIN_REASON_SHIFT + 2)
+
+# Algorithmic derivatives through the iterative projection with the
+# converged/candidate selection frozen.
+_MAC_DERIVATIVE_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.PRIMAL_STATE, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+    ),
+    route=DerivativeRoute.UNROLLED,
+    regularity=DerivativeRegularity.smooth(),
+    conditions=("decisions-frozen",),
+)
 
 
 class FixedGridStressOperatorModel(AbstractArrayModel):
@@ -290,7 +322,8 @@ class PeriodicLearnedStressRolloutTransition(AbstractDiscreteModelRolloutTransit
         finite = jnp.all(jnp.isfinite(result.state))
         successful = result.successful & finite
         accepted = jnp.where(successful, result.state, jnp.zeros_like(result.state))
-        return DiscreteModelRolloutTransitionResult(
+        return self._evidenced_result(
+            model,
             result.state,
             accepted,
             training_usable=successful,
@@ -298,7 +331,17 @@ class PeriodicLearnedStressRolloutTransition(AbstractDiscreteModelRolloutTransit
             status=jnp.where(successful, 0, 1),
             residual=result.correction_norm,
             iterations=jnp.asarray(3, dtype=jnp.int32),
-            transition_id=self.transition_id,
+            reason_bits=reason_bits_where(finite, AdmissibilityReason.NONFINITE)
+            | reason_bits_where(result.successful, _STAGE_FAILURE),
+            derivative_contract=branch_policy_contract(
+                self.prepared_stress.binding.plan.differentiation_semantics,
+                surfaces=(
+                    DerivativeSurface.PRIMAL_STATE,
+                    DerivativeSurface.MODEL_PARAMETER,
+                ),
+            ),
+            derivative_valid=successful,
+            dependencies=(state, inputs),
         )
 
 
@@ -461,15 +504,14 @@ class MACLearnedRateRolloutTransition(AbstractDiscreteModelRolloutTransition):
             target_boundary,
         )
         candidate = operators.velocity_space.flatten(candidate_velocity)
-        finite = (
-            boundary.successful
-            & target_boundary.successful
-            & jnp.all(jnp.isfinite(candidate))
-        )
+        finite_candidate = jnp.all(jnp.isfinite(candidate))
+        boundaries = boundary.successful & target_boundary.successful
+        finite = boundaries & finite_candidate
         training_usable = usable_projection & finite
         physically_converged = projected.converged & finite
         accepted = jnp.where(training_usable, candidate, jnp.zeros_like(candidate))
-        return DiscreteModelRolloutTransitionResult(
+        return self._evidenced_result(
+            model,
             candidate,
             accepted,
             training_usable=training_usable,
@@ -477,7 +519,13 @@ class MACLearnedRateRolloutTransition(AbstractDiscreteModelRolloutTransition):
             status=linear.status,
             residual=relative_residual,
             iterations=linear.diagnostics.iterations,
-            transition_id=self.transition_id,
+            reason_bits=reason_bits_where(finite_candidate, AdmissibilityReason.NONFINITE)
+            | reason_bits_where(~incomplete, AdmissibilityReason.CAPACITY_INSUFFICIENT)
+            | reason_bits_where(boundaries, _BOUNDARY_FAILURE)
+            | reason_bits_where(projected.converged | incomplete, _PROJECTION_FAILURE),
+            derivative_contract=_MAC_DERIVATIVE_CONTRACT,
+            derivative_valid=training_usable,
+            dependencies=(state,),
         )
 
 

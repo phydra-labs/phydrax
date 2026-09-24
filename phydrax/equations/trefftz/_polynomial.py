@@ -13,8 +13,10 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import DerivativeRegularity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._core import (
+    _trial_space_regularity,
     AbstractTrefftzBasis,
     SimilarityNormalization,
     TrefftzResourceBudget,
@@ -330,6 +332,9 @@ class HarmonicPolynomialBasis(AbstractTrefftzBasis):
             features.append(monomials @ coefficients.astype(monomials.dtype))
         return jnp.concatenate(tuple(features), axis=0)
 
+    def _value_regularity(self) -> DerivativeRegularity:
+        return _trial_space_regularity(self.certificate, degree_bound=self.maximum_degree)
+
 
 class PolyharmonicAlmansiBasis(AbstractTrefftzBasis):
     """Almansi basis whose span satisfies ``Laplacian**order u = 0``."""
@@ -487,6 +492,15 @@ class PolyharmonicAlmansiBasis(AbstractTrefftzBasis):
                 for power, basis in enumerate(self.harmonic_bases)
             ),
             axis=0,
+        )
+
+    def _value_regularity(self) -> DerivativeRegularity:
+        # Block ``power`` multiplies degree-``degree`` harmonics by ``|x|**(2 * power)``.
+        return _trial_space_regularity(
+            self.certificate,
+            degree_bound=max(
+                2 * power + degree for power, degree in enumerate(self.maximum_degrees)
+            ),
         )
 
 

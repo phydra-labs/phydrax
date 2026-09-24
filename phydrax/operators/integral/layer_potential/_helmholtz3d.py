@@ -16,8 +16,8 @@ from phydrax._strict import StrictModule
 from phydrax.ein import contract
 
 from ...._fingerprint import canonical_fingerprint
-from ...._model import AbstractArrayModel, TRIAL_SPACE_CERTIFICATE_KEY
-from ....equations.trefftz._core import TrialSpaceCertificate
+from ...._model import TRIAL_SPACE_CERTIFICATE_KEY
+from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 from ._core import LayerDiscretizationReport
 from ._surface3d import SurfacePanelization3D
 
@@ -74,7 +74,7 @@ class HelmholtzLayerKernel3D(StrictModule):
         )
 
 
-class HelmholtzLayerPotential3D(AbstractArrayModel):
+class HelmholtzLayerPotential3D(_AbstractTrialSpaceField):
     """Finite outgoing 3D Helmholtz layer sum."""
 
     panelization: SurfacePanelization3D
@@ -194,7 +194,7 @@ class HelmholtzLayerPotential3D(AbstractArrayModel):
         return {TRIAL_SPACE_CERTIFICATE_KEY: self._certificate}
 
 
-class HelmholtzCombinedField3D(AbstractArrayModel):
+class HelmholtzCombinedField3D(_AbstractTrialSpaceField):
     """Outgoing 3D Brakhage--Werner combined field."""
 
     panelization: SurfacePanelization3D

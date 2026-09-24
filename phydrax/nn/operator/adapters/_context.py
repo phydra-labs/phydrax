@@ -12,9 +12,17 @@ from jaxtyping import Array
 
 from phydrax.domain import Domain, DomainFunction
 
+from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0
+from ...._model._ports import (
+    ModelPorts,
+    PortBindingEvidence,
+    PortMapping,
+    resolve_port_mapping,
+)
 from ...._trainable import fixed_field
 from ..._base import _AbstractBaseModel
+from ..._contracts import model_regularity
 from ..._keys import EvalKey
 from ..._loss import ModelWithLoss
 from ..._utils import _get_size
@@ -22,11 +30,60 @@ from ..data import FunctionSamples, OperatorBatch, OperatorPrediction
 from ..engine import AbstractOperatorModel
 
 
+def _bind_trained_context(
+    trained: Any,
+    port_mapping: PortMapping | None,
+    owner_ports: ModelPorts | None,
+    /,
+) -> tuple[PortBindingEvidence, str, str]:
+    """Select one task query and target field of a trained operator by port ID."""
+    if port_mapping is None or owner_ports is None:
+        raise ValueError(
+            "OperatorContextModel requires an explicit port_mapping and owner_ports: "
+            f"{type(trained).__name__} declares model ports."
+        )
+    if not isinstance(port_mapping, PortMapping):
+        raise TypeError("port_mapping must be a PortMapping.")
+    if not isinstance(owner_ports, ModelPorts):
+        raise TypeError("owner_ports must be ModelPorts.")
+    if len(port_mapping.inputs) != 1 or len(port_mapping.outputs) != 1:
+        raise ValueError(
+            "OperatorContextModel port_mapping binds exactly one query input port "
+            "and one output field port."
+        )
+    task = trained.task
+    queries = {query.value_port().port_id: query for query in task.queries}
+    fields = {field.value_port().port_id: field for field in task.target_fields}
+    query_port_id = port_mapping.inputs[0][0]
+    field_port_id = port_mapping.outputs[0][0]
+    if query_port_id not in queries:
+        raise ValueError(
+            f"port_mapping input {query_port_id} is not a query port of the operator."
+        )
+    if field_port_id not in fields:
+        raise ValueError(
+            f"port_mapping output {field_port_id} is not a target field port of the "
+            "operator."
+        )
+    query = queries[query_port_id]
+    field = fields[field_port_id]
+    evidence = resolve_port_mapping(
+        ModelPorts(inputs=(query.value_port(),), outputs=(field.value_port(),)),
+        owner_ports,
+        port_mapping,
+    )
+    return evidence, query.name, field.name
+
+
 class OperatorContextModel(_AbstractBaseModel):
     """Differentiable point-query view with fixed neural-operator sources.
 
     The bridge preserves named source and case metadata, replaces one selected query,
-    and can extract one named field from raw, multi-output, or task-bound operators.
+    and extracts one field. A port-declaring `TrainedOperator` is bound through an
+    explicit `port_mapping` against `owner_ports`: its single input pair binds one
+    operator query port and its single output pair binds one operator target field
+    port, and the audited `port_binding` is kept. Raw operators without ports select
+    by `query_name` and their own output `field_name`.
     Scalar coordinate arguments and already-stacked coordinate arrays are both accepted,
     so the resulting callable composes directly with PhydraX differential operators.
     The source ``batch`` is FIXED data; only the operator's parameters train.
@@ -36,6 +93,7 @@ class OperatorContextModel(_AbstractBaseModel):
     batch: OperatorBatch = fixed_field()
     query_name: str
     field_name: str | None
+    port_binding: PortBindingEvidence | None
     coord_dim: int
     in_size: int
     out_size: int | tuple[int, ...] | Literal["scalar"]
@@ -48,12 +106,32 @@ class OperatorContextModel(_AbstractBaseModel):
         *,
         query_name: str | None = None,
         field_name: str | None = None,
+        port_mapping: PortMapping | None = None,
+        owner_ports: ModelPorts | None = None,
         coord_dim: int | None = None,
     ):
         from ..training._trained_operator import TrainedOperator
 
         if not isinstance(batch, OperatorBatch):
             raise TypeError("OperatorContextModel requires an OperatorBatch.")
+        base_operator = (
+            operator.model if isinstance(operator, ModelWithLoss) else operator
+        )
+        port_binding = None
+        if isinstance(base_operator, TrainedOperator):
+            if query_name is not None or field_name is not None:
+                raise ValueError(
+                    "A TrainedOperator context selects its query and field through "
+                    "port_mapping, not query_name or field_name."
+                )
+            port_binding, query_name, field_name = _bind_trained_context(
+                base_operator, port_mapping, owner_ports
+            )
+        elif port_mapping is not None or owner_ports is not None:
+            raise ValueError(
+                "OperatorContextModel received a port_mapping, but "
+                f"{type(base_operator).__name__} declares no model ports."
+            )
         if query_name is None:
             resolved_query = batch.single_query_name()
         else:
@@ -75,21 +153,9 @@ class OperatorContextModel(_AbstractBaseModel):
         if dimension <= 0:
             raise ValueError("coord_dim must be positive.")
 
-        base_operator = (
-            operator.model if isinstance(operator, ModelWithLoss) else operator
-        )
         if isinstance(base_operator, TrainedOperator):
-            declared = base_operator.task.field_by_name
-            available = tuple(base_operator.output_field_map.values())
-            resolved_field = (
-                available[0] if field_name is None and len(available) == 1 else field_name
-            )
-            if resolved_field is None or resolved_field not in available:
-                raise ValueError(
-                    "field_name is required for a multi-output task-bound operator."
-                )
-            field = declared[str(resolved_field)]
-            out_size = field.channels
+            resolved_field = field_name
+            out_size = base_operator.task.field_by_name[resolved_field].channels
         elif isinstance(base_operator, AbstractOperatorModel):
             declared = base_operator.operator_output_specs
             available = tuple(declared)
@@ -109,6 +175,7 @@ class OperatorContextModel(_AbstractBaseModel):
         self.batch = batch
         self.query_name = resolved_query
         self.field_name = None if resolved_field is None else str(resolved_field)
+        self.port_binding = port_binding
         self.coord_dim = dimension
         self.in_size = dimension
         self.out_size = out_size
@@ -175,6 +242,11 @@ class OperatorContextModel(_AbstractBaseModel):
         channel_shape = () if self.out_size == "scalar" else (_get_size(self.out_size),)
         return output.reshape(self.batch.case_shape + point_shape + channel_shape)
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # The fixed sources and the replaced query layout are data; the coordinates
+        # enter the operator's own declared map.
+        return model_regularity(self.operator)
+
     def domain_function(
         self,
         domain: Domain,
@@ -213,14 +285,22 @@ def bind_operator_context(
     *,
     query_name: str | None = None,
     field_name: str | None = None,
+    port_mapping: PortMapping | None = None,
+    owner_ports: ModelPorts | None = None,
     coord_dim: int | None = None,
 ) -> OperatorContextModel:
-    """Return a differentiable named point-query view with fixed sources."""
+    """Return a differentiable point-query view with fixed sources.
+
+    A `TrainedOperator` is selected through `port_mapping` against `owner_ports`;
+    raw operators select by `query_name` and `field_name`.
+    """
     return OperatorContextModel(
         operator,
         batch,
         query_name=query_name,
         field_name=field_name,
+        port_mapping=port_mapping,
+        owner_ports=owner_ports,
         coord_dim=coord_dim,
     )
 

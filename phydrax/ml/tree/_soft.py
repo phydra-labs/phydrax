@@ -16,6 +16,7 @@ import phydrax.ein as ein
 
 from ..._differentiation import (
     DerivativeContract,
+    DerivativeRegularity,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
@@ -43,6 +44,8 @@ from ._representation import (
 TemperatureSchedule: TypeAlias = Literal["constant", "linear", "geometric"]
 SoftObjective: TypeAlias = Literal["squared_error", "logistic", "softmax"]
 
+# Sigmoid gates, softmax feature selection, and the identity/sigmoid/softmax
+# objective transforms are smooth in finite inputs.
 _SOFT_CONTRACT = DerivativeContract(
     (
         SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
@@ -55,6 +58,7 @@ _SOFT_CONTRACT = DerivativeContract(
         ),
     ),
     route=DerivativeRoute.UNROLLED,
+    regularity=DerivativeRegularity.smooth(),
     nondifferentiable_outputs=("hardened structure", "hardened feature choices"),
     conditions=(
         "All scheduled temperatures are finite and strictly positive.",
@@ -144,6 +148,9 @@ class _AbstractSoftTree(AbstractFittedModel):
 
     def output_ports(self) -> tuple[ValuePort, ...]:
         return self.target_output_ports()
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _SOFT_CONTRACT
 
     def __init__(
         self,

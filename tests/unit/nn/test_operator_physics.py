@@ -8,6 +8,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
 from phydrax.nn.operator import AbstractOperatorModel
@@ -362,10 +363,15 @@ def test_trained_operator_applies_conservation_inside_physical_prediction():
             query_is_fixed=False,
         ),
     )
+    output_port = task.field_by_name["output"].value_port()
     model = phx.nn.operator.training.TrainedOperator(
         _NonlinearPointwiseOperator(),
         task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
+        output_ports={"output": output_port},
+        port_mapping=phx.PortMapping(
+            outputs=((output_port.port_id, output_port.port_id),)
+        ),
         output_pipeline=phx.nn.operator.training.OperatorOutputPipeline(
             phx.nn.operator.training.ConservationProjection(
                 "output", source_name="source"
@@ -473,13 +479,17 @@ def test_trained_operator_linearization_uses_physical_units():
             ),
         ),
     )
+    solution_port = task.field_by_name["solution"].value_port()
     trained = phx.nn.operator.training.TrainedOperator(
         _NonlinearPointwiseOperator(),
         task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
-        output_field_map={"output": "solution"},
+        output_ports={"output": solution_port},
+        port_mapping=phx.PortMapping(
+            outputs=((solution_port.port_id, solution_port.port_id),)
+        ),
     )
     linearization = phx.nn.operator.training.linearize_operator(
         trained,
@@ -582,3 +592,275 @@ def test_operator_context_supports_multiple_coordinates_queries_and_outputs():
     point = jnp.asarray([0.2, -0.3])
     assert jnp.allclose(function.func(point), jnp.full((2,), 0.13))
     assert jnp.allclose(laplacian.func(point), jnp.full((2,), 4.0))
+
+
+def _predict_split_fields(model, batch, key):
+    del model, key
+    coordinates = batch.query("query").coordinates_array(case_shape=batch.case_shape)
+    x = coordinates[..., 0]
+    spec = phx.nn.operator.OperatorOutputSpec("scalar")
+    return phx.nn.operator.OperatorPrediction(
+        {
+            "first": phx.nn.operator.OperatorFieldBatch(
+                x**2, query_name="query", spec=spec
+            ),
+            "second": phx.nn.operator.OperatorFieldBatch(
+                2.0 * x, query_name="query", spec=spec
+            ),
+        },
+        batch.queries,
+        case_axes=batch.case_axes,
+        case_shape=batch.case_shape,
+    )
+
+
+class _SplitQueryOperator(AbstractOperatorModel):
+    _operator_prediction_builder: ClassVar = staticmethod(_predict_split_fields)
+    in_size: str = eqx.field(static=True)
+    out_size: str = eqx.field(static=True)
+
+    def __init__(self):
+        self.in_size = "scalar"
+        self.out_size = "scalar"
+
+    @property
+    def operator_output_specs(self):
+        spec = phx.nn.operator.OperatorOutputSpec("scalar")
+        return {"first": spec, "second": spec}
+
+    @property
+    def operator_contract(self):
+        return phx.nn.operator.operator_architecture_contract("DeepONet")
+
+    def __call_operator_batch__(self, batch, *, key=None):
+        return _predict_split_fields(self, batch, key).field("first").values
+
+    def __call__(self, batch, *, key=None):
+        return self.__call_operator_batch__(batch, key=key)
+
+
+def _split_task():
+    value = phx.units.DimensionSignature({"value": 1})
+    return phx.nn.operator.OperatorTask(
+        "split-query-map",
+        dimension_basis=("length", "value"),
+        fields=(
+            phx.nn.operator.OperatorFieldSpec(
+                "source", role="source", source_name="source"
+            ),
+            phx.nn.operator.OperatorFieldSpec(
+                "left", role="target", query_name="query", dimension=value
+            ),
+            phx.nn.operator.OperatorFieldSpec(
+                "right",
+                role="target",
+                query_name="query",
+                dimension=value,
+                scale=10.0,
+            ),
+        ),
+        queries=(
+            phx.nn.operator.OperatorQuerySpec(
+                "query",
+                geometry_kind="tensor_grid",
+                coordinate_components=("x",),
+                coordinate_dimensions=(phx.units.LENGTH,),
+            ),
+        ),
+        problem=phx.nn.operator.OperatorProblemSpec(
+            source_query_relation="coincident",
+            query_is_fixed=False,
+        ),
+    )
+
+
+def _split_batch():
+    axis = _axis()
+    return phx.nn.operator.OperatorBatch(
+        inputs={
+            "source": phx.nn.operator.FunctionSamples(
+                values=jnp.ones((2, 5)), axes=(axis,)
+            )
+        },
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
+        case_axes=("case",),
+        case_shape=(2,),
+    )
+
+
+def _split_trained(first_port, second_port, mapping):
+    return phx.nn.operator.training.TrainedOperator(
+        _SplitQueryOperator(),
+        _split_task(),
+        training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
+        output_ports={"first": first_port, "second": second_port},
+        port_mapping=phx.PortMapping(outputs=mapping),
+    )
+
+
+def _split_ports():
+    task = _split_task()
+    return task.field_by_name["left"].value_port(), task.field_by_name[
+        "right"
+    ].value_port()
+
+
+def test_trained_operator_routes_model_outputs_by_bound_port_ids():
+    left, right = _split_ports()
+    # Model output names never match task fields: only the port binding routes.
+    trained = _split_trained(
+        right,
+        left,
+        ((right.port_id, right.port_id), (left.port_id, left.port_id)),
+    )
+    x = jnp.linspace(0.0, 1.0, 5)
+    prediction = trained.predict(_split_batch())
+
+    assert jnp.allclose(prediction.field("right").values, 10.0 * x**2)
+    assert jnp.allclose(prediction.field("left").values, 2.0 * x)
+    assert trained.port_binding.outputs == (
+        (right.port_id, right.port_id),
+        (left.port_id, left.port_id),
+    )
+    assert trained.port_binding.dimensions_verified
+    assert trained.port_binding.normalizations_verified
+    assert tuple(port.port_id for port in trained.model_ports().outputs) == (
+        left.port_id,
+        right.port_id,
+    )
+
+
+def test_trained_operator_binding_requires_explicit_compatible_ports():
+    left, right = _split_ports()
+    task = _split_task()
+    batch = _split_batch()
+    evidence = phx.nn.operator.OperatorTrainingEvidence("task_specific")
+    with pytest.raises(ValueError, match="explicit output_ports and a port_mapping"):
+        phx.nn.operator.training.TrainedOperator(
+            _SplitQueryOperator(),
+            task,
+            training_evidence=evidence,
+            output_ports={"first": right, "second": left},
+        )
+    dataset = phx.nn.operator.training.OperatorDataset(
+        batch,
+        phx.nn.operator.OperatorTargetBatch.from_arrays(
+            {"left": jnp.zeros((2, 5)), "right": jnp.zeros((2, 5))}, batch
+        ),
+    )
+    with pytest.raises(ValueError, match="explicit output_ports and a port_mapping"):
+        phx.nn.operator.training.fit_operator(
+            _SplitQueryOperator(),
+            dataset,
+            task=task,
+            training_evidence=evidence,
+            output_ports={"first": right, "second": left},
+        )
+
+    length = phx.ValuePort(
+        "right",
+        event_shape=(),
+        component_ids=("right",),
+        representation="scalar",
+        dimensions=(phx.units.LENGTH,),
+        normalization_id=right.normalization_id,
+    )
+    with pytest.raises(
+        ValueError,
+        match=rf"output port pair 'right' \({length.port_id} -> {right.port_id}\) "
+        "dimensions mismatch",
+    ):
+        _split_trained(
+            length,
+            left,
+            ((length.port_id, right.port_id), (left.port_id, left.port_id)),
+        )
+    channels = phx.ValuePort(
+        "right",
+        event_shape=(2,),
+        component_ids=("right[0]", "right[1]"),
+        representation="scalar",
+    )
+    with pytest.raises(ValueError, match="output port pair 'right' .*component_ids"):
+        _split_trained(
+            channels,
+            left,
+            ((channels.port_id, right.port_id), (left.port_id, left.port_id)),
+        )
+    source = task.field_by_name["source"].value_port()
+    with pytest.raises(ValueError, match="unknown owner output ports"):
+        _split_trained(
+            right,
+            left,
+            ((right.port_id, source.port_id), (left.port_id, left.port_id)),
+        )
+
+
+def test_port_binding_records_aspects_a_side_leaves_undeclared():
+    left, right = _split_ports()
+    bare = phx.ValuePort(
+        "right", event_shape=(), component_ids=("right",), representation="scalar"
+    )
+    relaxed = _split_trained(
+        bare, left, ((bare.port_id, right.port_id), (left.port_id, left.port_id))
+    )
+    exact = _split_trained(
+        right, left, ((right.port_id, right.port_id), (left.port_id, left.port_id))
+    )
+
+    unverified = relaxed.port_binding.unverified
+    assert ("output", bare.port_id, "dimensions") in unverified
+    assert ("output", bare.port_id, "normalization") in unverified
+    assert ("output", left.port_id, "dimensions") not in unverified
+    assert not relaxed.port_binding.dimensions_verified
+    assert exact.port_binding.dimensions_verified
+    assert relaxed.contract_fingerprint != exact.contract_fingerprint
+
+
+def test_trained_operator_context_selects_query_and_field_through_ports():
+    left, right = _split_ports()
+    trained = _split_trained(
+        right, left, ((right.port_id, right.port_id), (left.port_id, left.port_id))
+    )
+    query = _split_task().query_by_name["query"].value_port()
+    mapping = phx.PortMapping(
+        inputs=((query.port_id, query.port_id),),
+        outputs=((right.port_id, right.port_id),),
+    )
+    owner = phx.ModelPorts(inputs=(query,), outputs=(right,))
+    context = phx.nn.operator.adapters.bind_operator_context(
+        trained, _split_batch(), port_mapping=mapping, owner_ports=owner
+    )
+    points = jnp.asarray([[0.3], [0.6]])
+
+    assert jnp.allclose(context(points), 10.0 * points[:, 0] ** 2)
+    assert context.port_binding.outputs == ((right.port_id, right.port_id),)
+    assert context.port_binding.inputs == ((query.port_id, query.port_id),)
+    with pytest.raises(ValueError, match="explicit port_mapping"):
+        phx.nn.operator.adapters.bind_operator_context(trained, _split_batch())
+    with pytest.raises(ValueError, match="through port_mapping"):
+        phx.nn.operator.adapters.bind_operator_context(
+            trained,
+            _split_batch(),
+            field_name="right",
+            port_mapping=mapping,
+            owner_ports=owner,
+        )
+    with pytest.raises(ValueError, match="not a target field port"):
+        phx.nn.operator.adapters.bind_operator_context(
+            trained,
+            _split_batch(),
+            port_mapping=phx.PortMapping(
+                inputs=((query.port_id, query.port_id),),
+                outputs=((query.port_id, right.port_id),),
+            ),
+            owner_ports=owner,
+        )
+    with pytest.raises(ValueError, match="declares no model ports"):
+        phx.nn.operator.adapters.bind_operator_context(
+            _SplitQueryOperator(),
+            _split_batch(),
+            field_name="first",
+            port_mapping=mapping,
+            owner_ports=owner,
+        )

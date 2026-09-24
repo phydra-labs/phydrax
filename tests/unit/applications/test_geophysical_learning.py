@@ -158,8 +158,15 @@ def test_same_model_simulation_holdout_and_train_only_normalization():
         coord_dim=1,
         latent_size=4,
     )
+    increment_port = experiment.task.field_by_name["increment"].value_port()
     fit = experiment.fit(
-        model, steps=2, output_field_map={"output": "increment"}, jit=False
+        model,
+        steps=2,
+        output_ports={"output": increment_port},
+        port_mapping=phx.PortMapping(
+            outputs=((increment_port.port_id, increment_port.port_id),)
+        ),
+        jit=False,
     )
     assert fit.completed_steps == 2
     normalized = fit.normalization.normalize_batch(experiment.split.train.batch)

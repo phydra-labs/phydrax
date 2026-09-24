@@ -1207,11 +1207,22 @@ targetless = phx.nn.operator.training.OperatorDataset(
     cochain_batch,
     phx.nn.operator.OperatorTargetBatch.from_arrays({}, cochain_batch),
 )
+# The cochain operator emits each target field under that field's name, so its
+# outputs declare the task field ports and bind to them one-to-one.
+cochain_output_ports = {
+    field.name: field.value_port() for field in cochain_task.target_fields
+}
 fit = phx.nn.operator.training.fit_operator(
     cochain_operator,
     targetless,
     task=cochain_task,
     training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
+    output_ports=cochain_output_ports,
+    port_mapping=phx.PortMapping(
+        outputs=tuple(
+            (port.port_id, port.port_id) for port in cochain_output_ports.values()
+        )
+    ),
     loss_terms=physics_losses,
     normalization=None,
     batch_size=1,
@@ -1515,10 +1526,13 @@ rollout_loss = phx.nn.operator.training.SupervisedOperatorRolloutLoss(
     target_fields=("state_t1", "state_t2", "state_t3"),
     time_weights=(1.0, 1.0, 1.0),
 )
+state_port = task.field_by_name["state"].value_port()
 fit = phx.nn.operator.training.fit_operator(
     model,
     rollout_dataset,
     task=task,
+    output_ports={"state": state_port},
+    port_mapping=phx.PortMapping(outputs=((state_port.port_id, state_port.port_id),)),
     loss_terms=(rollout_loss,),
     training_evidence=training_evidence,
     rollout_route=route,
@@ -1799,6 +1813,37 @@ task also sets `fixed_geometry=True` on every query; fitting rejects geometry
 changes across cases or batches, and `TrainedOperator` persists and enforces the
 physical geometry fingerprints at inference.
 
+Model outputs reach task target fields only through an explicit port binding;
+names, shapes, and output order are never matched. `output_ports` declares the
+`ValuePort` of every named model output, and the outputs of `port_mapping` bind
+each declared port ID to one task target port `OperatorFieldSpec.value_port()`.
+Semantic identity, components, event shape, representation, and variance must
+agree exactly; dimensions, space, frame, normalization, and semantic axes must
+agree when both sides declare them and are otherwise recorded as unverified in
+`trained_operator.port_binding`. The binding, keyed by port IDs, enters the
+contract fingerprint, the checkpoint contract, and the artifact manifest:
+
+```text
+solution_port = task.field_by_name["solution"].value_port()
+fit_result = phx.nn.operator.training.fit_operator(
+    model,
+    split.train,
+    task=task,
+    training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
+    output_ports={"output": solution_port},
+    port_mapping=phx.PortMapping(
+        outputs=((solution_port.port_id, solution_port.port_id),)
+    ),
+)
+assert fit_result.port_binding.dimensions_verified
+```
+
+A `TrainedOperator` declares its task ports (`model_ports()`), so
+`bind_operator_context` selects its query and output field through a
+`port_mapping` against the caller's `owner_ports` (one query input pair and one
+field output pair) and keeps the audited `port_binding`; raw operators select by
+`query_name` and `field_name`.
+
 In task-bound mode `fit_result.trained_operator` is a `TrainedOperator`;
 `prepare` performs host-side contract validation once and `predict_prepared` is
 the compiled hot path. Its prediction is dimensionalized and retains named
@@ -1913,10 +1958,15 @@ physics_task = phx.nn.operator.OperatorTask(
         query_is_fixed=False,
     ),
 )
+physics_output_port = physics_task.field_by_name["output"].value_port()
 physics_model = phx.nn.operator.training.TrainedOperator(
     physics_base,
     physics_task,
     training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
+    output_ports={"output": physics_output_port},
+    port_mapping=phx.PortMapping(
+        outputs=((physics_output_port.port_id, physics_output_port.port_id),)
+    ),
     output_pipeline=output_pipeline,
 )
 physics_prediction = physics_model.predict(measured_batch, key=jr.key(14))

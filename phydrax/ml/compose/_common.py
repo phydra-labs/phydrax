@@ -524,6 +524,43 @@ def _combine_results(
     )
 
 
+def _declared_contract(model: AbstractArrayModel, /) -> DerivativeContract | None:
+    """Prediction contract of a child executable whose family declares one.
+
+    A declared family's execution contract carries its fit contract's prediction
+    surfaces and declares deterministic evaluation; the conservative default of an
+    undeclared executable leaves randomness undeclared and yields `None`.
+    """
+    contract = model.model_execution_contract()
+    randomness = contract.randomness
+    if (
+        randomness is None
+        or randomness.mode != "deterministic"
+        or randomness.requires_inference_state
+    ):
+        return None
+    return contract.derivative
+
+
+def _combine_models(
+    models: Sequence[AbstractArrayModel],
+    /,
+    *,
+    sequential: bool,
+) -> DerivativeContract | None:
+    """Combine child prediction contracts as `_combine_results` combines their fits.
+
+    `None` (undeclared) when any child is undeclared: its fit contract then need
+    not agree with its executable, so neither would the combined contracts.
+    """
+    contracts = tuple(_declared_contract(model) for model in models)
+    if any(contract is None for contract in contracts):
+        return None
+    if sequential:
+        return functools.reduce(DerivativeContract.compose, contracts)
+    return contracts[0].meet(*contracts[1:])
+
+
 def _prefixed_schema(name: str, schema: FeatureSchema, /) -> FeatureSchema:
     return FeatureSchema(
         tuple(f"{name}__{feature_name}" for feature_name in schema.names),

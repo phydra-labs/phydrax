@@ -115,16 +115,46 @@ derivative; see [Derivative contracts](../appendix/ml_differentiability.md).
 
 ## Bind the fitted model to a Phydrax domain
 
-Array-native ML models implement the same pointwise model and input-binding
-contracts as Phydrax neural models. If the two features are the coordinates of a
-geometric domain, the frozen closure can be bound directly:
+A fitted model declares intrinsic ports, so binding it to an owner requires an
+explicit `phx.PortMapping`, and ports bind only when their semantics agree. The
+strain/temperature closure above has feature ports of its own; it cannot stand in
+for the coordinates of a geometric domain. To learn a closure *of* domain
+coordinates, fit it on the domain's own coordinate ports:
 
 ```python
 geom = phx.domain.GeometryDomain(
     phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
 )
-frozen_field = geom.Model("x")(result.model)
+x_port = geom.value_port("x")
+conductivity = phx.ValuePort(
+    "conductivity",
+    event_shape=(),
+    component_ids=("kappa",),
+    representation="coefficient-field",
+    dimensions=(phx.units.DIMENSIONLESS,),
+)
+spatial = phx.ml.fit(
+    phx.ml.linear.RidgeRecipe(alpha=1e-5),
+    features,
+    targets,
+    feature_schema=phx.ml.FeatureSchema.from_ports((x_port,)),
+    target_schema=phx.ml.TargetSchema.from_port(conductivity),
+)
+mapping = phx.PortMapping(inputs=[(x_port.port_id, x_port.port_id)])
+frozen_field = geom.Model("x", port_mapping=mapping)(spatial.model)
+evidence = frozen_field.port_binding
 ```
+
+`FeatureSchema.from_ports` makes the fitted input ports exactly the owner's
+ports (the feature axis is their row-major concatenation, in port order), and
+`TargetSchema.from_port` makes the output port the declared quantity. The
+mapping names each model input port and the domain port it binds; dependencies
+are packed in `deps` order and never repacked, so the mapped labels must equal
+the `deps` order. `Domain.Model` rejects a missing mapping, a mapping onto a port
+with different semantics, and a mapping whose order differs from `deps`, all at
+binding time. `evidence` is the recorded `PortBindingEvidence`: domains declare
+no coordinate units, so `evidence.dimensions_verified` is `False` and the
+unverified aspects are listed in `evidence.unverified`.
 
 `frozen_field` is now a domain-aware function. It can be placed in the `functions`
 mapping of a `FunctionalSolver`, used by residual/condition terms, or differentiated
@@ -135,13 +165,14 @@ changing the learned closure.
 To refine the fitted coefficients jointly with physics, opt in explicitly:
 
 ```python
-trainable_field = geom.Model("x")(result.as_trainable())
+trainable_field = geom.Model("x", port_mapping=mapping)(spatial.as_trainable())
 ```
 
 This changes array roles only: the fitted coefficients become PARAMETER, while
 retained data and statistics declared with `fixed_field` stay FIXED. It does not
 copy the arrays, make a hard fit differentiable, or erase the original fit
-diagnostics.
+diagnostics. To train only some coefficients, pass an explicit
+`phx.nn.parameters.ParameterSubspace` to `FunctionalSolver.solve`.
 
 ## Use sparse data deliberately
 

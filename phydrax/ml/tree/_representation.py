@@ -12,6 +12,14 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._model import ModelBinding, ValuePort
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
@@ -24,6 +32,27 @@ ObjectiveTransform: TypeAlias = Literal[
 
 EnsembleAggregation: TypeAlias = Literal["sum", "weighted_median"]
 TreeInputDType: TypeAlias = Literal["preserve", "float32", "float64"]
+
+# Every represented ensemble is piecewise constant between split thresholds, so
+# its prediction is a discontinuous piecewise polynomial of degree zero.
+_HARD_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(
+            DerivativeSurface.MODEL_PARAMETER, GradientLevel.ALMOST_EVERYWHERE
+        ),
+    ),
+    route=DerivativeRoute.STOPPED,
+    regularity=DerivativeRegularity(continuity=-1, pieces="polynomial", degree_bound=0),
+    nondifferentiable_outputs=(
+        "split structure",
+        "leaf indices",
+        "decision paths",
+        "class labels",
+    ),
+    conditions=(
+        "Finite values away from represented split thresholds are locally constant.",
+    ),
+)
 
 
 def apply_objective(raw: Array, transform: ObjectiveTransform, /) -> Array:
@@ -358,6 +387,9 @@ class TreeEnsemble(AbstractFittedModel):
 
     def output_ports(self) -> tuple[ValuePort, ...]:
         return self.target_output_ports()
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _HARD_CONTRACT
 
     def __init__(
         self,

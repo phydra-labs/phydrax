@@ -22,8 +22,14 @@ from ..._model import ModelBinding
 from ..._trainable import fixed_field
 from ...kernels import AbstractPositiveDefiniteKernel, SquaredExponentialKernel
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, ML_NONCONVERGED
+from .._contracts import (
+    AbstractRecipe,
+    FitResult,
+    ML_NONCONVERGED,
+    prediction_fit_contract,
+)
 from .._schema import AbstractFittedModel
+from ..kernel_methods._utils import kernel_regularity, linear_expansion_contract
 from ._common import (
     _BLOCKWISE_BINDING,
     _case_count,
@@ -125,6 +131,11 @@ class OneClassSVMModel(AbstractFittedModel):
         self.case_shape = tuple(case_shape)
         self.in_size = train.shape[-1]
         self.out_size = "scalar"
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return linear_expansion_contract(
+            kernel_regularity(self.kernel), nondifferentiable_outputs=("predict",)
+        )
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -258,12 +269,9 @@ class OneClassSVMRecipe(AbstractRecipe):
             self.kernel,
             case_shape=batch.case_shape,
         )
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),
@@ -275,9 +283,8 @@ class OneClassSVMRecipe(AbstractRecipe):
                 ),
             ),
             route=DerivativeRoute.UNROLLED,
-            nondifferentiable_outputs=("support_partition", "predict", "valid", "status"),
+            nondifferentiable_outputs=("support_partition", "valid", "status"),
             conditions=(
-                "kernel is differentiable at evaluated inputs",
                 "capped-simplex active set and support partition are held fixed",
                 "fixed projected-gradient iteration count",
             ),

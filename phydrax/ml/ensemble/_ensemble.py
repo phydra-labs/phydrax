@@ -15,6 +15,7 @@ from jaxtyping import Array
 
 from ..._differentiation import (
     DerivativeContract,
+    DerivativeRegularity,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
@@ -28,9 +29,27 @@ from .._contracts import (
     AbstractRecipe,
     FitResult,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 from .._sparse_features import SparseFeatures
+
+
+# Weighted averaging is linear in the member predictions and in the (parameter)
+# member weights.
+_WEIGHTED_MEAN = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.smooth(degree_bound=1),
+)
+
+# Temperature-scaled softmax of the gate scores; the temperature is a parameter.
+_SOFTMAX_GATE = DerivativeContract.smooth(
+    (DerivativeSurface.INPUT, DerivativeSurface.MODEL_PARAMETER)
+)
 
 
 def _require_key(key: Any, owner: str) -> Array:
@@ -89,6 +108,12 @@ def _normalized_weights(weights: Array, count: int) -> Array:
 def _weighted_mean(predictions: Array, weights: Array) -> Array:
     shape = (weights.shape[0],) + (1,) * (predictions.ndim - 1)
     return jnp.sum(predictions * weights.reshape(shape), axis=0)
+
+
+def _members_contract(members: Sequence[AbstractArrayModel]) -> DerivativeContract:
+    """Prediction contract of the juxtaposed member predictions."""
+    contracts = tuple(member.model_execution_contract().derivative for member in members)
+    return contracts[0].meet(*contracts[1:])
 
 
 def _model_sizes(members: Sequence[AbstractArrayModel]) -> tuple[Any, Any]:
@@ -155,6 +180,11 @@ class HomogeneousEnsembleModel(AbstractFittedModel):
         """Return the shared UQ PredictiveField over raw member samples."""
         return self.ensemble.predict(x, key=_require_key(key, "predictive"))
 
+    def _prediction_contract(self) -> DerivativeContract:
+        # Stacked members share one static structure, hence one contract.
+        member = self.ensemble.layout.take(self.ensemble.model, 0)
+        return _members_contract((member,)).compose(_WEIGHTED_MEAN)
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         return _weighted_mean(self.member_predictions(x, key=key), self.member_weights)
 
@@ -192,6 +222,9 @@ class HeterogeneousEnsembleModel(AbstractFittedModel):
         """Return the shared UQ PredictiveField over raw member samples."""
         return self.ensemble.predict(x, key=_require_key(key, "predictive"))
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _members_contract(self.ensemble.members).compose(_WEIGHTED_MEAN)
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         return _weighted_mean(self.member_predictions(x, key=key), self.member_weights)
 
@@ -216,6 +249,9 @@ class SoftVotingModel(AbstractFittedModel):
         raw = jnp.ones((len(values),)) if member_weights is None else member_weights
         self.member_weights = _normalized_weights(jnp.asarray(raw), len(values))
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _members_contract(self.ensemble.members).compose(_WEIGHTED_MEAN)
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         return _weighted_mean(
             _call_members(self.ensemble.members, x, key), self.member_weights
@@ -236,6 +272,34 @@ class HardVotingModel(AbstractFittedModel):
             raise ValueError("members must be non-empty.")
         self.in_size, self.out_size = _model_sizes(values)
         self.ensemble = HeterogeneousFunctionEnsemble(values)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        members = _members_contract(self.ensemble.members)
+        combined = members.regularity
+        # The vote returns one member's prediction on each region of equal votes:
+        # it keeps the members' pieces but none of their continuity, and its
+        # gradient is stopped.
+        regularity = (
+            DerivativeRegularity.discontinuous()
+            if combined is None
+            else DerivativeRegularity(
+                continuity=-1,
+                pieces=combined.pieces,
+                degree_bound=combined.degree_bound,
+                conditions=combined.conditions,
+                support=combined.support,
+            )
+        )
+        return DerivativeContract(
+            (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+            route=DerivativeRoute.DIRECT,
+            regularity=regularity,
+            conditions=members.conditions,
+            nondifferentiable_outputs=(
+                *members.nondifferentiable_outputs,
+                "majority_vote",
+            ),
+        )
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         predictions = _call_members(self.ensemble.members, x, key)
@@ -260,6 +324,10 @@ class FeatureSubsetModel(AbstractFittedModel):
         self.indices = selected
         self.in_size = int(input_size)
         self.out_size = model.out_size
+
+    def _prediction_contract(self) -> DerivativeContract:
+        # The fixed column gather is linear, so the child's contract is kept.
+        return self.model.model_execution_contract().derivative
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         return self.model(jnp.take(jnp.asarray(x), self.indices, axis=-1), key=key)
@@ -287,6 +355,11 @@ class StackingModel(AbstractFittedModel):
         self.meta_model = meta_model
         self.in_size = first_in
         self.out_size = meta_model.out_size
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _members_contract(self.base_ensemble.members).compose(
+            self.meta_model.model_execution_contract().derivative
+        )
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         count = self.base_ensemble.num_members
@@ -342,6 +415,12 @@ class MixtureOfExpertsModel(AbstractFittedModel):
             raise ValueError("The gating model output must have one score per expert.")
         return jax.nn.softmax(logits / self.temperature, axis=-1)
 
+    def _prediction_contract(self) -> DerivativeContract:
+        gate = self.gate.model_execution_contract().derivative.compose(_SOFTMAX_GATE)
+        # The softmax weights are non-polynomial, so weighting the expert
+        # predictions by them has the regularity of the met factors.
+        return _members_contract(self.experts.members).meet(gate)
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         count = self.experts.num_members
         keys = (None,) * (count + 1) if key is None else tuple(jr.split(key, count + 1))
@@ -368,10 +447,14 @@ def _flatten_prediction(prediction: Any, features: Any) -> Array:
 
 
 def _fit_result(
-    model: AbstractArrayModel,
+    model: AbstractFittedModel,
     diagnostics: EnsembleFitDiagnostics,
-    contract: DerivativeContract,
     method: str,
+    *,
+    route: DerivativeRoute,
+    fit_surfaces: Sequence[SurfaceDerivative] = (),
+    conditions: Sequence[str] = (),
+    nondifferentiable_outputs: Sequence[str] = (),
 ) -> FitResult:
     valid = jnp.all(diagnostics.member_valid, axis=0)
     status = jnp.where(valid, ML_SUCCESS, jnp.max(diagnostics.member_status, axis=0))
@@ -381,7 +464,13 @@ def _fit_result(
         valid=valid,
         status=status,
         method=method,
-        derivative_contract=contract,
+        derivative_contract=prediction_fit_contract(
+            model._prediction_contract(),
+            fit_surfaces,
+            route=route,
+            conditions=conditions,
+            nondifferentiable_outputs=nondifferentiable_outputs,
+        ),
     )
 
 
@@ -440,20 +529,9 @@ class BaggingRecipe(AbstractRecipe):
         return _fit_result(
             HomogeneousEnsembleModel(models),
             diagnostics,
-            DerivativeContract(
-                (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
-                ),
-                route=DerivativeRoute.STOPPED,
-                nondifferentiable_outputs=("bootstrap_indices",),
-                conditions=(
-                    "Predictions are smooth when every child prediction is smooth.",
-                ),
-            ),
             "bagging",
+            route=DerivativeRoute.STOPPED,
+            nondifferentiable_outputs=("bootstrap_indices",),
         )
 
 
@@ -506,18 +584,9 @@ class RandomSubspaceRecipe(AbstractRecipe):
         return _fit_result(
             HeterogeneousEnsembleModel(tuple(models)),
             diagnostics,
-            DerivativeContract(
-                (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
-                ),
-                route=DerivativeRoute.STOPPED,
-                nondifferentiable_outputs=("feature_subspaces",),
-                conditions=("Predictions are smooth conditional on sampled subspaces.",),
-            ),
             "random-subspace",
+            route=DerivativeRoute.STOPPED,
+            nondifferentiable_outputs=("feature_subspaces",),
         )
 
 
@@ -544,17 +613,9 @@ class SoftVotingRecipe(AbstractRecipe):
         return _fit_result(
             SoftVotingModel(models, member_weights=self.member_weights),
             diagnostics,
-            DerivativeContract(
-                (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
-                ),
-                route=DerivativeRoute.STOPPED,
-                conditions=("All member scores must be aligned.",),
-            ),
             "soft-voting",
+            route=DerivativeRoute.STOPPED,
+            conditions=("All member scores must be aligned.",),
         )
 
 
@@ -576,16 +637,8 @@ class HardVotingRecipe(AbstractRecipe):
         return _fit_result(
             HardVotingModel(models),
             diagnostics,
-            DerivativeContract(
-                (
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE
-                    ),
-                ),
-                route=DerivativeRoute.STOPPED,
-                nondifferentiable_outputs=("majority_vote",),
-            ),
             "hard-voting",
+            route=DerivativeRoute.STOPPED,
         )
 
 
@@ -698,20 +751,12 @@ class StackingRecipe(AbstractRecipe):
         return _fit_result(
             model,
             diagnostics,
-            DerivativeContract(
-                (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
-                ),
-                route=DerivativeRoute.STOPPED,
-                nondifferentiable_outputs=("fold_assignment",),
-                conditions=(
-                    "Meta-model training uses predictions from models excluding each held-out fold.",
-                ),
-            ),
             "stacking",
+            route=DerivativeRoute.STOPPED,
+            conditions=(
+                "Meta-model training uses predictions from models excluding each held-out fold.",
+            ),
+            nondifferentiable_outputs=("fold_assignment",),
         )
 
 
@@ -816,28 +861,22 @@ class MixtureOfExpertsRecipe(AbstractRecipe):
         return _fit_result(
             model,
             diagnostics,
-            DerivativeContract(
-                (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
-                    ),
+            "mixture-of-experts",
+            route=DerivativeRoute.UNROLLED,
+            fit_surfaces=(
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),
-                route=DerivativeRoute.UNROLLED,
-                conditions=(
-                    "Expert and gate recipes must expose the corresponding fit gradients.",
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
                 ),
             ),
-            "mixture-of-experts",
+            conditions=(
+                "Expert and gate recipes must expose the corresponding fit gradients.",
+            ),
         )
 
 

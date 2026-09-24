@@ -10,7 +10,9 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
+from phydrax.nn._contracts import model_regularity
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
 from phydrax.nn.layers import LinearRecurrentUnit, RecurrentBatch
@@ -176,6 +178,9 @@ class LinearRecurrentOperator(AbstractOperatorModel):
             raise TypeError("inputs must be an OperatorBatch or RecurrentBatch.")
         output = self.model(inputs, initial_state=initial_state, key=key)
         return output[..., 0] if self.output_size == "scalar" else output
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return model_regularity(self.model)
 
 
 __all__ = ["LinearRecurrentOperator"]

@@ -15,6 +15,7 @@ import phydrax.ein as ein
 
 from ..._differentiation import (
     DerivativeContract,
+    DerivativeRegularity,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
@@ -29,6 +30,7 @@ from .._contracts import (
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._schema import AbstractFittedModel
 from ._common import (
@@ -39,6 +41,18 @@ from ._common import (
     pairwise_distances,
     positive_scalar,
     real_dtype,
+)
+
+
+# Radius labels of the nearest core point are locally constant and stopped.
+_RADIUS_LABEL_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.NONE),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.piecewise_polynomial(continuity=-1, degree_bound=0),
+    nondifferentiable_outputs=("labels",),
 )
 
 
@@ -77,6 +91,9 @@ class DensityClusterModel(AbstractFittedModel):
         self.case_shape = self.core_points.shape[:-2]
         self.cluster_capacity = self.cluster_active.shape[-1]
         self.method = str(method)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _RADIUS_LABEL_CONTRACT
 
     def core_distances(self, x: Any, /) -> Array:
         distance = distances_to_centers(
@@ -270,15 +287,10 @@ def _fit_density(
         degeneracy=exhausted | (core_count == 0),
         method=method,
     )
-    contract = DerivativeContract(
-        (
-            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
-            SurfaceDerivative(
-                DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
-            ),
-        ),
+    contract = prediction_fit_contract(
+        model._prediction_contract(),
         route=DerivativeRoute.STOPPED,
-        nondifferentiable_outputs=("labels", "core mask", "connected components"),
+        nondifferentiable_outputs=("core mask", "connected components"),
         conditions=(
             "soft_membership is smooth away from zero normalization",
             "hard radius labels are terminal",

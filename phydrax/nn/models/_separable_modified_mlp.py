@@ -9,6 +9,7 @@ import jax
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._model import ModelBinding
 from .._base import _AbstractStructuredInputModel
@@ -108,3 +109,6 @@ class SeparableModifiedMLP(_AbstractStructuredInputModel):
     ) -> Array:
         """Evaluate pointwise or coordinate-separable input."""
         return self.model(x, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return self.model._value_regularity()

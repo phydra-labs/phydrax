@@ -17,13 +17,11 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ...._model import AbstractArrayModel, TRIAL_SPACE_CERTIFICATE_KEY
+from ...._model import TRIAL_SPACE_CERTIFICATE_KEY
 from ...._strict import StrictModule
 from ...._trainable import fixed_field, NonTrainableState
 from ....discretization import EntitySet
-from ....equations.trefftz._core import (
-    TrialSpaceCertificate,
-)
+from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 from ....geometry import MeshRegion
 from ....integration import IntegrationPrecisionPolicy
 from ....linalg import AbstractLinearOperator, DenseLinearOperator, LinearCapabilityError
@@ -182,7 +180,7 @@ class StokesLayerKernel3D(StrictModule):
         )
 
 
-class StokesLayerPotential3D(AbstractArrayModel):
+class StokesLayerPotential3D(_AbstractTrialSpaceField):
     """Finite steady-Stokes layer sum off its discrete source support."""
 
     panelization: SurfacePanelization3D

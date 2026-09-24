@@ -12,12 +12,15 @@ from jaxtyping import Array, Key
 
 from phydrax.ein import contract
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from .._base import _AbstractBaseModel
+from .._contracts import AFFINE, compose_regularity, product_regularity
 from .._keys import EvalKey
 from .._scan import pack_scan_modules, scan_apply, stack_scan_dynamics
 from .._utils import _get_size, _identity
+from ..activations import activation_regularity
 from ..activations._stan import Stan
 from ..layers._linear import Linear as RealLinear
 
@@ -223,6 +226,17 @@ class _SumOverPathsDense(StrictModule):
             amp = jnp.exp(1j * alpha) * g  # (B,K)
             y = contract("bko,bk->bo", y_paths, amp)
             return y
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Smooth phases exp(i alpha_k(z)) of the action network times affine paths.
+        action = compose_regularity(
+            AFFINE,
+            self.action.l1._value_regularity(),
+            self.action.l2._value_regularity(),
+            self.action.l3._value_regularity(),
+        )
+        phase = compose_regularity(action, activation_regularity(jnp.exp))
+        return product_regularity((phase, AFFINE))
 
 
 class _RealConcatDense(StrictModule):
@@ -431,3 +445,17 @@ class FeynmaNN(_AbstractBaseModel):
 
         y = self.final_activation(y)
         return y
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        if self.blocks is None or self.activs is None:
+            return None
+        stages = [AFFINE]
+        for block, activation in zip(self.blocks, self.activs, strict=True):
+            stages += (block._value_regularity(), activation_regularity(activation))
+        # The real readout is affine in the concatenated real and imaginary parts.
+        readout = (
+            AFFINE if self.readout is None else self.readout.linear._value_regularity()
+        )
+        return compose_regularity(
+            *stages, readout, activation_regularity(self.final_activation)
+        )

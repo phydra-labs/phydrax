@@ -10,9 +10,11 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._model import KFACAffineBlock, KFACLayoutProvider
 from .._base import _AbstractBaseModel
+from .._contracts import AFFINE, compose_regularity, sum_regularity
 from .._keys import EvalKey, fold_in_eval_key
 from .._scan import (
     pack_scan_modules,
@@ -20,6 +22,7 @@ from .._scan import (
     stack_scan_dynamics,
 )
 from .._utils import _canonical_size, _get_value_shape, _identity, SizeLike
+from ..activations import activation_regularity
 from ..layers._dropout import _dropout_probabilities, Dropout
 from ..layers._linear import Linear
 from ..parameters import LowRankUpdate
@@ -327,3 +330,11 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
                 res = self._residual_proj(x0, key=fold_in_eval_key(key, hidden_count + 1))
             y = y + res
         return self.final_activation(y)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Dropout is affine in the value, so only the layers and the (projected)
+        # residual enter before the final activation.
+        stack = compose_regularity(*(layer._value_regularity() for layer in self.layers))
+        if self.skip_connection:
+            stack = sum_regularity((stack, AFFINE))
+        return compose_regularity(stack, activation_regularity(self.final_activation))

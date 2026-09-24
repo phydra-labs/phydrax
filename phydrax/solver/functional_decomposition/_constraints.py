@@ -117,6 +117,7 @@ def solve_augmented_interface(
             evaluation_terms=current.evaluation_terms,
             enforcement=current.enforcement,
             collocation_key=jr.key(seed + outer + 1),
+            regularity_policy=current.regularity_policy,
         )
         if (
             float(evidence.primal_residual) <= plan.primal_tolerance

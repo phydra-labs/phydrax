@@ -15,18 +15,21 @@ import phydrax.ein as ein
 
 from ..._differentiation import (
     DerivativeContract,
+    DerivativeRegularity,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
     SurfaceDerivative,
 )
 from ..._model import ModelBinding
+from ..._model._array import value_derivative_contract
 from ..._trainable import fixed_field
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
     FitResult,
     ML_NONCONVERGED,
+    prediction_fit_contract,
 )
 from .._numerics import pairwise_distances
 from .._schema import AbstractFittedModel
@@ -40,11 +43,19 @@ from ._common import (
     _euclidean_from_squared,
     _fit_arrays,
     _fit_status,
+    _HARD_NEIGHBOR_EXTENSION_CONTRACT,
     _prepare_queries,
     _restore_queries,
     _stable_hermitian_eigh,
+    _TRANSDUCTIVE_CONTRACT,
     build_neighbor_graph,
     ManifoldDiagnostics,
+)
+
+
+# The Gower transform is affine in the query's squared Euclidean distances.
+_CLASSICAL_MDS_CONTRACT = value_derivative_contract(
+    DerivativeRegularity.smooth(degree_bound=2)
 )
 
 
@@ -90,6 +101,9 @@ class SpectralEmbeddingModel(AbstractFittedModel):
         self.case_shape = tuple(case_shape)
         self.in_size = train.shape[-1]
         self.out_size = vectors.shape[-1]
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _HARD_NEIGHBOR_EXTENSION_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -246,12 +260,9 @@ class SpectralEmbeddingRecipe(AbstractRecipe):
             n_neighbors=self.n_neighbors,
             case_shape=batch.case_shape,
         )
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),
@@ -263,12 +274,7 @@ class SpectralEmbeddingRecipe(AbstractRecipe):
                 ),
             ),
             route=DerivativeRoute.SPECTRAL,
-            nondifferentiable_outputs=(
-                "neighbor_indices",
-                "connectivity",
-                "valid",
-                "status",
-            ),
+            nondifferentiable_outputs=("connectivity", "valid", "status"),
             conditions=("k-NN topology is held fixed", "retained eigenvalues are simple"),
         )
         return FitResult(
@@ -323,6 +329,11 @@ class MultidimensionalScalingModel(AbstractFittedModel):
         self.case_shape = tuple(case_shape)
         self.in_size = train.shape[-1]
         self.out_size = embedding.shape[-1]
+
+    def _prediction_contract(self) -> DerivativeContract:
+        if self.method == "classical":
+            return _CLASSICAL_MDS_CONTRACT
+        return _TRANSDUCTIVE_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -502,17 +513,9 @@ class MultidimensionalScalingRecipe(AbstractRecipe):
             method=self.method,
             case_shape=batch.case_shape,
         )
-        transform_supported = self.method == "classical"
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(
-                    DerivativeSurface.INPUT,
-                    GradientLevel.SMOOTH if transform_supported else GradientLevel.NONE,
-                ),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER,
-                    GradientLevel.SMOOTH if transform_supported else GradientLevel.NONE,
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),
@@ -524,7 +527,7 @@ class MultidimensionalScalingRecipe(AbstractRecipe):
                 ),
             ),
             route=DerivativeRoute.SPECTRAL
-            if transform_supported
+            if self.method == "classical"
             else DerivativeRoute.UNROLLED,
             nondifferentiable_outputs=("valid", "status"),
             conditions=("retained eigenspaces are simple", "SMACOF is transductive only"),
@@ -584,6 +587,9 @@ class IsomapModel(AbstractFittedModel):
         self.case_shape = tuple(case_shape)
         self.in_size = train.shape[-1]
         self.out_size = embedding.shape[-1]
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _HARD_NEIGHBOR_EXTENSION_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -748,12 +754,9 @@ class IsomapRecipe(AbstractRecipe):
             n_neighbors=self.n_neighbors,
             case_shape=batch.case_shape,
         )
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),
@@ -766,7 +769,6 @@ class IsomapRecipe(AbstractRecipe):
             ),
             route=DerivativeRoute.SPECTRAL,
             nondifferentiable_outputs=(
-                "neighbor_indices",
                 "shortest_path_topology",
                 "connectivity",
                 "valid",

@@ -12,13 +12,23 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._frozendict import frozendict
 from phydrax._strict import StrictModule
+from phydrax.nn._contracts import (
+    AFFINE,
+    compose_regularity,
+    model_regularity,
+    product_regularity,
+    sum_regularity,
+)
 from phydrax.nn._keys import EvalKey, split_eval_key
 from phydrax.nn._utils import _get_size
+from phydrax.nn.activations import activation_regularity
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.architectures.conditioning._deeponet import (
+    _fused_branch_regularity,
     AbstractBranchEncoder,
     BranchFusion,
     FixedBranchEncoder,
@@ -145,6 +155,18 @@ class FiLMCoordinateDecoder(StrictModule):
             scale, shift = jnp.split(scale_shift, 2, axis=-1)
             hidden = jax.nn.tanh((1.0 + scale) * layer(hidden, key=key) + shift)
         return self.projection(hidden, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        hidden = self.coordinate_lift._value_regularity()
+        for layer, modulation in zip(self.hidden, self.modulation, strict=True):
+            film = modulation._value_regularity()
+            modulated = product_regularity(
+                (film, compose_regularity(hidden, layer._value_regularity()))
+            )
+            hidden = compose_regularity(
+                sum_regularity((modulated, film)), activation_regularity(jax.nn.tanh)
+            )
+        return compose_regularity(hidden, self.projection._value_regularity())
 
 
 class CoordinateConditionedOperator(AbstractEncodedOperatorModel):
@@ -310,6 +332,16 @@ class CoordinateConditionedOperator(AbstractEncodedOperatorModel):
         if not isinstance(x, OperatorBatch):
             raise TypeError("CoordinateConditionedOperator requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        latent = _fused_branch_regularity(self.branches, self.fusion, self.branch_mixer)
+        decoder = (
+            self.decoder._value_regularity()
+            if isinstance(self.decoder, FiLMCoordinateDecoder)
+            else model_regularity(self.decoder)
+        )
+        # The decoder juxtaposes the function code with the query coordinates.
+        return compose_regularity(sum_regularity((latent, AFFINE)), decoder)
 
 
 __all__ = [

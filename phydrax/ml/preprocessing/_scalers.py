@@ -12,6 +12,7 @@ from jaxtyping import Array
 
 from ..._differentiation import (
     DerivativeContract,
+    DerivativeRegularity,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
@@ -20,7 +21,7 @@ from ..._differentiation import (
 from ..._model import ModelBinding
 from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
-from .._contracts import AbstractRecipe, FitResult
+from .._contracts import AbstractRecipe, FitResult, prediction_fit_contract
 from .._schema import AbstractFittedModel, FeatureSchema
 from ._common import (
     _align_parameter,
@@ -31,6 +32,19 @@ from ._common import (
     _fit_result,
     _weighted_mean,
     _weighted_quantiles,
+)
+
+
+# Normalizing by a vector norm is smooth away from the origin and the nonsmooth
+# loci of the norm, and jumps at the origin, which maps to itself.
+_NORM_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.piecewise_smooth(continuity=-1),
+    conditions=("The zero vector maps to itself.",),
 )
 
 
@@ -51,6 +65,27 @@ class _AbstractAffineTransform(AbstractFittedModel):
     case_shape: tuple[int, ...] = eqx.field(static=True)
     clip_bounds: tuple[float, float] | None = eqx.field(static=True)
     _input_binding: ModelBinding = eqx.field(static=True)  # ty: ignore[invalid-attribute-override]
+
+    def _prediction_contract(self) -> DerivativeContract:
+        # An affine map, clipped to a box when clip bounds are set.
+        clipped = self.clip_bounds is not None
+        return DerivativeContract(
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.INPUT,
+                    GradientLevel.ALMOST_EVERYWHERE if clipped else GradientLevel.SMOOTH,
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
+            regularity=DerivativeRegularity.piecewise_polynomial(
+                continuity=0, degree_bound=1
+            )
+            if clipped
+            else DerivativeRegularity.smooth(degree_bound=1),
+        )
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         return self.transform(x, key=key)
@@ -180,12 +215,9 @@ class StandardScaler(AbstractRecipe):
         return _fit_result(
             model,
             diagnostics,
-            DerivativeContract(
+            prediction_fit_contract(
+                model._prediction_contract(),
                 (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
                     SurfaceDerivative(
                         DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                     ),
@@ -292,17 +324,9 @@ class MinMaxScaler(AbstractRecipe):
         return _fit_result(
             model,
             diagnostics,
-            DerivativeContract(
+            prediction_fit_contract(
+                model._prediction_contract(),
                 (
-                    SurfaceDerivative(
-                        DerivativeSurface.INPUT,
-                        GradientLevel.ALMOST_EVERYWHERE
-                        if self.clip
-                        else GradientLevel.SMOOTH,
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
                     SurfaceDerivative(
                         DerivativeSurface.FIT_FEATURES, GradientLevel.ALMOST_EVERYWHERE
                     ),
@@ -368,12 +392,9 @@ class MaxAbsScaler(AbstractRecipe):
         return _fit_result(
             model,
             diagnostics,
-            DerivativeContract(
+            prediction_fit_contract(
+                model._prediction_contract(),
                 (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
                     SurfaceDerivative(
                         DerivativeSurface.FIT_FEATURES, GradientLevel.ALMOST_EVERYWHERE
                     ),
@@ -475,13 +496,8 @@ class RobustScaler(AbstractRecipe):
             constant=constant,
             details=(("quantile_range", self.quantile_range),),
         )
-        contract = DerivativeContract(
-            (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
-            ),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=("median", "interquartile_range"),
             conditions=(
@@ -506,6 +522,9 @@ class FittedNormScaler(AbstractFittedModel):
         self.norm = norm
         self.input_schema = schema
         self.output_schema = schema
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _NORM_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -589,22 +608,7 @@ class NormScaler(AbstractRecipe):
             method="norm_scaler",
             details=(("norm", self.norm),),
         )
-        return _fit_result(
-            model,
-            diagnostics,
-            DerivativeContract(
-                (
-                    SurfaceDerivative(
-                        DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE
-                    ),
-                ),
-                route=DerivativeRoute.DIRECT,
-                conditions=("The zero vector maps to itself.",),
-            ),
-        )
+        return _fit_result(model, diagnostics, _NORM_CONTRACT)
 
 
 __all__ = [

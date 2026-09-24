@@ -12,8 +12,21 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from ..._admissibility import (
+    AdmissibilityHeader,
+    AdmissibilityReason,
+    guard_derivative_validity,
+    reason_bits_where,
+)
+from ..._differentiation import (
+    branch_policy_contract,
+    BranchDifferentiationPolicy,
+    ComponentAuthority,
+    DerivativeContract,
+    DerivativeSurface,
+)
 from ..._fingerprint import canonical_fingerprint
-from ..._model import AbstractArrayModel
+from ..._model import AbstractArrayModel, ComponentContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._layout import InputLayout, StateLayout
@@ -21,8 +34,23 @@ from .._model_system import DiscreteModelTransition
 from .._system import DiscreteStepContext, DiscreteSystem, DiscreteTransitionResult
 
 
+# The direct model output is accepted by a state-membership decision.
+_DIRECT_DERIVATIVE_CONTRACT = branch_policy_contract(
+    BranchDifferentiationPolicy.FROZEN_DECISION,
+    surfaces=(DerivativeSurface.PRIMAL_STATE, DerivativeSurface.MODEL_PARAMETER),
+)
+
+
 class DiscreteModelRolloutTransitionResult(StrictModule):
-    """Candidate/accepted state and separate training/physical validity."""
+    """Candidate/accepted state and separate training/physical validity.
+
+    Beside the domain status, `header` is the transition's common
+    admissibility evidence (eligible exactly when the step is physically
+    converged; `model_id` is the learned component's identity, `evidence_id`
+    the transition binding), `derivative_contract` the canonical derivative
+    declaration, and `derivative_valid` whether derivatives of the candidate and
+    accepted states are valid. Invalid derivatives are NaN; primals are kept.
+    """
 
     candidate_state: Array
     accepted_state: Array
@@ -31,6 +59,9 @@ class DiscreteModelRolloutTransitionResult(StrictModule):
     status: Array
     residual: Array
     iterations: Array
+    header: AdmissibilityHeader
+    derivative_contract: DerivativeContract
+    derivative_valid: Array
     transition_id: str = eqx.field(static=True)
 
     def __init__(
@@ -44,8 +75,15 @@ class DiscreteModelRolloutTransitionResult(StrictModule):
         status: Any,
         residual: Any,
         iterations: Any,
+        header: AdmissibilityHeader,
+        derivative_contract: DerivativeContract,
+        derivative_valid: Any,
         transition_id: str,
     ):
+        if not isinstance(header, AdmissibilityHeader):
+            raise TypeError("header must be an AdmissibilityHeader.")
+        if not isinstance(derivative_contract, DerivativeContract):
+            raise TypeError("derivative_contract must be a DerivativeContract.")
         self.candidate_state = jnp.asarray(candidate_state)
         self.accepted_state = jnp.asarray(accepted_state)
         self.training_usable = jnp.asarray(training_usable, dtype=jnp.bool_)
@@ -53,6 +91,9 @@ class DiscreteModelRolloutTransitionResult(StrictModule):
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.residual = jnp.asarray(residual)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
+        self.header = header
+        self.derivative_contract = derivative_contract
+        self.derivative_valid = jnp.asarray(derivative_valid, dtype=jnp.bool_)
         self.transition_id = str(transition_id)
 
 
@@ -88,6 +129,79 @@ class AbstractDiscreteModelRolloutTransition(StrictModule, NonTrainableState):
     @property
     def supports_linear_refinement(self) -> bool:
         return False
+
+    def _evidenced_result(
+        self,
+        model: AbstractArrayModel,
+        candidate_state: Array,
+        accepted_state: Array,
+        /,
+        *,
+        training_usable: Any,
+        physically_converged: Any,
+        status: Any,
+        residual: Any,
+        iterations: Any,
+        reason_bits: Array,
+        derivative_contract: DerivativeContract,
+        derivative_valid: Any,
+        dependencies: Any,
+    ) -> DiscreteModelRolloutTransitionResult:
+        """Attach the common evidence and poison derivatives where invalid.
+
+        The header's `model_id` is the model's declared semantic provenance
+        (a marked fingerprint of its execution contract when undeclared) and its
+        `evidence_id` binds this transition to the model's MODEL-authority
+        component contract. The model's parameters join `dependencies` so a
+        rejected state that no longer depends on them is still poisoned.
+        """
+        contract = model.model_execution_contract()
+        model_id = (
+            canonical_fingerprint(
+                {
+                    "kind": "undeclared-model-provenance",
+                    "model_contract": contract.contract_id,
+                }
+            )
+            if contract.semantic_provenance is None
+            else contract.semantic_provenance.semantic_id
+        )
+        component = ComponentContract(
+            authority=ComponentAuthority.MODEL, model_contract=contract
+        )
+        converged = jnp.asarray(physically_converged, dtype=jnp.bool_)
+        header = AdmissibilityHeader(
+            jnp.where(converged, 1.0, -1.0),
+            reason_bits,
+            model_id,
+            canonical_fingerprint(
+                {
+                    "kind": "discrete-model-rollout-transition-evidence",
+                    "transition": self.transition_id,
+                    "component": component.bound_semantic_id,
+                    "derivative_contract": derivative_contract.contract_id,
+                }
+            ),
+        )
+        valid = jnp.asarray(derivative_valid, dtype=jnp.bool_)
+        candidate_state, accepted_state = guard_derivative_validity(
+            (candidate_state, accepted_state),
+            valid,
+            dependencies=(model, dependencies),
+        )
+        return DiscreteModelRolloutTransitionResult(
+            candidate_state,
+            accepted_state,
+            training_usable=training_usable,
+            physically_converged=converged,
+            status=status,
+            residual=residual,
+            iterations=iterations,
+            header=header,
+            derivative_contract=derivative_contract,
+            derivative_valid=valid,
+            transition_id=self.transition_id,
+        )
 
     def bind(self, model: AbstractArrayModel, /, *, system_id: str) -> DiscreteSystem:
         self.validate_model(model)
@@ -183,7 +297,8 @@ class DirectDiscreteModelRolloutTransition(AbstractDiscreteModelRolloutTransitio
         member = self.state_layout.geometry.contains(candidate)
         valid = finite & member
         accepted = jnp.where(valid, candidate, jnp.zeros_like(candidate))
-        return DiscreteModelRolloutTransitionResult(
+        return self._evidenced_result(
+            model,
             candidate,
             accepted,
             training_usable=valid,
@@ -191,7 +306,11 @@ class DirectDiscreteModelRolloutTransition(AbstractDiscreteModelRolloutTransitio
             status=jnp.where(valid, 0, 1),
             residual=jnp.asarray(0.0, dtype=jnp.real(candidate).dtype),
             iterations=jnp.asarray(1, dtype=jnp.int32),
-            transition_id=self.transition_id,
+            reason_bits=reason_bits_where(finite, AdmissibilityReason.NONFINITE)
+            | reason_bits_where(member, AdmissibilityReason.OUTSIDE_SUPPORT),
+            derivative_contract=_DIRECT_DERIVATIVE_CONTRACT,
+            derivative_valid=valid,
+            dependencies=(state, inputs),
         )
 
 

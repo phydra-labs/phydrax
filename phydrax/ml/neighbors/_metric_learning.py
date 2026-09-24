@@ -15,11 +15,13 @@ import phydrax.ein as ein
 
 from ..._differentiation import (
     DerivativeContract,
+    DerivativeRegularity,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
     SurfaceDerivative,
 )
+from ..._model._array import value_derivative_contract
 from ..._model._binding import ModelBinding
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
@@ -29,9 +31,15 @@ from .._contracts import (
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._schema import AbstractFittedModel
 from ._utils import masked_softmax, size, validated_weights
+
+
+_LINEAR_EMBEDDING_CONTRACT = value_derivative_contract(
+    DerivativeRegularity.smooth(degree_bound=1)
+)
 
 
 class LinearMetricModel(AbstractFittedModel):
@@ -72,6 +80,9 @@ class LinearMetricModel(AbstractFittedModel):
         self.out_size = components
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _LINEAR_EMBEDDING_CONTRACT
 
     def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
         del key
@@ -245,12 +256,9 @@ class NeighborhoodComponentsAnalysisRecipe(AbstractRecipe):
             rank=jnp.linalg.matrix_rank(factor),
             method="unrolled-neighborhood-components",
         )
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
                 SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.SMOOTH),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
@@ -372,12 +380,9 @@ class MahalanobisMetricRecipe(AbstractRecipe):
             condition=jnp.max(values, axis=-1) / jnp.min(values, axis=-1),
             method="weighted-covariance-eigh",
         )
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),

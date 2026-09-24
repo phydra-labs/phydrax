@@ -90,6 +90,88 @@ def test_fitted_executable_retains_schemas_and_ports_through_jit_and_artifacts(
     assert jnp.allclose(loaded(points), executable(points))
 
 
+def _owner_ports():
+    position = phx.ValuePort(
+        "position",
+        event_shape=(2,),
+        component_ids=("x", "y"),
+        representation="coordinates",
+        dimensions=(_dimension("length"),) * 2,
+        axis_keys=(phx.axes.AxisKey("owner:position", "component"),),
+    )
+    time = phx.ValuePort(
+        "time", event_shape=(), component_ids=("t",), representation="coordinates"
+    )
+    speed = phx.ValuePort(
+        "speed",
+        event_shape=(),
+        component_ids=("s",),
+        representation="field",
+        dimensions=(_dimension("length"),),
+    )
+    return position, time, speed
+
+
+def test_port_backed_schemas_declare_owner_ports_through_artifacts(tmp_path):
+    position, time, speed = _owner_ports()
+    feature_schema = phx.ml.FeatureSchema.from_ports((position, time))
+    target_schema = phx.ml.TargetSchema.from_port(speed)
+    features = jr.normal(jr.key(5), (24, 3))
+    result = phx.ml.fit(
+        phx.ml.linear.OLSRecipe(),
+        features,
+        features @ jnp.asarray([1.0, -2.0, 0.5]),
+        feature_schema=feature_schema,
+        target_schema=target_schema,
+    )
+
+    assert feature_schema.names == ("x", "y", "t")
+    # Time declares no dimensions, so the concatenated feature axis declares none.
+    assert feature_schema.dimensions is None
+    ports = result.model_ports()
+    assert ports.inputs == (position, time)
+    assert ports.outputs == (speed,)
+
+    destination = tmp_path / "ports.phxml"
+    save_ml_artifact(destination, result.model, fit_result=result)
+    artifact = read_ml_artifact(destination)
+    assert artifact.manifest.ports == ports
+    assert artifact.model.as_trainable().model_ports() == ports
+
+
+def test_port_backed_schemas_reject_contradicting_declarations():
+    position, time, speed = _owner_ports()
+
+    with pytest.raises(ValueError, match="component IDs in port order"):
+        phx.ml.FeatureSchema(("y", "x", "t"), ports=(position, time))
+    with pytest.raises(ValueError, match="declared dimensions"):
+        phx.ml.FeatureSchema(("x", "y"), ports=(position,))
+    with pytest.raises(ValueError, match="must be continuous"):
+        phx.ml.TargetSchema("count", names=("s",), port=speed)
+    two_ports = phx.ml.FeatureSchema.from_ports((position, time))
+    assert two_ports.value_ports() == (position, time)
+    assert two_ports.select((0, 1)).ports is None
+
+    features = jr.normal(jr.key(6), (12, 2))
+    vector_target = phx.ml.fit(
+        phx.ml.linear.OLSRecipe(),
+        features,
+        jnp.stack((features[:, 0], features[:, 1]), axis=-1),
+        feature_schema=phx.ml.FeatureSchema.from_ports((position,)),
+        target_schema=phx.ml.TargetSchema.from_port(position),
+    )
+    assert vector_target.model_ports().outputs == (position,)
+    scalar_target = phx.ml.fit(
+        phx.ml.linear.OLSRecipe(),
+        features,
+        jnp.stack((features[:, 0], features[:, 1]), axis=-1),
+        feature_schema=phx.ml.FeatureSchema.from_ports((position,)),
+        target_schema=phx.ml.TargetSchema.from_port(speed),
+    )
+    with pytest.raises(ValueError, match="event shape"):
+        scalar_target.model_ports()
+
+
 def test_ml_artifact_round_trip_preserves_contract_and_identity(tmp_path):
     result, feature_schema, target_schema = _schema_bound_fit()
     executable = result.as_trainable()

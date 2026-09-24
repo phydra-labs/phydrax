@@ -23,7 +23,7 @@ from ..._differentiation import (
 from ..._model import ModelBinding
 from ..._trainable import fixed_field
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult
+from .._contracts import AbstractRecipe, FitResult, prediction_fit_contract
 from .._schema import AbstractFittedModel
 from ._common import (
     _BLOCKWISE_BINDING,
@@ -31,10 +31,12 @@ from ._common import (
     _euclidean_distances,
     _fit_arrays,
     _fit_status,
+    _HARD_NEIGHBOR_EXTENSION_CONTRACT,
     _prepare_queries,
     _restore_queries,
     _spectral_coordinates,
     _stable_hermitian_eigh,
+    _TRANSDUCTIVE_CONTRACT,
     build_neighbor_graph,
     ManifoldDiagnostics,
 )
@@ -203,6 +205,13 @@ class LocallyLinearEmbeddingModel(AbstractFittedModel):
         self.in_size = x.shape[-1]
         self.out_size = embedding.shape[-1]
 
+    def _prediction_contract(self) -> DerivativeContract:
+        # Barycentric weights solve a regularized local Gram system of the hard
+        # neighbors; Hessian-LLE and LTSA are transductive.
+        if self.transform_supported:
+            return _HARD_NEIGHBOR_EXTENSION_CONTRACT
+        return _TRANSDUCTIVE_CONTRACT
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         if not self.transform_supported:
@@ -350,21 +359,9 @@ class LocallyLinearEmbeddingRecipe(AbstractRecipe):
             variant=self.variant,
             case_shape=batch.case_shape,
         )
-        transform_supported = self.variant in ("standard", "modified")
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(
-                    DerivativeSurface.INPUT,
-                    GradientLevel.CONDITIONAL
-                    if transform_supported
-                    else GradientLevel.NONE,
-                ),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER,
-                    GradientLevel.CONDITIONAL
-                    if transform_supported
-                    else GradientLevel.NONE,
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),

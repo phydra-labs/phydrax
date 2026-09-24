@@ -20,7 +20,7 @@ from ..._differentiation import (
 from ..._model import ModelBinding
 from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
-from .._contracts import AbstractRecipe, FitResult
+from .._contracts import AbstractRecipe, FitResult, prediction_fit_contract
 from .._schema import AbstractFittedModel
 from ._subspace import _fit_subspace, SubspaceModel
 
@@ -100,6 +100,9 @@ class IncrementalPCAModel(AbstractFittedModel):
     def singular_values(self) -> Array:
         return self.subspace.singular_values
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return self.subspace._prediction_contract()
+
     def transform(self, x, /) -> Array:
         return self.subspace.transform(x)
 
@@ -152,12 +155,9 @@ def _wrap_incremental(
         valid=result.valid,
         status=result.status,
         method="incremental-pca-merge-svd",
-        derivative_contract=DerivativeContract(
+        derivative_contract=prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),

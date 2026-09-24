@@ -144,12 +144,20 @@ def _route():
     )
 
 
+def _state_binding(task):
+    port = task.field_by_name["state"].value_port()
+    return {
+        "output_ports": {"output": port},
+        "port_mapping": phx.PortMapping(outputs=((port.port_id, port.port_id),)),
+    }
+
+
 def _trained(model, task, *, normalization=None, output_pipeline=None):
     return phx.nn.operator.training.TrainedOperator(
         model,
         task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "state"},
+        **_state_binding(task),
         normalization=normalization,
         output_pipeline=output_pipeline,
     )
@@ -315,7 +323,7 @@ def test_route_rejects_independent_or_mismatched_support_and_multiple_routes():
         prediction_name="missing",
         task_field="state",
     )
-    with pytest.raises(ValueError, match="output map"):
+    with pytest.raises(ValueError, match="not port-bound"):
         phx.nn.operator.training.autoregressive_operator_rollout(
             coincident,
             _batch(values),
@@ -338,7 +346,7 @@ def test_masked_future_nans_are_sanitized_before_rollout_residuals():
         _dataset(mask=mask, target_nan=True),
         task=_task(),
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "state"},
+        **_state_binding(_task()),
         loss_terms=(_supervised_loss(),),
         rollout_route=_route(),
         rollout_policy=_policy(),
@@ -380,7 +388,7 @@ def test_residual_recurrence_has_gradients_and_honors_bptt_rematerialization():
         dataset,
         task=_task(),
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "state"},
+        **_state_binding(_task()),
         loss_terms=(residual,),
         rollout_route=_route(),
         rollout_policy=_policy(truncate_every=1, rematerialize=True),
@@ -407,7 +415,7 @@ def test_rollout_updates_are_batch_and_accumulation_invariant():
     common = {
         "task": _task(),
         "training_evidence": phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        "output_field_map": {"output": "state"},
+        **_state_binding(_task()),
         "loss_terms": (_supervised_loss(),),
         "rollout_route": _route(),
         "rollout_policy": _policy(),
@@ -485,7 +493,7 @@ def test_fit_and_deployment_use_the_same_recurrent_physical_pipeline():
         dataset,
         task=_task(),
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "state"},
+        **_state_binding(_task()),
         loss_terms=(_supervised_loss(),),
         rollout_route=_route(),
         rollout_policy=_policy(),

@@ -17,6 +17,7 @@ import phydrax.ein as ein
 
 from ..._differentiation import (
     DerivativeContract,
+    DerivativeRegularity,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
@@ -35,6 +36,42 @@ from .._contracts import (
 )
 from .._numerics import assign_bins, quantile_bin_edges
 from .._schema import AbstractFittedModel, FeatureSchema
+
+
+# A fixed gather with inactive entries zeroed is linear in the input.
+_EXACT_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),
+    ),
+    route=DerivativeRoute.STOPPED,
+    regularity=DerivativeRegularity.smooth(degree_bound=1),
+    nondifferentiable_outputs=("selected_indices", "selected_mask"),
+    conditions=(
+        "Selection capacity is static; inactive padded entries evaluate to zero.",
+    ),
+)
+# Elementwise gating by fitted weights is linear in the input.
+_GATE_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(
+            DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+        ),
+    ),
+    route=DerivativeRoute.RELAXED,
+    regularity=DerivativeRegularity.smooth(degree_bound=1),
+    conditions=(
+        "The configured scorer must be differentiable at the supplied batch.",
+        "Feature and target masks must remain fixed with positive effective mass.",
+        "Score normalization requires a nonzero finite range and stable extrema.",
+        "Absolute correlation requires nonzero covariance and variance.",
+    ),
+)
 
 
 class ExactSelection(StrictModule):
@@ -105,6 +142,9 @@ class ExactFeatureSelectorModel(AbstractFittedModel):
         self.in_size = int(input_size)
         self.out_size = selection.indices.shape[0]
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _EXACT_CONTRACT
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         selected = jnp.take(jnp.asarray(x), self.selection.indices, axis=-1)
@@ -133,6 +173,9 @@ class ContinuousFeatureGateModel(AbstractFittedModel):
         )
         self.in_size = gates_.shape[0]
         self.out_size = gates_.shape[0]
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _GATE_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -245,17 +288,7 @@ def _exact_result(
         valid=valid,
         status=status,
         method=method,
-        derivative_contract=DerivativeContract(
-            (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),
-            ),
-            route=DerivativeRoute.STOPPED,
-            nondifferentiable_outputs=("selected_indices", "selected_mask"),
-            conditions=(
-                "Selection capacity is static; inactive padded entries evaluate to zero.",
-            ),
-        ),
+        derivative_contract=_EXACT_CONTRACT,
     )
 
 
@@ -718,33 +751,7 @@ class ContinuousSparseGateRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="continuous-sparse-gates",
-            derivative_contract=DerivativeContract(
-                (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
-                    ),
-                ),
-                route=DerivativeRoute.RELAXED,
-                conditions=(
-                    "The configured scorer must be differentiable at the supplied batch.",
-                    "Feature and target masks must remain fixed with positive effective mass.",
-                    "Score normalization requires a nonzero finite range and stable extrema.",
-                    "Absolute correlation requires nonzero covariance and variance.",
-                ),
-            ),
+            derivative_contract=_GATE_CONTRACT,
         )
 
 

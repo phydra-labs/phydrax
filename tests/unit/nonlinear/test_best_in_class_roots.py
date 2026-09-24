@@ -693,6 +693,50 @@ def test_small_batch_mixed_precision_and_sharding_contracts():
     assert float(policy.residual_norm(placed)) == pytest.approx(5.0)
 
 
+def _component(authority, precision):
+    return phx.ComponentContract(
+        authority=authority,
+        model_contract=phx.ModelExecutionContract(
+            derivative=phx.DerivativeContract.smooth((phx.DerivativeSurface.INPUT,)),
+            execution=phx.ExecutionCapabilities("native-jax"),
+            precision=precision,
+        ),
+    )
+
+
+def test_model_precision_below_state_precision_requires_declared_cast_boundary():
+    def float32_model(*casts):
+        return phx.ComponentPrecisionContract(
+            input_dtype="float64",
+            parameter_dtype="float32",
+            compute_dtype="float32",
+            accumulation_dtype="float32",
+            output_dtype="float64",
+            absolute_error_floor=1e-5,
+            cast_boundary_evidence=casts,
+        )
+
+    model = phx.ComponentAuthority.MODEL
+    for components in ((), (_component(model, float32_model()),)):
+        with pytest.raises(ValueError, match="cast_boundary_evidence"):
+            nl.NonlinearPrecisionPolicy(
+                state_dtype="float64",
+                model_dtype="float32",
+                components=components,
+            )
+    with pytest.raises(ValueError, match="declares no ComponentPrecisionContract"):
+        nl.NonlinearPrecisionPolicy(components=(_component(model, None),))
+
+    policy = nl.NonlinearPrecisionPolicy(
+        state_dtype="float64",
+        residual_dtype="float64",
+        model_dtype="float32",
+        components=(_component(model, float32_model("input-downcast")),),
+    )
+    assert (policy.state_dtype, policy.model_dtype) == ("float64", "float32")
+    assert policy.residual_floor() == pytest.approx(1e-5)
+
+
 def test_solver_graduation_and_regression_gates():
     evidence = nl.SolverGraduationEvidence(
         0,

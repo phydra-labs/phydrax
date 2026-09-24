@@ -15,11 +15,13 @@ import phydrax.ein as ein
 
 from ..._differentiation import (
     DerivativeContract,
+    DerivativeRegularity,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
     SurfaceDerivative,
 )
+from ..._model._array import value_derivative_contract
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
@@ -29,10 +31,19 @@ from .._contracts import (
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._schema import AbstractFittedModel
 from ._common import active_data, distances_to_centers, positive_scalar, real_dtype
 from ._spectral import _deterministic_embedding_kmeans
+
+
+# A softmax of negated squared-Euclidean distances to the row centers.
+_ROW_RESPONSIBILITY_CONTRACT = prediction_fit_contract(
+    value_derivative_contract(DerivativeRegularity.smooth()),
+    route=DerivativeRoute.DIRECT,
+    nondifferentiable_outputs=("hard_row_labels", "column_labels"),
+)
 
 
 class BiclusterDiagnostics(StrictModule):
@@ -119,6 +130,9 @@ class BiclusterModel(AbstractFittedModel):
         self.out_size = self.row_centers.shape[-2]
         self.case_shape = self.row_centers.shape[:-2]
         self.method = str(method)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _ROW_RESPONSIBILITY_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -209,10 +223,9 @@ def _finish(
         degeneracy=~nonempty | infeasible_,
         method=method,
     )
-    contract = DerivativeContract(
+    contract = prediction_fit_contract(
+        model._prediction_contract(),
         (
-            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
             SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
             SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
             SurfaceDerivative(
@@ -222,11 +235,7 @@ def _finish(
         route=DerivativeRoute.SPECTRAL
         if "spectral" in method
         else DerivativeRoute.UNROLLED,
-        nondifferentiable_outputs=(
-            "hard_row_labels",
-            "column_labels",
-            "block assignments",
-        ),
+        nondifferentiable_outputs=("block assignments",),
         conditions=(
             "fixed row and column partitions",
             "separated spectral subspaces when applicable",

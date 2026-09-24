@@ -27,7 +27,6 @@ from ._base import (
     MultinomialLogisticModel,
     parameter_dtype,
     prepare_supervised,
-    unrolled_contract,
 )
 
 
@@ -158,10 +157,8 @@ def _fit_binary_logistic(
             case_shape=prepared.case_shape,
             target_shape=prepared.target_shape,
         ),
-        derivative_contract=unrolled_contract(
-            fit_targets=GradientLevel.NONE, hard_outputs=("predict", "predict_indices")
-        ),
         extra_valid=label_valid,
+        fit_targets=GradientLevel.NONE,
     )
 
 
@@ -326,11 +323,8 @@ class MultinomialLogisticRegressionRecipe(AbstractRecipe):
                 labels,
                 case_shape=prepared.case_shape,
             ),
-            derivative_contract=unrolled_contract(
-                fit_targets=GradientLevel.NONE,
-                hard_outputs=("predict", "predict_indices"),
-            ),
             extra_valid=label_valid & class_valid,
+            fit_targets=GradientLevel.NONE,
         )
 
 
@@ -453,7 +447,6 @@ def _fit_log_glm(recipe, batch: MLBatch, /, *, family: str, power: float) -> Fit
         method=f"weighted-{family}-log-link-fixed-gradient",
         objective=objective,
         model_factory=make_model,
-        derivative_contract=unrolled_contract(),
         extra_valid=domain_valid,
     )
 

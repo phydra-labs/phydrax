@@ -13,7 +13,15 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
+from phydrax.nn._contracts import (
+    AFFINE,
+    compose_regularity,
+    product_regularity,
+    SMOOTH,
+    sum_regularity,
+)
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
 from phydrax.nn.models._mlp import MLP
@@ -338,6 +346,15 @@ class KoopmanTemporalOperator(AbstractOperatorModel):
         if not isinstance(x, OperatorBatch):
             raise TypeError("KoopmanTemporalOperator requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Quadrature weights are fixed source geometry; the stable transitions are
+        # smooth in the query time; the decoder juxtaposes query coordinates.
+        latent = compose_regularity(self.encoder._value_regularity(), AFFINE)
+        evolved = product_regularity((latent, SMOOTH))
+        return compose_regularity(
+            sum_regularity((evolved, AFFINE)), self.decoder._value_regularity()
+        )
 
 
 __all__ = ["KoopmanTemporalOperator"]

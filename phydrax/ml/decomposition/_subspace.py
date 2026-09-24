@@ -14,6 +14,7 @@ import phydrax.ein as ein
 
 from ..._differentiation import (
     DerivativeContract,
+    DerivativeRegularity,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
@@ -27,12 +28,23 @@ from .._contracts import (
     AbstractRecipe,
     FitResult,
     ML_INFEASIBLE,
+    prediction_fit_contract,
 )
 from .._numerics import effective_sample_size, fit_weighted_subspace
 from .._schema import AbstractFittedModel
 
 
 SubspaceGradientTarget = Literal["projector", "basis", "none"]
+
+# Encoding is an affine metric-scaled projection of the input.
+_PREDICTION_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.smooth(degree_bound=1),
+)
 
 
 class SubspaceDiagnostics(StrictModule):
@@ -128,6 +140,9 @@ class SubspaceModel(AbstractFittedModel):
         )
         self.sign_phase_convention = "largest-magnitude-entry-positive-real"
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _PREDICTION_CONTRACT
+
     def _flatten_input(
         self, value: Array, width: int, /
     ) -> tuple[Array, tuple[int, ...]]:
@@ -203,52 +218,28 @@ def _shape_product(shape: tuple[int, ...], /) -> int:
 
 
 def _derivative_contract(target: SubspaceGradientTarget, /) -> DerivativeContract:
+    if target == "none":
+        return prediction_fit_contract(
+            _PREDICTION_CONTRACT, route=DerivativeRoute.STOPPED
+        )
     if target == "projector":
-        return DerivativeContract(
-            (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
-                SurfaceDerivative(
-                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
-                ),
-                SurfaceDerivative(
-                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
-                ),
-            ),
-            route=DerivativeRoute.SPECTRAL,
-            conditions=(
-                "projector gradients require separation between retained and discarded spectra",
-            ),
+        conditions: tuple[str, ...] = (
+            "projector gradients require separation between retained and discarded spectra",
         )
-    if target == "basis":
-        return DerivativeContract(
-            (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
-                SurfaceDerivative(
-                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
-                ),
-                SurfaceDerivative(
-                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
-                ),
-            ),
-            route=DerivativeRoute.SPECTRAL,
-            conditions=(
-                "basis gradients require a non-repeated retained spectrum",
-                "basis representatives use the largest-magnitude-entry positive-real convention",
-                "canonicalization pivots must remain unique and nonzero",
-            ),
+    else:
+        conditions = (
+            "basis gradients require a non-repeated retained spectrum",
+            "basis representatives use the largest-magnitude-entry positive-real convention",
+            "canonicalization pivots must remain unique and nonzero",
         )
-    return DerivativeContract(
+    return prediction_fit_contract(
+        _PREDICTION_CONTRACT,
         (
-            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
         ),
-        route=DerivativeRoute.STOPPED,
+        route=DerivativeRoute.SPECTRAL,
+        conditions=conditions,
     )
 
 

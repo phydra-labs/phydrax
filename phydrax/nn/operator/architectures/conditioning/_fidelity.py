@@ -9,7 +9,9 @@ from math import lcm
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from phydrax._differentiation import DerivativeRegularity
 from phydrax.fidelity import FidelityPath
+from phydrax.nn._contracts import model_regularity, sum_regularity
 from phydrax.nn._keys import EvalKey, split_eval_key
 from phydrax.nn.operator.capabilities import (
     ConfiguredOperatorContract,
@@ -347,6 +349,14 @@ class FidelityCorrectionOperator(AbstractOperatorModel):
         key: EvalKey = None,
     ) -> Array:
         return self.__call_operator_batch__(batch, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return sum_regularity(
+            (
+                model_regularity(self.baseline_operator),
+                model_regularity(self.correction_operator),
+            )
+        )
 
 
 __all__ = ["FidelityCorrectionOperator"]

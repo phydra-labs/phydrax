@@ -14,6 +14,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
+from ...._model._ports import PortBindingEvidence, ValuePort
 from ..._keys import EvalKey
 from ..data import function_samples_with_values, OperatorBatch, OperatorPrediction
 from ..engine import AbstractOperatorModel
@@ -22,7 +23,9 @@ from ..task import OperatorTask
 from ._dtype import OperatorDTypePolicy
 from ._execution import (
     _evaluate_operator_step,
+    _operator_output_routes,
     nondimensionalize_batch,
+    OperatorOutputRoutes,
 )
 from ._normalization import OperatorNormalizationPolicy
 from ._physics import OperatorOutputPipeline
@@ -142,7 +145,8 @@ class _OperatorRolloutCarry(NamedTuple):
 def _validate_rollout_route(
     route: OperatorRolloutRoute,
     task: OperatorTask,
-    output_field_map: Mapping[str, str],
+    output_ports: Mapping[str, ValuePort],
+    port_binding: PortBindingEvidence,
     batch: OperatorBatch,
     /,
 ) -> None:
@@ -161,8 +165,15 @@ def _validate_rollout_route(
         raise ValueError("Classification fields cannot be recurrent rollout state.")
     if field.source_name != route.source_name:
         raise ValueError("Rollout source_name disagrees with the task field binding.")
-    if output_field_map.get(route.prediction_name) != route.task_field:
-        raise ValueError("Rollout prediction_name disagrees with the model output map.")
+    prediction_port = output_ports.get(route.prediction_name)
+    if (
+        prediction_port is None
+        or (prediction_port.port_id, field.value_port().port_id)
+        not in port_binding.outputs
+    ):
+        raise ValueError(
+            "Rollout prediction_name is not port-bound to the routed task field."
+        )
     assert field.query_name is not None
     source = batch.input(route.source_name)
     query = batch.query(field.query_name)
@@ -225,7 +236,7 @@ def _operator_rollout_step(
     carry: _OperatorRolloutCarry,
     route: OperatorRolloutRoute,
     task: OperatorTask,
-    output_field_map: Mapping[str, str],
+    routes: OperatorOutputRoutes,
     output_pipeline: OperatorOutputPipeline | None,
     normalization: OperatorNormalizationPolicy | None,
     dtype_policy: OperatorDTypePolicy,
@@ -246,7 +257,7 @@ def _operator_rollout_step(
         carry.execution_batch,
         carry.physical_batch,
         task,
-        output_field_map,
+        routes,
         output_pipeline,
         normalization,
         dtype_policy,
@@ -297,7 +308,7 @@ def _operator_rollout_scan(
     route: OperatorRolloutRoute,
     policy: OperatorRolloutPolicy,
     task: OperatorTask,
-    output_field_map: Mapping[str, str],
+    routes: OperatorOutputRoutes,
     output_pipeline: OperatorOutputPipeline | None,
     normalization: OperatorNormalizationPolicy | None,
     dtype_policy: OperatorDTypePolicy,
@@ -321,7 +332,7 @@ def _operator_rollout_scan(
             current_carry,
             route,
             task,
-            output_field_map,
+            routes,
             output_pipeline,
             normalization,
             dtype_policy,
@@ -374,9 +385,11 @@ def autoregressive_operator_rollout(
     _validate_rollout_route(
         route,
         plan.task,
-        plan.output_field_map,
+        plan.output_ports,
+        plan.port_binding,
         initial_batch,
     )
+    routes = plan.output_routes
     prepared = plan.prepare(initial_batch)
     carry = _OperatorRolloutCarry(
         prepared.physical_batch,
@@ -391,7 +404,7 @@ def autoregressive_operator_rollout(
             carry,
             route,
             plan.task,
-            plan.output_field_map,
+            routes,
             plan.output_pipeline,
             plan.normalization,
             plan.dtype_policy,
@@ -437,9 +450,11 @@ def autoregressive_operator_rollout_routes(
         _validate_rollout_route(
             route,
             plan.task,
-            plan.output_field_map,
+            plan.output_ports,
+            plan.port_binding,
             initial_batch,
         )
+    output_routes = plan.output_routes
     prepared = plan.prepare(initial_batch)
     physical_batch = prepared.physical_batch
     predictions = []
@@ -479,7 +494,7 @@ def autoregressive_operator_rollout_routes(
             execution_batch,
             physical_batch,
             plan.task,
-            plan.output_field_map,
+            output_routes,
             plan.output_pipeline,
             plan.normalization,
             plan.dtype_policy,
@@ -507,23 +522,25 @@ def autoregressive_operator_rollout_routes(
 
 def infer_operator_rollout_routes(
     task: OperatorTask,
-    output_field_map: Mapping[str, str],
+    output_ports: Mapping[str, ValuePort],
+    port_binding: PortBindingEvidence,
     batch: OperatorBatch,
     /,
 ) -> tuple[OperatorRolloutRoute, ...]:
-    """Infer routes only from an unambiguous semantic source/target bijection."""
+    """Infer routes only from an unambiguous semantic source/target bijection.
+
+    Model outputs are paired with task fields by the port IDs of `port_binding`.
+    """
     routes = []
-    by_field = task.field_by_name
-    for prediction, field_name in output_field_map.items():
-        field = by_field[field_name]
+    for prediction, field in _operator_output_routes(task, output_ports, port_binding):
         if not field.is_source or not field.is_target or field.is_classification:
             continue
         assert field.source_name is not None
-        routes.append(OperatorRolloutRoute(field.source_name, prediction, field_name))
+        routes.append(OperatorRolloutRoute(field.source_name, prediction, field.name))
     if not routes or len({route.source_name for route in routes}) != len(routes):
         raise ValueError("Operator rollout semantics are absent or ambiguous.")
     for route in routes:
-        _validate_rollout_route(route, task, output_field_map, batch)
+        _validate_rollout_route(route, task, output_ports, port_binding, batch)
     return tuple(routes)
 
 

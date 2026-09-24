@@ -109,6 +109,15 @@ families that estimate the target, the joined feature port for `FeatureUnion`
 and `ColumnTransformer`, the final stage's outputs for `Pipeline`, and empty
 otherwise.
 
+To fit on values an owner already publishes as ports, derive the schemas from
+them. `FeatureSchema.from_ports(ports)` declares the feature axis as the
+row-major concatenation of those ports' events, in port order: its features are
+the ports' component IDs, and the fitted input ports are exactly those ports.
+`TargetSchema.from_port(port)` declares a continuous target whose fitted output
+port is `port`; the output event shape must equal the port's event shape. Such
+a model then binds to that owner through an explicit `phydrax.PortMapping`.
+Artifacts persist the backing ports.
+
 Category discovery, hard bin construction, rank selection, and class vocabulary
 construction are discrete fit operations. They are never advertised as
 continuously differentiable. Use an explicit schema when reproducibility across
@@ -275,7 +284,10 @@ Fitted pointwise models implement the shared `AbstractArrayModel` and
 therefore be:
 
 - called under `jax.jit`, `jax.vmap`, and JAX transformations;
-- bound into a `DomainFunction` when their input schema matches a domain layout;
+- bound into a `DomainFunction` (and into dynamics, operator, and closure owners)
+  through an explicit `phydrax.PortMapping` when their ports are the owner's ports
+  (see `FeatureSchema.from_ports`); ports never bind by name, shape, or order,
+  and the recorded `PortBindingEvidence` lists what stayed unverified;
 - used as fixed reduced-order closures or explicitly converted to trainable warm
   starts;
 - composed with `phydrax.kernels`, `phydrax.optim`, operator models, and UQ;

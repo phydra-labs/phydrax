@@ -14,11 +14,13 @@ from jaxtyping import Array, ArrayLike
 
 from ..._differentiation import (
     DerivativeContract,
+    DerivativeRegularity,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
     SurfaceDerivative,
 )
+from ..._model._array import value_derivative_contract
 from ..._model._binding import ModelBinding
 from ..._trainable import fixed_field
 from ...kernels import FiniteFeatureKernel, SquaredExponentialKernel
@@ -30,16 +32,23 @@ from .._contracts import (
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._schema import AbstractFittedModel
 from .._sparse_features import SparseFeatures
 from ._utils import (
     case_kernel_matrix,
     finite_array,
+    kernel_regularity,
+    linear_expansion_contract,
     query_kernel_matrix,
     validate_kernel,
     validated_weights,
 )
+
+
+# Cosines of affine maps of the input.
+_RANDOM_FOURIER_CONTRACT = value_derivative_contract(DerivativeRegularity.smooth())
 
 
 def _size(shape: tuple[int, ...]) -> int:
@@ -103,6 +112,9 @@ class KernelPCAModel(AbstractFittedModel):
         self.out_size = self.component_count
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return linear_expansion_contract(kernel_regularity(self.kernel))
 
     def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
         del key
@@ -208,12 +220,9 @@ class KernelPCARecipe(AbstractRecipe):
             rank=jnp.sum(values > self.eigenvalue_floor, axis=-1),
             method="weighted-kernel-eigh",
         )
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),
@@ -266,6 +275,9 @@ class NystromModel(AbstractFittedModel):
         self.out_size = self.component_count
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return linear_expansion_contract(kernel_regularity(self.kernel))
 
     def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
         del key
@@ -387,12 +399,9 @@ class NystromRecipe(AbstractRecipe):
             ),
             method=f"nystrom-{self.selection}",
         )
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES,
                     GradientLevel.CONDITIONAL
@@ -443,6 +452,9 @@ class RandomFourierFeatureModel(AbstractFittedModel):
         self.out_size = self.component_count
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _RANDOM_FOURIER_CONTRACT
 
     def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
         del key
@@ -523,12 +535,9 @@ class RandomFourierFeaturesRecipe(AbstractRecipe):
             rank=self.n_components,
             method="squared-exponential-spectral-sampling",
         )
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
                 ),

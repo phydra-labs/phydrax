@@ -123,11 +123,13 @@ def run_example(*, steps=40, artifact_directory=None):
         provenance=_provenance(12),
     )
     experiment = GeophysicalLearningExperiment.prepare(task, dataset)
+    state_port = task.field_by_name["state"].value_port()
     fit = experiment.fit(
         op.architectures.SFNO(space, width=4, depth=1, source_key="state", key=jr.key(1)),
         steps=steps,
         learning_rate=0.01,
-        output_field_map={"output": "state"},
+        output_ports={"output": state_port},
+        port_mapping=phx.PortMapping(outputs=((state_port.port_id, state_port.port_id),)),
         artifact_id="spherical-diffusion-qualification",
     )
     trained = fit.trained_operator
@@ -263,11 +265,15 @@ def run_example(*, steps=40, artifact_directory=None):
         coord_dim=1,
         latent_size=latent,
     )
+    increment_port = column_task.field_by_name["increment"].value_port()
     column_fit = column_experiment.fit(
         column_model,
         steps=steps,
         learning_rate=0.005,
-        output_field_map={"output": "increment"},
+        output_ports={"output": increment_port},
+        port_mapping=phx.PortMapping(
+            outputs=((increment_port.port_id, increment_port.port_id),)
+        ),
     )
     if column_fit.trained_operator is None:
         raise RuntimeError("Column closure fit did not produce a trained operator")

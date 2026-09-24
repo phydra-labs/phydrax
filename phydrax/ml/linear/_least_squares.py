@@ -33,6 +33,7 @@ from .._contracts import (
     ML_NONFINITE,
     ML_RANK_DEFICIENT,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._numerics import solve_weighted_least_squares
 from ._base import (
@@ -68,11 +69,10 @@ def _validated_rcond(value: float | None, /) -> float | None:
     return result
 
 
-def _direct_contract() -> DerivativeContract:
-    return DerivativeContract(
+def _direct_contract(model: AbstractLinearRegressorModel, /) -> DerivativeContract:
+    return prediction_fit_contract(
+        model._prediction_contract(),
         (
-            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
             SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
             SurfaceDerivative(DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL),
             SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
@@ -102,7 +102,6 @@ def _aggregate_direct(
     solver_status: Array,
     method: str,
     model_type: type[AbstractLinearRegressorModel],
-    derivative_contract: DerivativeContract,
 ) -> FitResult:
     parameter_finite = (
         jnp.all(jnp.isfinite(jnp.real(coefficients)), axis=(1, 2))
@@ -139,7 +138,7 @@ def _aggregate_direct(
         valid=valid_cases,
         status=status_cases,
         method=method,
-        derivative_contract=derivative_contract,
+        derivative_contract=_direct_contract(model),
     )
 
 
@@ -192,7 +191,6 @@ def _dense_isotropic_solve(
         solver_status=solved.status,
         method=method,
         model_type=model_type,
-        derivative_contract=_direct_contract(),
     )
 
 
@@ -294,7 +292,6 @@ def _normal_solve(
         solver_status=solver_status,
         method=method,
         model_type=model_type,
-        derivative_contract=_direct_contract(),
     )
 
 

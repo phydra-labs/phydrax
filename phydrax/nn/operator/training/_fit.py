@@ -23,6 +23,7 @@ import optax
 from ...._execution_runtime import ExecutionGroup
 from ...._frozendict import frozendict
 from ...._iteration import IterationSession
+from ...._model._ports import PortBindingEvidence, PortMapping, ValuePort
 from ...._trainable import (
     combine_parameters,
     partition_parameters,
@@ -96,9 +97,13 @@ from ._dataset import OperatorDataset
 from ._dtype import OperatorDTypePolicy, OperatorPrecisionEvidence
 from ._execution import (
     _evaluate_operator_step,
+    _operator_output_routes,
     _operator_prediction,
+    _port_binding_record,
+    bind_operator_outputs,
     nondimensionalize_batch,
     nondimensionalize_targets,
+    OperatorOutputRoutes,
 )
 from ._fingerprint import operator_fit_schema
 from ._loader import (
@@ -199,7 +204,7 @@ class OperatorFitResult:
     execution_model: AbstractOperatorModel
     last_execution_model: AbstractOperatorModel
     trained_operator: TrainedOperator | None
-    output_field_map: frozendict[str, str]
+    port_binding: PortBindingEvidence | None
     output_pipeline: OperatorOutputPipeline | None
     history: OperatorFitHistory
     normalization: OperatorNormalizationPolicy | None
@@ -403,55 +408,45 @@ def _place_batch(
     )
 
 
-def _resolve_output_map(
+def _resolve_output_binding(
     model: AbstractOperatorModel,
-    targets: OperatorTargetBatch,
-    output_field_map: Mapping[str, str] | None,
     task: OperatorTask | None,
+    output_ports: Mapping[str, ValuePort] | None,
+    port_mapping: PortMapping | None,
     /,
-) -> dict[str, str]:
-    declared = tuple(model.operator_output_specs)
-    target_names = (
-        tuple(field.name for field in task.target_fields)
-        if task is not None
-        else (tuple(targets.fields) if targets.fields else declared)
-    )
-    if output_field_map is None:
-        if set(declared) == set(target_names):
-            resolved = {name: name for name in declared}
-        elif len(declared) == len(target_names) == 1:
-            resolved = {declared[0]: target_names[0]}
-        else:
+) -> tuple[frozendict[str, ValuePort], PortBindingEvidence] | None:
+    if task is None:
+        if output_ports is not None or port_mapping is not None:
             raise ValueError(
-                "output_field_map is required when model outputs and physical output "
-                "fields do not have identical names."
+                "output_ports and port_mapping bind model outputs to task target "
+                "fields; they require a task-bound fit."
             )
-    else:
-        resolved = {
-            str(model_name): str(target_name)
-            for model_name, target_name in output_field_map.items()
-        }
-    if set(resolved) != set(declared) or set(resolved.values()) != set(target_names):
-        raise ValueError(
-            "output_field_map must bijectively map every model output to a physical output field."
-        )
-    return resolved
+        return None
+    return bind_operator_outputs(model, task, output_ports, port_mapping)
 
 
 def _default_losses(
-    output_map: Mapping[str, str],
+    model: AbstractOperatorModel,
+    routes: OperatorOutputRoutes | None,
     /,
-    *,
-    physical_names: bool,
 ) -> tuple[SupervisedOperatorLoss, ...]:
-    multiple = len(output_map) > 1
+    """Supervise every task target, or every raw model output of a taskless fit."""
+    if routes is None:
+        names = tuple(model.operator_output_specs)
+        return tuple(
+            SupervisedOperatorLoss(
+                name=f"supervised_l2/{name}" if len(names) > 1 else "supervised_l2",
+                prediction_field=name,
+            )
+            for name in names
+        )
     return tuple(
         SupervisedOperatorLoss(
-            name=f"supervised_l2/{target_name}" if multiple else "supervised_l2",
-            prediction_field=target_name if physical_names else model_name,
-            target_field=target_name,
+            name=f"supervised_l2/{target.name}" if len(routes) > 1 else "supervised_l2",
+            prediction_field=target.name,
+            target_field=target.name,
         )
-        for model_name, target_name in output_map.items()
+        for _, target in routes
     )
 
 
@@ -831,7 +826,8 @@ def fit_operator(
     validation: FitInput | None = None,
     task: OperatorTask | None = None,
     training_evidence: OperatorTrainingEvidence | None = None,
-    output_field_map: Mapping[str, str] | None = None,
+    output_ports: Mapping[str, ValuePort] | None = None,
+    port_mapping: PortMapping | None = None,
     loss_terms: Sequence[AbstractOperatorLossTerm] | None = None,
     output_pipeline: OperatorOutputPipeline | None = None,
     rollout_route: OperatorRolloutRoute | None = None,
@@ -893,6 +889,10 @@ def fit_operator(
     maximum ``rollout_policy``; future targets remain aliases rather than model
     outputs.
 
+    Task-bound fits require ``output_ports`` (the ``ValuePort`` of each named
+    model output) and a ``port_mapping`` binding those ports to task target field
+    ports; taskless fits train in raw model coordinates and bind no ports.
+
     Experimental ``update_alignment`` projects the exact emitted optimizer
     proposal against every supported explicit loss term before parameter
     application. It requires one microstep, excludes attached model losses and
@@ -938,6 +938,10 @@ def fit_operator(
             update_alignment=update_alignment,
             target_policy=target_policy,
         )
+    )
+    output_binding = _resolve_output_binding(model, task, output_ports, port_mapping)
+    output_routes = (
+        None if output_binding is None else _operator_output_routes(task, *output_binding)
     )
     target_aliases, optimizer, resolved_optimizer_id = _resolve_operator_fit_optimizer(
         model,
@@ -1214,20 +1218,12 @@ def fit_operator(
                     "Validation fixed queries differ from the training discretization."
                 )
 
-    resolved_output_map = _resolve_output_map(
-        model,
-        first.targets,
-        output_field_map,
-        task,
-    )
     if loss_terms is None and not first.targets.fields:
         raise ValueError(
             "Targetless operator fitting requires explicit physics loss_terms."
         )
     terms = (
-        _default_losses(resolved_output_map, physical_names=task is not None)
-        if loss_terms is None
-        else specified_terms
+        _default_losses(model, output_routes) if loss_terms is None else specified_terms
     )
     if not terms:
         raise ValueError("fit_operator requires at least one operator loss term.")
@@ -1246,10 +1242,11 @@ def fit_operator(
         assert task is not None
         assert rollout_route is not None
         assert rollout_policy is not None
+        assert output_binding is not None
         _validate_rollout_route(
             rollout_route,
             task,
-            resolved_output_map,
+            *output_binding,
             physical_first,
         )
 
@@ -1283,12 +1280,13 @@ def fit_operator(
                 resolved_dtype,
             )
             return raw_prediction, raw_prediction
+        assert output_routes is not None
         return _evaluate_operator_step(
             evaluated_model,
             batch,
             physical_batch,
             task,
-            resolved_output_map,
+            output_routes,
             output_pipeline,
             resolved_normalization,
             resolved_dtype,
@@ -1402,7 +1400,7 @@ def fit_operator(
                 rollout_route,
                 rollout_policy,
                 task,
-                resolved_output_map,
+                output_routes,
                 output_pipeline,
                 resolved_normalization,
                 resolved_dtype,
@@ -2165,7 +2163,9 @@ def fit_operator(
     fit_contract_data = {
         "model_contract": operator_contract_fingerprint(model.operator_contract),
         "task_fingerprint": None if task is None else task.fingerprint,
-        "output_field_map": resolved_output_map,
+        "port_binding": (
+            None if output_binding is None else _port_binding_record(*output_binding)
+        ),
         "loss_terms": [term.fingerprint for term in terms],
         "objective_aggregation": "numerator_support",
         "rollout_route": (None if rollout_route is None else asdict(rollout_route)),
@@ -2864,7 +2864,8 @@ def fit_operator(
             selected_model,
             task,
             training_evidence=evidence,
-            output_field_map=resolved_output_map,
+            output_ports=output_ports,
+            port_mapping=port_mapping,
             fixed_query_fingerprints=fixed_query_fingerprints,
             output_pipeline=output_pipeline,
             normalization=resolved_normalization,
@@ -2887,7 +2888,7 @@ def fit_operator(
         execution_model=selected_model,
         last_execution_model=evaluation_model,
         trained_operator=trained,
-        output_field_map=frozendict(resolved_output_map),
+        port_binding=None if output_binding is None else output_binding[1],
         output_pipeline=output_pipeline,
         history=history,
         normalization=resolved_normalization,

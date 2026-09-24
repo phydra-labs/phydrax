@@ -8,8 +8,10 @@ from typing import Literal
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0
 from ..._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..._contracts import model_regularity, sum_regularity
 from ..._keys import EvalKey, split_eval_key
 from ..._utils import _get_size
 
@@ -92,3 +94,6 @@ class ConcatenatedModel(_AbstractStructuredInputModel):
             for i, o in enumerate(outputs)
         )
         return jnp.concatenate(outputs, axis=self.axis)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return sum_regularity(model_regularity(model) for model in self.models)

@@ -11,7 +11,10 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from phydrax._differentiation import AbstractConstructionCertificate
+from phydrax._differentiation import (
+    AbstractConstructionCertificate,
+    DerivativeRegularity,
+)
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._holomorphic import HolomorphicJet
 from phydrax._holomorphic_linear import HolomorphicLinearFrame
@@ -20,6 +23,7 @@ from phydrax.equations.trefftz._holomorphic_constraints import (
     HolomorphicAffineCoefficientMap,
     PreparedHolomorphicConstraintOperator,
 )
+from phydrax.nn._contracts import AFFINE, SMOOTH, sum_regularity
 from phydrax.nn._keys import EvalKey
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
@@ -181,6 +185,9 @@ class TargetAugmentedBranchEncoder(AbstractBranchEncoder):
         if free.shape != case_shape + (self.free_size,):
             raise ValueError("Free branch encoder returned an invalid shape.")
         return jnp.concatenate((targets, free), axis=-1)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return sum_regularity((AFFINE, self.free_encoder._value_regularity()))
 
 
 class HolomorphicBasisTrunk(AbstractBasisTrunk, NonTrainableState):
@@ -357,6 +364,11 @@ class HolomorphicBasisTrunk(AbstractBasisTrunk, NonTrainableState):
         output_size = self.frame.linear_frame_certificate().complex_output_size
         return offset.reshape(case_shape + query.sample_shape + (output_size,))
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # A holomorphic frame is real-analytic in the real query coordinates, and
+        # the constraint transforms are linear.
+        return SMOOTH
+
 
 class ConditionalHolomorphicDeepONet(AbstractOperatorModel):
     """DeepONet whose continuous query decoder is holomorphic by construction."""
@@ -439,6 +451,9 @@ class ConditionalHolomorphicDeepONet(AbstractOperatorModel):
     ) -> Array:
         return self.operator.__call_operator_batch__(batch, key=key)
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return self.operator._value_regularity()
+
     def query_jet(
         self,
         batch: OperatorBatch,
@@ -506,6 +521,9 @@ class ConditionalHarmonicOperator2D(AbstractOperatorModel):
         key: EvalKey = None,
     ) -> Array:
         return jnp.real(self.potential.__call_operator_batch__(batch, key=key))
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return self.potential._value_regularity()
 
 
 __all__ = [

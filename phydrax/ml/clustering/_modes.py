@@ -14,7 +14,6 @@ from jaxtyping import Array
 import phydrax.ein as ein
 
 from ..._differentiation import (
-    DerivativeContract,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
@@ -29,6 +28,7 @@ from .._contracts import (
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from ._common import (
     active_data,
@@ -172,12 +172,9 @@ class MeanShift(AbstractRecipe):
             degeneracy=exhausted,
             method="mean-shift",
         )
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),
@@ -189,7 +186,7 @@ class MeanShift(AbstractRecipe):
                 ),
             ),
             route=DerivativeRoute.UNROLLED,
-            nondifferentiable_outputs=("hard_labels", "merged mode mask"),
+            nondifferentiable_outputs=("merged mode mask",),
             conditions=("fixed seed and merge ordering", "positive bandwidth"),
         )
         return FitResult(
@@ -377,12 +374,9 @@ class AffinityPropagation(AbstractRecipe):
             degeneracy=exhausted,
             method="affinity-propagation",
         )
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),
@@ -394,7 +388,7 @@ class AffinityPropagation(AbstractRecipe):
                 ),
             ),
             route=DerivativeRoute.UNROLLED,
-            nondifferentiable_outputs=("hard_labels", "exemplar selection"),
+            nondifferentiable_outputs=("exemplar selection",),
             conditions=("fixed message iterations", "fixed exemplar top-k ordering"),
         )
         return FitResult(

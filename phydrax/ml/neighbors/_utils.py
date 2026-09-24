@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ..._differentiation import DerivativeRegularity
 from .._numerics import pairwise_distances
 
 
@@ -30,6 +31,32 @@ def validate_metric(metric: Any) -> Any:
     ):
         raise ValueError("metric must be callable or a supported native metric name.")
     return metric
+
+
+def metric_regularity(metric: Any, /) -> DerivativeRegularity | None:
+    """Value regularity of `x -> distance(x, y)` for a fixed point `y`.
+
+    Euclidean distance has a cone at `y` and Manhattan distance kinks on the
+    coordinate hyperplanes through `y`; cosine distance has no limit at the
+    origin. Callable metrics carry no certificate and stay undeclared.
+    """
+    if metric == "squared-euclidean":
+        return DerivativeRegularity.smooth(degree_bound=2)
+    if metric == "euclidean":
+        return DerivativeRegularity.piecewise_smooth(continuity=0)
+    if metric == "manhattan":
+        return DerivativeRegularity.piecewise_polynomial(continuity=0, degree_bound=1)
+    if metric == "cosine":
+        return DerivativeRegularity.piecewise_smooth(continuity=-1)
+    return None
+
+
+def distance_softmax_regularity(metric: Any, /) -> DerivativeRegularity | None:
+    """Regularity of a map smooth in the distances to fixed points, e.g. a softmax."""
+    regularity = metric_regularity(metric)
+    return (
+        None if regularity is None else regularity.compose(DerivativeRegularity.smooth())
+    )
 
 
 def masked_softmax(logits: Array, mask: Array) -> Array:
@@ -126,8 +153,10 @@ __all__ = [
     "broadcast_support",
     "case_distances",
     "chunked_call",
+    "distance_softmax_regularity",
     "masked_softmax",
     "gather_support",
+    "metric_regularity",
     "pad_support",
     "size",
     "validate_metric",

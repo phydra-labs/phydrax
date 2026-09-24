@@ -10,10 +10,13 @@ import equinox as eqx
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from .._base import _AbstractBaseModel
+from .._contracts import compose_regularity
 from .._keys import EvalKey, fold_in_eval_key
 from .._utils import _canonical_size, _identity, SizeLike
+from ..activations import activation_regularity
 from ..layers._linear import Linear
 from ..layers._sine import SineLayer
 
@@ -124,6 +127,13 @@ class SIREN(_AbstractBaseModel):
             hidden = layer(hidden, key=fold_in_eval_key(key, index))
         output = self.projection(hidden, key=fold_in_eval_key(key, len(self.layers)))
         return self.final_activation(output)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return compose_regularity(
+            *(layer._value_regularity() for layer in self.layers),
+            self.projection._value_regularity(),
+            activation_regularity(self.final_activation),
+        )
 
 
 __all__ = ["SIREN"]

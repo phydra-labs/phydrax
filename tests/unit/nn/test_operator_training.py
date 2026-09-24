@@ -937,12 +937,16 @@ def test_fit_operator_returns_task_bound_physical_operator():
     output_pipeline = phx.nn.operator.training.OperatorOutputPipeline(
         phx.nn.operator.training.ConservationProjection("solution", source_name="state")
     )
+    solution_port = task.field_by_name["solution"].value_port()
     result = phx.nn.operator.training.fit_operator(
         _fit_model(seed=4),
         dataset,
         task=task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "solution"},
+        output_ports={"output": solution_port},
+        port_mapping=phx.PortMapping(
+            outputs=((solution_port.port_id, solution_port.port_id),)
+        ),
         epochs=1,
         steps=1,
         batch_size=4,

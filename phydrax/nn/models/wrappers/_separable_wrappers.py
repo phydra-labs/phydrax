@@ -22,12 +22,14 @@ from ...._axis_factorization import (
     AxisFactorizedField,
     AxisProductTerm,
 )
+from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0
 from ...._frozendict import frozendict
 from ...._model import AxisModelEvaluator, ModelBinding, StructuredDerivativeProvider
 from ...._strict import StrictModule
 from ....logging import emit
 from ..._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..._contracts import compose_regularity, model_regularity, product_regularity
 from ..._keys import EvalKey, split_eval_key
 from ..._scan import (
     pack_scan_modules,
@@ -35,6 +37,7 @@ from ..._scan import (
     stack_scan_dynamics,
 )
 from ..._utils import _get_size, _identity
+from ...activations import activation_regularity
 from .._utils import _contract_str, _stack_separable
 from ._latent_derivative import (
     evaluate_latent_partial,
@@ -1181,6 +1184,14 @@ class Separable(_AbstractStructuredInputModel):
         if latents.ndim == 1:
             return latents.reshape(self.latent_size, _get_size(self.out_size))
         return latents.reshape(-1, self.latent_size, _get_size(self.out_size))
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # The latent sum and the real part are linear, so only the product of the
+        # coordinate models and the output activation shape the regularity.
+        return compose_regularity(
+            product_regularity(model_regularity(model) for model in self.models),
+            activation_regularity(self.output_activation),
+        )
 
     def factorize_axes(
         self,

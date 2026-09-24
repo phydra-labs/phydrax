@@ -265,7 +265,6 @@ def test_operator_fit_composes_explicit_loss_terms():
         epochs=1,
         batch_size=2,
         shuffle=False,
-        output_field_map={"output": "solution"},
         jit=False,
     )
 
@@ -282,7 +281,6 @@ def test_operator_fit_composes_explicit_loss_terms():
             epochs=1,
             batch_size=2,
             shuffle=False,
-            output_field_map={"output": "solution"},
             jit=False,
         )
 
@@ -313,7 +311,6 @@ def test_operator_fit_aligns_an_ordinary_aggregate_optimizer_proposal():
         steps=1,
         batch_size=2,
         shuffle=False,
-        output_field_map={"output": "solution"},
         jit=True,
     )
 

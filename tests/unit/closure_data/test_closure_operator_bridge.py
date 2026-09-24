@@ -310,11 +310,18 @@ def test_trained_operator_binds_through_the_existing_stress_policy():
         "closure_normalizer": normalizer.normalizer_id,
         "closure_preparation": datasets.preparation_id,
     }
+    stress_port = task.field_by_name["stress"].value_port()
+    binding = {
+        "output_ports": {"output": stress_port},
+        "port_mapping": phx.PortMapping(
+            outputs=((stress_port.port_id, stress_port.port_id),)
+        ),
+    }
     trained = phx.nn.operator.training.TrainedOperator(
         _StressOperator(),
         task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "stress"},
+        **binding,
         artifact_id=artifact_id,
         provenance=provenance,
     )
@@ -349,7 +356,7 @@ def test_trained_operator_binds_through_the_existing_stress_policy():
                 training_evidence=phx.nn.operator.OperatorTrainingEvidence(
                     "task_specific"
                 ),
-                output_field_map={"output": "stress"},
+                **binding,
                 artifact_id=artifact_id,
                 provenance=provenance | {"closure_partition": "other"},
             ),

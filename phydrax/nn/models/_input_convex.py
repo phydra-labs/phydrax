@@ -11,13 +11,16 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
-from ..._differentiation import AbstractConstructionCertificate
+from ..._differentiation import AbstractConstructionCertificate, DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
 from ..._model import INPUT_CONVEX_CERTIFICATE_KEY
 from .._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from .._contracts import AFFINE, compose_regularity, sum_regularity
 from .._keys import EvalKey, fold_in_eval_key
 from .._utils import _canonical_size, SizeLike
+from ..activations import activation_regularity
+from ..activations._functions import squared_relu
 from ..layers._linear import Linear
 from ..parameters import PositiveTransform
 
@@ -27,17 +30,36 @@ InputConvexConstruction = Literal[
     "input-convex-network", "partially-input-convex-network"
 ]
 _CanonicalSize: TypeAlias = int | tuple[int, ...] | Literal["scalar"]
+_CONVEX_ACTIVATIONS = {
+    "softplus": jax.nn.softplus,
+    "relu": jax.nn.relu,
+    "squared_relu": squared_relu,
+}
 
 
 def _convex_activation(name: ConvexActivation, values: Array, /) -> Array:
-    if name == "softplus":
-        return jax.nn.softplus(values)
-    if name == "relu":
-        return jax.nn.relu(values)
-    if name == "squared_relu":
-        positive = jax.nn.relu(values)
-        return positive * positive
-    raise ValueError("activation must be 'softplus', 'relu', or 'squared_relu'.")
+    if name not in _CONVEX_ACTIVATIONS:
+        raise ValueError("activation must be 'softplus', 'relu', or 'squared_relu'.")
+    return _CONVEX_ACTIVATIONS[name](values)
+
+
+def _input_convex_regularity(
+    activation: ConvexActivation,
+    depth: int,
+    /,
+    *,
+    context: DerivativeRegularity | None = None,
+) -> DerivativeRegularity | None:
+    # Every hidden state is the activation of a sum of affine terms in the input,
+    # the (lifted) context, and the previous hidden state; the output is affine.
+    act = activation_regularity(_CONVEX_ACTIVATIONS[activation])
+    lifted = () if context is None else (compose_regularity(context, AFFINE),)
+    hidden = compose_regularity(sum_regularity((AFFINE, *lifted)), act)
+    for _ in range(depth - 1):
+        hidden = compose_regularity(
+            sum_regularity((AFFINE, *lifted, compose_regularity(hidden, AFFINE))), act
+        )
+    return sum_regularity((AFFINE, *lifted, compose_regularity(hidden, AFFINE)))
 
 
 def _size_payload(size: _CanonicalSize | None, /) -> Any:
@@ -235,6 +257,9 @@ class InputConvexNetwork(_AbstractBaseModel):
         """Attach the input-convex certificate to a bound domain function."""
         return {INPUT_CONVEX_CERTIFICATE_KEY: self.input_convex_certificate()}
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return _input_convex_regularity(self.activation, len(self.state_layers))
+
 
 class PartiallyInputConvexNetwork(_AbstractStructuredInputModel):
     r"""Potential convex in its second input for every fixed context.
@@ -387,6 +412,13 @@ class PartiallyInputConvexNetwork(_AbstractStructuredInputModel):
     def model_metadata(self) -> Mapping[str, Any]:
         """Attach the input-convex certificate to a bound domain function."""
         return {INPUT_CONVEX_CERTIFICATE_KEY: self.input_convex_certificate()}
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return _input_convex_regularity(
+            self.activation,
+            len(self.state_layers),
+            context=self.context_lift._value_regularity(),
+        )
 
 
 __all__ = [

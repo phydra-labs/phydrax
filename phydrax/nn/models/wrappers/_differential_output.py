@@ -12,10 +12,12 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
+from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
 from ...._trainable import fixed_field, NonTrainableState
 from ..._base import _AbstractBaseModel
+from ..._contracts import gradient_regularity, model_regularity
 from ..._keys import EvalKey
 
 
@@ -197,6 +199,14 @@ class DifferentialFieldDecoder(_AbstractBaseModel):
         self.field_channels = channels
         self.in_size = dimension
         self.out_size = out_size
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # The scalings and transforms are linear in the Jacobian; a central
+        # difference is a linear combination of translated decoder values.
+        decoder = model_regularity(self.decoder)
+        if self.backend == "central_difference":
+            return decoder
+        return gradient_regularity(decoder)
 
     def _field(self, point: Array, key: EvalKey, /) -> Array:
         value = jnp.asarray(self.decoder(point, key=key))

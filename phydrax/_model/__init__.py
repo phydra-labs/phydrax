@@ -11,6 +11,22 @@ from ._artifacts import (
     register_operator_architecture_codec,
 )
 from ._binding import ModelBatchMode, ModelBinding, ModelInputMode
+from ._component import (
+    AbstractComponentSlot,
+    admit_randomness,
+    bind_component,
+    CertificateRecord,
+    ComponentBinding,
+    ComponentContract,
+    ComponentPrecisionContract,
+    ComponentSlotContract,
+    ExecutionCapabilities,
+    ExecutionTier,
+    ModelExecutionContract,
+    RandomnessContract,
+    RandomnessMode,
+    supports_derivative,
+)
 from ._frozen import FrozenModel
 from ._kfac import KFACAffineBlock, KFACLayoutProvider
 from ._objectives import (
@@ -37,6 +53,7 @@ from ._protocols import (
     StructuredDerivativeProvider,
     TRIAL_SPACE_CERTIFICATE_KEY,
 )
+from ._realization import FrozenRealization
 from ._structure import (
     deserialize_model_leaf,
     model_from_structure_recipe,
@@ -47,6 +64,20 @@ from ._structure import (
 
 __all__ = [
     "AbstractArrayModel",
+    "AbstractComponentSlot",
+    "admit_randomness",
+    "bind_component",
+    "CertificateRecord",
+    "ComponentBinding",
+    "ComponentContract",
+    "ComponentPrecisionContract",
+    "ComponentSlotContract",
+    "ExecutionCapabilities",
+    "ExecutionTier",
+    "ModelExecutionContract",
+    "RandomnessContract",
+    "RandomnessMode",
+    "supports_derivative",
     "AxisModelEvaluator",
     "artifact_value",
     "artifact_value_id",
@@ -60,6 +91,7 @@ __all__ = [
     "INPUT_CONVEX_CERTIFICATE_KEY",
     "KFACAffineBlock",
     "FrozenModel",
+    "FrozenRealization",
     "KFACLayoutProvider",
     "ModelBatchMode",
     "MODEL_CONSTRUCTION_CERTIFICATE_KEYS",

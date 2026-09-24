@@ -19,6 +19,7 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
+from phydrax._model._ports import PortMapping
 from phydrax._trainable import combine_parameters, partition_parameters
 from phydrax.nn.operator import (
     AbstractOperatorModel,
@@ -417,7 +418,20 @@ def _train_operator_with_trace(
         )
         for name in training_data.targets.fields
     )
-
+    # Task-backed benchmark models emit every task target field under its own
+    # name, so each output declares that field's port and binds to it.
+    output_ports = (
+        None
+        if scenario.task is None
+        else {field.name: field.value_port() for field in scenario.task.target_fields}
+    )
+    port_mapping = (
+        None
+        if output_ports is None
+        else PortMapping(
+            outputs=tuple((port.port_id, port.port_id) for port in output_ports.values())
+        )
+    )
     result = fit_operator(
         model,
         training_data,
@@ -425,6 +439,8 @@ def _train_operator_with_trace(
         loss_terms=loss_terms,
         include_model_losses=False,
         task=scenario.task,
+        output_ports=output_ports,
+        port_mapping=port_mapping,
         learning_rate=float(learning_rate),
         epochs=max(int(steps), 1),
         steps=int(steps) if trainable else 0,

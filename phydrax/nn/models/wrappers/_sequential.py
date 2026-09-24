@@ -8,8 +8,10 @@ from typing import Literal
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0
 from ..._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..._contracts import compose_regularity, model_regularity
 from ..._keys import EvalKey, split_eval_key
 from ..._utils import _canonical_size
 
@@ -81,6 +83,9 @@ class Sequential(_AbstractStructuredInputModel):
         for model, subkey in zip(self.models[1:], keys[1:], strict=True):
             y = model(jnp.asarray(y), key=subkey)
         return jnp.asarray(y)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return compose_regularity(*(model_regularity(model) for model in self.models))
 
 
 __all__ = ["Sequential"]

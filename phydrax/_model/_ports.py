@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from math import prod
 from typing import Any, Literal, Protocol, runtime_checkable, TypeAlias
 
@@ -181,6 +181,92 @@ class ValuePort(StrictModule, NonTrainableState):
                 "variance": variance,
             }
         )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the canonical JSON-compatible record of this port, with `port_id`."""
+        return {
+            "semantic_id": self.semantic_id,
+            "space_id": self.space_id,
+            "event_shape": list(self.event_shape),
+            "component_ids": list(self.component_ids),
+            "dimensions": (
+                None
+                if self.dimensions is None
+                else [value.to_dict() for value in self.dimensions]
+            ),
+            "representation": self.representation,
+            "frame_id": self.frame_id,
+            "normalization_id": self.normalization_id,
+            "axis_keys": (
+                None
+                if self.axis_keys is None
+                else [[key.scope, key.name] for key in self.axis_keys]
+            ),
+            "variance": self.variance,
+            "port_id": self.port_id,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any], /) -> ValuePort:
+        """Restore a port from `to_dict`, failing closed on any field or ID change."""
+        if not isinstance(payload, Mapping):
+            raise TypeError("ValuePort payload must be a mapping.")
+        expected = {
+            "semantic_id",
+            "space_id",
+            "event_shape",
+            "component_ids",
+            "dimensions",
+            "representation",
+            "frame_id",
+            "normalization_id",
+            "axis_keys",
+            "variance",
+            "port_id",
+        }
+        if set(payload) != expected:
+            raise ValueError(
+                "ValuePort payload must use the canonical fields; "
+                f"missing={sorted(expected - set(payload))}, "
+                f"unknown={sorted(set(payload) - expected)}."
+            )
+        for name in ("event_shape", "component_ids"):
+            if not isinstance(payload[name], list):
+                raise TypeError(f"ValuePort payload {name} must be a list.")
+        dimensions = payload["dimensions"]
+        axis_keys = payload["axis_keys"]
+        if dimensions is not None and not isinstance(dimensions, list):
+            raise TypeError("ValuePort payload dimensions must be a list or None.")
+        if axis_keys is not None and (
+            not isinstance(axis_keys, list)
+            or any(not isinstance(key, list) or len(key) != 2 for key in axis_keys)
+        ):
+            raise TypeError(
+                "ValuePort payload axis_keys must be [scope, name] pairs or None."
+            )
+        port = cls(
+            payload["semantic_id"],
+            event_shape=payload["event_shape"],
+            component_ids=payload["component_ids"],
+            representation=payload["representation"],
+            space_id=payload["space_id"],
+            dimensions=(
+                None
+                if dimensions is None
+                else [DimensionSignature.from_dict(value) for value in dimensions]
+            ),
+            frame_id=payload["frame_id"],
+            normalization_id=payload["normalization_id"],
+            axis_keys=(
+                None
+                if axis_keys is None
+                else [AxisKey(scope, name) for scope, name in axis_keys]
+            ),
+            variance=payload["variance"],
+        )
+        if payload["port_id"] != port.port_id:
+            raise ValueError("ValuePort payload port_id does not match its content.")
+        return port
 
 
 def _port_tuple(ports: Iterable[ValuePort], name: str, /) -> tuple[ValuePort, ...]:
@@ -450,12 +536,90 @@ class PortProvider(Protocol):
         ...
 
 
+def intrinsic_model_ports(model: Any, /) -> ModelPorts | None:
+    """Return a model's intrinsic ports, or `None` when it declares none.
+
+    A `FrozenModel` declares exactly the ports of the model it freezes; any
+    other `PortProvider` returns `model_ports()`.
+    """
+    from ._frozen import FrozenModel
+
+    while isinstance(model, FrozenModel):
+        model = model.as_trainable()
+    if not isinstance(model, PortProvider):
+        return None
+    ports = model.model_ports()
+    if not isinstance(ports, ModelPorts):
+        raise TypeError(f"{type(model).__name__}.model_ports() must return ModelPorts.")
+    return ports
+
+
+def bind_model_ports(
+    model: Any,
+    owner_ports: ModelPorts,
+    mapping: PortMapping | None,
+    /,
+    *,
+    site: str,
+) -> PortBindingEvidence | None:
+    """Bind a model's intrinsic ports to an owner's ports at one binding site.
+
+    A model with intrinsic ports (`intrinsic_model_ports`) requires an explicit
+    `PortMapping` and returns the `PortBindingEvidence` of
+    `resolve_port_mapping`; a model without intrinsic ports takes no mapping and
+    returns `None`. Violations raise `ValueError` naming `site`.
+    """
+    if mapping is not None and not isinstance(mapping, PortMapping):
+        raise TypeError(f"{site} port_mapping must be a PortMapping or None.")
+    model_ports = intrinsic_model_ports(model)
+    if model_ports is None:
+        if mapping is not None:
+            raise ValueError(
+                f"{site} received a port_mapping, but {type(model).__name__} "
+                "declares no model ports."
+            )
+        return None
+    if mapping is None:
+        raise ValueError(
+            f"{site} requires an explicit port_mapping: {type(model).__name__} "
+            "declares model ports."
+        )
+    return resolve_port_mapping(model_ports, owner_ports, mapping)
+
+
+def require_mapped_order(
+    evidence: PortBindingEvidence,
+    direction: Literal["input", "output"],
+    expected: tuple[str, ...],
+    /,
+    *,
+    site: str,
+) -> None:
+    """Require owner ports bound in model port order to equal `expected` owner port IDs.
+
+    Binding sites that pass owner values positionally never repack them, so the
+    owner ports mapped from the model's ordered ports must be exactly the owner's
+    positional order. Raises `ValueError` otherwise.
+    """
+    pairs = evidence.inputs if direction == "input" else evidence.outputs
+    mapped = tuple(owner for _, owner in pairs)
+    if mapped != tuple(expected):
+        raise ValueError(
+            f"{site} passes owner {direction} ports in order {tuple(expected)}, but "
+            f"the port mapping binds the model's ordered {direction} ports to "
+            f"{mapped}; owner values are never repacked."
+        )
+
+
 __all__ = [
+    "bind_model_ports",
+    "intrinsic_model_ports",
     "ModelPorts",
     "PortBindingEvidence",
     "PortMapping",
     "PortProvider",
     "PortVariance",
+    "require_mapped_order",
     "ValuePort",
     "resolve_port_mapping",
 ]

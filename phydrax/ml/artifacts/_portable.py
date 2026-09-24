@@ -235,6 +235,9 @@ def _feature_schema_record(schema: FeatureSchema | None, /) -> Any:
         "kinds": list(schema.kinds),
         "layout_id": schema.layout_id,
         "dimensions": _dimensions_record(schema.dimensions),
+        "ports": (
+            None if schema.ports is None else [port.port_id for port in schema.ports]
+        ),
     }
 
 
@@ -248,6 +251,7 @@ def _target_schema_record(schema: TargetSchema | None, /) -> Any:
             schema.class_labels, path="target_schema.class_labels"
         ),
         "dimensions": _dimensions_record(schema.dimensions),
+        "port": None if schema.port is None else schema.port.port_id,
     }
 
 

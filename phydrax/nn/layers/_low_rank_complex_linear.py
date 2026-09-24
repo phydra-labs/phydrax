@@ -16,11 +16,13 @@ from jaxtyping import Array, Key
 
 from phydrax.ein import contract
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._base import _AbstractBaseModel
+from .._contracts import AFFINE
 from .._keys import EvalKey
 from .._utils import _canonical_size, _get_size, _get_value_shape, SizeLike
 
@@ -235,6 +237,9 @@ class LowRankComplexLinear(_AbstractBaseModel):
         if output.shape[-1] != 1:
             raise ValueError("Scalar LowRankComplexLinear output requires one feature.")
         return jnp.squeeze(output, axis=-1)
+
+    def _value_regularity(self) -> DerivativeRegularity:
+        return AFFINE
 
 
 __all__ = [

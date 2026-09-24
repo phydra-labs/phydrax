@@ -13,7 +13,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._differentiation import GradientLevel
+from ..._differentiation import DerivativeContract, GradientLevel
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -24,6 +24,10 @@ from .._contracts import (
     ML_SUCCESS,
 )
 from ._base import (
+    _AFFINE,
+    _HARD_LABELS,
+    _linear_contract,
+    _SMOOTH,
     AbstractLinearRegressorModel,
     AbstractLinearScoreClassifierModel,
     binary_targets,
@@ -53,6 +57,12 @@ class AbstractOnlineClassifierModel(AbstractLinearScoreClassifierModel):
     def __init__(self, *args, probabilistic: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
         self.probabilistic = bool(probabilistic)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _linear_contract(
+            _SMOOTH if self.probabilistic else _AFFINE,
+            nondifferentiable_outputs=_HARD_LABELS,
+        )
 
     def positive_probability(self, x: Any, /) -> Array:
         if not self.probabilistic:
@@ -223,6 +233,7 @@ def _finish_online(
         status=status_cases,
         method=method,
         derivative_contract=unrolled_contract(
+            model,
             nonsmooth=nonsmooth,
             fit_targets=fit_targets,
             hard_outputs=hard_outputs,
@@ -452,7 +463,6 @@ class SGDClassifierRecipe(AbstractRecipe):
             model=model,
             extra_valid=label_valid,
             nonsmooth=self.loss == "hinge",
-            hard_outputs=("predict", "predict_indices"),
         )
 
 
@@ -532,7 +542,7 @@ class PerceptronRecipe(AbstractRecipe):
             model=model,
             extra_valid=label_valid,
             nonsmooth=True,
-            hard_outputs=("predict", "predict_indices", "mistake_updates"),
+            hard_outputs=("mistake_updates",),
         )
 
 
@@ -731,7 +741,7 @@ class PassiveAggressiveClassifierRecipe(_AbstractPassiveAggressiveRecipe):
             model=model,
             extra_valid=label_valid,
             nonsmooth=True,
-            hard_outputs=("predict", "predict_indices", "margin_updates"),
+            hard_outputs=("margin_updates",),
         )
 
 

@@ -15,8 +15,14 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
+from phydrax.nn._contracts import (
+    compose_regularity,
+    product_regularity,
+    SMOOTH,
+)
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
 from phydrax.nn.layers._linear import Linear
@@ -29,6 +35,7 @@ from phydrax.nn.operator.architectures.attention._upt import (
     _feature_norm,
     _flatten_function_values,
     _flatten_geometry,
+    _query_decoder_regularity,
     LatentTokenProcessor,
 )
 from phydrax.nn.operator.context import EncodedOperatorState, operator_context_fingerprint
@@ -129,6 +136,22 @@ class _PhysicsSliceTokenizer(StrictModule):
         )
         tokens = (tokens / normalizer[..., None]) * slice_mask[..., None]
         return tokens, slice_measure, slice_mask
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        if self.top_k < self.num_slices:
+            # The exact top-k partition differentiates through a dense-softmax
+            # straight-through surrogate, not its own derivative.
+            return None
+        memberships = compose_regularity(self.assignment._value_regularity(), SMOOTH)
+        # Tokens are membership-weighted values normalized by the (strictly
+        # positive) membership measure of each slice.
+        return product_regularity(
+            (
+                memberships,
+                self.value._value_regularity(),
+                compose_regularity(memberships, SMOOTH),
+            )
+        )
 
 
 class Transolver(AbstractEncodedOperatorModel):
@@ -390,6 +413,20 @@ class Transolver(AbstractEncodedOperatorModel):
         if not isinstance(x, OperatorBatch):
             raise TypeError("Transolver requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        tokens = compose_regularity(
+            self.source_lift._value_regularity(),
+            self.tokenizer._value_regularity(),
+            self.processor._value_regularity(),
+        )
+        return _query_decoder_regularity(
+            tokens,
+            self.query_lift,
+            self.decoder_attention,
+            self.decoder_norm,
+            self.projection,
+        )
 
 
 __all__ = ["Transolver"]

@@ -18,11 +18,13 @@ from jax import core as jax_core
 from jaxtyping import Array
 
 import phydrax.ein as ein
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._frozendict import frozendict
 from phydrax._model import AbstractArrayModel, FrozenModel, register_artifact_value
 from phydrax._numerics import solve_weighted_least_squares
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
+from phydrax.nn._contracts import AFFINE, model_regularity, sum_regularity
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
 from phydrax.nn._utils import _get_size
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
@@ -549,6 +551,14 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
             self.channels,
             key=fold_in_eval_key(key, 1),
         )
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        if self.evaluator is not None:
+            return None
+        offset = (
+            AFFINE if self.offset_model is None else model_regularity(self.offset_model)
+        )
+        return sum_regularity((model_regularity(self.basis_model), offset))
 
     def decode(
         self,

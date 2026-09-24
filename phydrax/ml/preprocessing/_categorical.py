@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._differentiation import (
     DerivativeContract,
+    DerivativeRegularity,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
@@ -30,6 +31,7 @@ from .._contracts import (
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._schema import AbstractFittedModel, FeatureSchema
 from ._common import (
@@ -46,6 +48,34 @@ from ._common import (
 
 UnknownPolicy = Literal["fail", "indicator"]
 ImputationStrategy = Literal["mean", "median", "most_frequent", "constant"]
+# Category lookups match inputs against a finite vocabulary, so every encoding is
+# discontinuous in its input.
+_ORDINAL_CONTRACT = DerivativeContract(
+    (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+    route=DerivativeRoute.STOPPED,
+    regularity=DerivativeRegularity.discontinuous(),
+    nondifferentiable_outputs=("ordinal_codes", "unknown_indicators"),
+)
+_ONE_HOT_CONTRACT = DerivativeContract(
+    (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+    route=DerivativeRoute.STOPPED,
+    regularity=DerivativeRegularity.discontinuous(),
+    nondifferentiable_outputs=("one_hot_codes", "unknown_indicators"),
+)
+_TARGET_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(
+            DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+        ),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.discontinuous(),
+    nondifferentiable_outputs=("category_membership", "unknown_indicators"),
+    conditions=("Category membership and target masks are held fixed.",),
+)
 
 
 class CategoricalSchema(StrictModule):
@@ -255,6 +285,26 @@ class FittedSimpleImputer(AbstractFittedModel):
             else ModelBinding.pointwise("flat", pass_key=False)
         )
 
+    def _prediction_contract(self) -> DerivativeContract:
+        # Imputation is the identity except where an input equals a finite sentinel,
+        # which jumps to its fill value; a NaN sentinel never equals a real input.
+        return DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
+            regularity=(
+                DerivativeRegularity.smooth(degree_bound=1)
+                if self.missing_is_nan
+                else DerivativeRegularity.piecewise_polynomial(
+                    continuity=-1, degree_bound=1
+                )
+            ),
+        )
+
     def _missing(self, values: Array, mask: Any | None) -> Array:
         missing = jnp.asarray(
             jnp.isnan(values) if self.missing_is_nan else values == self.missing_values,
@@ -421,12 +471,9 @@ class SimpleImputer(AbstractRecipe):
             details=(("strategy", self.strategy), ("add_indicator", self.add_indicator)),
         )
         contract = (
-            DerivativeContract(
+            prediction_fit_contract(
+                model._prediction_contract(),
                 (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
                     SurfaceDerivative(
                         DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                     ),
@@ -440,13 +487,8 @@ class SimpleImputer(AbstractRecipe):
                 ),
             )
             if self.strategy == "mean"
-            else DerivativeContract(
-                (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
-                ),
+            else prediction_fit_contract(
+                model._prediction_contract(),
                 route=DerivativeRoute.STOPPED,
                 nondifferentiable_outputs=("imputation_choice",),
                 conditions=("The hard fitted imputation choice is fixed during apply.",),
@@ -484,6 +526,9 @@ class FittedOrdinalEncoder(AbstractFittedModel, NonTrainableState):
         self.unknown_value = int(unknown_value)
         self.input_schema = input_schema
         self.output_schema = output_schema
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _ORDINAL_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -588,15 +633,7 @@ class OrdinalEncoder(AbstractRecipe):
             valid=diagnostics.valid,
             status=diagnostics.status,
             method=diagnostics.method,
-            derivative_contract=DerivativeContract(
-                (
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE
-                    ),
-                ),
-                route=DerivativeRoute.STOPPED,
-                nondifferentiable_outputs=("ordinal_codes", "unknown_indicators"),
-            ),
+            derivative_contract=_ORDINAL_CONTRACT,
         )
 
 
@@ -629,6 +666,9 @@ class FittedOneHotEncoder(AbstractFittedModel, NonTrainableState):
         self.unknown_policy = unknown_policy
         self.input_schema = input_schema
         self.output_schema = output_schema
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _ONE_HOT_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -745,15 +785,7 @@ class OneHotEncoder(AbstractRecipe):
             valid=diagnostics.valid,
             status=diagnostics.status,
             method=diagnostics.method,
-            derivative_contract=DerivativeContract(
-                (
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE
-                    ),
-                ),
-                route=DerivativeRoute.STOPPED,
-                nondifferentiable_outputs=("one_hot_codes", "unknown_indicators"),
-            ),
+            derivative_contract=_ONE_HOT_CONTRACT,
         )
 
 
@@ -789,6 +821,9 @@ class FittedTargetEncoder(AbstractFittedModel):
         self.input_schema = input_schema
         self.output_schema = output_schema
         self.case_shape = tuple(case_shape)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _TARGET_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -952,25 +987,7 @@ class TargetEncoder(AbstractRecipe):
             valid=valid,
             status=status,
             method="target_encoder",
-            derivative_contract=DerivativeContract(
-                (
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
-                    ),
-                ),
-                route=DerivativeRoute.DIRECT,
-                nondifferentiable_outputs=("category_membership", "unknown_indicators"),
-                conditions=("Category membership and target masks are held fixed.",),
-            ),
+            derivative_contract=_TARGET_CONTRACT,
         )
 
 

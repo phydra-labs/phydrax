@@ -362,6 +362,59 @@ owner, and `authority_admits(authority, route, objective_kind)` states which
 An accelerator therefore never trains through an implicit solution map, and no
 authority trains through a `STOPPED` route.
 
+### Owner admission
+
+Owners admit derivatives while planning, before any batch is traced.
+
+**Field regularity.** The regularity of a domain field is composed over its
+evaluation tree: each bound model contributes
+`model_execution_contract().regularity`, constants are degree-zero polynomials,
+sums and differences take the maximum degree bound, products add degree bounds,
+division by a constant keeps the numerator, and known pointwise maps compose. Any
+node whose regularity is undeclared, including an opaque callable such as a
+`domain.Function` closure, makes the whole field undeclared. A declared field
+regularity is therefore an upper bound that never hides a cancellation. For
+example, `2 * u + 1` keeps the vanishing Laplacian of a ReLU network `u` with a
+linear output, while `u * u` has quadratic pieces.
+
+**Planning.** `trace_derivative_requests(residual, fields, *, authority=None,
+policy=None)` admits every recorded request at its accumulated order, so a nested
+Laplacian is admitted as an order-4 derivative, and attaches the
+`DerivativeAdmission` to `DerivativeRequest.admission`. A derivative along a
+variable the field does not depend on vanishes by independence and carries no
+admission. A rejection raises `ValueError` naming the field, the order, and the
+reasons.
+
+| Owner | Authority | Policy |
+| --- | --- | --- |
+| `FunctionalSolver` training terms | `SURROGATE` | `regularity_policy`, default `RegularityPolicy(allow_undeclared=True)` |
+| direct `partial_n` and term evaluation | `None` | almost-everywhere admitted; undeclared recorded |
+| `implicit_root_result` residual components | component binding, else `MODEL` | `RegularityPolicy()` on the `IMPLICIT` route |
+
+`FunctionalSolver` admits its training residuals at construction. Its default
+policy is the frontend's declared exploratory policy: fields with undeclared
+regularity train with the recorded `"regularity-undeclared"` condition, an
+almost-everywhere derivative needs `RegularityPolicy(allow_almost_everywhere=True)`,
+and proven degeneracy is always rejected. `FunctionalSolver.derivative_requests`
+lists the admitted requests with their conditions. A ReLU network with a linear
+output is rejected for a Laplacian residual even when almost-everywhere
+derivatives are acknowledged. A ReLU network with a `tanh` output is admitted
+only with that acknowledgment, and the admission records `"singular-part-ignored"`.
+
+Direct eager `partial_n` rejects only proven degeneracy. It executes
+almost-everywhere derivatives and records an undeclared field regularity as a
+`derivative.regularity.undeclared` logging event.
+
+Implicit root differentiation admits the model components of a structured
+residual callable and of its `args`. Each component needs classical `C¹`
+regularity near the root, or a `"branch-margin"` condition, and its randomness
+must be deterministic or bound to one `FrozenRealization`. Newton preparation
+(`NewtonKrylov`, `NewtonTrustRegion`, `prepare_nonlinear`) admits the same
+randomness for the certified primal map. An opaque residual closure hides its
+components. It is recorded as `"residual:determinism-undeclared"` (and, on the
+implicit route, `"residual:regularity-undeclared"`) in
+`NonlinearResult.component_evidence`.
+
 ## Meet and compose
 
 Two operations combine contracts. Both combine routes the same way: equal routes

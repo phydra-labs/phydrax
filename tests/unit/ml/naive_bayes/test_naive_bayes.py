@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from phydrax import DerivativeSurface, GradientLevel
+from phydrax import DerivativeSurface, DifferentiationRequest, GradientLevel
 from phydrax.ml import (
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
@@ -137,19 +137,26 @@ def test_every_naive_bayes_family_has_normalized_schema_aware_jit_vmap_behavior(
     assert jax.vmap(model)(features[:2]).shape == (2, 2)
     if method == "complement-nb":
         assert model.complement
-    expected_input_level = (
-        GradientLevel.ALMOST_EVERYWHERE
-        if method in {"bernoulli-nb", "categorical-nb"}
-        else GradientLevel.SMOOTH
-    )
+    # Thresholded and integer-coded features are locally constant or lattice-valued,
+    # so their input derivatives are declared degenerate rather than a.e.
+    discrete = method in {"bernoulli-nb", "categorical-nb"}
     contract = result.derivative_contract
-    assert contract.level(DerivativeSurface.INPUT) is expected_input_level
+    assert contract.level(DerivativeSurface.INPUT) is (
+        GradientLevel.NONE if discrete else GradientLevel.SMOOTH
+    )
     assert contract.level(DerivativeSurface.MODEL_PARAMETER) is GradientLevel.SMOOTH
     assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
     assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
     assert (
         contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is GradientLevel.CONDITIONAL
     )
+    assert model.model_execution_contract().regularity == contract.regularity
+    input_gradient = result.derivative_admission(
+        DifferentiationRequest((DerivativeSurface.INPUT,))
+    )
+    assert input_gradient.supported is not discrete
+    if not discrete:
+        assert "regularity-undeclared" not in input_gradient.conditions
 
 
 def test_gaussian_nb_preserves_case_masks_product_weights_and_string_vocabulary():

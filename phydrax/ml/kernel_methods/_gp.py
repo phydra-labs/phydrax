@@ -38,9 +38,15 @@ from .._contracts import (
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._schema import AbstractFittedModel
-from ._utils import finite_array, validated_weights
+from ._utils import (
+    finite_array,
+    kernel_regularity,
+    linear_expansion_contract,
+    validated_weights,
+)
 
 
 def _size(shape: tuple[int, ...]) -> int:
@@ -79,6 +85,18 @@ class GaussianProcessClassifierModel(AbstractFittedModel):
         self.out_size = self.class_count
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        # The latent mean and (nonnegative) variance are kernel expansions and the
+        # logistic-Gaussian moment correction and link are smooth, so the
+        # probabilities keep the shared kernel's regularity.
+        posterior = self.posteriors[0]
+        if isinstance(posterior, CategoricalGaussianProcessPosterior):
+            posterior = posterior.factors[0]
+        return linear_expansion_contract(
+            kernel_regularity(posterior.factor.state.kernel),
+            nondifferentiable_outputs=("predict",),
+        )
 
     def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
         del key
@@ -252,12 +270,9 @@ class GaussianProcessClassifierRecipe(AbstractRecipe):
             effective_samples=effective,
             method="uq-gp-laplace-classification",
         )
-        contract = DerivativeContract(
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
             (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                ),
                 SurfaceDerivative(
                     DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                 ),
@@ -269,7 +284,6 @@ class GaussianProcessClassifierRecipe(AbstractRecipe):
                 ),
             ),
             route=DerivativeRoute.UNROLLED,
-            nondifferentiable_outputs=("predict",),
             conditions=("Class labels and Newton iteration count are fixed.",),
         )
         return FitResult(

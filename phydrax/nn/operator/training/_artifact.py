@@ -21,6 +21,7 @@ from ...._model import (
     operator_architecture_codec,
     operator_architecture_codec_for,
 )
+from ...._model._ports import PortMapping, ValuePort
 from ...._model._structure import (
     deserialize_model_leaf as _deserialize_leaf,
     model_from_structure_recipe as _materialized_recipe,
@@ -83,6 +84,59 @@ def _artifact_digest(value: Any, field: str, /, *, allow_empty: bool = False) ->
     return value
 
 
+def _port_binding_manifest(trained: TrainedOperator, /) -> dict[str, Any]:
+    """Record the output ports and port-ID binding of one trained operator."""
+    return {
+        "output_ports": {
+            name: port.to_dict() for name, port in trained.output_ports.items()
+        },
+        "outputs": [list(pair) for pair in trained.port_binding.outputs],
+        "binding_fingerprint": trained.port_binding.binding_fingerprint,
+    }
+
+
+def _validate_port_binding_manifest(value: Any, /) -> None:
+    if not isinstance(value, Mapping) or set(value) != {
+        "output_ports",
+        "outputs",
+        "binding_fingerprint",
+    }:
+        raise ValueError("Operator artifact port_binding must use the canonical fields.")
+    output_ports = value["output_ports"]
+    outputs = value["outputs"]
+    if (
+        not isinstance(output_ports, Mapping)
+        or any(
+            not isinstance(name, str) or not name or not isinstance(port, Mapping)
+            for name, port in output_ports.items()
+        )
+        or not isinstance(outputs, list)
+        or any(
+            not isinstance(pair, list)
+            or len(pair) != 2
+            or any(not isinstance(item, str) or not item for item in pair)
+            for pair in outputs
+        )
+        or not isinstance(value["binding_fingerprint"], str)
+    ):
+        raise ValueError("Operator artifact port_binding is invalid.")
+
+
+def _restore_port_binding(
+    value: Mapping[str, Any], /
+) -> tuple[dict[str, ValuePort], PortMapping]:
+    try:
+        output_ports = {
+            name: ValuePort.from_dict(port)
+            for name, port in value["output_ports"].items()
+        }
+    except (TypeError, ValueError) as error:
+        raise ValueError("Operator artifact output ports are invalid.") from error
+    return output_ports, PortMapping(
+        outputs=tuple(tuple(pair) for pair in value["outputs"])
+    )
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class OperatorArtifactTrainingState:
     """Restored optional optimizer/loop state and its immutable metadata."""
@@ -100,7 +154,7 @@ class OperatorArtifactManifest:
     task: Mapping[str, Any]
     task_fingerprint: str
     contract_fingerprint: str
-    output_field_map: Mapping[str, str]
+    port_binding: Mapping[str, Any]
     fixed_query_fingerprints: Mapping[str, str]
     output_pipeline_fingerprint: str
     output_pipeline_recipe: Mapping[str, Any] | None
@@ -132,7 +186,7 @@ class OperatorArtifactManifest:
             "task",
             "task_fingerprint",
             "contract_fingerprint",
-            "output_field_map",
+            "port_binding",
             "fixed_query_fingerprints",
             "output_pipeline_fingerprint",
             "output_pipeline_recipe",
@@ -182,7 +236,6 @@ class OperatorArtifactManifest:
             )
         mapping_fields = (
             "task",
-            "output_field_map",
             "fixed_query_fingerprints",
             "dtype_policy",
             "precision_evidence",
@@ -201,15 +254,12 @@ class OperatorArtifactManifest:
             not isinstance(item, str) for item in value["training_evidence"].values()
         ):
             raise ValueError("Operator artifact training evidence is invalid.")
-        for name in ("output_field_map", "fixed_query_fingerprints"):
-            if any(
-                not isinstance(key, str)
-                or not key
-                or not isinstance(item, str)
-                or not item
-                for key, item in value[name].items()
-            ):
-                raise ValueError(f"Operator artifact {name} is invalid.")
+        _validate_port_binding_manifest(value["port_binding"])
+        if any(
+            not isinstance(key, str) or not key or not isinstance(item, str) or not item
+            for key, item in value["fixed_query_fingerprints"].items()
+        ):
+            raise ValueError("Operator artifact fixed_query_fingerprints is invalid.")
         optional_mappings = (
             "output_pipeline_recipe",
             "execution_model_recipe",
@@ -298,7 +348,7 @@ class OperatorArtifactManifest:
             task=value["task"],
             task_fingerprint=value["task_fingerprint"],
             contract_fingerprint=value["contract_fingerprint"],
-            output_field_map=value["output_field_map"],
+            port_binding=value["port_binding"],
             fixed_query_fingerprints=value["fixed_query_fingerprints"],
             output_pipeline_fingerprint=value["output_pipeline_fingerprint"],
             output_pipeline_recipe=value["output_pipeline_recipe"],
@@ -505,7 +555,7 @@ def save_operator_artifact(
         task=trained.task.to_dict(),
         task_fingerprint=trained.task_fingerprint,
         contract_fingerprint=trained.contract_fingerprint,
-        output_field_map=dict(trained.output_field_map),
+        port_binding=_port_binding_manifest(trained),
         fixed_query_fingerprints=dict(trained.fixed_query_fingerprints),
         output_pipeline_fingerprint=(
             "" if trained.output_pipeline is None else trained.output_pipeline.fingerprint
@@ -699,11 +749,13 @@ def load_trained_operator(
         if manifest.privacy_certificate is None
         else PrivacyCertificate.from_record(manifest.privacy_certificate)
     )
+    output_ports, port_mapping = _restore_port_binding(manifest.port_binding)
     trained = TrainedOperator(
         execution_model,
         task,
         training_evidence=evidence,
-        output_field_map=manifest.output_field_map,
+        output_ports=output_ports,
+        port_mapping=port_mapping,
         fixed_query_fingerprints=manifest.fixed_query_fingerprints,
         output_pipeline=output_pipeline,
         normalization=normalization,
@@ -713,6 +765,11 @@ def load_trained_operator(
         provenance=dict(manifest.provenance),
         calibration=dict(manifest.calibration),
     )
+    if (
+        trained.port_binding.binding_fingerprint
+        != manifest.port_binding["binding_fingerprint"]
+    ):
+        raise ValueError("Operator artifact port-binding fingerprint mismatch.")
     if trained.contract_fingerprint != manifest.contract_fingerprint:
         raise ValueError("Operator artifact instance-contract fingerprint mismatch.")
     if trained.precision_evidence != precision_evidence:
@@ -801,7 +858,8 @@ def load_external_trained_operator(
     in_size: int | tuple[int, ...] | Literal["scalar"],
     out_size: int | tuple[int, ...] | Literal["scalar"],
     dtype_policy: OperatorDTypePolicy | None = None,
-    output_field_map: Mapping[str, str] | None = None,
+    output_ports: Mapping[str, ValuePort] | None = None,
+    port_mapping: PortMapping | None = None,
     fixed_query_batch: OperatorBatch | None = None,
     output_pipeline: OperatorOutputPipeline | None = None,
 ) -> TrainedOperator:
@@ -822,7 +880,8 @@ def load_external_trained_operator(
         adapter,
         task,
         training_evidence=training_evidence,
-        output_field_map=output_field_map,
+        output_ports=output_ports,
+        port_mapping=port_mapping,
         fixed_query_fingerprints=_fixed_query_fingerprints(task, fixed_query_batch),
         output_pipeline=output_pipeline,
         dtype_policy=dtype_policy,

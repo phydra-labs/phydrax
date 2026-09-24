@@ -82,14 +82,16 @@ def test_every_lle_variant_has_declared_schema_and_exact_transform_support(varia
         assert result.model(jnp.zeros((3, 3))).shape == (3, 1)
         assert jax.jit(model)(jnp.zeros((3, 3))).shape == (3, 1)
         assert jax.vmap(model)(jnp.zeros((3, 3))).shape == (3, 1)
+        # The barycentric extension jumps when the hard neighbor set changes.
         assert (
             result.derivative_contract.level(DerivativeSurface.INPUT)
-            is GradientLevel.CONDITIONAL
+            is GradientLevel.NONE
         )
         assert (
             result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
-            is GradientLevel.CONDITIONAL
+            is GradientLevel.ALMOST_EVERYWHERE
         )
+        assert result.derivative_contract.regularity.continuity == -1
     else:
         assert (
             result.derivative_contract.level(DerivativeSurface.INPUT)
@@ -169,8 +171,12 @@ def test_spectral_embedding_is_jittable_vmappable_and_conditionally_differentiab
     assert all(jnp.all(jnp.isfinite(leaf)) for leaf in parameter_leaves)
     assert any(jnp.any(jnp.abs(leaf) > 1e-8) for leaf in parameter_leaves)
     contract = result.derivative_contract
-    assert contract.level(DerivativeSurface.INPUT) is GradientLevel.CONDITIONAL
-    assert contract.level(DerivativeSurface.MODEL_PARAMETER) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.INPUT) is GradientLevel.NONE
+    assert contract.level(DerivativeSurface.MODEL_PARAMETER) is (
+        GradientLevel.ALMOST_EVERYWHERE
+    )
+    assert contract.regularity.continuity == -1
+    assert model.model_execution_contract().regularity == contract.regularity
     assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
     assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
     assert (
@@ -242,14 +248,12 @@ def test_isomap_exposes_geodesic_invariants_capacity_and_connectivity_status():
     assert jax.jit(model)(features[:3]).shape == (3, 2)
     assert jax.vmap(model)(features[:3]).shape == (3, 2)
     assert result.diagnostics.connected_components == 1
-    assert (
-        result.derivative_contract.level(DerivativeSurface.INPUT)
-        is GradientLevel.CONDITIONAL
-    )
+    assert result.derivative_contract.level(DerivativeSurface.INPUT) is GradientLevel.NONE
     assert (
         result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
-        is GradientLevel.CONDITIONAL
+        is GradientLevel.ALMOST_EVERYWHERE
     )
+    assert result.derivative_contract.regularity.continuity == -1
     assert (
         result.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
         is GradientLevel.CONDITIONAL

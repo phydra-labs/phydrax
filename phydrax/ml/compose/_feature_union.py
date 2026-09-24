@@ -15,8 +15,9 @@ from ..._differentiation import (
 from ..._model import AbstractArrayModel, ModelBinding, ValuePort
 from .._batch import MLBatch
 from .._contracts import AbstractRecipe, FitResult
-from .._schema import AbstractFittedModel, FeatureSchema, schema_port
+from .._schema import AbstractFittedModel, FeatureSchema
 from ._common import (
+    _combine_models,
     _combine_results,
     _composition_binding,
     _join_feature_batches,
@@ -45,7 +46,7 @@ class FittedFeatureUnion(AbstractFittedModel):
     _input_binding: ModelBinding = eqx.field(static=True)  # ty: ignore[invalid-attribute-override]
 
     def output_ports(self) -> tuple[ValuePort, ...]:
-        return (schema_port(self.output_schema),)
+        return self.output_schema.value_ports()
 
     def __init__(
         self,
@@ -87,6 +88,11 @@ class FittedFeatureUnion(AbstractFittedModel):
     @property
     def fit_results(self) -> tuple[FitResult, ...]:
         return self.provenance.results
+
+    def _prediction_contract(self) -> DerivativeContract | None:
+        return _combine_models(
+            tuple(model for _, model in self.transformer_list), sequential=False
+        )
 
     def __call__(self, x: Any, /, *, key: Any = None):
         keys = _split_key(key, len(self.transformer_list))

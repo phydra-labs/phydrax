@@ -225,10 +225,16 @@ def _task():
 
 
 def _trained(problem):
+    task = _task()
+    output_port = task.field_by_name["output"].value_port()
     return phx.nn.operator.training.TrainedOperator(
         _IdentityMechanicsOperator(),
-        _task(),
+        task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
+        output_ports={"output": output_port},
+        port_mapping=phx.PortMapping(
+            outputs=((output_port.port_id, output_port.port_id),)
+        ),
         provenance=dict(problem.metadata),
         artifact_id="immutable-mechanics-operator",
     )

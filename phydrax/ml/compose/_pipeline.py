@@ -17,6 +17,7 @@ from .._batch import MLBatch
 from .._contracts import AbstractRecipe, FitResult
 from .._schema import AbstractFittedModel, FeatureSchema
 from ._common import (
+    _combine_models,
     _combine_results,
     _composition_binding,
     _normalize_recipe_specs,
@@ -96,6 +97,9 @@ class FittedPipeline(AbstractFittedModel):
     @property
     def fit_results(self) -> tuple[FitResult, ...]:
         return self.provenance.results
+
+    def _prediction_contract(self) -> DerivativeContract | None:
+        return _combine_models(tuple(model for _, model in self.steps), sequential=True)
 
     def __call__(self, x: Any, /, *, key: Any = None):
         keys = _split_key(key, len(self.steps))

@@ -16,12 +16,14 @@ import phydrax.ein as ein
 
 from ..._differentiation import (
     DerivativeContract,
+    DerivativeRegularity,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
     SurfaceDerivative,
 )
 from ..._model import AbstractArrayModel, ModelBinding
+from ..._model._array import value_derivative_contract
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
 from ...kernels import AbstractPositiveDefiniteKernel, SquaredExponentialKernel
@@ -33,9 +35,20 @@ from .._contracts import (
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._schema import AbstractFittedModel
 from .._sparse_features import SparseFeatures
+from ..kernel_methods._utils import kernel_regularity, linear_expansion_contract
+
+
+# Class labels selected by an argmax are locally constant and stopped.
+_HARD_LABEL_CONTRACT = DerivativeContract(
+    (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.piecewise_polynomial(continuity=-1, degree_bound=0),
+    nondifferentiable_outputs=("class_index",),
+)
 
 
 class GraphFitDiagnostics(StrictModule):
@@ -292,6 +305,16 @@ class LabelPropagationModel(AbstractFittedModel):
         self.in_size = x.shape[-1]
         self.out_size = probabilities.shape[-1]
 
+    def _prediction_contract(self) -> DerivativeContract:
+        # A Nadaraya-Watson ratio of kernel expansions: smooth in the kernel
+        # values wherever the weighted kernel mass is positive.
+        regularity = kernel_regularity(self.kernel)
+        if regularity is not None:
+            regularity = regularity.compose(
+                DerivativeRegularity.smooth(conditions=("positive-kernel-values",))
+            )
+        return linear_expansion_contract(regularity)
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         points = jnp.asarray(x)
@@ -332,6 +355,9 @@ class HardLabelPropagationModel(AbstractFittedModel):
         self.soft_model = soft_model
         self.in_size = soft_model.in_size
         self.out_size = "scalar"
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _HARD_LABEL_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         indices = jnp.argmax(self.soft_model(x, key=key), axis=-1)
@@ -425,12 +451,9 @@ class LabelPropagationRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="label-propagation",
-            derivative_contract=DerivativeContract(
+            derivative_contract=prediction_fit_contract(
+                model._prediction_contract(),
                 (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
                     SurfaceDerivative(
                         DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                     ),
@@ -532,24 +555,22 @@ class LabelSpreadingRecipe(AbstractRecipe):
             status=status,
             method="label-spreading",
         )
+        model = LabelPropagationModel(
+            x,
+            distributions,
+            valid_weight,
+            self.kernel,
+            class_labels=class_labels,
+        )
         return FitResult(
-            LabelPropagationModel(
-                x,
-                distributions,
-                valid_weight,
-                self.kernel,
-                class_labels=class_labels,
-            ),
+            model,
             diagnostics,
             valid=valid,
             status=status,
             method="label-spreading",
-            derivative_contract=DerivativeContract(
+            derivative_contract=prediction_fit_contract(
+                model._prediction_contract(),
                 (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
                     SurfaceDerivative(
                         DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                     ),
@@ -582,20 +603,15 @@ class HardLabelPropagationRecipe(AbstractRecipe):
         model = result.as_trainable()
         if not isinstance(model, LabelPropagationModel):
             raise TypeError("soft_recipe returned an incompatible model.")
+        hard_model = HardLabelPropagationModel(model)
         return FitResult(
-            HardLabelPropagationModel(model),
+            hard_model,
             result.diagnostics,
             valid=result.valid,
             status=result.status,
             method="hard-label-propagation",
-            derivative_contract=DerivativeContract(
-                (
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE
-                    ),
-                ),
-                route=DerivativeRoute.STOPPED,
-                nondifferentiable_outputs=("class_index",),
+            derivative_contract=prediction_fit_contract(
+                hard_model._prediction_contract(), route=DerivativeRoute.STOPPED
             ),
         )
 
@@ -673,6 +689,9 @@ class SoftSelfTrainingModel(AbstractFittedModel):
         self.in_size = model.in_size
         self.out_size = model.out_size
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return self.model.model_execution_contract().derivative
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         return self.model(x, key=key)
 
@@ -687,6 +706,9 @@ class HardSelfTrainingModel(AbstractFittedModel):
         self.model = model
         self.in_size = model.in_size
         self.out_size = model.out_size
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return self.model.model_execution_contract().derivative
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         return self.model(x, key=key)
@@ -762,18 +784,16 @@ class SoftSelfTrainingRecipe(AbstractRecipe):
             iterations=self.iterations,
             method="soft-self-training",
         )
+        model = SoftSelfTrainingModel(result.as_trainable())
         return FitResult(
-            SoftSelfTrainingModel(result.as_trainable()),
+            model,
             diagnostics,
             valid=valid,
             status=status,
             method="soft-self-training",
-            derivative_contract=DerivativeContract(
+            derivative_contract=prediction_fit_contract(
+                model._prediction_contract(),
                 (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
                     SurfaceDerivative(
                         DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                     ),
@@ -876,19 +896,15 @@ class HardSelfTrainingRecipe(AbstractRecipe):
             iterations=self.iterations,
             method="hard-self-training",
         )
+        model = HardSelfTrainingModel(result.as_trainable())
         return FitResult(
-            HardSelfTrainingModel(result.as_trainable()),
+            model,
             diagnostics,
             valid=valid,
             status=status,
             method="hard-self-training",
-            derivative_contract=DerivativeContract(
-                (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
-                    ),
-                ),
+            derivative_contract=prediction_fit_contract(
+                model._prediction_contract(),
                 route=DerivativeRoute.STOPPED,
                 nondifferentiable_outputs=("pseudo_label", "pseudo_label_acceptance"),
                 conditions=(
@@ -937,6 +953,17 @@ class SoftOneClassCompositionModel(AbstractFittedModel):
         self.in_size = predictor.in_size
         self.out_size = predictor.out_size
 
+    def _prediction_contract(self) -> DerivativeContract:
+        # The predictor times a sigmoid of the detector score.
+        predictor = self.predictor.model_execution_contract().regularity
+        detector = self.detector.model_execution_contract().regularity
+        regularity = (
+            None
+            if predictor is None or detector is None
+            else predictor.multiply(detector.compose(DerivativeRegularity.smooth()))
+        )
+        return value_derivative_contract(regularity)
+
     def acceptance(self, x: Any, /, *, key: Any = None) -> Array:
         points = jnp.asarray(x)
         score = _score_vector(
@@ -975,6 +1002,27 @@ class HardOneClassCompositionModel(AbstractFittedModel):
         self.threshold = jnp.asarray(threshold)
         self.in_size = predictor.in_size
         self.out_size = predictor.out_size
+
+    def _prediction_contract(self) -> DerivativeContract:
+        # The predictor jumps to zero across the detector's acceptance boundary
+        # and keeps the predictor's pieces on either side.
+        predictor = self.predictor.model_execution_contract().regularity
+        detector = self.detector.model_execution_contract().regularity
+        regularity = (
+            None
+            if predictor is None or detector is None
+            else DerivativeRegularity(
+                continuity=-1,
+                pieces=predictor.pieces,
+                degree_bound=predictor.degree_bound,
+                conditions=(*predictor.conditions, *detector.conditions),
+            )
+        )
+        return prediction_fit_contract(
+            value_derivative_contract(regularity),
+            route=DerivativeRoute.DIRECT,
+            nondifferentiable_outputs=("one_class_acceptance",),
+        )
 
     def acceptance(self, x: Any, /, *, key: Any = None) -> Array:
         points = jnp.asarray(x)
@@ -1073,23 +1121,21 @@ class SoftOneClassCompositionRecipe(AbstractRecipe):
             iterations=1,
             method="soft-one-class-composition",
         )
+        model = SoftOneClassCompositionModel(
+            detector_result.as_trainable(),
+            predictor_result.as_trainable(),
+            threshold=self.threshold,
+            temperature=self.temperature,
+        )
         return FitResult(
-            SoftOneClassCompositionModel(
-                detector_result.as_trainable(),
-                predictor_result.as_trainable(),
-                threshold=self.threshold,
-                temperature=self.temperature,
-            ),
+            model,
             diagnostics,
             valid=valid,
             status=status,
             method="soft-one-class-composition",
-            derivative_contract=DerivativeContract(
+            derivative_contract=prediction_fit_contract(
+                model._prediction_contract(),
                 (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
                     SurfaceDerivative(
                         DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
                     ),
@@ -1172,24 +1218,19 @@ class HardOneClassCompositionRecipe(AbstractRecipe):
             iterations=1,
             method="hard-one-class-composition",
         )
+        model = HardOneClassCompositionModel(
+            detector_result.as_trainable(),
+            predictor_result.as_trainable(),
+            threshold=self.threshold,
+        )
         return FitResult(
-            HardOneClassCompositionModel(
-                detector_result.as_trainable(),
-                predictor_result.as_trainable(),
-                threshold=self.threshold,
-            ),
+            model,
             diagnostics,
             valid=valid,
             status=status,
             method="hard-one-class-composition",
-            derivative_contract=DerivativeContract(
-                (
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
-                    ),
-                ),
-                route=DerivativeRoute.STOPPED,
-                nondifferentiable_outputs=("one_class_acceptance",),
+            derivative_contract=prediction_fit_contract(
+                model._prediction_contract(), route=DerivativeRoute.STOPPED
             ),
         )
 

@@ -14,13 +14,7 @@ import jax.numpy as jnp
 import optax
 from jaxtyping import Array
 
-from ..._differentiation import (
-    DerivativeContract,
-    DerivativeRoute,
-    DerivativeSurface,
-    GradientLevel,
-    SurfaceDerivative,
-)
+from ..._differentiation import DerivativeContract, DerivativeRoute
 from ..._strict import StrictModule
 from ..._trainable import (
     combine_parameters,
@@ -36,6 +30,7 @@ from .._contracts import (
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._numerics import run_fixed_iterations
 from .._schema import AbstractFittedModel, FeatureSchema
@@ -72,6 +67,9 @@ class FittedCircuitFeatureTransform(AbstractFittedModel):
         self.output_schema = output_schema
         self.in_size = model.in_size
         self.out_size = model.out_size
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return self.model._prediction_contract()
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         return self.model(x, key=key)
@@ -171,18 +169,10 @@ class CircuitFeatureTransformRecipe(AbstractRecipe):
             effective_samples=effective,
             method="circuit_feature_transform",
         )
-        contract = DerivativeContract(
-            (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
-                ),
-            ),
+        contract = prediction_fit_contract(
+            fitted._prediction_contract(),
             route=DerivativeRoute.DIRECT,
-            conditions=(
-                "The dense program and local observables remain valid.",
-                "The circuit feature model is frozen by this fit-free recipe.",
-            ),
+            conditions=("The circuit feature model is frozen by this fit-free recipe.",),
         )
         return FitResult(
             fitted,
@@ -389,19 +379,8 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
             self.feature_model.execution.shift_plan.occurrence_count,
             self.feature_model.gradient_method,
         )
-        contract = DerivativeContract(
-            (
-                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
-                SurfaceDerivative(
-                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
-                ),
-            ),
-            route=DerivativeRoute.STOPPED,
-            nondifferentiable_outputs=("predict",),
-            conditions=(
-                "The dense quantum program and local observables remain valid.",
-                "Parameter-shift mode certifies first-order Pauli-angle derivatives only.",
-            ),
+        contract = prediction_fit_contract(
+            fitted._prediction_contract(), route=DerivativeRoute.STOPPED
         )
         return FitResult(
             fitted,

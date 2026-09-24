@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import json
+
 import pytest
 
 from phydrax import (
@@ -214,6 +216,23 @@ def test_port_and_binding_identities_are_deterministic():
     ports = ModelPorts(inputs=(_position(), _time()), outputs=(_velocity(),))
     swapped = ModelPorts(inputs=(_time(), _position()), outputs=(_velocity(),))
     assert ports.ports_id != swapped.ports_id
+
+
+def test_port_records_round_trip_and_fail_closed():
+    for port in (_velocity(), _time()):
+        record = json.loads(json.dumps(port.to_dict()))
+        restored = ValuePort.from_dict(record)
+        assert restored.port_id == port.port_id
+        assert restored.dimensions == port.dimensions
+        assert restored.axis_keys == port.axis_keys
+
+    record = _velocity().to_dict()
+    with pytest.raises(ValueError, match="port_id does not match"):
+        ValuePort.from_dict(record | {"port_id": _time().port_id})
+    with pytest.raises(ValueError, match="port_id does not match"):
+        ValuePort.from_dict(record | {"frame_id": "body"})
+    with pytest.raises(ValueError, match="canonical fields"):
+        ValuePort.from_dict(record | {"schema_version": 1})
 
 
 def test_port_declarations_are_validated():

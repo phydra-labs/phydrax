@@ -15,8 +15,16 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
+from phydrax.nn._contracts import (
+    AFFINE,
+    compose_regularity,
+    product_regularity,
+    SMOOTH,
+    sum_regularity,
+)
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
 from phydrax.nn.layers._linear import Linear
@@ -215,6 +223,10 @@ class _ConditionedLayerNorm(StrictModule):
         shift = scalar_time * self.shift_weight + self.shift_bias
         return normalized * scale.reshape(broadcast) + shift.reshape(broadcast)
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Time modulation multiplies the normalized values by affine time terms.
+        return SMOOTH if self.norm.eps > 0.0 else None
+
 
 class _WindowAttention2D(StrictModule):
     query: Linear
@@ -403,6 +415,19 @@ class _WindowAttention2D(StrictModule):
             padded_width=padded_width,
         )
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Window partitions and pair masks depend only on static grid indices.
+        weights = compose_regularity(
+            product_regularity(
+                (self.query._value_regularity(), self.key._value_regularity())
+            ),
+            SMOOTH,
+        )
+        return compose_regularity(
+            product_regularity((weights, self.value._value_regularity())),
+            self.output._value_regularity(),
+        )
+
 
 class _PoseidonBlock(StrictModule):
     attention: _WindowAttention2D
@@ -467,6 +492,19 @@ class _PoseidonBlock(StrictModule):
         feed_forward = self.contract(self.expand(hidden))
         return hidden + self.feed_forward_norm(feed_forward, time)
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        attended = compose_regularity(
+            self.attention._value_regularity(), self.attention_norm._value_regularity()
+        )
+        feed_forward = compose_regularity(
+            self.expand._value_regularity(),
+            self.contract._value_regularity(),
+            self.feed_forward_norm._value_regularity(),
+        )
+        return compose_regularity(
+            sum_regularity((AFFINE, attended)), sum_regularity((AFFINE, feed_forward))
+        )
+
 
 class _PoseidonStage(StrictModule):
     blocks: tuple[_PoseidonBlock, ...]
@@ -501,6 +539,9 @@ class _PoseidonStage(StrictModule):
         for block in self.blocks:
             values = block(values, time)
         return values
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return compose_regularity(*(block._value_regularity() for block in self.blocks))
 
 
 class _PatchMerge(StrictModule):
@@ -544,6 +585,11 @@ class _PatchMerge(StrictModule):
             .reshape(batch, height // 2, width // 2, 4 * channels)
         )
         return self.norm(self.reduction(merged), time)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return compose_regularity(
+            self.reduction._value_regularity(), self.norm._value_regularity()
+        )
 
 
 class _PatchUnmerge(StrictModule):
@@ -595,6 +641,13 @@ class _PatchUnmerge(StrictModule):
             batch, 2 * height, 2 * width, out_width
         )
         return self.mix(self.norm(expanded, time))
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return compose_regularity(
+            self.expansion._value_regularity(),
+            self.norm._value_regularity(),
+            self.mix._value_regularity(),
+        )
 
 
 class _ConvNeXtSkipBlock(StrictModule):
@@ -650,6 +703,15 @@ class _ConvNeXtSkipBlock(StrictModule):
         )
         update = self.contract(self.expand(self.norm(filtered, time)))
         return values + self.layer_scale * update
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # The depthwise convolution is linear.
+        update = compose_regularity(
+            self.norm._value_regularity(),
+            self.expand._value_regularity(),
+            self.contract._value_regularity(),
+        )
+        return sum_regularity((AFFINE, update))
 
 
 class Poseidon(AbstractOperatorModel):
@@ -941,6 +1003,35 @@ class Poseidon(AbstractOperatorModel):
             case_shape=case_shape,
         )
         return self.__call_operator_batch__(batch)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Mirrors `_evaluate`: patching, merging, and the output mix are linear.
+        hidden = self.patch_embedding._value_regularity()
+        skips = []
+        for level, stage in enumerate(self.encoder_stages):
+            hidden = compose_regularity(hidden, stage._value_regularity())
+            skips.append(hidden)
+            if level < len(self.mergers):
+                hidden = compose_regularity(
+                    hidden, self.mergers[level]._value_regularity()
+                )
+        for level, processors in enumerate(self.skip_processors):
+            skips[level] = compose_regularity(
+                skips[level], *(processor._value_regularity() for processor in processors)
+            )
+        hidden = skips[-1]
+        for level in reversed(range(len(self.decoder_stages))):
+            if level < len(self.decoder_stages) - 1:
+                hidden = sum_regularity((hidden, skips[level]))
+            hidden = compose_regularity(
+                hidden, self.decoder_stages[level]._value_regularity()
+            )
+            if level > 0:
+                hidden = compose_regularity(
+                    hidden, self.unmergers[level - 1]._value_regularity()
+                )
+        output = compose_regularity(hidden, self.patch_recovery._value_regularity())
+        return sum_regularity((output, AFFINE)) if self.learn_residual else output
 
 
 __all__ = ["Poseidon"]

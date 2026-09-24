@@ -15,6 +15,7 @@ import phydrax.ein as ein
 
 from ..._differentiation import (
     DerivativeContract,
+    DerivativeRegularity,
     DerivativeRoute,
     DerivativeSurface,
     GradientLevel,
@@ -37,6 +38,32 @@ from .._contracts import (
 from .._numerics import effective_sample_size, fit_weighted_subspace
 from .._numerics._spectral import _canonicalize_rows
 from .._schema import AbstractFittedModel
+
+
+def _contract(*conditions: str) -> DerivativeContract:
+    # Both encoders are centered affine maps of the input.
+    return DerivativeContract(
+        (
+            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+        ),
+        route=DerivativeRoute.UNROLLED,
+        regularity=DerivativeRegularity.smooth(degree_bound=1),
+        conditions=conditions,
+    )
+
+
+_FACTOR_ANALYSIS_CONTRACT = _contract(
+    "factor loading gradients require separated retained eigenspaces",
+    "convergence-masked uniqueness iterations are piecewise smooth",
+)
+_ICA_CONTRACT = _contract(
+    "ICA initialization key is explicit and fixed during differentiation",
+    "whitening gradients require separated retained and discarded spectra",
+    "FastICA fixed-point iterations must converge without component collisions",
+)
 
 
 class LatentDecompositionDiagnostics(StrictModule):
@@ -143,6 +170,9 @@ class FactorAnalysisModel(AbstractFittedModel):
         self.in_size = self.mean.shape[-1]
         self.out_size = self.loadings.shape[-1]
         self.case_shape = tuple(self.mean.shape[:-1])
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _FACTOR_ANALYSIS_CONTRACT
 
     def transform(self, x: ArrayLike, /) -> Array:
         value = jnp.asarray(x)
@@ -324,25 +354,7 @@ class FactorAnalysis(AbstractRecipe):
             valid=valid,
             status=status,
             method="principal-axis-factor-analysis",
-            derivative_contract=DerivativeContract(
-                (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
-                    ),
-                ),
-                route=DerivativeRoute.UNROLLED,
-                conditions=(
-                    "factor loading gradients require separated retained eigenspaces",
-                    "convergence-masked uniqueness iterations are piecewise smooth",
-                ),
-            ),
+            derivative_contract=_FACTOR_ANALYSIS_CONTRACT,
         )
 
 
@@ -381,6 +393,9 @@ class ICAModel(AbstractFittedModel):
         self.in_size = self.mean.shape[-1]
         self.out_size = self.unmixing.shape[-2]
         self.case_shape = tuple(self.mean.shape[:-1])
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _ICA_CONTRACT
 
     def transform(self, x: ArrayLike, /) -> Array:
         value = jnp.asarray(x)
@@ -546,26 +561,7 @@ class ICA(AbstractRecipe):
             valid=valid,
             status=status,
             method="symmetric-fastica",
-            derivative_contract=DerivativeContract(
-                (
-                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
-                    SurfaceDerivative(
-                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
-                    ),
-                    SurfaceDerivative(
-                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
-                    ),
-                ),
-                route=DerivativeRoute.UNROLLED,
-                conditions=(
-                    "ICA initialization key is explicit and fixed during differentiation",
-                    "whitening gradients require separated retained and discarded spectra",
-                    "FastICA fixed-point iterations must converge without component collisions",
-                ),
-            ),
+            derivative_contract=_ICA_CONTRACT,
         )
 
 

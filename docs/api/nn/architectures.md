@@ -2792,7 +2792,10 @@ finite differences. PINO remains a training composition, not a separate model
 class.
 
 `OperatorContextModel` and `bind_operator_context` expose independent,
-differentiable point queries while keeping all source functions fixed.
+differentiable point queries while keeping all source functions fixed. A
+`TrainedOperator` context selects its query and field through `port_mapping`
+against the caller's `owner_ports` and records the audited `port_binding`; raw
+operators select by `query_name` and `field_name`.
 
 The `operator.training` package supplies deterministic dataset splits,
 mask-preserving collation, persisted training-only normalization, exact
@@ -2887,7 +2890,11 @@ semantics to be explicit. Fixed queries must share geometry across cases and
 batches, and their physical geometry fingerprints are enforced by
 `TrainedOperator`. A trained operator combines the task with an execution model,
 normalization, dtype policy, training evidence, provenance, physical output
-pipeline, and explicit output-field mapping.
+pipeline, and an explicit port binding: `output_ports` declares the `ValuePort`
+of each named model output and `port_mapping` binds those port IDs to task target
+field ports (`OperatorFieldSpec.value_port()`); the audited `port_binding` routes
+outputs to targets. The trained operator itself declares its task ports
+(`model_ports()`).
 
 ---
 

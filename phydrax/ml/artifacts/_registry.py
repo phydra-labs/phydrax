@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import importlib
 
-from ..._model import FrozenModel, register_artifact_value
+from ..._model import FrozenModel, register_artifact_value, ValuePort
+from ...axes import AxisKey
 from ...units._dimension import DimensionSignature
 from .._schema import FeatureSchema, TargetSchema
 
@@ -45,6 +46,8 @@ def register_native_ml_artifacts() -> None:
     register_artifact_value("phydrax.ml.core:FeatureSchema", FeatureSchema)
     register_artifact_value("phydrax.ml.core:TargetSchema", TargetSchema)
     register_artifact_value("phydrax.units:DimensionSignature", DimensionSignature)
+    register_artifact_value("phydrax:ValuePort", ValuePort)
+    register_artifact_value("phydrax.axes:AxisKey", AxisKey)
     for family in _ARTIFACT_FAMILIES:
         module = importlib.import_module(f"phydrax.ml.{family}")
         namespace = vars(module)

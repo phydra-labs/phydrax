@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -62,3 +63,87 @@ def test_structured_coordinates_have_no_dense_port():
 
     with pytest.raises(ValueError, match="'data'"):
         domain.value_ports()
+
+
+def _fitted_on(*ports):
+    width = sum(len(port.component_ids) for port in ports)
+    features = jnp.linspace(0.0, 1.0, 8 * width).reshape(8, width)
+    return phx.ml.fit(
+        phx.ml.linear.RidgeRecipe(alpha=1e-8),
+        features,
+        jnp.sum(features, axis=-1),
+        feature_schema=phx.ml.FeatureSchema.from_ports(ports),
+    )
+
+
+def _identity(*ports):
+    return phx.PortMapping(inputs=[(port.port_id, port.port_id) for port in ports])
+
+
+def test_model_with_ports_binds_only_through_an_explicit_mapping_in_deps_order():
+    domain = _square("x") @ TimeInterval(0.0, 1.0)
+    x_port, t_port = domain.value_ports()
+    fitted = _fitted_on(x_port, t_port)
+
+    with pytest.raises(ValueError, match="requires an explicit port_mapping"):
+        domain.Model("x", "t")(fitted.model)
+    with pytest.raises(ValueError, match="never repacked"):
+        domain.Model("t", "x", port_mapping=_identity(x_port, t_port))(fitted.model)
+    with pytest.raises(ValueError, match="unknown owner input ports"):
+        domain.Model("x", port_mapping=_identity(x_port, t_port))(fitted.model)
+    with pytest.raises(ValueError, match="binds input ports only"):
+        domain.Model(
+            "x",
+            "t",
+            port_mapping=phx.PortMapping(
+                inputs=_identity(x_port, t_port).inputs,
+                outputs=[(t_port.port_id, t_port.port_id)],
+            ),
+        )
+
+    field = domain.Model("x", "t", port_mapping=_identity(x_port, t_port))(fitted.model)
+    evidence = field.port_binding
+    assert evidence.inputs == (
+        (x_port.port_id, x_port.port_id),
+        (t_port.port_id, t_port.port_id),
+    )
+    assert evidence.outputs == tuple(
+        (port.port_id, port.port_id) for port in fitted.model_ports().outputs
+    )
+    # Domains declare no units, so dimensions are recorded as unverified.
+    assert not evidence.dimensions_verified
+    assert ("input", x_port.port_id, "dimensions") in evidence.unverified
+    assert ("input", x_port.port_id, "axes") not in evidence.unverified
+
+    batch = domain.component().sample(
+        phx.domain.PointSampling(4, layout=phx.domain.SampleLayout((("x", "t"),))),
+        key=jax.random.key(1),
+    )
+    x = jnp.asarray(batch.points["x"].data)
+    t = jnp.asarray(batch.points["t"].data).reshape(-1, 1)
+    expected = jax.vmap(fitted.model)(jnp.concatenate((x, t), axis=-1))
+    assert jnp.allclose(jnp.asarray(field(batch).data), expected)
+    # A derived field no longer carries the bound model's value or its evidence.
+    assert (field + 1.0).port_binding is None
+
+
+def test_model_ports_must_match_the_mapped_domain_port():
+    domain = _square("x") @ _square("y")
+    x_port, y_port = domain.value_ports()
+    fitted = _fitted_on(x_port)
+    crossed = phx.PortMapping(inputs=[(x_port.port_id, y_port.port_id)])
+
+    with pytest.raises(ValueError, match="semantic_id mismatch"):
+        domain.Model("y", port_mapping=crossed)(fitted.model)
+
+
+def test_models_without_ports_take_no_mapping():
+    domain = _square("x")
+    (x_port,) = domain.value_ports()
+    network = phx.nn.models.MLP(
+        in_size=2, out_size="scalar", width_size=4, depth=1, key=jax.random.key(0)
+    )
+
+    with pytest.raises(ValueError, match="declares no model ports"):
+        domain.Model("x", port_mapping=_identity(x_port))(network)
+    assert domain.Model("x")(network).port_binding is None

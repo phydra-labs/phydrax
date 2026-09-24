@@ -98,9 +98,13 @@ def test_exact_neighbors_select_unmasked_geometry_preserve_target_axes_and_freez
     assert jnp.array_equal(indices[..., 0], jnp.array([[0, 2]]))
     assert jnp.allclose(distances[..., 0], jnp.array([[1.9, 0.2]]), atol=1e-6)
     assert jnp.allclose(model(query), jnp.array([[[0.0, 10.0], [50.0, 60.0]]]))
+    # Averages of hard-selected targets are locally constant: no input derivative.
     assert _levels(
         result, DerivativeSurface.INPUT, DerivativeSurface.MODEL_PARAMETER
-    ) == (GradientLevel.ALMOST_EVERYWHERE, GradientLevel.ALMOST_EVERYWHERE)
+    ) == (GradientLevel.NONE, GradientLevel.ALMOST_EVERYWHERE)
+    regularity = result.derivative_contract.regularity
+    assert (regularity.continuity, regularity.degree_bound) == (-1, 0)
+    assert model.model_execution_contract().regularity == regularity
     _assert_finite(jax.grad(lambda point: jnp.sum(model(point)))(jnp.array([1.7])))
     _assert_prediction_parameter_gradient(model, jnp.array([[1.7], [4.6]]))
 
@@ -394,10 +398,7 @@ def test_hard_neighbor_failures_and_case_query_geometry_are_explicit():
     _assert_prediction_parameter_gradient(lof_model, query)
 
     radius = RadiusNeighborsRegressorRecipe(0.8).fit_batch(MLBatch(features, targets))
-    assert (
-        radius.derivative_contract.level(DerivativeSurface.INPUT)
-        is GradientLevel.ALMOST_EVERYWHERE
-    )
+    assert radius.derivative_contract.level(DerivativeSurface.INPUT) is GradientLevel.NONE
     _assert_finite(
         jax.grad(lambda point: jnp.nan_to_num(radius.as_trainable()(point)) ** 2)(
             query[0]

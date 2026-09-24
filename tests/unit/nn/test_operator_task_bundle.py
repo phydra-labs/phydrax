@@ -117,6 +117,14 @@ def _fixed_task():
     )
 
 
+def _solution_binding(task):
+    port = task.field_by_name["solution"].value_port()
+    return {
+        "output_ports": {"output": port},
+        "port_mapping": phx.PortMapping(outputs=((port.port_id, port.port_id),)),
+    }
+
+
 def _trained(
     *,
     revision="1",
@@ -138,7 +146,7 @@ def _trained(
         training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
-        output_field_map={"output": "solution"},
+        **_solution_binding(_task(revision=revision)),
         output_pipeline=output_pipeline,
         dtype_policy=dtype_policy,
         compilation_strategy=compilation_strategy,
@@ -359,11 +367,16 @@ def test_trained_operator_preserves_multiple_named_outputs_and_queries():
             for name in ("spatial", "sensors")
         ),
     )
+    ports = {name: task.field_by_name[name].value_port() for name in ("state", "flux")}
     trained = phx.nn.operator.training.TrainedOperator(
         model,
         task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
+        ),
+        output_ports=ports,
+        port_mapping=phx.PortMapping(
+            outputs=tuple((port.port_id, port.port_id) for port in ports.values())
         ),
     )
 
@@ -383,7 +396,7 @@ def test_fixed_query_geometry_is_shared_and_persistently_bound(tmp_path):
         _trained().execution_model,
         task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "solution"},
+        **_solution_binding(task),
         fixed_query_fingerprints={"solution-query": fingerprint},
     )
 
@@ -474,6 +487,39 @@ def test_operator_artifact_manifest_rejects_noncanonical_fields(tmp_path):
 
     with pytest.raises(ValueError, match="current canonical fields"):
         phx.nn.operator.training.load_trained_operator(tmp_path)
+
+
+def test_operator_artifact_round_trips_the_port_binding_and_fails_closed(tmp_path):
+    task = _task()
+    target = task.field_by_name["solution"].value_port()
+    # A dimensionless-by-omission declaration leaves aspects unverified.
+    declared = phx.ValuePort(
+        "solution", event_shape=(), component_ids=("solution",), representation="scalar"
+    )
+    trained = phx.nn.operator.training.TrainedOperator(
+        _trained().execution_model,
+        task,
+        training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
+        output_ports={"output": declared},
+        port_mapping=phx.PortMapping(outputs=((declared.port_id, target.port_id),)),
+    )
+    destination = phx.nn.operator.training.save_operator_artifact(
+        tmp_path / "artifact", trained
+    )
+    restored = phx.nn.operator.training.load_trained_operator(destination)
+
+    assert restored.port_binding.outputs == ((declared.port_id, target.port_id),)
+    assert restored.port_binding.unverified == trained.port_binding.unverified
+    assert ("output", declared.port_id, "dimensions") in restored.port_binding.unverified
+    assert restored.output_ports["output"].port_id == declared.port_id
+    assert restored.contract_fingerprint == trained.contract_fingerprint
+
+    manifest_path = destination / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["port_binding"]["output_ports"]["output"]["frame_id"] = "rotated"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="output ports are invalid"):
+        phx.nn.operator.training.load_trained_operator(destination)
 
 
 def test_operator_artifact_rejects_inconsistent_precision_evidence(tmp_path):
@@ -569,7 +615,7 @@ def test_periodic_fourier_cno_artifacts_round_trip_with_semantic_ids(
         training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
-        output_field_map={"output": "solution"},
+        **_solution_binding(_task()),
     )
     batch = _periodic_fourier_batch()
     expected = trained.predict(batch).field("solution").values
@@ -628,7 +674,7 @@ def test_periodic_fourier_cno_artifacts_reject_legacy_ids(
         training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
-        output_field_map={"output": "solution"},
+        **_solution_binding(_task()),
     )
     destination = phx.nn.operator.training.save_operator_artifact(
         tmp_path / type(model).__name__,
@@ -676,7 +722,7 @@ def test_wavelet_operator_artifacts_round_trip_without_model_templates(tmp_path)
             training_evidence=phx.nn.operator.OperatorTrainingEvidence(
                 regime="task_specific"
             ),
-            output_field_map={"output": "solution"},
+            **_solution_binding(_task()),
         )
         expected = trained.predict(batch).field("solution").values
         destination = phx.nn.operator.training.save_operator_artifact(
@@ -767,7 +813,7 @@ def test_sfno_artifact_round_trips_s2fft_plan_without_model_template(tmp_path):
         training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
-        output_field_map={"output": "solution"},
+        **_solution_binding(task),
         fixed_query_fingerprints={
             "solution-query": batch.query("solution-query").geometry_fingerprint()
         },
@@ -899,7 +945,7 @@ def test_external_checkpoint_enters_the_same_task_bound_runtime(tmp_path):
         output_adapter=lambda output, batch, external_manifest: output,
         in_size="scalar",
         out_size="scalar",
-        output_field_map={"output": "solution"},
+        **_solution_binding(_task()),
     )
     values = _batch().input("u").values
     assert jnp.allclose(

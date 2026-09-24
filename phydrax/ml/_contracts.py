@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Iterable
 from typing import Any, overload, Protocol, runtime_checkable, TypeVar
 
 import equinox as eqx
@@ -14,8 +15,10 @@ from jaxtyping import Array
 from .._differentiation import (
     DerivativeAdmission,
     DerivativeContract,
+    DerivativeRoute,
     DifferentiationRequest,
     RegularityPolicy,
+    SurfaceDerivative,
 )
 from .._model import AbstractArrayModel, FrozenModel, ModelPorts, PortProvider
 from .._strict import StrictModule
@@ -202,6 +205,34 @@ class FitResult(StrictModule):
     ) -> DerivativeAdmission:
         """Return the admission of `request`, raising `ValueError` if unsupported."""
         return self.derivative_contract.require(request, policy=policy)
+
+
+def prediction_fit_contract(
+    prediction: DerivativeContract,
+    fit_surfaces: Iterable[SurfaceDerivative] = (),
+    /,
+    *,
+    route: DerivativeRoute,
+    conditions: Iterable[str] = (),
+    nondifferentiable_outputs: Iterable[str] = (),
+) -> DerivativeContract:
+    """Fit contract extending a fitted model's prediction contract.
+
+    The prediction surfaces, regularity, conditions, and nondifferentiable
+    outputs of `prediction` (the model's `_prediction_contract()`) are kept, so a
+    fit and its executable never disagree; `fit_surfaces`, the fit `route`, and
+    fit `conditions` and `nondifferentiable_outputs` are added.
+    """
+    return DerivativeContract(
+        (*prediction.surfaces, *fit_surfaces),
+        route=route,
+        regularity=prediction.regularity,
+        conditions=(*prediction.conditions, *conditions),
+        nondifferentiable_outputs=(
+            *prediction.nondifferentiable_outputs,
+            *nondifferentiable_outputs,
+        ),
+    )
 
 
 class AbstractRecipe(StrictModule):

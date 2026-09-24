@@ -11,8 +11,10 @@ from jaxtyping import Array, Key
 
 from phydrax.ein import contract
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from .._base import _AbstractBaseModel
+from .._contracts import SMOOTH
 from .._keys import EvalKey
 from .._utils import _canonical_size, _get_size, _get_value_shape, SizeLike
 
@@ -113,6 +115,9 @@ class SineLayer(_AbstractBaseModel):
                 )
             output = jnp.squeeze(affine, axis=-1)
         return jnp.sin(self.omega * output)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return SMOOTH
 
 
 __all__ = ["SineLayer"]

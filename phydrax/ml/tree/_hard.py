@@ -13,13 +13,6 @@ import jax.core as jax_core
 import jax.numpy as jnp
 from jaxtyping import Array
 
-from ..._differentiation import (
-    DerivativeContract,
-    DerivativeRoute,
-    DerivativeSurface,
-    GradientLevel,
-    SurfaceDerivative,
-)
 from ..._strict import StrictModule
 from .._batch import MLBatch
 from .._contracts import (
@@ -30,7 +23,12 @@ from .._contracts import (
     ML_SUCCESS,
 )
 from .._schema import TargetSchema
-from ._representation import _traverse_one_tree, _weighted_median_case, TreeEnsemble
+from ._representation import (
+    _HARD_CONTRACT,
+    _traverse_one_tree,
+    _weighted_median_case,
+    TreeEnsemble,
+)
 
 
 SplitSearch: TypeAlias = Literal["exact", "histogram", "random"]
@@ -42,24 +40,6 @@ XGBObjective: TypeAlias = Literal[
     "poisson",
     "pairwise_ranking",
 ]
-
-_HARD_CONTRACT = DerivativeContract(
-    (
-        SurfaceDerivative(
-            DerivativeSurface.MODEL_PARAMETER, GradientLevel.ALMOST_EVERYWHERE
-        ),
-    ),
-    route=DerivativeRoute.STOPPED,
-    nondifferentiable_outputs=(
-        "split structure",
-        "leaf indices",
-        "decision paths",
-        "class labels",
-    ),
-    conditions=(
-        "Finite values away from represented split thresholds are locally constant.",
-    ),
-)
 
 
 def _as_bool(value: Any) -> bool:

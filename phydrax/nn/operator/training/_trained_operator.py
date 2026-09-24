@@ -9,6 +9,7 @@ from typing import Any
 
 from ...._doc import DOC_KEY0
 from ...._frozendict import frozendict
+from ...._model._ports import ModelPorts, PortBindingEvidence, PortMapping, ValuePort
 from ...._strict import StrictModule
 from ...._trainable import ExplicitFreeze
 from ....privacy import PrivacyCertificate
@@ -35,7 +36,8 @@ class TrainedOperator(StrictModule, ExplicitFreeze):
     """Artifact identity around one fully prepared operator execution plan.
 
     As an `ExplicitFreeze` holder the trained operator is FIXED wherever it is
-    embedded; train its ``execution_model`` directly to fine-tune it.
+    embedded; train its ``execution_model`` directly to fine-tune it. It declares
+    its task's ports (`model_ports`), so consumers bind it through a `PortMapping`.
     """
 
     execution_plan: OperatorExecutionPlan
@@ -51,7 +53,8 @@ class TrainedOperator(StrictModule, ExplicitFreeze):
         /,
         *,
         training_evidence: OperatorTrainingEvidence,
-        output_field_map: Mapping[str, str] | None = None,
+        output_ports: Mapping[str, ValuePort] | None = None,
+        port_mapping: PortMapping | None = None,
         fixed_query_fingerprints: Mapping[str, str] | None = None,
         output_pipeline: OperatorOutputPipeline | None = None,
         normalization: OperatorNormalizationPolicy | None = None,
@@ -68,7 +71,8 @@ class TrainedOperator(StrictModule, ExplicitFreeze):
             execution_model,
             task,
             training_evidence=training_evidence,
-            output_field_map=output_field_map,
+            output_ports=output_ports,
+            port_mapping=port_mapping,
             fixed_query_fingerprints=fixed_query_fingerprints,
             output_pipeline=output_pipeline,
             normalization=normalization,
@@ -99,8 +103,26 @@ class TrainedOperator(StrictModule, ExplicitFreeze):
         return self.execution_plan.contract
 
     @property
-    def output_field_map(self) -> frozendict[str, str]:
-        return self.execution_plan.output_field_map
+    def output_ports(self) -> frozendict[str, ValuePort]:
+        return self.execution_plan.output_ports
+
+    @property
+    def port_binding(self) -> PortBindingEvidence:
+        return self.execution_plan.port_binding
+
+    def model_ports(self) -> ModelPorts:
+        """Return the task ports of this physical operator.
+
+        Inputs are the `value_port()` of every task source field followed by
+        every task query, in task order; outputs are the task target field ports
+        in task target order, keyed in `predict` by the target field names.
+        """
+        task = self.task
+        return ModelPorts(
+            inputs=tuple(field.value_port() for field in task.source_fields)
+            + tuple(query.value_port() for query in task.queries),
+            outputs=tuple(field.value_port() for field in task.target_fields),
+        )
 
     @property
     def fixed_query_fingerprints(self) -> frozendict[str, str]:
