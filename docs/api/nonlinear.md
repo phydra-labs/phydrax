@@ -138,6 +138,38 @@ physical state/residual spaces and retain update history or prepared linear
 state. Work controls are checked before an indivisible update. Arbitrary
 callables enter this lifecycle only through `FunctionNonlinearUpdate`.
 
+`AbstractNonlinearUpdate` is the neutral `ACCELERATOR` component slot
+(`slot_semantic_id="phydrax.nonlinear.update"`), and
+`FunctionNonlinearUpdate` is its canonical callable and learned
+implementation. Its `function(state, args)` is a stateless operation or a
+callable module held as a dynamic child, so a learned model inside it keeps its
+PARAMETER arrays. Every `AbstractArrayModel` in the callable is bound to the
+update slot, and `component_contracts()` returns the bound contracts; a
+`ComponentBinding` with another authority is rejected. Capabilities derive
+from the models' execution and derivative contracts: a host-only model makes
+the update non-JIT and a stopped or input-nondifferentiable model makes the
+action non-differentiable. A proposal is never trusted. Application evaluates
+the original problem at the current state and the candidate and reports
+`APPLIED` only when the candidate and its residual are finite and
+`problem.valid` accepts them; an out-of-domain proposal is `DOMAIN_REJECTED`.
+`NonlinearRichardson` and `NonlinearGMRES` keep their native globalization,
+re-evaluating the original residual of every trial state, so a learned
+proposal can accelerate a solve but cannot certify one.
+
+```python
+class LearnedCorrection(phx.StrictModule):
+    network: phx.nn.models.MLP
+
+    def __call__(self, state, target):
+        return state + self.network(target - state)
+
+
+update = phx.nonlinear.FunctionNonlinearUpdate(
+    LearnedCorrection(network), update_id="learned-correction"
+)
+method = phx.nonlinear.NonlinearRichardson(update)
+```
+
 `CompositeNonlinearUpdate` supports static multiplicative, weighted additive,
 and safeguarded residual-optimal composition. Every child is evaluated from
 the declared base state, its result remains component evidence, and the

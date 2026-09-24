@@ -59,6 +59,7 @@ _SLOT_BASES = (
     ("phydrax.stochastic._state_space", "AbstractTransitionKernel"),
     ("phydrax.stochastic._state_space", "AbstractObservationModel"),
     ("phydrax.stochastic._process", "AbstractPathwiseTransition"),
+    ("phydrax.meshing._proposals", "AbstractMeshProposer"),
 )
 
 # Containers on the plan-embedded training path (G8) that must stay neutral even
@@ -118,6 +119,7 @@ _REQUIRED_NEUTRAL = (
     ),
     ("phydrax.stochastic._state_space", "GaussianObservationModel"),
     ("phydrax.closure_data._binding", "PreparedSpectralDriftHook"),
+    ("phydrax.stochastic._state_space", "ModelObservationLocation"),
 )
 
 

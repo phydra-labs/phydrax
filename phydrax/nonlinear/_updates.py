@@ -5,15 +5,29 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Callable
 from enum import IntEnum
-from typing import Any
+from typing import Any, ClassVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._differentiation import (
+    ComponentAuthority,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+)
 from .._fingerprint import canonical_fingerprint
+from .._model import (
+    AbstractArrayModel,
+    AbstractComponentSlot,
+    bind_component,
+    ComponentBinding,
+    ComponentContract,
+)
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from .._tree_math import tree_allfinite, validate_inexact_tree
@@ -492,8 +506,18 @@ class PreparedNonlinearUpdate(StrictModule):
         self.reference_auxiliary = reference_auxiliary
 
 
-class AbstractNonlinearUpdate(StrictModule):
-    """Finite nonlinear work that proposes, but need not solve for, a physical state."""
+class AbstractNonlinearUpdate(AbstractComponentSlot):
+    """Finite nonlinear work that proposes, but need not solve for, a physical state.
+
+    The base is the neutral `ACCELERATOR` slot of nonlinear methods: an update
+    may change how fast a method converges but never the equation it solves,
+    because the owning method re-evaluates the original residual of every
+    proposal and owns termination. Composite updates stay neutral, so a learned
+    child keeps its PARAMETER arrays.
+    """
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.ACCELERATOR
+    slot_semantic_id: ClassVar[str] = "phydrax.nonlinear.update"
 
     @property
     @abc.abstractmethod
@@ -543,32 +567,114 @@ class AbstractNonlinearUpdate(StrictModule):
         raise NotImplementedError
 
 
+def _is_component(node: Any, /) -> bool:
+    return isinstance(node, (AbstractArrayModel, ComponentBinding))
+
+
+def _slot_component_contracts(
+    slot: type[AbstractComponentSlot], function: Any, /
+) -> tuple[tuple[str, ComponentContract], ...]:
+    """Bind every model below `function` to `slot`; return `(location, contract)`."""
+    entries, _ = jax.tree_util.tree_flatten_with_path(function, is_leaf=_is_component)
+    contracts = []
+    for path, node in entries:
+        location = "function" + jax.tree_util.keystr(path)
+        if isinstance(node, ComponentBinding):
+            if node.authority is not slot.component_authority or (
+                node.slot_semantic_id not in (None, slot.slot_semantic_id)
+            ):
+                raise ValueError(
+                    f"Component {location} is bound with {node.authority.value} "
+                    f"authority to slot {node.slot_semantic_id!r}; a "
+                    f"{slot.__name__} slot confers "
+                    f"{slot.component_authority.value} authority."
+                )
+            contracts.append((location, node.contract()))
+        elif isinstance(node, AbstractArrayModel):
+            contracts.append((location, bind_component(node, slot).contract()))
+    return tuple(contracts)
+
+
+def _differentiable_action(contract: ComponentContract, /) -> bool:
+    derivative = contract.model_contract.derivative
+    return (
+        derivative.route is not DerivativeRoute.STOPPED
+        and derivative.level(DerivativeSurface.INPUT) is not GradientLevel.NONE
+    )
+
+
 class FunctionNonlinearUpdate(AbstractNonlinearUpdate):
-    """Explicit callable boundary for one physical state proposal."""
+    """Canonical callable or model-backed physical state proposal.
 
-    function: Any
+    `function(state, args)` returns a proposed physical state. It is a
+    stateless operation or a callable module held as a dynamic child whose
+    arrays keep their own roles, so a learned model inside it stays PARAMETER.
+    Every `AbstractArrayModel` inside the callable is a component bound to this
+    `ACCELERATOR` slot; a `ComponentBinding` inside it must carry the same
+    authority and slot. `component_contracts()` returns the bound contracts,
+    and `capabilities` derive JIT support and action differentiability from the
+    models' execution and derivative contracts. An array model maps model
+    inputs, not `(state, args)`, so it enters through a callable module that
+    defines the proposal.
+
+    The proposal is never trusted. Application evaluates the original problem
+    at the current state and at the candidate, and reports `APPLIED` only for a
+    finite candidate with a finite residual that `problem.valid` accepts; an
+    out-of-domain candidate is `DOMAIN_REJECTED` and a non-finite one
+    `NONFINITE_EVALUATION`. Owning methods such as `NonlinearRichardson` and
+    `NonlinearGMRES` keep native globalization: they re-evaluate the residual
+    of every trial state and own termination.
+    """
+
+    function: Callable[[PyTree[Any], Any], PyTree[Any]]
     update_name: str = eqx.field(static=True)
+    _capabilities: NonlinearUpdateCapabilities
 
-    def __init__(self, function: Any, /, *, update_id: str = "function-update"):
+    def __init__(
+        self,
+        function: Callable[[PyTree[Any], Any], PyTree[Any]],
+        /,
+        *,
+        update_id: str = "function-update",
+    ):
+        if _is_component(function):
+            raise TypeError(
+                "function must map (state, args) to a proposed state; hold an array "
+                "model in a callable module that defines the proposal."
+            )
         if not callable(function):
             raise TypeError("function must be callable.")
         identifier = str(update_id)
         if not identifier:
             raise ValueError("update_id must be non-empty.")
+        contracts = tuple(
+            contract for _, contract in _slot_component_contracts(type(self), function)
+        )
         self.function = function
         self.update_name = identifier
+        self._capabilities = NonlinearUpdateCapabilities(
+            jit=all(contract.model_contract.execution.jit for contract in contracts),
+            prepared_refresh=True,
+            differentiable_action=all(
+                _differentiable_action(contract) for contract in contracts
+            ),
+        )
 
     @property
     def update_id(self) -> str:
         return self.update_name
 
+    def component_contracts(self) -> tuple[tuple[str, ComponentContract], ...]:
+        """Return `(location, contract)` of every model bound to this update slot.
+
+        Locations are PyTree paths below `function` in flattening order; a plain
+        stateless function has no components.
+        """
+        return _slot_component_contracts(type(self), self.function)
+
     @property
     def capabilities(self) -> NonlinearUpdateCapabilities:
-        return NonlinearUpdateCapabilities(
-            jit=True,
-            prepared_refresh=True,
-            differentiable_action=True,
-        )
+        return self._capabilities
 
     @property
     def maximum_work(self) -> NonlinearWork:

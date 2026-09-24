@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Sequence
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax
@@ -16,8 +16,9 @@ import jax.scipy as jsp
 import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
+from .._differentiation import ComponentAuthority
 from .._fingerprint import canonical_fingerprint
-from .._strict import StrictModule
+from .._model._component import AbstractComponentSlot
 from .._trainable import fixed_field, NonTrainableState
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._dense_inverse import dense_inverse
@@ -112,8 +113,22 @@ def _prepared_action_cost(
     )
 
 
-class AbstractPreconditioner(StrictModule):
-    """Prepared approximate inverse with explicit source-space semantics."""
+class AbstractPreconditioner(AbstractComponentSlot):
+    """Prepared approximate inverse with explicit source-space semantics.
+
+    The base is the neutral `ACCELERATOR` slot of Krylov and fixed-point solvers:
+    an accelerator may change how fast a solve converges but never the equation
+    it solves, because every solver re-evaluates the original operator residual.
+    `space` and `properties` are FIXED. Analytic implementations are fixed
+    `NonTrainableState` leaves; composites (precision cast, multigrid levels,
+    subspace-correction terms, block factorizations) stay neutral so a learned
+    child implementation keeps its PARAMETER arrays. A learned implementation
+    holds its model as a dynamic child and never claims `linear` without
+    construction evidence.
+    """
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.ACCELERATOR
+    slot_semantic_id: ClassVar[str] = "phydrax.linalg.preconditioner"
 
     space: AbstractVectorSpace = fixed_field()
     properties: PreconditionerProperties = fixed_field()

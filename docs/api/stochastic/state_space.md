@@ -110,6 +110,34 @@ observation models likewise receive context in their documented final
 position. Phydrax does not probe callback arity or guess a compatibility
 signature; callbacks using an older arity must be updated explicitly.
 
+## Model slots and learned locations
+
+`AbstractTransitionKernel` and `AbstractObservationModel` are neutral `MODEL`
+component slots (`phydrax.stochastic.transition-kernel` and
+`phydrax.stochastic.observation-model`): they define the latent dynamics and
+likelihood that every filter and smoother trusts. Analytic kernels and linear
+Gaussian observations are fixed; callback fields are stateless operations or
+callable modules held as dynamic children.
+
+`ModelObservationLocation` adapts a pointwise `AbstractArrayModel` to the
+`location(state, time, context)` ABI. The model reads the flattened state,
+followed by the observation time when `time_input=True`; its `in_size` and
+`out_size` must match exactly and it is evaluated without a key. Used as the
+location of `GaussianObservationModel`, it stays a dynamic child whose arrays
+are PARAMETER under `partition_parameters`, and `component_contract()` binds it
+to the observation-model slot. An unbatched state is one model call, so the
+ensemble transform filter, which vectorizes over members itself, runs exactly
+the numerics of an equivalent location closure.
+
+```python
+location = phx.stochastic.ModelObservationLocation(
+    network, state_shape=(1,), observation_shape=(1,)
+)
+observation = phx.stochastic.GaussianObservationModel(
+    location, jnp.asarray([[0.2]]), state_shape=(1,), observation_shape=(1,)
+)
+```
+
 ## Priors
 
 ::: phydrax.stochastic.AbstractStatePrior
@@ -141,6 +169,10 @@ signature; callbacks using an older arity must be updated explicitly.
 ---
 
 ::: phydrax.stochastic.GaussianObservationModel
+
+---
+
+::: phydrax.stochastic.ModelObservationLocation
 
 ---
 

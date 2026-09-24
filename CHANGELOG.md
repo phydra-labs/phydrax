@@ -44,6 +44,22 @@
   `binding_id`), and a conservative-face `ArbitraryNormalFaceClosurePlan` holds
   its binding as the correction child, so in either deployment a frozen
   predictor stays fixed and a trainable one trains.
+- Solver, state-space, control, and meshing extension points are now owner
+  component slots. `AbstractPreconditioner` and `AbstractNonlinearUpdate` are
+  neutral `ACCELERATOR` slots whose composites (precision cast, multigrid
+  levels, subspace-correction terms, block factorizations) keep learned
+  children PARAMETER; `AbstractTransitionKernel` and `AbstractObservationModel`
+  are `MODEL` slots; `AbstractControlParameterization` and the new
+  `phydrax.meshing.AbstractMeshProposer` are `DECISION` slots.
+  `FunctionNonlinearUpdate` is the canonical callable and learned update: models
+  in its callable module are bound to the update slot
+  (`component_contracts()`), its capabilities derive from their execution and
+  derivative contracts, and success still requires a finite proposal that the
+  original problem accepts. Added `phydrax.stochastic.ModelObservationLocation`
+  (learned observation location with unchanged ensemble-transform numerics),
+  `phydrax.control.NeuralFeedbackPolicy` (learned state feedback), and
+  `phydrax.meshing.LearnedMeshProposer` (learned marking, size, and metric
+  proposals certified only by the native projection).
 - Added model execution contracts (`ModelExecutionContract`,
   `ExecutionCapabilities`, `ComponentPrecisionContract`, `RandomnessContract`)
   separate from bound component contracts (`AbstractComponentSlot`,

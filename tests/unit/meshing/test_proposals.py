@@ -1,8 +1,12 @@
+import equinox as eqx
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
 from phydrax.meshing._proposals import (
+    LearnedMeshProposer,
     mesh_proposal_scope,
     MeshCoordinateProposal,
     MeshMarkingProposal,
@@ -273,3 +277,112 @@ def test_unit_gradation_reaches_beyond_sixty_four_adjacency_hops():
     )
 
     np.testing.assert_allclose(projection.size_field.values, 0.1, atol=1e-12)
+
+
+class _AbstractScore(phx.AbstractArrayModel):
+    weight: jax.Array
+    bias: jax.Array
+    in_size: int = eqx.field(static=True)
+    out_size: str = eqx.field(static=True)
+
+    def __init__(self, weight, bias=0.0):
+        self.weight = jnp.asarray(weight, dtype=jnp.float64)
+        self.bias = jnp.asarray(bias, dtype=jnp.float64)
+        self.in_size = int(self.weight.size)
+        self.out_size = "scalar"
+
+    def __call__(self, x, /, *, key=None):
+        return self.weight @ x + self.bias
+
+
+class _Score(_AbstractScore):
+    pass
+
+
+def test_learned_marking_cannot_bypass_native_projection_or_protection():
+    source = _source()
+    # One-hot cell features in sorted global-ID order; the model scores the
+    # protected cell 10 highest.
+    features = np.eye(4)
+    proposer = LearnedMeshProposer(
+        _Score((9.0, 1.0, 3.0, 2.0)), kind="marking", proposer_id="learned-marker"
+    )
+    proposal = proposer.propose(source, features)
+    policy = _policy(
+        source, protected_scopes=(mesh_proposal_scope(source, 2, np.asarray((10,))),)
+    )
+    transaction = prepare_mesh_proposal(source, proposal, policy)
+
+    assert isinstance(proposal, MeshMarkingProposal)
+    assert proposal.proposer_id == "learned-marker"
+    np.testing.assert_array_equal(proposal.values, (9.0, 1.0, 3.0, 2.0))
+    # Identical values from any other proposer project identically: the learned
+    # route has no trusted path of its own.
+    untrusted = MeshMarkingProposal(
+        source,
+        mesh_proposal_scope(source, 2),
+        (9.0, 1.0, 3.0, 2.0),
+        proposer_id="learned-marker",
+    )
+    assert (
+        project_mesh_proposal(source, untrusted, policy).projection_id
+        == transaction.projection.projection_id
+    )
+    assert 10 not in np.asarray(transaction.projection.marked_cell_ids)
+    result = transaction.commit(source)
+    row = int(np.flatnonzero(np.asarray(result.mesh.blocks[0].global_ids) == 10)[0])
+    np.testing.assert_array_equal(
+        result.mesh.blocks[0].vertices[row], source.mesh.blocks[0].vertices[0]
+    )
+    contract = proposer.component_contract()
+    assert contract.authority is phx.ComponentAuthority.DECISION
+
+    nonfinite = LearnedMeshProposer(
+        _Score((np.nan, 0.0, 0.0, 0.0)), kind="marking", proposer_id="nan"
+    )
+    with pytest.raises(ValueError, match="finite"):
+        nonfinite.propose(source, features)
+
+
+def test_learned_size_proposal_is_clamped_by_the_trusted_projection():
+    source = _source()
+    features = np.eye(5)
+    proposer = LearnedMeshProposer(
+        _Score((-5.0, 2.0, 0.2, 50.0, 1.0)), kind="size", proposer_id="sizer"
+    )
+    transaction = prepare_mesh_proposal(
+        source,
+        proposer.propose(source, features),
+        _policy(source, maximum_gradation=1.1),
+    )
+
+    sizes = np.asarray(transaction.projection.size_field.values)
+    assert np.all(sizes >= 0.1 - 1e-12) and np.all(sizes <= 2.0 + 1e-12)
+    with pytest.raises(ValueError, match="spatial_dimension"):
+        LearnedMeshProposer(_Score((1.0,)), kind="metric", proposer_id="metric")
+
+
+def test_learned_marker_trains_against_dual_weighted_residual_targets():
+    source = _source()
+    residual = jnp.asarray([[1.0, 0.5], [0.2, 0.1], [2.0, -1.0], [0.0, 0.3]])
+    correction = jnp.asarray([[0.5, 0.5], [1.0, 1.0], [0.25, -0.5], [1.0, 0.0]])
+    targets = phx.discretization.fem.local_dual_weighted_residual(
+        residual, correction
+    ).absolute
+    features = jnp.concatenate((residual, correction), axis=1)
+    proposer = LearnedMeshProposer(
+        _Score(jnp.zeros(4)), kind="marking", proposer_id="dwr-marker"
+    )
+    parameters, model_state, fixed = phx.partition_parameters(proposer)
+
+    def loss(parameters):
+        bound = phx.combine_parameters(parameters, model_state, fixed)
+        return jnp.mean((bound.evaluate(features) - targets) ** 2)
+
+    gradient = jax.grad(loss)(parameters)
+    assert {id(leaf) for leaf in jax.tree.leaves(parameters)} == {
+        id(proposer.model.weight),
+        id(proposer.model.bias),
+    }
+    assert all(jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree.leaves(gradient))
+    assert isinstance(proposer.propose(source, features), MeshMarkingProposal)

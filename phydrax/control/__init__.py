@@ -238,6 +238,7 @@ from ._parameterization import (
     BSplineControlBoundCertificate,
     BSplineControlParameterization,
     BSplineControlRefinement,
+    NeuralFeedbackPolicy,
     PiecewiseConstantControlParameterization,
     PiecewiseLinearControlParameterization,
 )
@@ -434,6 +435,7 @@ __all__ = [
     "DiscreteControlDynamics",
     "PathConstraint",
     "PreparedLinearControlQP",
+    "NeuralFeedbackPolicy",
     "PiecewiseConstantControlParameterization",
     "PiecewiseLinearControlParameterization",
     "RecedingHorizonMPC",

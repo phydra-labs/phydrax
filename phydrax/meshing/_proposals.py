@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import heapq
 import time
+from abc import abstractmethod
+from typing import Any, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -13,7 +15,14 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._differentiation import ComponentAuthority
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._model import (
+    AbstractArrayModel,
+    AbstractComponentSlot,
+    bind_component,
+    ComponentContract,
+)
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -237,6 +246,174 @@ class MeshCoordinateProposal(_AbstractMeshProposal):
 MeshProposal = (
     MeshMarkingProposal | MeshSizeProposal | MeshMetricProposal | MeshCoordinateProposal
 )
+
+MeshProposerKind: TypeAlias = Literal["marking", "size", "metric"]
+
+
+class AbstractMeshProposer(AbstractComponentSlot):
+    """Source of untrusted typed mesh proposals.
+
+    The base is the neutral `DECISION` slot of mesh adaptation: a proposer
+    decides where and how a certified mesh should adapt, but it never produces
+    a mesh. `propose(source, features, scope=...)` returns one typed marking,
+    size, or metric proposal bound to the exact source revision; only
+    `project_mesh_proposal` and `prepare_mesh_proposal` turn it into a trusted
+    candidate, under a `MeshProposalSafetyPolicy` and native refinement.
+    `features` hold one row per scope entity in sorted global-ID order.
+    """
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.DECISION
+    slot_semantic_id: ClassVar[str] = "phydrax.meshing.mesh-proposer"
+
+    proposer_id: eqx.AbstractVar[str]
+
+    @abstractmethod
+    def propose(
+        self,
+        source: CellMeshingResult,
+        features: ArrayLike,
+        /,
+        *,
+        scope: MeshingScope | None = None,
+    ) -> MeshMarkingProposal | MeshSizeProposal | MeshMetricProposal:
+        raise NotImplementedError
+
+
+def _model_value_shape(size: Any, /) -> tuple[int, ...]:
+    if size == "scalar":
+        return ()
+    if isinstance(size, int):
+        return (int(size),)
+    return tuple(size)
+
+
+class LearnedMeshProposer(AbstractMeshProposer):
+    """Pointwise learned marking, size, or metric proposer.
+
+    The model maps one feature row to one proposal value: a marking score per
+    cell (`kind="marking"`), a size per vertex (`"size"`), or a
+    `(spatial_dimension, spatial_dimension)` metric tensor per vertex
+    (`"metric"`). Sizes are exact: `in_size` is the feature width and `out_size`
+    produces the value shape; the model must use a pointwise flat binding and
+    is evaluated without a key. `evaluate(features)` is the differentiable
+    per-entity map used for supervised training, for example against marking
+    targets derived from `FiniteElementDWRIndicators.absolute` or
+    `HighEnthalpyAMREvidence.refine_mask` reordered to the scope's global IDs.
+
+    `propose` wraps the values in the typed proposal of `kind`, which rejects
+    non-finite values and stale scopes; the proposal stays untrusted until the
+    native projection certifies it. The model is a dynamic child whose arrays
+    keep their own roles and is bound to the `AbstractMeshProposer` `DECISION`
+    slot; `component_contract()` returns the bound contract.
+    """
+
+    model: AbstractArrayModel
+    kind: MeshProposerKind = eqx.field(static=True)
+    spatial_dimension: int | None = eqx.field(static=True)
+    proposer_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        model: AbstractArrayModel,
+        /,
+        *,
+        kind: MeshProposerKind,
+        proposer_id: str,
+        spatial_dimension: int | None = None,
+    ):
+        if not isinstance(model, AbstractArrayModel):
+            raise TypeError("model must be an AbstractArrayModel.")
+        if kind not in ("marking", "size", "metric"):
+            raise ValueError("kind must be 'marking', 'size', or 'metric'.")
+        if (kind == "metric") != (spatial_dimension is not None):
+            raise ValueError(
+                "spatial_dimension is required exactly for metric proposers."
+            )
+        if spatial_dimension is not None and (
+            isinstance(spatial_dimension, bool)
+            or not isinstance(spatial_dimension, int)
+            or spatial_dimension <= 0
+        ):
+            raise ValueError("spatial_dimension must be a positive int.")
+        binding = model.input_binding()
+        if binding.batch_mode != "pointwise" or binding.input_mode != "flat":
+            raise ValueError("Learned mesh proposers require a pointwise flat binding.")
+        if isinstance(model.in_size, bool) or not isinstance(model.in_size, int):
+            raise ValueError("Learned mesh proposer in_size must be the feature width.")
+        value_shape = (
+            () if spatial_dimension is None else (spatial_dimension, spatial_dimension)
+        )
+        if _model_value_shape(model.out_size) != value_shape:
+            raise ValueError(
+                f"Learned {kind} proposer out_size must produce shape {value_shape}; "
+                f"got {model.out_size!r}."
+            )
+        identifier = str(proposer_id).strip()
+        if not identifier:
+            raise ValueError("proposer_id must be non-empty.")
+        bind_component(model, AbstractMeshProposer)
+        self.model = model
+        self.kind = kind
+        self.spatial_dimension = spatial_dimension
+        self.proposer_id = identifier
+
+    def component_contract(self) -> ComponentContract:
+        """Return the model's contract bound to the mesh-proposer slot."""
+        return bind_component(self.model, AbstractMeshProposer).contract()
+
+    def evaluate(self, features: ArrayLike, /) -> Array:
+        """Return one proposal value per feature row, shape `(rows,) + value shape`."""
+        rows = jnp.asarray(features)
+        if rows.ndim != 2 or rows.shape[1] != self.model.in_size:
+            raise ValueError(
+                f"Proposer features must have shape (entities, {self.model.in_size}); "
+                f"got {rows.shape}."
+            )
+        binding = self.model.input_binding()
+        return jax.vmap(
+            lambda row: binding.call(self.model, row, key=None, iter_=None, kwargs={})
+        )(rows)
+
+    def propose(
+        self,
+        source: CellMeshingResult,
+        features: ArrayLike,
+        /,
+        *,
+        scope: MeshingScope | None = None,
+    ) -> MeshMarkingProposal | MeshSizeProposal | MeshMetricProposal:
+        if not isinstance(source, CellMeshingResult):
+            raise TypeError("source must be CellMeshingResult.")
+        if self.kind == "metric" and (
+            self.spatial_dimension != source.mesh.ambient_dimension
+        ):
+            raise ValueError(
+                "Metric proposer spatial_dimension must match the source mesh."
+            )
+        dimension = source.mesh.topological_dimension if self.kind == "marking" else 0
+        scope_ = mesh_proposal_scope(source, dimension) if scope is None else scope
+        rows = jnp.asarray(features)
+        if rows.ndim != 2 or rows.shape[0] != scope_.entity_ids.size:
+            raise ValueError(
+                "Proposer features must hold one row per scope entity in sorted "
+                "global-ID order."
+            )
+        values = np.asarray(self.evaluate(rows))
+        match self.kind:
+            case "marking":
+                return MeshMarkingProposal(
+                    source, scope_, values, proposer_id=self.proposer_id
+                )
+            case "size":
+                return MeshSizeProposal(
+                    source, scope_, values, proposer_id=self.proposer_id
+                )
+            case "metric":
+                return MeshMetricProposal(
+                    source, scope_, values, proposer_id=self.proposer_id
+                )
+            case _:
+                raise ValueError(f"Unknown mesh proposer kind {self.kind!r}.")
 
 
 class MeshProposalSafetyPolicy(StrictModule, NonTrainableState):
@@ -1033,6 +1210,8 @@ def prepare_mesh_proposal(
 
 
 __all__ = [
+    "AbstractMeshProposer",
+    "LearnedMeshProposer",
     "MeshCoordinateProposal",
     "MeshMarkingProposal",
     "MeshMetricProposal",

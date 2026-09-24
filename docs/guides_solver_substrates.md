@@ -79,10 +79,13 @@ preconditioner refresh. Targetless and on-policy residual corpora remain
 immutable training inputs; their solver, operator, task, loss, and source
 artifact identities travel through normal operator provenance.
 
-Nonlinear learned proposals would require an `AbstractNonlinearUpdate` and
-`NonlinearGMRES` so the original nonlinear residual is re-evaluated. Temporal
-learned defects require a separate fixed-step contract. Neither behavior is
-inferred from the linear preconditioner bridge.
+Nonlinear learned proposals use `FunctionNonlinearUpdate`, the canonical
+`ACCELERATOR` update slot: its callable module holds the model as a dynamic
+child, application reports success only for a finite proposal the original
+problem accepts, and `NonlinearRichardson` or `NonlinearGMRES` re-evaluates the
+original nonlinear residual of every trial state. Temporal learned defects
+require a separate fixed-step contract. Neither behavior is inferred from the
+linear preconditioner bridge.
 
 ## Mixed-integer proof and proposal lanes
 

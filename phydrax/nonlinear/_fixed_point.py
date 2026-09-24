@@ -994,7 +994,13 @@ def _picard_candidate(
 
 
 class PicardUpdate(AbstractNonlinearUpdate):
-    """One preconditioned Picard correction as a finite nonlinear update."""
+    """One preconditioned Picard correction as a finite nonlinear update.
+
+    ``inverse_action`` is an `AbstractPreconditioner` (an `ACCELERATOR` slot
+    whose learned implementations keep their PARAMETER arrays) or a stateless
+    operation or callable module held as a dynamic child; arrays hidden in
+    closures are rejected at training and artifact boundaries.
+    """
 
     inverse_action: Callable[[PyTree[Any]], PyTree[Any]] | AbstractPreconditioner
     damping: float = eqx.field(static=True)

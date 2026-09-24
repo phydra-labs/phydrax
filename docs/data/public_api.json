@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "15514c1ef97a4d4f8679b5fa954b21479c012dbf6f6eac1aadcc0933cc6852b0",
+  "manifest_id": "6a11092589d411f215493bfb620609c7758115ad361f89983f08cc1729dccf45",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -11018,6 +11018,7 @@
       "phydrax.control.MultipleShootingHistory",
       "phydrax.control.MultipleShootingLinearization",
       "phydrax.control.MultipleShootingResult",
+      "phydrax.control.NeuralFeedbackPolicy",
       "phydrax.control.PathConstraint",
       "phydrax.control.PathConstraintFunction",
       "phydrax.control.PiecewiseConstantControlParameterization",
@@ -22338,6 +22339,7 @@
       "phydrax.membranes.solution_diffusion_flux"
     ],
     "phydrax.meshing": [
+      "phydrax.meshing.AbstractMeshProposer",
       "phydrax.meshing.AbstractMeshingSession",
       "phydrax.meshing.CellFamilyPolicy",
       "phydrax.meshing.CellMeshAuditPolicy",
@@ -22371,6 +22373,7 @@
       "phydrax.meshing.ImplicitMeshingPlan",
       "phydrax.meshing.LayerSchedule",
       "phydrax.meshing.LayerTerminationPolicy",
+      "phydrax.meshing.LearnedMeshProposer",
       "phydrax.meshing.ManifoldProvider",
       "phydrax.meshing.MeshAssembly",
       "phydrax.meshing.MeshAttribute",
@@ -31669,6 +31672,7 @@
       "phydrax.stochastic.MeanFieldBSDEProblem",
       "phydrax.stochastic.MeanFieldSnapshot",
       "phydrax.stochastic.MeasureChangeKind",
+      "phydrax.stochastic.ModelObservationLocation",
       "phydrax.stochastic.NoiseCoupling",
       "phydrax.stochastic.NoiseCouplingWitness",
       "phydrax.stochastic.ObservationSequence",
