@@ -42,7 +42,7 @@ _SLOT_BASES = (
         "AbstractFaceReconstructionPlan",
     ),
     ("phydrax.discretization.finite_volume._reconstruction", "AbstractSlopeLimiter"),
-    ("phydrax.discretization.finite_volume._closure", "ConservativeFaceClosurePlan"),
+    ("phydrax.discretization.finite_volume._closure", "AbstractFaceClosurePlan"),
     ("phydrax.solver._fixed_step", "AbstractAcceptedStepTransform"),
     ("phydrax._numerics._ssp_runge_kutta", "AbstractSSPRKStageTransform"),
     ("phydrax.linalg._preconditioners", "AbstractPreconditioner"),

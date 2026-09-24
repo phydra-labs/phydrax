@@ -535,14 +535,61 @@ retaining fixed tensor topology. Preparation computes mapped vertices, cell volu
 face centers, face measures, and oriented area vectors in one, two, or three dimensions.
 It rejects nonpositive orientation or measure.
 
-Generic mapped conservative-state execution currently accepts Rusanov or HLL fluxes,
-which evaluate the physical normal flux against mapped unit normals, and remains
-stationary. Time-dependent fixed-connectivity geometry is deliberately separate under
-the MAC-specific `MACALEGeometryPlan` described above.
+Generic mapped conservative-state execution accepts any
+`AbstractArbitraryNormalNumericalFluxPlan` (Rusanov, HLL, HLLC, Einfeldt-HLL, the
+entropy-stable and all-speed fluxes, or a user flux implementing `normal_face_flux`),
+evaluated against mapped unit normals; axis-only fluxes such as Roe and HLLD are
+refused when the dynamics are prepared. Mapped execution remains stationary.
+Time-dependent fixed-connectivity geometry is deliberately separate under the
+MAC-specific `MACALEGeometryPlan` described above.
 
-`ConservativeFaceClosurePlan` corrections use a Cartesian-axis ABI, so preparing
-mapped dynamics with a nonempty `FiniteVolumeMethodPlan.closure` raises `ValueError`;
-mapped closures are not supported yet.
+## Face closures
+
+Numerical-flux owners accept one optional face closure (`closure=` on
+`FiniteVolumeMethodPlan`, `TriangleFiniteVolumeMethodPlan`, and
+`UnstructuredFiniteVolumeMethodPlan`). `AbstractFaceClosurePlan` is a neutral
+`DISCRETIZATION` component slot; `ArbitraryNormalFaceClosurePlan` evaluates
+
+```text
+correction(system, left, right, baseline_normal_flux, context, args)
+```
+
+once per shared face site and adds it to the baseline normal flux density, so any
+correction is conservative. `FaceFluxContext` carries the validated unit normal
+(orientation lives only in the normal), the positive face measure, the grid-normal
+velocity, the Cartesian axis of structured face families, and the geometry identity.
+Owners supply it everywhere they evaluate a flux:
+
+- Cartesian grids and block AMR keep the axis `face_flux` baseline unchanged and pass
+  `n = e_axis`;
+- mapped grids pass mapped unit normals and physical face measures;
+- triangle and unstructured meshes apply the closure at every centroid or quadrature
+  site;
+- moving and overset unstructured stages pass the stage normals, measures, and
+  quadrature grid-normal velocities.
+
+Wave-propagation plans do not apply closures and refuse them at construction.
+Every evaluation checks shape, dtype, finiteness, and equal-state consistency
+`C(u, u, n) = 0` on active faces. `SymmetrizedFaceClosure(g)` builds
+
+```text
+h(a, b, n) = g(a, b, n) - g(m, m, n),   m = (a + b) / 2
+C(a, b, n) = 1/2 [h(a, b, n) - h(b, a, -n)]
+```
+
+which is consistent and orientation antisymmetric, `C(a, b, n) = -C(b, a, -n)`, by
+construction and carries a `SymmetrizedFaceClosureCertificate`. The symmetrization is
+optional. With `frame="face-normal"`, the correction is evaluated in the face-normal
+frame of a system implementing `phx.equations.AbstractNormalFrameSystem`
+(`EulerSystem`, `CompressibleNavierStokesSystem`, and the homogeneous-mixture gas
+systems), which makes it rotation covariant; systems without that explicit
+capability are refused. Systems with magnetic components are refused.
+
+The correction is a dynamic child. A learned correction holds its model, whose
+arrays stay `PARAMETER` inside the prepared dynamics, so
+`phx.partition_parameters(dynamics)` exposes only the closure parameters while
+geometry and data stay `FIXED`. The static `closure_id` enters the method identity;
+weights do not.
 
 ## Multiblock and adaptive grids
 

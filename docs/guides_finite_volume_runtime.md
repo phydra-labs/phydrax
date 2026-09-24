@@ -7,6 +7,9 @@ multiblock, AMR, incompressible, MHD, and distributed combinations remain explic
 qualified rather than being implied by the core API. See
 [Shallow water](guides_shallow_water.md) for its balanced-face restrictions.
 
+A method face closure corrects the high-order face flux only; the runtime's
+positivity fallback dynamics use the uncorrected monotone fallback flux.
+
 ## Materials and transport
 
 `EulerSystem` owns an immutable `IdealGasMaterial`. `CompressibleNavierStokesSystem`

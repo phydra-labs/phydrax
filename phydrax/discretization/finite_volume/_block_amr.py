@@ -16,7 +16,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
-from .._conservation_boundary import PrescribedNormalFluxBoundary
+from .._conservation_boundary import PrescribedNormalFluxBoundary, SourceFunction
 from .._conservation_ledger import (
     ConservationStageFluxRateBlock,
     ConservationStageLedger,
@@ -33,7 +33,6 @@ from ._dynamics import (
     evaluate_cartesian_numerical_flux,
     FiniteVolumeMethodPlan,
     reconstruct_cartesian_ghosted_axis,
-    SourceFunction,
 )
 from ._precision import FiniteVolumePrecisionPolicy
 from ._riemann import AbstractNumericalFluxPlan
@@ -122,6 +121,8 @@ class BlockAMRFiniteVolumePlan(StrictModule):
             raise ValueError(
                 "Block AMR currently accepts inviscid finite-volume methods only."
             )
+        if method.closure is not None:
+            method.closure.admit_system(system)
         if not isinstance(boundaries, FiniteVolumeBoundarySet):
             raise TypeError("boundaries must be FiniteVolumeBoundarySet.")
         hierarchy_plan = hierarchy.plan.hierarchy
@@ -799,6 +800,7 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule):
             crop.append(slice(None))
             left = left[tuple(crop)]
             right = right[tuple(crop)]
+            spacings = self.topology.plan.level_spacings[level]
             flux, speed = evaluate_cartesian_numerical_flux(
                 self.plan.method,
                 self.plan.system,
@@ -807,6 +809,11 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule):
                 right,
                 axis,
                 args,
+                face_measure=prod(
+                    value for index, value in enumerate(spacings) if index != axis
+                ),
+                geometry_id=self.plan.hierarchy.prepared_id,
+                active=active_cells,
             )
             fluxes.append(flux)
             speeds.append(speed)

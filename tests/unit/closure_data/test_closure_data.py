@@ -8,6 +8,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax as phx
+from phydrax.closure_data import conservative_face_numeric_revision
 from phydrax.closure_data._alignment import (
     conservative_prolong,
     conservative_restrict,
@@ -431,8 +433,8 @@ def test_normalizer_statistics_and_provenance_are_train_only():
 def test_binding_rejects_schema_mismatch_and_inserts_face_correction():
     schema = _schema()
 
-    def correction(system, left, right, baseline, axis, args):
-        del system, baseline, axis
+    def correction(system, left, right, baseline, context, args):
+        del system, baseline, context
         return args * (right - left)
 
     binding = LearnedClosureBindingPlan(
@@ -444,22 +446,23 @@ def test_binding_rejects_schema_mismatch_and_inserts_face_correction():
         model_artifact_id="model",
         normalizer_provenance_id="normalizer",
     )
-    plan = binding.bind_conservative_faces(schema)
-    left = jnp.arange(5.0)
+    revision = conservative_face_numeric_revision(binding)
+    plan = binding.bind_conservative_faces(schema, revision)
+    left = jnp.arange(10.0).reshape((2, 5))
     right = left + 1.0
-    baseline = jnp.full((5,), 2.0)
-    result = plan.apply(
-        SimpleNamespace(component_names=schema.component_names),
-        left,
-        right,
-        baseline,
-        0,
-        0.25,
+    baseline = jnp.full((2, 5), 2.0)
+    system = SimpleNamespace(component_names=schema.component_names, dimension=1)
+    context = phx.discretization.FaceFluxContext(
+        jnp.ones((2, 1)), jnp.ones(2), geometry_id="faces"
     )
+    result = plan.apply(system, left, right, baseline, context, 0.25)
     np.testing.assert_allclose(result, 2.25)
+    assert jax.tree.leaves(phx.partition_parameters(plan)[0]) == []
     other = FlowStateSchema(("rho",), ("kg/m^3",), (1.0,), density_name="rho")
     with pytest.raises(ValueError, match="schema identity"):
-        binding.bind_conservative_faces(other)
+        binding.bind_conservative_faces(other, revision)
+    with pytest.raises(ValueError, match="Numeric revision"):
+        binding.bind_conservative_faces(schema, phx.NumericRevision("other", {}))
 
 
 def _spectral_contract():

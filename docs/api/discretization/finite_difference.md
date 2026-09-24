@@ -178,6 +178,11 @@ Periodic SBP conservation diagnostics use a twofold compensated reduction for th
 quadrature-weighted residual in the prepared grid dtype. The antisymmetric pairwise
 flux construction, entropy rates, and evolution residual are unchanged.
 
+`SBPFluxDifferencingMethodPlan.volume_flux` is a dynamic child typed by the neutral
+numerical-flux slot, so a learned symmetric two-point flux keeps its parameters.
+The optional source uses the same `(time, state, coordinates, args)` conservation
+source ABI as the finite-volume owners.
+
 
 ::: phydrax.discretization.TensorSBPPlan
 

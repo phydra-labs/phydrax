@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -22,7 +23,7 @@ from .._differentiation import (
     DerivativeSurface,
 )
 from .._fingerprint import canonical_fingerprint
-from .._identity import SemanticProvenance
+from .._identity import NumericRevision, SemanticProvenance
 from .._model import ValuePort
 from .._model._ports import (
     bind_model_ports,
@@ -34,7 +35,10 @@ from .._model._ports import (
 )
 from .._strict import StrictModule
 from .._trainable import ExplicitFreeze, NonTrainableState
-from ..discretization.finite_volume._closure import ConservativeFaceClosurePlan
+from ..discretization.finite_volume._closure import (
+    ArbitraryNormalFaceClosurePlan,
+    FaceFluxContext,
+)
 from ..discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ..discretization.spectral._dealias import (
     OversamplingDealiasingPlan,
@@ -50,6 +54,77 @@ from ._state import _declared_dimension, FlowStateSchema
 ClosureDeploymentKind = Literal["conservative_face", "spectral_drift"]
 SpectralEnergyPolicy = Literal["nonincreasing", "diagnostic"]
 StressEnergyPolicy = Literal["signed", "dissipative", "bounded_backscatter"]
+
+
+def conservative_face_numeric_revision(
+    binding: LearnedClosureBindingPlan, /
+) -> NumericRevision:
+    """Numeric revision of a conservative-face predictor under its binding identity.
+
+    The revision binds the predictor's inexact array leaves to the binding
+    semantics (`binding_id`: deployment kind, schema, components, model artifact,
+    normalizer provenance, differentiability).
+    """
+    return NumericRevision(
+        binding.binding_id,
+        {
+            "predictor": tuple(
+                jax.tree_util.tree_leaves(
+                    eqx.filter(binding.predictor, eqx.is_inexact_array)
+                )
+            )
+        },
+    )
+
+
+def _conservative_face_correction(
+    binding: LearnedClosureBindingPlan,
+    system: Any,
+    left: Array,
+    right: Array,
+    baseline_normal_flux: Array,
+    context: FaceFluxContext,
+    args: Any,
+    /,
+) -> Array:
+    if binding.deployment_kind != "conservative_face":
+        raise ValueError("Only conservative_face bindings evaluate face corrections.")
+    return binding.predictor(system, left, right, baseline_normal_flux, context, args)
+
+
+def _bind_conservative_faces(
+    binding: LearnedClosureBindingPlan,
+    schema: FlowStateSchema,
+    numeric_revision: NumericRevision,
+    consistency_tolerance: float,
+    /,
+) -> ArbitraryNormalFaceClosurePlan:
+    binding._validate_schema(schema)
+    if binding.deployment_kind != "conservative_face":
+        raise ValueError("Only conservative_face bindings can enter a face flux plan.")
+    if binding.output_component_names != schema.component_names:
+        raise ValueError(
+            "A conservative face closure must output every conservative component in schema order."
+        )
+    if not isinstance(numeric_revision, NumericRevision):
+        raise TypeError("numeric_revision must be a NumericRevision.")
+    expected = conservative_face_numeric_revision(binding)
+    if (
+        numeric_revision.semantic_id != expected.semantic_id
+        or numeric_revision.revision_id != expected.revision_id
+    ):
+        raise ValueError(
+            "Numeric revision does not match the bound conservative-face predictor."
+        )
+    # The binding itself is the correction child: its role marker governs the
+    # predictor arrays inside the finite-volume tree, and its static identity is
+    # the closure identity, so weights never change the method identity.
+    return ArbitraryNormalFaceClosurePlan(
+        binding,
+        closure_id=binding.binding_id,
+        consistency_tolerance=consistency_tolerance,
+        differentiability=binding.differentiability,
+    )
 
 
 class LearnedClosureBindingPlan(StrictModule, NonTrainableState):
@@ -143,27 +218,36 @@ class LearnedClosureBindingPlan(StrictModule, NonTrainableState):
             }
         )
 
+    def __call__(
+        self,
+        system: Any,
+        left: Array,
+        right: Array,
+        baseline_normal_flux: Array,
+        context: FaceFluxContext,
+        args: Any = None,
+        /,
+    ) -> Array:
+        """Evaluate the conservative-face correction ABI of the bound predictor."""
+        return _conservative_face_correction(
+            self, system, left, right, baseline_normal_flux, context, args
+        )
+
     def bind_conservative_faces(
         self,
         schema: FlowStateSchema,
+        numeric_revision: NumericRevision,
         /,
         *,
         consistency_tolerance: float = 1e-10,
-    ) -> ConservativeFaceClosurePlan:
-        self._validate_schema(schema)
-        if self.deployment_kind != "conservative_face":
-            raise ValueError(
-                "Only conservative_face bindings can enter a face flux plan."
-            )
-        if self.output_component_names != schema.component_names:
-            raise ValueError(
-                "A conservative face closure must output every conservative component in schema order."
-            )
-        return ConservativeFaceClosurePlan(
-            self.predictor,
-            closure_id=self.binding_id,
-            consistency_tolerance=consistency_tolerance,
-            differentiability=self.differentiability,
+    ) -> ArbitraryNormalFaceClosurePlan:
+        """Bind the verified predictor revision as an arbitrary-normal face closure.
+
+        `numeric_revision` must equal `conservative_face_numeric_revision(self)`,
+        the revision recorded with the model artifact.
+        """
+        return _bind_conservative_faces(
+            self, schema, numeric_revision, consistency_tolerance
         )
 
     def bind_spectral_drift(
@@ -1248,6 +1332,7 @@ def _energy_rate(state: Array, drift: Array) -> Array:
 
 __all__ = [
     "ClosureDeploymentKind",
+    "conservative_face_numeric_revision",
     "LearnedClosureBindingPlan",
     "LearnedStressBindingPlan",
     "LearnedStressEvidence",

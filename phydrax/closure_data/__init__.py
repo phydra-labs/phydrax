@@ -26,6 +26,7 @@ from ._analysis import (
 )
 from ._binding import (
     ClosureDeploymentKind,
+    conservative_face_numeric_revision,
     LearnedClosureBindingPlan,
     LearnedStressBindingPlan,
     LearnedStressEvidence,
@@ -146,6 +147,7 @@ __all__ = [
     "ClosureArtifactRepository",
     "ClosureDatasetChunk",
     "ClosureDeploymentKind",
+    "conservative_face_numeric_revision",
     "ClosureField",
     "ClosureQualityReport",
     "bind_trained_stress_operator",

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, TYPE_CHECKING
+from typing import Any, ClassVar, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -14,8 +14,9 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
-from ..._differentiation import BranchDifferentiationPolicy
+from ..._differentiation import BranchDifferentiationPolicy, ComponentAuthority
 from ..._fingerprint import canonical_fingerprint
+from ..._model import AbstractComponentSlot
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -83,8 +84,11 @@ class NumericalFluxResult(StrictModule):
         self.fallback_activated = fallback
 
 
-class AbstractNumericalFluxPlan(StrictModule):
-    """Interface solver returning a conservative normal flux density."""
+class AbstractNumericalFluxPlan(AbstractComponentSlot):
+    """Neutral slot of an interface solver returning a conservative normal flux."""
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.DISCRETIZATION
+    slot_semantic_id: ClassVar[str] = "discretization.numerical-flux"
 
     flux_id: str = eqx.field(static=True)
     differentiability: BranchDifferentiationPolicy = eqx.field(static=True)

@@ -5,15 +5,15 @@
 from __future__ import annotations
 
 import abc
-from typing import Any
+from typing import Any, ClassVar
 
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._differentiation import BranchDifferentiationPolicy
+from ..._differentiation import BranchDifferentiationPolicy, ComponentAuthority
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import StrictModule
+from ..._model import AbstractComponentSlot
 from ..._trainable import NonTrainableState
 from ._high_resolution import (
     CharacteristicReconstructionPlan,
@@ -46,8 +46,11 @@ def _boundary_layer(value: ArrayLike, interior: Array, /) -> Array:
     return layer
 
 
-class AbstractFaceReconstructionPlan(StrictModule):
-    """Cell-average to directional left/right face traces."""
+class AbstractFaceReconstructionPlan(AbstractComponentSlot):
+    """Neutral slot of cell-average to directional left/right face traces."""
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.DISCRETIZATION
+    slot_semantic_id: ClassVar[str] = "discretization.face-reconstruction"
 
     formal_order: int = eqx.field(static=True)
     ghost_width: int = eqx.field(static=True)
@@ -105,8 +108,11 @@ class PiecewiseConstantReconstruction(
         return _restore_axis(left, axis), _restore_axis(right, axis)
 
 
-class AbstractSlopeLimiter(StrictModule):
-    """Two-slope nonlinear limiter."""
+class AbstractSlopeLimiter(AbstractComponentSlot):
+    """Neutral slot of a two-slope nonlinear limiter."""
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.DISCRETIZATION
+    slot_semantic_id: ClassVar[str] = "discretization.slope-limiter"
 
     limiter_id: str = eqx.field(static=True)
 

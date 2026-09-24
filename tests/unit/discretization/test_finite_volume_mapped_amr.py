@@ -5,7 +5,6 @@
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 import phydrax as phx
 
@@ -91,10 +90,14 @@ def test_warped_mapped_geometry_preserves_constant_flux_divergence():
     assert jnp.all(mapped.cell_volumes > 0.0)
 
 
-def test_mapped_geometry_refuses_face_closure_before_execution():
+def test_mapped_geometry_applies_face_closure_on_mapped_normals():
     reference = phx.discretization.FiniteVolumePlan(_grid((6, 5))).prepare()
     mapped = phx.discretization.MappedFiniteVolumePlan(
-        reference, lambda point: point, mapping_id="identity"
+        reference,
+        lambda point: jnp.stack(
+            (point[0] + 0.1 * point[0] * point[1], point[1] + 0.05 * point[0])
+        ),
+        mapping_id="bilinear-warp",
     ).prepare()
     pair = phx.discretization.FiniteVolumeBoundaryPair(
         phx.discretization.ExtrapolationBoundary(),
@@ -106,17 +109,32 @@ def test_mapped_geometry_refuses_face_closure_before_execution():
         _scalar_system(2),
         phx.discretization.FiniteVolumeBoundarySet(("x", "y"), (pair, pair)),
     )
-    method = phx.discretization.FiniteVolumeMethodPlan(
-        phx.discretization.PiecewiseConstantReconstruction(),
-        phx.discretization.RusanovFluxPlan(),
-        closure=phx.discretization.ConservativeFaceClosurePlan(
-            lambda system, left, right, baseline, axis, args: 0.1 * (right - left),
-            closure_id="mapped-jump-correction",
-        ),
+    closure = phx.discretization.ArbitraryNormalFaceClosurePlan(
+        lambda system, left, right, baseline, context, args: 0.1 * (right - left),
+        closure_id="mapped-jump-correction",
     )
 
-    with pytest.raises(ValueError, match="Cartesian-axis-only"):
-        phx.equations.compile_conservation_problem(problem, mapped, method)
+    def compiled(closure):
+        return phx.equations.compile_conservation_problem(
+            problem,
+            mapped,
+            phx.discretization.FiniteVolumeMethodPlan(
+                phx.discretization.PiecewiseConstantReconstruction(),
+                phx.discretization.RusanovFluxPlan(),
+                closure=closure,
+            ),
+        )
+
+    state = 1.0 + mapped.cell_centers[..., :1] ** 2
+    contribution = compiled(closure)(0.0, state) - compiled(None)(0.0, state)
+
+    assert float(jnp.max(jnp.abs(contribution))) > 1e-3
+    np.testing.assert_allclose(
+        jnp.sum(contribution * mapped.cell_volumes[..., None]), 0.0, atol=1e-13
+    )
+    np.testing.assert_allclose(
+        compiled(closure)(0.0, jnp.ones(mapped.state_shape)), 0.0, atol=2e-11
+    )
 
 
 def test_conforming_multiblock_interface_uses_one_conservative_flux():

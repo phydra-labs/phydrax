@@ -677,3 +677,311 @@ def test_g16_frozen_realization_reproduces_primal_and_derivative():
         _NoisyResponse(0.5), jr.key(8), realization_id="noise-draw-8"
     )
     assert not jnp.allclose(_implicit_state(redrawn, target).state, first.state)
+
+
+# G8 / G9 / G18: learned face closures in finite-volume owners -----------------
+
+
+class _FaceGenerator(phx.StrictModule):
+    """Unconstrained learned generator g(a, b, n) of a face correction."""
+
+    network: phx.nn.models.MLP
+
+    def __call__(self, system, left, right, baseline, context, args=None):
+        del system, baseline, args
+        features = jnp.concatenate((left, right, context.unit_normal), axis=-1)
+        flat = features.reshape((-1, features.shape[-1]))
+        return 0.05 * jax.vmap(self.network)(flat).reshape(left.shape)
+
+
+def _learned_face_closure(dimension, key=0):
+    components = dimension + 2
+    generator = _FaceGenerator(
+        phx.nn.models.MLP(
+            in_size=2 * components + dimension,
+            out_size=components,
+            width_size=8,
+            depth=1,
+            key=jr.key(key),
+        )
+    )
+    return phx.discretization.ArbitraryNormalFaceClosurePlan(
+        phx.discretization.SymmetrizedFaceClosure(generator),
+        closure_id="learned-face-closure",
+    )
+
+
+def _unit_grid(shape, *, periodic):
+    return phx.discretization.TensorGridPlan(
+        tuple(
+            phx.discretization.UniformCellAxisSpec(count, periodic=periodic)
+            for count in shape
+        ),
+        axis_names=tuple("xy"[: len(shape)]),
+    ).prepare(jnp.stack((jnp.zeros(len(shape)), jnp.ones(len(shape)))))
+
+
+def _extrapolation():
+    return phx.discretization.ExtrapolationBoundary()
+
+
+def _structured_euler(shape, closure, *, mapped=False, periodic=False):
+    system = phx.equations.EulerSystem(len(shape))
+    discretization = phx.discretization.FiniteVolumePlan(
+        _unit_grid(shape, periodic=periodic), component_names=system.component_names
+    ).prepare()
+    if mapped:
+        discretization = phx.discretization.MappedFiniteVolumePlan(
+            discretization, lambda point: point, mapping_id="identity"
+        ).prepare()
+    names = tuple("xy"[: len(shape)])
+    boundaries = (
+        phx.discretization.FiniteVolumeBoundarySet.periodic(names)
+        if periodic
+        else phx.discretization.FiniteVolumeBoundarySet(
+            names,
+            tuple(
+                phx.discretization.FiniteVolumeBoundaryPair(
+                    _extrapolation(), _extrapolation()
+                )
+                for _ in names
+            ),
+        )
+    )
+    problem = phx.equations.ConservationProblemIR(
+        "g-closure", "state", system, boundaries
+    )
+    method = phx.discretization.FiniteVolumeMethodPlan(
+        phx.discretization.PiecewiseConstantReconstruction(),
+        phx.discretization.RusanovFluxPlan(),
+        closure=closure,
+    )
+    return phx.equations.compile_conservation_problem(
+        problem, discretization, method
+    ).dynamics
+
+
+def _quadrilateral_mesh(system, nx, ny):
+    vertices = [(i / nx, j / ny) for j in range(ny + 1) for i in range(nx + 1)]
+    cells = []
+    for j in range(ny):
+        for i in range(nx):
+            lower_left = j * (nx + 1) + i
+            upper_left = lower_left + nx + 1
+            cells.append((lower_left, lower_left + 1, upper_left + 1, upper_left))
+    return phx.discretization.UnstructuredFiniteVolumePlan(
+        jnp.asarray(vertices),
+        quadrilaterals=jnp.asarray(cells, dtype=jnp.int32),
+        component_names=system.component_names,
+    )
+
+
+def _unstructured_euler(
+    nx, ny, closure, *, interface_solver=None, motion=None, motion_id="static"
+):
+    system = phx.equations.EulerSystem(2)
+    plan = _quadrilateral_mesh(system, nx, ny)
+    discretization = plan.prepare()
+    boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
+        discretization.boundary_patch_names,
+        {name: _extrapolation() for name in discretization.boundary_patch_names},
+    )
+    method = phx.discretization.UnstructuredFiniteVolumeMethodPlan(
+        phx.discretization.PiecewiseConstantReconstruction(),
+        phx.discretization.RusanovFluxPlan()
+        if interface_solver is None
+        else interface_solver,
+        closure=closure,
+    )
+    coupling = (
+        None
+        if motion is None
+        else phx.discretization.UnstructuredFiniteVolumeCouplingPlan(
+            motion=phx.discretization.FixedConnectivityMotionPlan(
+                plan, motion, mapping_id=motion_id
+            )
+        )
+    )
+    problem = phx.equations.ConservationProblemIR(
+        f"g-closure-unstructured:{motion_id}", "state", system, boundaries
+    )
+    return phx.equations.compile_conservation_problem(
+        problem, discretization, method, coupling=coupling
+    ).dynamics
+
+
+def _euler_state(shape):
+    system = phx.equations.EulerSystem(2)
+    x = jnp.linspace(0.0, 1.0, shape[0] * shape[1]).reshape(shape)
+    primitive = jnp.stack(
+        (1.0 + 0.2 * jnp.sin(3.0 * x), 0.2 * x, -0.1 * x**2, 1.0 + 0.1 * x), axis=-1
+    )
+    return system.primitive_to_conserved(primitive)
+
+
+def test_g8_plan_embedded_closure_trains_inside_prepared_dynamics():
+    reference = phx.discretization.ArbitraryNormalFaceClosurePlan(
+        lambda system, left, right, baseline, context, args: 0.03 * (right - left),
+        closure_id="reference-jump-dissipation",
+    )
+    target_dynamics = _structured_euler((16,), reference, periodic=True)
+    dynamics = _structured_euler((16,), _learned_face_closure(1), periodic=True)
+    system = dynamics.system
+    x = dynamics.discretization.cell_centers[..., 0]
+    initial = system.primitive_to_conserved(
+        jnp.stack(
+            (
+                1.0 + 0.2 * jnp.sin(2.0 * jnp.pi * x),
+                0.1 * jnp.cos(2.0 * jnp.pi * x),
+                jnp.ones_like(x),
+            ),
+            axis=-1,
+        )
+    )
+
+    def rollout(model):
+        state = initial
+        for _ in range(4):
+            state = state + 2e-3 * model(0.0, state)
+        return state
+
+    target = rollout(target_dynamics)
+    parameters, model_state, fixed = phx.partition_parameters(dynamics)
+    network = dynamics.method.closure.correction.generator.network
+    network_leaves = jax.tree.leaves(phx.partition_parameters(network)[0])
+    assert len(jax.tree.leaves(parameters)) == len(network_leaves)
+    assert all(
+        leaf is expected
+        for leaf, expected in zip(
+            jax.tree.leaves(parameters), network_leaves, strict=True
+        )
+    )
+    phx.require_parameter_roles(dynamics, context="G8 plan-embedded closure")
+
+    def loss(parameters):
+        model = phx.combine_parameters(parameters, model_state, fixed)
+        return jnp.sum((rollout(model) - target) ** 2)
+
+    optimizer = optax.adam(3e-2)
+
+    @jax.jit
+    def step(parameters, optimizer_state):
+        value, gradient = jax.value_and_grad(loss)(parameters)
+        updates, optimizer_state = optimizer.update(gradient, optimizer_state)
+        return optax.apply_updates(parameters, updates), optimizer_state, value
+
+    optimizer_state = optimizer.init(parameters)
+    trained = parameters
+    first = None
+    for _ in range(25):
+        trained, optimizer_state, value = step(trained, optimizer_state)
+        first = value if first is None else first
+    final = loss(trained)
+
+    assert float(final) < 0.5 * float(first)
+    model = phx.combine_parameters(trained, model_state, fixed)
+    _, _, fixed_after = phx.partition_parameters(model)
+    for before, after in zip(
+        jax.tree.leaves(fixed), jax.tree.leaves(fixed_after), strict=True
+    ):
+        assert before is after
+    assert model.dynamics_id == dynamics.dynamics_id
+
+
+def test_g9_one_face_closure_serves_cartesian_mapped_and_unstructured_owners():
+    closure = _learned_face_closure(2)
+    grid_state = _euler_state((4, 3))
+    contributions = {
+        name: _structured_euler((4, 3), closure, mapped=mapped)(0.0, grid_state)
+        - _structured_euler((4, 3), None, mapped=mapped)(0.0, grid_state)
+        for name, mapped in (("cartesian", False), ("mapped", True))
+    }
+    # Unstructured cell j * nx + i is structured cell (i, j).
+    cell_state = jnp.swapaxes(grid_state, 0, 1).reshape((-1, 4))
+    unstructured = _unstructured_euler(4, 3, closure)(0.0, cell_state) - (
+        _unstructured_euler(4, 3, None)(0.0, cell_state)
+    )
+
+    assert float(jnp.max(jnp.abs(contributions["cartesian"]))) > 1e-5
+    assert jnp.allclose(contributions["mapped"], contributions["cartesian"], atol=1e-12)
+    assert jnp.allclose(
+        unstructured,
+        jnp.swapaxes(contributions["cartesian"], 0, 1).reshape((-1, 4)),
+        atol=1e-12,
+    )
+
+
+class _RecordingClosure(phx.StrictModule):
+    """Zero correction that records every context it receives (eager only)."""
+
+    contexts: list = eqx.field(static=True)
+
+    def __call__(self, system, left, right, baseline, context, args=None):
+        self.contexts.append(context)
+        return jnp.zeros_like(baseline)
+
+
+def _deformation(time, vertices, args):
+    del args
+    return vertices.at[4, 0].add(0.15 * time)
+
+
+def test_g18_ale_closure_receives_exact_geometry_and_cartesian_parity():
+    recorder = _RecordingClosure([])
+    closure = phx.discretization.ArbitraryNormalFaceClosurePlan(
+        recorder, closure_id="recording-closure"
+    )
+    dynamics = _unstructured_euler(
+        2,
+        2,
+        closure,
+        interface_solver=phx.discretization.HLLCFluxPlan(),
+        motion=_deformation,
+        motion_id="g18-deformation",
+    )
+    runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        dynamics, phx.discretization.FluxPositivityPlan()
+    )
+    system = dynamics.system
+    uniform = system.primitive_to_conserved(
+        jnp.broadcast_to(jnp.asarray((1.0, 0.2, -0.1, 1.0)), (4, 4))
+    )
+    initial = runtime.initialize_state(uniform, 0.0, 2e-2)
+    stage = runtime.advance(initial).ale.geometry.stage_1
+    recorder.contexts.clear()
+    dynamics.evaluate_stage(initial.content_state, stage)
+
+    (block,) = stage.face_blocks
+    (context,) = recorder.contexts
+    active = context.active
+    expected_normal = jnp.broadcast_to(
+        (block.area_vectors / block.face_measures[:, None])[:, None, :],
+        context.unit_normal.shape,
+    )
+    expected_measure = jnp.broadcast_to(
+        block.face_measures[:, None], context.face_measure.shape
+    )
+    assert bool(jnp.any(active))
+    assert jnp.array_equal(context.unit_normal[active], expected_normal[active])
+    assert jnp.array_equal(context.face_measure[active], expected_measure[active])
+    assert jnp.array_equal(
+        context.grid_normal_velocity, block.quadrature_grid_normal_velocity
+    )
+    assert float(jnp.max(jnp.abs(context.grid_normal_velocity))) > 0.0
+    assert context.geometry_id == stage.geometry_layout_id
+
+    recorder.contexts.clear()
+    cartesian = _structured_euler((3, 2), closure)
+    baseline = _structured_euler((3, 2), None)
+    state = _euler_state((3, 2))
+    assert jnp.array_equal(cartesian(0.0, state), baseline(0.0, state))
+    for axis, context in enumerate(recorder.contexts):
+        assert context.axis == axis
+        assert jnp.array_equal(
+            context.unit_normal,
+            jnp.broadcast_to(jnp.eye(2)[axis], context.unit_normal.shape),
+        )
+        assert jnp.array_equal(
+            context.face_measure, cartesian.discretization.face_measures[axis]
+        )
+        assert not bool(jnp.any(context.grid_normal_velocity))

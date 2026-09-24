@@ -173,19 +173,22 @@ Initial qualification is deliberately narrow:
 
 ## Learned closures
 
-`ConservativeFaceClosurePlan` adds one correction to each shared baseline face flux.
-Trainable parameters arrive through runtime `args`; the static closure callable and ID
-remain part of the numerical method identity. Equal-state consistency and finite output
-are enforced. Existing positivity machinery blends an unsafe corrected flux toward the
-uncorrected monotone fallback.
+`ArbitraryNormalFaceClosurePlan` adds one correction to each shared baseline face flux,
+evaluated with a `FaceFluxContext` (unit normal, face measure, grid-normal velocity,
+Cartesian axis, geometry identity) on Cartesian, mapped, triangle, unstructured,
+moving, and overset faces. A learned correction is a dynamic child whose model
+parameters train inside the prepared dynamics; the closure ID remains part of the
+numerical method identity. Equal-state consistency and finite output are enforced,
+and `SymmetrizedFaceClosure` adds construction-certified orientation antisymmetry.
+Existing positivity machinery blends an unsafe corrected flux toward the uncorrected
+monotone fallback.
 
 Cell-face closures are rejected for constrained MHD until a closure also supplies a
 compatible edge-electromotive correction.
 
-The closure ABI is Cartesian-axis only and applies to numerical-flux interface
-solvers. `FiniteVolumeMethodPlan` rejects a closure combined with a wave-propagation
-plan, whose residual would not apply it, and structured dynamics preparation rejects a
-closure on mapped geometry.
+Closures apply to numerical-flux interface solvers. `FiniteVolumeMethodPlan` rejects a
+closure combined with a wave-propagation plan, whose residual would not apply it. See
+the finite-volume guide for the full closure contract.
 
 ## Differentiability boundary
 

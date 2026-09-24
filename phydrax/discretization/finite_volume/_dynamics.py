@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
@@ -21,9 +20,9 @@ from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
-from .._conservation_boundary import PrescribedNormalFluxBoundary
+from .._conservation_boundary import PrescribedNormalFluxBoundary, SourceFunction
 from ._boundary import FiniteVolumeBoundarySet
-from ._closure import ConservativeFaceClosurePlan
+from ._closure import AbstractFaceClosurePlan, FaceFluxContext
 from ._entropy import (
     _evaluate_finite_volume_entropy_diagnostics,
     FiniteVolumeEntropyDiagnostics,
@@ -35,14 +34,13 @@ from ._high_resolution import (
     NonuniformWENOReconstructionPlan,
 )
 from ._mapped import MappedFiniteVolumeDiscretization
-from ._positivity import EinfeldtHLLFluxPlan
 from ._precision import FiniteVolumePrecisionPolicy
 from ._reconstruction import (
     AbstractFaceReconstructionPlan,
     PiecewiseConstantReconstruction,
     reconstruct_ghosted_axis,
 )
-from ._riemann import AbstractNumericalFluxPlan, HLLFluxPlan, RusanovFluxPlan
+from ._riemann import AbstractArbitraryNormalNumericalFluxPlan, AbstractNumericalFluxPlan
 from ._shallow_water import (
     PreparedShallowWaterBathymetry,
     reconstruct_shallow_water_faces,
@@ -62,7 +60,6 @@ if TYPE_CHECKING:
     from ...equations import ConvexEntropyPair
 
 
-SourceFunction = Callable[[Array, Array, Array, Any], ArrayLike]
 FiniteVolumeReconstruction = (
     AbstractFaceReconstructionPlan
     | HighResolutionReconstructionPlan
@@ -123,7 +120,7 @@ class FiniteVolumeMethodPlan(StrictModule):
     positivity: ConvexStateLimiterPlan | None
     wave_limiter: WaveFamilyLimiterPlan | None
     viscous: ViscousFluxPlan | None
-    closure: ConservativeFaceClosurePlan | None
+    closure: AbstractFaceClosurePlan | None
     differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
@@ -144,7 +141,7 @@ class FiniteVolumeMethodPlan(StrictModule):
         positivity: ConvexStateLimiterPlan | None = None,
         wave_limiter: WaveFamilyLimiterPlan | None = None,
         viscous: ViscousFluxPlan | None = None,
-        closure: ConservativeFaceClosurePlan | None = None,
+        closure: AbstractFaceClosurePlan | None = None,
         differentiability: BranchDifferentiationPolicy = (
             BranchDifferentiationPolicy.BRANCHWISE
         ),
@@ -220,8 +217,8 @@ class FiniteVolumeMethodPlan(StrictModule):
                     )
         if viscous is not None and not isinstance(viscous, ViscousFluxPlan):
             raise TypeError("viscous must be ViscousFluxPlan or None.")
-        if closure is not None and not isinstance(closure, ConservativeFaceClosurePlan):
-            raise TypeError("closure must be ConservativeFaceClosurePlan or None.")
+        if closure is not None and not isinstance(closure, AbstractFaceClosurePlan):
+            raise TypeError("closure must be an AbstractFaceClosurePlan or None.")
         if closure is not None and isinstance(
             interface_solver, AbstractWavePropagationPlan
         ):
@@ -305,8 +302,17 @@ def evaluate_cartesian_numerical_flux(
     axis: int,
     args: Any = None,
     /,
+    *,
+    face_measure: ArrayLike,
+    geometry_id: str,
+    active: ArrayLike | None = None,
 ):
-    """Evaluate the shared Cartesian numerical-flux and closure kernel."""
+    """Evaluate the shared Cartesian numerical-flux and closure kernel.
+
+    The baseline is the axis `face_flux`; a closure sees the stationary context
+    of normal `+e_axis`, `face_measure` and the support mask `active` (both
+    broadcast over the face batch), and the geometry identity `geometry_id`.
+    """
     if not isinstance(method.interface_solver, AbstractNumericalFluxPlan):
         raise TypeError(
             "Cartesian finite-volume fluxes require a numerical-flux interface solver."
@@ -316,13 +322,16 @@ def evaluate_cartesian_numerical_flux(
     result = method.interface_solver.face_flux(system, left_, right_, int(axis), args)
     normal_flux = result.normal_flux
     if method.closure is not None:
-        normal_flux = method.closure.apply(
-            system,
-            left_,
-            right_,
-            normal_flux,
+        batch = left_.shape[:-1]
+        context = FaceFluxContext.cartesian(
             int(axis),
-            args,
+            system.dimension,
+            jnp.broadcast_to(precision.flux(face_measure), batch),
+            geometry_id=geometry_id,
+            active=None if active is None else jnp.broadcast_to(active, batch),
+        )
+        normal_flux = method.closure.apply(
+            system, left_, right_, normal_flux, context, args
         )
     return precision.flux(normal_flux), precision.decision(result.max_speed)
 
@@ -401,12 +410,17 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             raise TypeError("method must be a FiniteVolumeMethodPlan.")
         if (
             isinstance(discretization, MappedFiniteVolumeDiscretization)
-            and method.closure is not None
+            and isinstance(method.interface_solver, AbstractNumericalFluxPlan)
+            and not isinstance(
+                method.interface_solver, AbstractArbitraryNormalNumericalFluxPlan
+            )
         ):
             raise ValueError(
-                "Learned face closures use a Cartesian-axis-only ABI; mapped "
-                "finite-volume geometry is not supported yet."
+                "Mapped finite volumes require an arbitrary-normal numerical flux; "
+                f"{type(method.interface_solver).__name__} evaluates Cartesian axes only."
             )
+        if method.closure is not None:
+            method.closure.admit_system(system)
         if not isinstance(boundaries, FiniteVolumeBoundarySet):
             raise TypeError("boundaries must be a FiniteVolumeBoundarySet.")
         if boundaries.axis_names != discretization.grid.axis_names:
@@ -784,6 +798,35 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             output = output.at[tuple(index)].set(outward)
         return output
 
+    def _mapped_normal_flux(
+        self,
+        left: Array,
+        right: Array,
+        axis: int,
+        args: Any,
+        /,
+    ) -> tuple[Array, Array]:
+        # Preparation admits only arbitrary-normal fluxes on mapped geometry.
+        solver = self.method.interface_solver
+        measure = self.discretization.face_measures[axis]
+        left_ = self.precision.flux(left)
+        right_ = self.precision.flux(right)
+        normal = self.precision.flux(
+            self.discretization.face_area_vectors[axis] / measure[..., None]
+        )
+        result = solver.normal_face_flux(self.system, left_, right_, normal, args)
+        normal_flux = result.normal_flux
+        if self.method.closure is not None:
+            context = FaceFluxContext(
+                normal,
+                self.precision.flux(measure),
+                geometry_id=self.discretization.prepared_id,
+            )
+            normal_flux = self.method.closure.apply(
+                self.system, left_, right_, normal_flux, context, args
+            )
+        return normal_flux, result.max_speed
+
     def face_fluxes(
         self,
         time: Array,
@@ -806,26 +849,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         for axis in range(len(self.discretization.cell_shape)):
             left, right = self._reconstruct(time, value, axis, args)
             if isinstance(self.discretization, MappedFiniteVolumeDiscretization):
-                solver = self.method.interface_solver
-                if not isinstance(
-                    solver, (RusanovFluxPlan, HLLFluxPlan, EinfeldtHLLFluxPlan)
-                ):
-                    raise ValueError(
-                        "Mapped finite volumes currently require Rusanov, HLL, or Einfeldt HLL flux."
-                    )
-                normal = (
-                    self.discretization.face_area_vectors[axis]
-                    / self.discretization.face_measures[axis][..., None]
-                )
-                result = solver.normal_face_flux(
-                    self.system,
-                    self.precision.flux(left),
-                    self.precision.flux(right),
-                    self.precision.flux(normal),
-                    args,
-                )
-                normal_flux = result.normal_flux
-                max_speed = result.max_speed
+                normal_flux, max_speed = self._mapped_normal_flux(left, right, axis, args)
             else:
                 normal_flux, max_speed = evaluate_cartesian_numerical_flux(
                     self.method,
@@ -835,6 +859,8 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                     right,
                     axis,
                     args,
+                    face_measure=self.discretization.face_measures[axis],
+                    geometry_id=self.discretization.prepared_id,
                 )
             fluxes.append(
                 self.precision.flux(
@@ -847,13 +873,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                     )
                 )
             )
-            speeds.append(
-                self.precision.decision(
-                    result.max_speed
-                    if isinstance(self.discretization, MappedFiniteVolumeDiscretization)
-                    else max_speed
-                )
-            )
+            speeds.append(self.precision.decision(max_speed))
         return tuple(fluxes), tuple(speeds)
 
     def boundary_trace(

@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Added arbitrary-normal finite-volume face closures: the neutral
+  `AbstractFaceClosurePlan` slot, `ArbitraryNormalFaceClosurePlan` evaluated with a
+  `FaceFluxContext` (unit normal, positive face measure, grid-normal velocity,
+  Cartesian axis, geometry and frame identity), and the optional construction-certified
+  `SymmetrizedFaceClosure`. Structured, mapped, block-AMR, triangle, unstructured,
+  moving, and overset owners apply one closure at every face site; a learned closure
+  trains inside the prepared dynamics as the only parameter lane. Euler,
+  compressible Navier--Stokes, and homogeneous-mixture gas systems implement the
+  explicit `AbstractNormalFrameSystem` capability used by face-normal-frame closures.
 - Added model execution contracts (`ModelExecutionContract`,
   `ExecutionCapabilities`, `ComponentPrecisionContract`, `RandomnessContract`)
   separate from bound component contracts (`AbstractComponentSlot`,
@@ -39,6 +48,16 @@
   and bounded rendering/video adapters.
 
 ### Changed
+- Numerical flux plans, face reconstructions, and slope limiters are neutral
+  `DISCRETIZATION` component slots. Mapped structured finite volumes admit any
+  arbitrary-normal flux (including HLLC and the all-speed fluxes) and refuse
+  axis-only fluxes at preparation; face closures now apply on mapped geometry.
+- `ConservativeFaceClosurePlan` and its Cartesian-axis correction ABI are replaced
+  by `ArbitraryNormalFaceClosurePlan`; corrections receive a `FaceFluxContext`
+  instead of an axis. `LearnedClosureBindingPlan.bind_conservative_faces` verifies the
+  predictor's `conservative_face_numeric_revision` before binding.
+- The conservation-source callable type `SourceFunction` has one owner shared by the
+  structured, block-AMR, triangle, unstructured, and SBP dynamics.
 - Models with intrinsic ports require an explicit `PortMapping` at
   `Domain.Model`, model systems, operator context/execution plans, geophysical
   bindings, and learned-stress bindings. Operator output name maps are replaced

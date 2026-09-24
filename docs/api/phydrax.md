@@ -595,7 +595,10 @@ nondimensional values carry the reference-scale fingerprint as their normalizati
 identity. `TrainOnlyNormalizer` records the exact training assignments used for its
 statistics. `LearnedClosureBindingPlan` binds predictor ABI, model artifact, component
 ordering, normalizer provenance, and differentiability. Conservative-face deployment
-uses the finite-volume closure owner. Spectral drift is explicitly dealiased,
+binds the verified predictor revision (`conservative_face_numeric_revision`) as an
+`ArbitraryNormalFaceClosurePlan` whose correction is the binding itself, so a frozen
+deployment stays `FIXED` inside the finite-volume tree and its weights never change
+the method identity. Spectral drift is explicitly dealiased,
 projected, Hermitian constrained, and energy checked; invalid prediction produces zero
 drift together with a `SpectralFallbackArtifact`, never a hidden fallback.
 
@@ -628,6 +631,10 @@ drift together with a `SpectralFallbackArtifact`, never a hidden fallback.
 ---
 
 ::: phydrax.closure_data.LearnedClosureBindingPlan
+
+---
+
+::: phydrax.closure_data.conservative_face_numeric_revision
 
 ---
 

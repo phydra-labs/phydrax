@@ -802,8 +802,8 @@ def test_mhd_flux_preserves_declared_components():
 
 
 def test_wave_propagation_method_refuses_face_closure():
-    closure = phx.discretization.ConservativeFaceClosurePlan(
-        lambda system, left, right, baseline, axis, args: 0.1 * (right - left),
+    closure = phx.discretization.ArbitraryNormalFaceClosurePlan(
+        lambda system, left, right, baseline, context, args: 0.1 * (right - left),
         closure_id="wave-jump-correction",
     )
 

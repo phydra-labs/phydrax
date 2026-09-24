@@ -95,6 +95,13 @@ Moving and overset couplings additionally require
 expose face fluxes, CFL limits, conservation diagnostics, JVP/VJP linearization,
 shared SSPRK, and conservative positivity/retry.
 
+`UnstructuredFiniteVolumeMethodPlan(..., closure=...)` accepts an
+`AbstractFaceClosurePlan`. The closure corrects the baseline normal flux at every
+centroid or quadrature site with a `FaceFluxContext` holding the physical unit
+normal, face measure, geometry identity, and, on moving and overset stages, the exact
+quadrature grid-normal velocity; inactive stage routes receive no correction. The
+positivity fallback flux stays uncorrected.
+
 ## Cell-polynomial and WENO-Z reconstruction
 
 `CellPolynomialReconstructionPlan(degree)` prepares a conservative zero-mean

@@ -56,7 +56,14 @@ from ._cell_polynomial import (
     CellPolynomialReconstructionReport,
     PreparedCellPolynomialReconstruction,
 )
-from ._closure import ConservativeFaceClosurePlan
+from ._closure import (
+    AbstractFaceClosurePlan,
+    ArbitraryNormalFaceClosurePlan,
+    FaceClosureFrame,
+    FaceFluxContext,
+    SymmetrizedFaceClosure,
+    SymmetrizedFaceClosureCertificate,
+)
 from ._contact_angle import (
     ContactAngleCondition,
     ContactAngleEvidence,
@@ -681,7 +688,12 @@ __all__ = [
     "CharacteristicSystem",
     "ConstantStateBoundary",
     "ConvexStateLimiterPlan",
-    "ConservativeFaceClosurePlan",
+    "AbstractFaceClosurePlan",
+    "ArbitraryNormalFaceClosurePlan",
+    "FaceClosureFrame",
+    "FaceFluxContext",
+    "SymmetrizedFaceClosure",
+    "SymmetrizedFaceClosureCertificate",
     "EntropyConservativeEulerFluxPlan",
     "BlockAMRConservationPlan",
     "BlockAMRFiniteVolumePlan",
