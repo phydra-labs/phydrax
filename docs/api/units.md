@@ -37,12 +37,25 @@ compatibility, and persistence rules.
       show_root_heading: true
       show_source: false
 
+## Unit expressions
+
+`parse_unit` resolves a declared unit string such as `"kg/(m^2*s)"` or
+`"(m/s)^2"` into an exact `UnitDefinition` over the atomic catalog symbols,
+`1`, integer power suffixes (`m3`), `*`, `/`, whitespace products, parentheses,
+and integer or rational `^` powers. Unknown symbols and malformed expressions
+raise `ValueError`.
+
+::: phydrax.units.parse_unit
+    options:
+      show_root_heading: true
+      show_source: false
+
 ## Canonical catalog
 
 The namespace exports canonical definitions for the SI/coherent base and the
 physical units used by current PhydraX domains. Text aliases are resolved only
-by explicit domain adapters; there is no global runtime registry or expression
-parser.
+by explicit domain adapters or the closed `parse_unit` grammar; there is no
+global runtime registry.
 
 Nuclear and magnetic applications additionally export exact `BARN`,
 `BECQUEREL`, `KILOELECTRONVOLT`, `MEGAELECTRONVOLT`, `WEBER`, `TESLA`, and

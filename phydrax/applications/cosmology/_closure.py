@@ -11,7 +11,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...artifacts import DifferentiationContract, ScientificArtifactEnvelope
+from ...artifacts import ScientificArtifactEnvelope
 from ...observation import (
     CoordinateLayout,
     CorrelatedGaussianPlan,
@@ -201,7 +201,6 @@ __all__ = [
     "CorrelatedGaussianResult",
     "CosmologyPhysicalState",
     "CosmologyRealizationSignature",
-    "DifferentiationContract",
     "LinearObservationPlan",
     "PhysicalDependencyProjection",
     "PrecisionCovarianceAction",

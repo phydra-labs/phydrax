@@ -41,7 +41,14 @@ def main() -> None:
         physics_policy_id="linear-total-matter",
         scale_id=scale.scale_id,
         source_kind="native",
-        differentiation="native-parameter",
+        differentiation=phx.DerivativeContract.smooth(
+            (
+                phx.DerivativeSurface.INPUT,
+                phx.DerivativeSurface.MODEL_PARAMETER,
+                phx.DerivativeSurface.PHYSICAL_PARAMETER,
+                phx.DerivativeSurface.STORED_VALUES,
+            )
+        ),
     )
     k = jnp.geomspace(0.05, 2000.0, 512)
     linear = cosmo.MatterPowerTable(
@@ -72,7 +79,13 @@ def main() -> None:
         linear.wavenumbers,
         boost,
         card,
-        differentiation="native-parameter",
+        differentiation=phx.DerivativeContract.smooth(
+            (
+                phx.DerivativeSurface.INPUT,
+                phx.DerivativeSurface.MODEL_PARAMETER,
+                phx.DerivativeSurface.STORED_VALUES,
+            )
+        ),
     ).apply(linear)
     variance = cosmo.LinearVariancePlan(1.0).sigma(
         background, linear, jnp.asarray([0.01, 0.1, 1.0]), 1.0

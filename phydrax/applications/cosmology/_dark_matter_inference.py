@@ -28,7 +28,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...artifacts import DifferentiationContract, ScientificArtifactEnvelope
+from ...artifacts import ScientificArtifactEnvelope
 from ...observation import (
     CholeskyCovarianceAction,
     CoordinateLayout,
@@ -41,7 +41,7 @@ from ...uq._metrics import (
     interval_calibration_diagnostics,
     IntervalCalibrationDiagnostics,
 )
-from ._products import combine_differentiation, CosmologyProductProvenance
+from ._products import CosmologyProductProvenance
 from ._spectral_statistics import (
     SpectralFieldDiscrepancyPlan,
     SpectralFieldDiscrepancyResult,
@@ -85,17 +85,6 @@ def _scalar_flag(value: ArrayLike, name: str, /) -> Array:
     if flag.shape != ():
         raise ValueError(f"{name} must be scalar.")
     return jax.lax.stop_gradient(flag)
-
-
-def _constant_contract(contract: DifferentiationContract, /) -> bool:
-    return not (
-        contract.upstream_physical_parameters
-        or contract.stored_values
-        or contract.query_coordinates
-        or contract.local_parameters
-        or contract.stochastic_realization
-        or contract.higher_order
-    )
 
 
 class DarkMatterInferenceEvaluation(StrictModule):
@@ -843,7 +832,7 @@ class ConstantExternalDarkMatterProduct(StrictModule, NonTrainableState):
             or artifact.license_id != manifest.license_id
             or manifest.manifest_id not in artifact.parent_artifact_ids
             or provenance.source_kind != "external"
-            or not _constant_contract(provenance.differentiation)
+            or provenance.differentiation.supported_surfaces
             or verified_manifest_id != manifest.manifest_id
         ):
             raise ValueError(
@@ -1274,10 +1263,7 @@ class DarkMatterDiscrepancyPlan(StrictModule, NonTrainableState):
             physics_policy_id=provenance.physics_policy_id,
             scale_id=provenance.scale_id,
             source_kind="native",
-            differentiation=combine_differentiation(
-                provenance.differentiation,
-                target_differentiation,
-            ),
+            differentiation=provenance.differentiation.meet(target_differentiation),
             parent_product_ids=parent_product_ids,
         )
         product_id = canonical_fingerprint(
@@ -1546,9 +1532,8 @@ class DarkMatterEmulatorCalibrationPlan(StrictModule, NonTrainableState):
             physics_policy_id=provenance.physics_policy_id,
             scale_id=provenance.scale_id,
             source_kind="native",
-            differentiation=combine_differentiation(
-                provenance.differentiation,
-                reference.provenance.differentiation,
+            differentiation=provenance.differentiation.meet(
+                reference.provenance.differentiation
             ),
             parent_product_ids=(
                 emulator_product_id,

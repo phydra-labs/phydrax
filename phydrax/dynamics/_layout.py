@@ -11,7 +11,9 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
+from .._model import ValuePort
 from .._strict import StrictModule
+from ..axes import AxisKey
 from ..linalg import AbstractVectorSpace, ArraySpace, DualSpace
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
 
@@ -184,6 +186,70 @@ class StateLayout(StrictModule):
     def cotangent_space(self) -> DualSpace:
         return DualSpace(self.tangent_space)
 
+    def value_port(
+        self,
+        *,
+        role: Literal[
+            "point", "local", "tangent", "local_cotangent", "cotangent"
+        ] = "point",
+    ) -> ValuePort:
+        """Return the canonical port of one declared state role.
+
+        Every role has `semantic_id` `f"{layout_id}:{role}"`, so the point,
+        local, tangent, and cotangent values of one layout never share a port.
+        `point` is the stored state array: event shape `shape`, components
+        `component_names`, representation `state-point`, neutral variance,
+        `space_id` equal to the state `geometry_id`, and one
+        `AxisKey(f"state-layout:{layout_id}", axis)` per declared axis. The
+        differential roles are canonical flattened coordinates of their declared
+        vector space: event shape `(space.size,)`, representation
+        `space-coordinates`, and `space_id` equal to that space's `space_id`.
+        `local` and `tangent` use their own component names and contravariant
+        variance; `local_cotangent` and `cotangent` are the dual spaces, reuse
+        the components of their primal space, and have covariant variance.
+        State layouts declare no physical dimensions, frames, or normalizations.
+        """
+        match role:
+            case "point":
+                scope = f"state-layout:{self.layout_id}"
+                return ValuePort(
+                    f"{self.layout_id}:point",
+                    event_shape=self.shape,
+                    component_ids=self.component_names,
+                    representation="state-point",
+                    space_id=self.geometry.geometry_id,
+                    axis_keys=tuple(AxisKey(scope, axis) for axis in self.axes),
+                )
+            case "local":
+                space = self.local_space
+                components = self.local_component_names
+                variance = "contravariant"
+            case "tangent":
+                space = self.tangent_space
+                components = self.tangent_component_names
+                variance = "contravariant"
+            case "local_cotangent":
+                space = self.local_cotangent_space
+                components = self.local_component_names
+                variance = "covariant"
+            case "cotangent":
+                space = self.cotangent_space
+                components = self.tangent_component_names
+                variance = "covariant"
+            case _:
+                raise ValueError(
+                    "role must be 'point', 'local', 'tangent', 'local_cotangent', "
+                    f"or 'cotangent'; got {role!r}."
+                )
+        return ValuePort(
+            f"{self.layout_id}:{role}",
+            event_shape=(space.size,),
+            component_ids=components,
+            representation="space-coordinates",
+            space_id=space.space_id,
+            variance=variance,
+        )
+
 
 class InputLayout(StrictModule):
     """Physical exogenous-input shape, labels, roles, and stable identity."""
@@ -241,6 +307,25 @@ class InputLayout(StrictModule):
                 "roles": list(resolved_roles),
             },
             "input-layout",
+        )
+
+    def value_port(self) -> ValuePort:
+        """Return the canonical port of the exogenous input array.
+
+        The port's `semantic_id` is `layout_id`, which already identifies the
+        per-component roles. Its event shape is `shape`, its components are
+        `component_names`, and every declared axis has
+        `AxisKey(f"input-layout:{layout_id}", axis)`. The representation is the
+        fixed literal `input-array` with neutral variance. Input layouts declare
+        no physical dimensions, spaces, frames, or normalizations.
+        """
+        scope = f"input-layout:{self.layout_id}"
+        return ValuePort(
+            self.layout_id,
+            event_shape=self.shape,
+            component_ids=self.component_names,
+            representation="input-array",
+            axis_keys=tuple(AxisKey(scope, axis) for axis in self.axes),
         )
 
 

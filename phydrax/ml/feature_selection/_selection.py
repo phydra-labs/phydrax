@@ -15,19 +15,25 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
 )
 from .._numerics import assign_bins, quantile_bin_edges
-from .._schema import FeatureSchema
+from .._schema import AbstractFittedModel, FeatureSchema
 
 
 class ExactSelection(StrictModule):
@@ -83,7 +89,7 @@ class FeatureSelectionDiagnostics(StrictModule):
         self.method = str(method)
 
 
-class ExactFeatureSelectorModel(AbstractArrayModel):
+class ExactFeatureSelectorModel(AbstractFittedModel):
     """Exact fixed-capacity gather, smooth in values conditional on fitted indices."""
 
     selection: ExactSelection
@@ -105,7 +111,7 @@ class ExactFeatureSelectorModel(AbstractArrayModel):
         return jnp.where(mask, selected, 0)
 
 
-class ContinuousFeatureGateModel(AbstractArrayModel):
+class ContinuousFeatureGateModel(AbstractFittedModel):
     """Smooth, shape-preserving sparse feature gate."""
 
     gates: Array
@@ -238,10 +244,12 @@ def _exact_result(
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="none",
-            fit_mode="stopped",
+        derivative_contract=DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),
+            ),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=("selected_indices", "selected_mask"),
             conditions=(
                 "Selection capacity is static; inactive padded entries evaluate to zero.",
@@ -709,12 +717,26 @@ class ContinuousSparseGateRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="continuous-sparse-gates",
-            gradient_contract=GradientContract(
-                fit_features="conditional",
-                fit_targets="conditional",
-                fit_weights="conditional",
-                fit_hyperparameters="conditional",
-                fit_mode="relaxed",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.RELAXED,
                 conditions=(
                     "The configured scorer must be differentiable at the supplied batch.",
                     "Feature and target masks must remain fixed with positive effective mass.",

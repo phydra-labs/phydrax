@@ -14,6 +14,7 @@ import jax.random as jr
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array
 
+from ..._differentiation import DerivativeRoute, DerivativeSurface, GradientLevel
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
 from .._batch import MLBatch
@@ -634,10 +635,13 @@ def influence_functions(
     """Compute damped empirical influence functions when fit gradients are certified."""
     if not isinstance(result, FitResult) or not isinstance(batch, MLBatch):
         raise TypeError("result and batch must use native Phydrax ML types.")
-    contract = result.gradient_contract
-    if contract.fit_mode == "stopped" or contract.fit_targets == "none":
+    contract = result.derivative_contract
+    if (
+        contract.route is DerivativeRoute.STOPPED
+        or contract.level(DerivativeSurface.FIT_TARGETS) is GradientLevel.NONE
+    ):
         raise ValueError(
-            "The fit result's GradientContract does not permit influence functions."
+            "The fit result's derivative contract does not permit influence functions."
         )
     if float(damping) < 0.0:
         raise ValueError("damping must be nonnegative.")

@@ -19,7 +19,11 @@ import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._model import AbstractArrayModel, StructuredDerivativeProvider
+from ..._model import (
+    AbstractArrayModel,
+    StructuredDerivativeProvider,
+    TRIAL_SPACE_CERTIFICATE_KEY,
+)
 from ...metrix.clifford import (
     basis_blade_product,
     CliffordAlgebraSpec,
@@ -30,7 +34,6 @@ from ._core import (
     SimilarityNormalization,
     TrefftzResourceBudget,
     TrefftzResourceEvidence,
-    TRIAL_SPACE_CERTIFICATE_KEY,
     TRIAL_SPACE_REPRESENTATION_KEY,
     TrialSpaceCertificate,
 )

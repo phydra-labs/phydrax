@@ -16,7 +16,12 @@ from phydrax.ein import contract
 from .._admissibility import (
     AdmissibilityHeader,
     AdmissibilityReason,
-    DerivativeAvailability,
+)
+from .._differentiation import (
+    branch_policy_contract,
+    BranchDifferentiationPolicy,
+    DerivativeContract,
+    DerivativeSurface,
 )
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -33,6 +38,13 @@ class ThinEDLReason(IntFlag):
     INVALID_TANGENTIAL_FIELD = 1 << 11
 
 
+# Derivatives of the executed algorithm with model and regime decisions frozen.
+_DERIVATIVE_CONTRACT = branch_policy_contract(
+    BranchDifferentiationPolicy.FROZEN_DECISION,
+    surfaces=(DerivativeSurface.PRIMAL_STATE, DerivativeSurface.PHYSICAL_PARAMETER),
+)
+
+
 class ThinEDLSlipEvaluation(StrictModule):
     slip_velocity: Array
     debye_length: Array
@@ -40,7 +52,7 @@ class ThinEDLSlipEvaluation(StrictModule):
     dukhin_number: Array
     electroneutrality_defect: Array
     header: AdmissibilityHeader
-    derivative_availability: DerivativeAvailability = eqx.field(static=True)
+    derivative_contract: DerivativeContract
     volumetric_force_permitted: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -231,7 +243,7 @@ class ThinEDLElectroosmoticSlipPlan(StrictModule, NonTrainableState):
             jnp.asarray(dukhin, dtype=concentration.dtype),
             charge_defect,
             header,
-            DerivativeAvailability.ALGORITHMIC_FIXED_MODEL,
+            _DERIVATIVE_CONTRACT,
             False,
             self.plan_id,
         )

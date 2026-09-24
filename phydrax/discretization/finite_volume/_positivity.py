@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -33,7 +34,7 @@ class EinfeldtHLLFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan):
     """Monotone HLL fallback with Roe-enlarged Einfeldt signal bounds."""
 
     def __init__(self):
-        self.differentiability = "almost_everywhere"
+        self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.flux_id = canonical_fingerprint(
             {"kind": "einfeldt-hll-flux", "normal_ale_contract": _NORMAL_ALE_CONTRACT}
         )

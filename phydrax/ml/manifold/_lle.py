@@ -13,9 +13,17 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, GradientContract
+from .._contracts import AbstractRecipe, FitResult
+from .._schema import AbstractFittedModel
 from ._common import (
     _BLOCKWISE_BINDING,
     _case_count,
@@ -155,7 +163,7 @@ def _lle_alignment_one(
     return embedding, eigenvalues, residual
 
 
-class LocallyLinearEmbeddingModel(AbstractArrayModel):
+class LocallyLinearEmbeddingModel(AbstractFittedModel):
     """Fitted LLE embedding with conditional barycentric out-of-sample extension."""
 
     training_features: Array
@@ -342,14 +350,31 @@ class LocallyLinearEmbeddingRecipe(AbstractRecipe):
             case_shape=batch.case_shape,
         )
         transform_supported = self.variant in ("standard", "modified")
-        contract = GradientContract(
-            prediction_inputs="conditional" if transform_supported else "none",
-            prediction_parameters="conditional" if transform_supported else "none",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="spectral",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.INPUT,
+                    GradientLevel.CONDITIONAL
+                    if transform_supported
+                    else GradientLevel.NONE,
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER,
+                    GradientLevel.CONDITIONAL
+                    if transform_supported
+                    else GradientLevel.NONE,
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             nondifferentiable_outputs=(
                 "neighbor_indices",
                 "connectivity",
@@ -368,7 +393,7 @@ class LocallyLinearEmbeddingRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method=f"lle-{self.variant}",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

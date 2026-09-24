@@ -47,7 +47,6 @@ boundaries.
     ```
 """
 
-from .._hybrid_sensitivity import HybridSensitivityMode
 from . import advanced, coupling, maxwell
 from ._adaptive_tdvp import (
     AdaptiveTDVPPlan,
@@ -4016,7 +4015,6 @@ __all__ = [
     "NumericalEventResult",
     "localize_hybrid_event_root",
     "localize_numerical_event",
-    "HybridSensitivityMode",
     "particle_conversion_surrogate_bias",
     "particle_conversion_validity_certificate",
     "ParticleConversionSensitivityPolicy",

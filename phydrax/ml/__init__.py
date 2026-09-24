@@ -10,7 +10,6 @@ from ._contracts import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_CAPACITY_EXHAUSTED,
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
@@ -18,9 +17,6 @@ from ._contracts import (
     ML_NONFINITE,
     ML_RANK_DEFICIENT,
     ML_SUCCESS,
-    ML_UNSUPPORTED_GRADIENT,
-    MLGradientAdmission,
-    MLGradientRequest,
 )
 from ._fit import fit
 from ._overlap import (
@@ -97,7 +93,6 @@ __all__ = [
     "ML_NONFINITE",
     "ML_RANK_DEFICIENT",
     "ML_SUCCESS",
-    "ML_UNSUPPORTED_GRADIENT",
     "AbstractRecipe",
     "ClassificationObjective",
     "ClassificationObjectiveKind",
@@ -105,10 +100,7 @@ __all__ = [
     "FeatureSchema",
     "FitDiagnostics",
     "FitResult",
-    "GradientContract",
     "MLBatch",
-    "MLGradientAdmission",
-    "MLGradientRequest",
     "OverlapClassReduction",
     "OverlapEmptyPolicy",
     "OverlapKind",

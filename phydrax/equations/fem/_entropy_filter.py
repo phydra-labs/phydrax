@@ -15,6 +15,7 @@ from scipy.special import eval_legendre
 
 import phydrax.ein as ein
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._ssp_runge_kutta import (
     AbstractSSPRKStageTransform,
@@ -23,10 +24,6 @@ from ..._numerics._ssp_runge_kutta import (
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._conservation_boundary import PrescribedNormalFluxBoundary
-from ...discretization._conservation_policy import (
-    DifferentiabilityPolicy,
-    validate_differentiability_policy,
-)
 from ...discretization.fem._boundary import tensor_local_face
 from .._hyperbolic_systems import EulerSystem
 from ._conservation import PreparedDGSEMConservationDynamics
@@ -52,7 +49,7 @@ class EntropyFilterPlan(StrictModule, NonTrainableState):
     maximum_strength: float = eqx.field(static=True)
     bisection_iterations: int = eqx.field(static=True)
     mean_tolerance: float = eqx.field(static=True)
-    differentiability: DifferentiabilityPolicy = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -66,7 +63,9 @@ class EntropyFilterPlan(StrictModule, NonTrainableState):
         maximum_strength: float = 36.0,
         bisection_iterations: int = 24,
         mean_tolerance: float = 1.0e-10,
-        differentiability: DifferentiabilityPolicy = "branchwise",
+        differentiability: BranchDifferentiationPolicy = (
+            BranchDifferentiationPolicy.BRANCHWISE
+        ),
     ):
         density = None if density_floor is None else float(density_floor)
         pressure = None if pressure_floor is None else float(pressure_floor)
@@ -75,11 +74,19 @@ class EntropyFilterPlan(StrictModule, NonTrainableState):
         strength = float(maximum_strength)
         iterations = int(bisection_iterations)
         mean = float(mean_tolerance)
-        differentiability_ = validate_differentiability_policy(differentiability)
-        if differentiability_ not in ("branchwise", "unsupported"):
-            raise ValueError(
-                "The hard entropy filter supports branchwise or unsupported AD."
-            )
+        if not isinstance(differentiability, BranchDifferentiationPolicy):
+            raise TypeError("differentiability must be a BranchDifferentiationPolicy.")
+        match differentiability:
+            case (
+                BranchDifferentiationPolicy.BRANCHWISE
+                | BranchDifferentiationPolicy.UNSUPPORTED
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "EntropyFilterPlan supports BRANCHWISE or UNSUPPORTED; got "
+                    f"{differentiability.name}."
+                )
         if density is not None and (not math.isfinite(density) or density <= 0.0):
             raise ValueError("density_floor must be finite and positive when supplied.")
         if pressure is not None and (not math.isfinite(pressure) or pressure <= 0.0):
@@ -102,7 +109,7 @@ class EntropyFilterPlan(StrictModule, NonTrainableState):
         self.maximum_strength = strength
         self.bisection_iterations = iterations
         self.mean_tolerance = mean
-        self.differentiability = differentiability_
+        self.differentiability = differentiability
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "entropy-filter-plan",
@@ -113,7 +120,7 @@ class EntropyFilterPlan(StrictModule, NonTrainableState):
                 "maximum_strength": strength,
                 "bisection_iterations": iterations,
                 "mean_tolerance": mean,
-                "differentiability": differentiability_,
+                "differentiability": differentiability.value,
             }
         )
 

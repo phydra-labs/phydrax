@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from enum import Enum, IntFlag
+from enum import IntFlag
 from functools import partial
 from typing import Any, Literal, TypeAlias
 
@@ -32,15 +32,6 @@ class AdmissibilityReason(IntFlag):
 
 
 DOMAIN_REASON_SHIFT = 8
-
-
-class DerivativeAvailability(str, Enum):
-    """Derivative semantics promised by one fixed physical model."""
-
-    NONE = "none"
-    WITHIN_FIXED_MODEL = "within-fixed-model"
-    ALGORITHMIC_FIXED_MODEL = "algorithmic-fixed-model"
-    IMPLICIT_FIXED_MODEL = "implicit-fixed-model"
 
 
 DerivativeFailureMode: TypeAlias = Literal["status", "error"]
@@ -276,7 +267,6 @@ __all__ = [
     "AdmissibilityHeader",
     "AdmissibilityReason",
     "AdmissibilityTransitionRequest",
-    "DerivativeAvailability",
     "DerivativeFailureMode",
     "combine_admissibility",
     "guard_derivative_validity",

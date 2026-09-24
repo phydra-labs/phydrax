@@ -86,7 +86,7 @@ def _transfer(space):
         physics_policy_id="correlated-two-component-transfer",
         scale_id=background.scale.scale_id,
         source_kind="native",
-        differentiation="constant",
+        differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
         parent_product_ids=(artifact.artifact_id,),
     )
     transfer = ComponentTransferMatrixProduct(

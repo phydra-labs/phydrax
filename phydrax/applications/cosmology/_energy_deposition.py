@@ -15,10 +15,10 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
+from ..._differentiation import DerivativeContract, DerivativeSurface
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...artifacts import DifferentiationContract
 from ...interchange import AdapterLoss, AdapterReport, AdapterStatus
 from ...qualification import ReferenceArtifactManifest
 from ._closure import CosmologyRealizationSignature
@@ -84,9 +84,19 @@ def _source_axis(
     return scale_factor, permutation, direction
 
 
+_NATIVE_DIFFERENTIATION = DerivativeContract.smooth(
+    (
+        DerivativeSurface.INPUT,
+        DerivativeSurface.MODEL_PARAMETER,
+        DerivativeSurface.PHYSICAL_PARAMETER,
+        DerivativeSurface.STORED_VALUES,
+    )
+)
+
+
 def _admit_external(
     source_kind: DepositionSourceKind,
-    differentiation: DifferentiationContract,
+    differentiation: DerivativeContract,
     manifest: ReferenceArtifactManifest | None,
     /,
     *,
@@ -97,8 +107,8 @@ def _admit_external(
 ) -> bool:
     if source_kind not in ("native", "external"):
         raise ValueError("source_kind must be 'native' or 'external'.")
-    if not isinstance(differentiation, DifferentiationContract):
-        raise TypeError("differentiation must be a DifferentiationContract.")
+    if not isinstance(differentiation, DerivativeContract):
+        raise TypeError("differentiation must be a DerivativeContract.")
     external = source_kind == "external"
     if external:
         if not isinstance(manifest, ReferenceArtifactManifest):
@@ -111,7 +121,7 @@ def _admit_external(
             training_use=training_use,
             export=export,
         )
-        if differentiation.contract_id != DifferentiationContract.constant().contract_id:
+        if differentiation.supported_surfaces:
             raise ValueError(
                 "External deposition products must declare constant differentiation."
             )
@@ -136,7 +146,7 @@ class InjectionSpectrum(StrictModule, NonTrainableState):
     energy_gev: Array
     differential_number_per_gev: Array
     manifest: ReferenceArtifactManifest | None
-    differentiation: DifferentiationContract
+    differentiation: DerivativeContract
     species: tuple[str, ...] = eqx.field(static=True)
     source_axis_direction: str = eqx.field(static=True)
     source_kind: DepositionSourceKind = eqx.field(static=True)
@@ -153,7 +163,7 @@ class InjectionSpectrum(StrictModule, NonTrainableState):
         *,
         source_id: str,
         source_kind: DepositionSourceKind = "native",
-        differentiation: DifferentiationContract | str = "native-parameter",
+        differentiation: DerivativeContract = _NATIVE_DIFFERENTIATION,
         manifest: ReferenceArtifactManifest | None = None,
         commercial_use: bool = False,
         redistribution: bool = False,
@@ -184,14 +194,9 @@ class InjectionSpectrum(StrictModule, NonTrainableState):
         identifier = str(source_id).strip()
         if not identifier:
             raise ValueError("source_id must be non-empty.")
-        differentiation_ = (
-            DifferentiationContract.from_label(differentiation)
-            if isinstance(differentiation, str)
-            else differentiation
-        )
         external = _admit_external(
             source_kind,
-            differentiation_,
+            differentiation,
             manifest,
             commercial_use=commercial_use,
             redistribution=redistribution,
@@ -217,7 +222,7 @@ class InjectionSpectrum(StrictModule, NonTrainableState):
         self.energy_gev = energy_array
         self.differential_number_per_gev = values_array
         self.manifest = manifest
-        self.differentiation = differentiation_
+        self.differentiation = differentiation
         self.species = species_
         self.source_axis_direction = direction
         self.source_kind = source_kind
@@ -240,7 +245,7 @@ class InjectionSpectrum(StrictModule, NonTrainableState):
                     "spectrum": "injection^-1 GeV^-1",
                 },
                 "manifest": None if manifest is None else manifest.manifest_id,
-                "differentiation": differentiation_.contract_id,
+                "differentiation": differentiation.contract_id,
             }
         )
 
@@ -265,7 +270,7 @@ class CascadeKernelProduct(StrictModule, NonTrainableState):
     valid: Array
     status: Array
     manifest: ReferenceArtifactManifest | None
-    differentiation: DifferentiationContract
+    differentiation: DerivativeContract
     species: tuple[str, ...] = eqx.field(static=True)
     deposition_channels: tuple[str, ...] = eqx.field(static=True)
     state_names: tuple[str, ...] = eqx.field(static=True)
@@ -288,7 +293,7 @@ class CascadeKernelProduct(StrictModule, NonTrainableState):
         /,
         *,
         source_kind: DepositionSourceKind = "native",
-        differentiation: DifferentiationContract | str = "native-parameter",
+        differentiation: DerivativeContract = _NATIVE_DIFFERENTIATION,
         manifest: ReferenceArtifactManifest | None = None,
         relative_closure_tolerance: float = 1e-6,
         absolute_closure_tolerance_gev: float = 1e-12,
@@ -340,14 +345,9 @@ class CascadeKernelProduct(StrictModule, NonTrainableState):
             raise ValueError(
                 "Cascade kernel axes, state, values, or closure tolerances are invalid."
             )
-        differentiation_ = (
-            DifferentiationContract.from_label(differentiation)
-            if isinstance(differentiation, str)
-            else differentiation
-        )
         external = _admit_external(
             source_kind,
-            differentiation_,
+            differentiation,
             manifest,
             commercial_use=commercial_use,
             redistribution=redistribution,
@@ -391,7 +391,7 @@ class CascadeKernelProduct(StrictModule, NonTrainableState):
             dtype=jnp.int32,
         )
         self.manifest = manifest
-        self.differentiation = differentiation_
+        self.differentiation = differentiation
         self.species = species_
         self.deposition_channels = channels
         self.state_names = state_names_
@@ -409,7 +409,7 @@ class CascadeKernelProduct(StrictModule, NonTrainableState):
                 "state_names": list(state_names_),
                 "source_kind": source_kind,
                 "manifest": None if manifest is None else manifest.manifest_id,
-                "differentiation": differentiation_.contract_id,
+                "differentiation": differentiation.contract_id,
                 "relative_closure_tolerance": tolerance,
                 "absolute_closure_tolerance_gev": absolute_tolerance,
             }
@@ -645,10 +645,7 @@ class SpeciesResolvedThermodynamicsHistory(StrictModule, NonTrainableState):
                 raise ValueError(
                     "External thermodynamics provenance must name its rights manifest."
                 )
-            if (
-                provenance.differentiation.contract_id
-                != DifferentiationContract.constant().contract_id
-            ):
+            if provenance.differentiation.supported_surfaces:
                 raise ValueError(
                     "External thermodynamics history must be constant under differentiation."
                 )

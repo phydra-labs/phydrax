@@ -6,6 +6,16 @@ import pytest
 import phydrax as phx
 
 
+NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
+    (
+        phx.DerivativeSurface.INPUT,
+        phx.DerivativeSurface.MODEL_PARAMETER,
+        phx.DerivativeSurface.PHYSICAL_PARAMETER,
+        phx.DerivativeSurface.STORED_VALUES,
+    )
+)
+
+
 cosmology = phx.applications.cosmology
 
 
@@ -20,7 +30,7 @@ def _context(shells, *, fields=("total_matter", "total_matter"), stage="linear")
         physics_policy_id="measured-density-contrast",
         scale_id=background.scale.scale_id,
         source_kind="native",
-        differentiation=cosmology.DifferentiationContract.native(),
+        differentiation=NATIVE_DIFFERENTIATION,
     )
     descriptor = cosmology.MatterPowerDescriptor(
         fields[0], fields[1], stage=stage, spatial_dimension=len(shells.source_shape)

@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import BranchDifferentiationPolicy
 from phydrax.closure_data import (
     LearnedClosureBindingPlan,
     LearnedStressBindingPlan,
@@ -173,7 +174,7 @@ def test_signed_stress_validates_contract_and_preserves_backscatter():
     )
     np.testing.assert_allclose(result.stress, jnp.swapaxes(result.stress, -1, -2))
     assert not bool(result.evidence.correction_applied)
-    assert result.evidence.differentiation_semantics == "smooth_discrete"
+    assert result.evidence.differentiation_semantics is BranchDifferentiationPolicy.SMOOTH
     assert result.evidence.target_id == prepared.plan.output_contract.target_id
     assert result.evidence.filter_id == prepared.plan.resolved_filter.filter_id
     assert result.evidence.valid
@@ -187,7 +188,10 @@ def test_dissipative_projection_removes_only_negative_local_transfer():
     assert bool(result.evidence.correction_applied)
     assert bool(result.evidence.correction_active[0])
     assert not bool(result.evidence.correction_active[1])
-    assert result.evidence.differentiation_semantics == "branchwise"
+    assert (
+        result.evidence.differentiation_semantics
+        is BranchDifferentiationPolicy.BRANCHWISE
+    )
     np.testing.assert_allclose(result.evidence.selected_backscatter_transfer, 0.0)
 
 
@@ -390,4 +394,4 @@ def test_existing_generic_binding_contract_remains_unchanged():
 
     assert binding.predictor is predictor
     assert binding.deployment_kind == "conservative_face"
-    assert binding.differentiability == "smooth_discrete"
+    assert binding.differentiability is BranchDifferentiationPolicy.SMOOTH

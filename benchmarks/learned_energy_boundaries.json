@@ -29,24 +29,24 @@
   },
   "identities": {
     "boundary_topologies": {
-      "exchange_equilibrium_reservoir": "c360a2191fc3bcc430c6b570171d12aed523e846ddc71f5b733da84f6283f8cd",
-      "invalid_target_reservoir": "461ccd36aacb8bc08601c4c30982368edb9f815d718ddc3549b63810e400f32c",
-      "matching_equilibrium_reservoir": "c360a2191fc3bcc430c6b570171d12aed523e846ddc71f5b733da84f6283f8cd",
-      "maxwell_thermal": "3f2aa6d669cba7c92f2d2c61747d1e82fa76f6e870df1ca2c06c8dc3d072de22",
-      "maxwell_thermal_degenerate": "8117980062484c6109d15a64daeeab8cefeba1f8dac4c85aae5936efc685e22e",
-      "outward_extrapolation": "866418d4f7d355fee733c8f29f7d422e942b32368b353b60628ca5bf74ba1640",
-      "periodic": "8d3bf4f3d839928540dfd7e761a1efc572304725e2ebec1f4bfb058eefb2bad8",
-      "specular_adiabatic": "c9dbb44ab3596dc066673569fe068b8b3b1626dadea3358da1af3d6b314546a7"
+      "exchange_equilibrium_reservoir": "f862a920d7a8130bf2ff604f9a51e926fa7a6735a825d5649c11ab44aba51306",
+      "invalid_target_reservoir": "9f3e5324f01bb0a78a8cff696e12023be1611a0e103dc7b61caaaf378188ee30",
+      "matching_equilibrium_reservoir": "f862a920d7a8130bf2ff604f9a51e926fa7a6735a825d5649c11ab44aba51306",
+      "maxwell_thermal": "9c2772612b5a7963c2b3ae9c40cd5309e3acb52862e4137560a2760ea243a95d",
+      "maxwell_thermal_degenerate": "a9283e1b955b19f5670661c22cad7f505fe41a0cb5ddcbe0aebcfb61faa79c11",
+      "outward_extrapolation": "1815bb05305fd485693602ae4da5e1da6a6c9ae57063eb885cd8c16c177ada5b",
+      "periodic": "4d7a556c184be484fb61c9f0936bcbbda40a92ad4e08eabea11fa694d0b90016",
+      "specular_adiabatic": "af83397dfcfec6eed5df25fdcf281bd7d6eda0dc1487b5cad0bbc2701db5a582"
     },
-    "boundary_topology_set": "f6d57b9ead80b94e7c0d9093c09a161a795b0eae21ba0cc8269fe553e3fce4b1",
-    "energy_plan": "e8aeae0ee5b21b368fc2a3410a1694ff8fcb3cf78c28c0d6d6ee172fb5c8d5db",
-    "kinetic_method": "edf09afb32dbafb777bc3dbef3a0a985439700f499f88ec634825ff69b8a362f",
+    "boundary_topology_set": "bfcf3a2344918c3e1fac5fda74204ff3654dd3ed28b658b82d59834d28972ebf",
+    "energy_plan": "b4cb8e1f0260cd96191636b31f2fa817f83c59e2c5a6375bedc7ce3765eaf189",
+    "kinetic_method": "6199410282d847d6b25d7bf44a56144b92974898716efd9a22a781e3f218d2eb",
     "material": "2a9118f25ff3fa199ce1cd53ac2d948f42809a1728b021f1477dd5ae6bf05ea3",
-    "parent_periodic_transport": "4280d7fffab30036760877ef1e30d7f7890ef1576096290650c682b1408877f5",
-    "quadrature": "dc679fee35dccbf283f88cbe6afc8bf2f350f2dc74c828c0fb82fd7e1f8676e9",
-    "runtime": "8362477b8bc8005f343a2ced4ae095e60ce80b6c0bdd13c019963b9f6e719032",
-    "runtime_program_manifest": "5a58b44b22f002abe2c6968a1c6d5d50841fd8395c2c6e49e615fc8517290cbf",
-    "spatial_plan": "a3d2b9292297d5e8bbc0115b8ad625b1cf5c007c2a842c108ae41f2e3211b3b7",
+    "parent_periodic_transport": "34a65127a34e08b8fd38e3bf7cdf201e5899e779665d62fb44f30024a457feb1",
+    "quadrature": "e98e367a69a4a752157e9b59c0ed86a14962bab97bb018bdfe919b7492ef05bf",
+    "runtime": "c931d87472cb044a48f9fc08dc0f6a7374c04ed5d8ecacc3823526d58789cd81",
+    "runtime_program_manifest": "e7077092d71183bd1b1452d35590cfc02c9122adc0b0689f9eb040517108f793",
+    "spatial_plan": "0da510336d6eb07260a23daf611d965fe657d8fd030fc83c754e467d835a5457",
     "transport_closure": "2e968ac79dc0270cfa5a32b4e32f6b9eb950d099102738b02c4a2a39af3a2b31"
   },
   "incompatible_reservoir_corner": {
@@ -66,18 +66,18 @@
     ],
     "particle_state_fully_restored": true,
     "passed": true,
-    "plan_id": "c97fd3a208843628ba251c42842be6463900ea93d7297fcfa27e8cb512447fdd",
+    "plan_id": "b27bdd115050dea5b009d7330b75a52776c5680991cd8e88353ca9eec1f253e4",
     "rejected_candidate_differs": true,
     "rollback_applied": true,
     "status": "INVALID_TARGET",
-    "topology_id": "461ccd36aacb8bc08601c4c30982368edb9f815d718ddc3549b63810e400f32c"
+    "topology_id": "9f3e5324f01bb0a78a8cff696e12023be1611a0e103dc7b61caaaf378188ee30"
   },
   "lineage": {
-    "model_id": "4bbf067759323e62ef1f48ec91fbcc04d9b43b66d10f4f9b81fd0f7d79f6a1b7",
-    "parent_spatial_id": "e1bc2bea38460367c07443afb911cecb2253f44fce8023569271e2f32a11ab34",
-    "runtime_id": "8362477b8bc8005f343a2ced4ae095e60ce80b6c0bdd13c019963b9f6e719032",
-    "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176",
-    "topology_id": "f6d57b9ead80b94e7c0d9093c09a161a795b0eae21ba0cc8269fe553e3fce4b1"
+    "model_id": "ab49b6a07cdac9a5fc7ec9fbf8f8feff1cdb48e5dc1b461e3a32c941c013a89f",
+    "parent_spatial_id": "00f1543552971a1bedeb5d4427d88608d6fe8258ff0f4bec1c90ee077790e981",
+    "runtime_id": "c931d87472cb044a48f9fc08dc0f6a7374c04ed5d8ecacc3823526d58789cd81",
+    "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d",
+    "topology_id": "bfcf3a2344918c3e1fac5fda74204ff3654dd3ed28b658b82d59834d28972ebf"
   },
   "long_link_routes": {
     "checked_long_boundary_links": 368,
@@ -130,12 +130,12 @@
     "incoming_values_supplied_directly": true,
     "input_source": "prepared runtime analytic safe-equilibrium f/g populations",
     "passed": true,
-    "plan_id": "622cd1e63b5db4804fe9797c91583538057512ab9d34b1c8672757584cede43c",
+    "plan_id": "fb69b12dc55b4d368cd4d692f0770138aac2d03ccc3440f7dbc6b433cf23ee2e",
     "state_exactly_stationary": true,
-    "topology_id": "c360a2191fc3bcc430c6b570171d12aed523e846ddc71f5b733da84f6283f8cd"
+    "topology_id": "f862a920d7a8130bf2ff604f9a51e926fa7a6735a825d5649c11ab44aba51306"
   },
   "maxwell_thermal": {
-    "degenerate_topology_id": "8117980062484c6109d15a64daeeab8cefeba1f8dac4c85aae5936efc685e22e",
+    "degenerate_topology_id": "a9283e1b955b19f5670661c22cad7f505fe41a0cb5ddcbe0aebcfb61faa79c11",
     "passed": true,
     "positive_accommodation": {
       "accepted_energy_exchange": 3547.6171875,
@@ -171,7 +171,7 @@
       ],
       "mass_flux_absolute_tolerance": 5e-10,
       "passed": true,
-      "plan_id": "80774c012bceb11df23c99d1a5781c5a9e2af29da5e2e0485ca4fe38455a45f6",
+      "plan_id": "a4c51419a0713d8bb64325e4047abbcfc604a719f914e29c365ef6a9fcb8380b",
       "reported_exchange_tolerance": 6.951454765349108e-10,
       "reported_mass_momentum_energy_exchange": [
         1.5279510989785194e-10,
@@ -205,7 +205,7 @@
         "energy_state_fully_restored": true,
         "exchange_ledgers_exactly_zero": true,
         "particle_state_fully_restored": true,
-        "plan_id": "4e957b4d24a3cb0c2739663d41c6d9e227efd7348036e67664c8102b31e8003b",
+        "plan_id": "f474bf49afb4b70e74346e7ba5c5ad89ca135e3112f4a7f0600f4e05f6fe4c40",
         "refused": true,
         "rollback_applied": true,
         "route_dtype": "float32",
@@ -216,19 +216,19 @@
         "energy_state_fully_restored": true,
         "exchange_ledgers_exactly_zero": true,
         "particle_state_fully_restored": true,
-        "plan_id": "80774c012bceb11df23c99d1a5781c5a9e2af29da5e2e0485ca4fe38455a45f6",
+        "plan_id": "a4c51419a0713d8bb64325e4047abbcfc604a719f914e29c365ef6a9fcb8380b",
         "refused": true,
         "rollback_applied": true,
         "status": "NONPOSITIVE_CANDIDATE"
       },
       "passed": true
     },
-    "topology_id": "3f2aa6d669cba7c92f2d2c61747d1e82fa76f6e870df1ca2c06c8dc3d072de22",
+    "topology_id": "9c2772612b5a7963c2b3ae9c40cd5309e3acb52862e4137560a2760ea243a95d",
     "zero_accommodation_specular_limit": {
       "coupled_state_and_ledgers_exactly_equal": true,
       "passed": true,
-      "plan_id": "34049c25b5c879c3ac31b3dfe6e0ff503d5b8fd6709def19bf3a4eeb8c454f9e",
-      "reference_specular_plan_id": "7bc03233d273b6751e9b194b6659ba3de03ac051c71c23fbe90863aaa815a91f",
+      "plan_id": "b1e83cd0c1cec1430d35920fcea88e349d5c32ed72f9a1800701580ae7c5ed6e",
+      "reference_specular_plan_id": "da1d01a2a13a25ffb95ecb43634d4e244fc758d7c810eb264883067714cb0259",
       "status": "SUCCESS"
     }
   },
@@ -262,13 +262,13 @@
       true
     ],
     "physical_axis": "x",
-    "plan_id": "814283ef463d1a819cc075b0b385e947dfaec10d7cc788208e8e44a97a5ed9c7",
-    "topology_id": "866418d4f7d355fee733c8f29f7d422e942b32368b353b60628ca5bf74ba1640"
+    "plan_id": "fb0cc778c9a0ec6805c5adcf3178f5ee29745f611c83225a3c2d6c694871b6cd",
+    "topology_id": "1815bb05305fd485693602ae4da5e1da6a6c9ae57063eb885cd8c16c177ada5b"
   },
   "passed": true,
   "periodic_compatibility": {
-    "boundary_plan_id": "2ffbf5003655698882c55c5a267d9a60e97dfe4074e4240ed773abf26857f921",
-    "boundary_topology_id": "8d3bf4f3d839928540dfd7e761a1efc572304725e2ebec1f4bfb058eefb2bad8",
+    "boundary_plan_id": "c073d186c4063d1243c4572b5142d4fdd8b43af7987f92165fbc7c5073f020a6",
+    "boundary_topology_id": "4d7a556c184be484fb61c9f0936bcbbda40a92ad4e08eabea11fa694d0b90016",
     "energy_maximum_absolute_difference": 0.0,
     "exchange": [
       0.0,
@@ -277,11 +277,11 @@
       0.0
     ],
     "history_retained_and_exact": true,
-    "parent_periodic_transport_id": "4280d7fffab30036760877ef1e30d7f7890ef1576096290650c682b1408877f5",
+    "parent_periodic_transport_id": "34a65127a34e08b8fd38e3bf7cdf201e5899e779665d62fb44f30024a457feb1",
     "particle_maximum_absolute_difference": 0.0,
     "passed": true
   },
-  "qualification_id": "98c45201aff689f708e7ebec4fb092aaeb13e160c7b9b6d0d91110f1e60c0fce",
+  "qualification_id": "da9b32a5669bba1de24328e41632bbc67bc8958994f12dbf5a685b5dbc718299",
   "reservoir_exchange_and_corners": {
     "all_exchange_components_nonzero": true,
     "coupled_route_values_exact": true,
@@ -300,14 +300,14 @@
       0.05316821695963547
     ],
     "passed": true,
-    "plan_id": "0af027bf60d2e2215949df6e6c4e7de18537b41d9436ad695863501dddff24a3",
+    "plan_id": "7cf1179902856a66911ab3a0698ca3f571d4011d8ab5e66e3887269175a8189a",
     "reported_mass_momentum_energy_exchange": [
       0.0410037923177099,
       -0.00543040364583333,
       -0.008020540364583327,
       0.05316821695963703
     ],
-    "topology_id": "c360a2191fc3bcc430c6b570171d12aed523e846ddc71f5b733da84f6283f8cd",
+    "topology_id": "f862a920d7a8130bf2ff604f9a51e926fa7a6735a825d5649c11ab44aba51306",
     "wall_momentum_impulse": [
       0.0,
       0.0
@@ -348,14 +348,14 @@
       0.0
     ],
     "passed": true,
-    "plan_id": "7bc03233d273b6751e9b194b6659ba3de03ac051c71c23fbe90863aaa815a91f",
+    "plan_id": "da1d01a2a13a25ffb95ecb43634d4e244fc758d7c810eb264883067714cb0259",
     "reported_mass_momentum_energy_exchange": [
       0.0,
       -7238.875,
       -450.75,
       0.0
     ],
-    "topology_id": "c9dbb44ab3596dc066673569fe068b8b3b1626dadea3358da1af3d6b314546a7",
+    "topology_id": "af83397dfcfec6eed5df25fdcf281bd7d6eda0dc1487b5cad0bbc2701db5a582",
     "wall_momentum_impulse": [
       7238.875,
       450.75

@@ -18,7 +18,6 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...artifacts import DifferentiationContract
 from ...qualification import ReferenceArtifactManifest
 from ..astrophysics._operators import SpectralField
 from ..astrophysics._photometry import ObservationDataProvenance
@@ -247,9 +246,7 @@ class ParticleYieldSpectrum(StrictModule, NonTrainableState):
             )
         if uncertainty.line_standard_deviation.shape != lines.energy_gev.shape:
             raise ValueError("Line uncertainty must match the exact line table.")
-        constant = continuum.provenance.differentiation.contract_id == (
-            DifferentiationContract.constant().contract_id
-        )
+        constant = not continuum.provenance.differentiation.supported_surfaces
         coordinate = (
             jax.lax.stop_gradient(continuum.coordinate)
             if constant
@@ -484,10 +481,7 @@ class ExternalYieldProviderResult(StrictModule, NonTrainableState):
             raise ValueError(
                 "Yield provenance checksum/license must match its rights manifest."
             )
-        if (
-            provenance.differentiation.contract_id
-            != DifferentiationContract.constant().contract_id
-        ):
+        if provenance.differentiation.supported_surfaces:
             raise ValueError(
                 "External yield products must declare constant differentiation."
             )

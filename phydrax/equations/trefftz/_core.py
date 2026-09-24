@@ -7,7 +7,7 @@ from __future__ import annotations
 import abc
 import math
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,9 +15,10 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
+from ..._differentiation import AbstractConstructionCertificate
 from ..._doc import DOC_KEY0
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._model import AbstractArrayModel, MODEL_CONSTRUCTION_CERTIFICATE_KEYS
+from ..._model import AbstractArrayModel, TRIAL_SPACE_CERTIFICATE_KEY
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -33,7 +34,7 @@ TrialEquationFamily = Literal[
 TrialExactness = Literal["algebraic"]
 TrialCoverage = Literal["finite-subspace", "finite-parametric-family"]
 TrialValidityRegion = Literal["all-space", "off-singular-support"]
-TRIAL_SPACE_CERTIFICATE_KEY = next(iter(MODEL_CONSTRUCTION_CERTIFICATE_KEYS))
+
 TRIAL_SPACE_REPRESENTATION_KEY = "trial_space_runtime_representation"
 
 
@@ -172,9 +173,10 @@ class TrefftzResourceEvidence(StrictModule, NonTrainableState):
         )
 
 
-class TrialSpaceCertificate(StrictModule, NonTrainableState):
+class TrialSpaceCertificate(AbstractConstructionCertificate):
     """Construction claim for a finite PDE-satisfying trial space."""
 
+    capability_id: ClassVar[str] = "exact-pde-trial-space"
     equation_family: TrialEquationFamily = eqx.field(static=True)
     ambient_dimension: int = eqx.field(static=True)
     field_shape: tuple[int, ...] = eqx.field(static=True)
@@ -550,7 +552,6 @@ __all__ = [
     "SimilarityNormalization",
     "TrefftzResourceBudget",
     "TrefftzResourceEvidence",
-    "TRIAL_SPACE_CERTIFICATE_KEY",
     "TRIAL_SPACE_REPRESENTATION_KEY",
     "TrialCoverage",
     "trial_target_fingerprint",

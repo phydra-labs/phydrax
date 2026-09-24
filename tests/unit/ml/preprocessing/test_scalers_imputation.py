@@ -55,9 +55,18 @@ def test_standard_scaler_preserves_case_axes_masks_weights_schema_and_gradients(
     assert jnp.allclose(restored, batch.features)
     gradient = jax.grad(lambda value: jnp.sum(model(value)))(jnp.array([2.0, 3.0]))
     assert jnp.all(jnp.isfinite(gradient))
-    assert result.gradient_contract.prediction_inputs == "smooth"
-    assert result.gradient_contract.fit_features == "conditional"
-    assert result.gradient_contract.fit_targets == "none"
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.INPUT)
+        is phx.GradientLevel.SMOOTH
+    )
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.FIT_FEATURES)
+        is phx.GradientLevel.CONDITIONAL
+    )
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.FIT_TARGETS)
+        is phx.GradientLevel.NONE
+    )
 
 
 @pytest.mark.parametrize("recipe", [MinMaxScaler(), MaxAbsScaler(), RobustScaler()])
@@ -133,8 +142,14 @@ def test_simple_imputer_weighted_masked_strategies_indicators_and_inverse_reject
         "feature_1_missing",
     )
     assert model.output_schema.kinds[-2:] == ("boolean", "boolean")
-    assert result.gradient_contract.fit_features == "conditional"
-    assert result.gradient_contract.fit_targets == "none"
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.FIT_FEATURES)
+        is phx.GradientLevel.CONDITIONAL
+    )
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.FIT_TARGETS)
+        is phx.GradientLevel.NONE
+    )
     with pytest.raises(NotImplementedError, match="not bijective"):
         model.inverse_transform(transformed)
 

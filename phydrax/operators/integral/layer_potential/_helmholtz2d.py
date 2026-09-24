@@ -15,9 +15,8 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from ...._fingerprint import canonical_fingerprint
-from ...._model import AbstractArrayModel
+from ...._model import AbstractArrayModel, TRIAL_SPACE_CERTIFICATE_KEY
 from ....equations.trefftz._core import (
-    TRIAL_SPACE_CERTIFICATE_KEY,
     TrialSpaceCertificate,
 )
 from ....special import hankel1

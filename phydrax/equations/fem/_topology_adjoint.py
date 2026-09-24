@@ -5,20 +5,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._moving_conservation import ConservativeRemapPlan
-
-
-TopologyAdjointPolicy = Literal["frozen_event", "smooth_surrogate", "unsupported"]
 
 
 class ReverseCheckpointSchedule(StrictModule, NonTrainableState):
@@ -90,7 +87,7 @@ class TopologyAdjointEvent(StrictModule, NonTrainableState):
     pullback: Callable = eqx.field(static=True)
     source_shape: tuple[int, ...] = eqx.field(static=True)
     target_shape: tuple[int, ...] = eqx.field(static=True)
-    policy: TopologyAdjointPolicy = eqx.field(static=True)
+    policy: BranchDifferentiationPolicy = eqx.field(static=True)
     event_id: str = eqx.field(static=True)
 
     def __init__(
@@ -100,15 +97,28 @@ class TopologyAdjointEvent(StrictModule, NonTrainableState):
         target_shape: Sequence[int],
         /,
         *,
-        policy: TopologyAdjointPolicy,
+        policy: BranchDifferentiationPolicy,
         event_id: str,
     ):
         source = tuple(source_shape)
         target = tuple(target_shape)
+        if not isinstance(policy, BranchDifferentiationPolicy):
+            raise TypeError("policy must be a BranchDifferentiationPolicy.")
+        match policy:
+            case (
+                BranchDifferentiationPolicy.FROZEN_DECISION
+                | BranchDifferentiationPolicy.SMOOTH_SURROGATE
+                | BranchDifferentiationPolicy.UNSUPPORTED
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "TopologyAdjointEvent supports FROZEN_DECISION, "
+                    f"SMOOTH_SURROGATE, or UNSUPPORTED; got {policy.name}."
+                )
         if (
             not callable(pullback)
             or any(value <= 0 for value in (*source, *target))
-            or policy not in ("frozen_event", "smooth_surrogate", "unsupported")
             or not str(event_id)
         ):
             raise ValueError("Topology adjoint event is invalid.")
@@ -121,7 +131,7 @@ class TopologyAdjointEvent(StrictModule, NonTrainableState):
                 "kind": "topology-adjoint-event",
                 "source_shape": source,
                 "target_shape": target,
-                "policy": policy,
+                "policy": policy.value,
                 "event": str(event_id),
             }
         )
@@ -130,7 +140,7 @@ class TopologyAdjointEvent(StrictModule, NonTrainableState):
         value = jnp.asarray(target_cotangent)
         if value.shape != self.target_shape:
             raise ValueError("Topology event cotangent has wrong target shape.")
-        if self.policy == "unsupported":
+        if self.policy is BranchDifferentiationPolicy.UNSUPPORTED:
             return jnp.zeros(self.source_shape, dtype=value.dtype)
         source = jnp.asarray(self.pullback(value))
         if source.shape != self.source_shape:
@@ -195,7 +205,9 @@ class ReverseTimeTopologyTape(StrictModule, NonTrainableState):
                 traversed.append(record.record_id)
             else:
                 cotangent = record.apply(cotangent)
-                valid = valid & (record.policy != "unsupported")
+                valid = valid & (
+                    record.policy is not BranchDifferentiationPolicy.UNSUPPORTED
+                )
                 traversed.append(record.event_id)
         result_id = canonical_fingerprint(
             {
@@ -226,7 +238,7 @@ def conservative_remap_adjoint_event(
         remap.transpose_apply,
         source_shape,
         target_shape,
-        policy="frozen_event",
+        policy=BranchDifferentiationPolicy.FROZEN_DECISION,
         event_id=event_id,
     )
 
@@ -236,7 +248,6 @@ __all__ = [
     "ReverseCheckpointSchedule",
     "ReverseTimeTopologyTape",
     "TopologyAdjointEvent",
-    "TopologyAdjointPolicy",
     "TopologyAdjointResult",
     "conservative_remap_adjoint_event",
 ]

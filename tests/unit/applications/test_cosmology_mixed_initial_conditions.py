@@ -93,7 +93,7 @@ def _transfer(space, *, component_units=None, gauge="synchronous"):
         physics_policy_id="correlated-linear-components",
         scale_id=scale.scale_id,
         source_kind="external",
-        differentiation="constant",
+        differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
         parent_product_ids=(artifact.artifact_id, manifest.manifest_id),
     )
     product = ComponentTransferMatrixProduct(
@@ -188,7 +188,7 @@ def test_transfer_rights_denial_manifest_substitution_and_native_generation():
         physics_policy_id="fixture",
         scale_id=background.scale.scale_id,
         source_kind="external",
-        differentiation="constant",
+        differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
         parent_product_ids=(
             denied_artifact.artifact_id,
             denied_manifest.manifest_id,
@@ -223,7 +223,7 @@ def test_transfer_rights_denial_manifest_substitution_and_native_generation():
         physics_policy_id="fixture",
         scale_id=background.scale.scale_id,
         source_kind="external",
-        differentiation="constant",
+        differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
         parent_product_ids=(
             product.artifact.artifact_id,
             substitute_manifest.manifest_id,
@@ -254,7 +254,7 @@ def test_transfer_rights_denial_manifest_substitution_and_native_generation():
         physics_policy_id="native",
         scale_id=background.scale.scale_id,
         source_kind="native",
-        differentiation="constant",
+        differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
     )
     native = ComponentTransferMatrixProduct(
         [0.1, 1.0],

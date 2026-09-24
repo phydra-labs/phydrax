@@ -13,18 +13,24 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._model._binding import ModelBinding
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_CAPACITY_EXHAUSTED,
     ML_INSUFFICIENT_DATA,
     ML_SUCCESS,
 )
+from .._schema import AbstractFittedModel
 from ._utils import (
     broadcast_support,
     case_distances,
@@ -81,7 +87,7 @@ def _target_width(output_shape: tuple[int, ...]) -> int:
     return width
 
 
-class ExactNeighborRegressorModel(AbstractArrayModel):
+class ExactNeighborRegressorModel(AbstractFittedModel):
     support: Array
     targets: Array
     support_weight: Array
@@ -165,7 +171,7 @@ class ExactNeighborRegressorModel(AbstractArrayModel):
         return chunked_call(self, jnp.asarray(x), chunk_size)
 
 
-class ExactNeighborClassifierModel(AbstractArrayModel):
+class ExactNeighborClassifierModel(AbstractFittedModel):
     support: Array
     labels: Array
     support_weight: Array
@@ -252,7 +258,7 @@ class ExactNeighborClassifierModel(AbstractArrayModel):
         return chunked_call(self, jnp.asarray(x), chunk_size)
 
 
-class KernelNeighborRegressorModel(AbstractArrayModel):
+class KernelNeighborRegressorModel(AbstractFittedModel):
     """Smooth all-support kernel weighting, distinct from hard top-k selection."""
 
     support: Array
@@ -336,7 +342,7 @@ class KernelNeighborRegressorModel(AbstractArrayModel):
         return chunked_call(self, jnp.asarray(x), chunk_size)
 
 
-class KernelNeighborClassifierModel(AbstractArrayModel):
+class KernelNeighborClassifierModel(AbstractFittedModel):
     """Smooth all-support class probabilities with no hard top-k operation."""
 
     support: Array
@@ -425,7 +431,7 @@ class KernelNeighborClassifierModel(AbstractArrayModel):
         return chunked_call(self, jnp.asarray(x), chunk_size)
 
 
-class RadiusNeighborRegressorModel(AbstractArrayModel):
+class RadiusNeighborRegressorModel(AbstractFittedModel):
     support: Array
     targets: Array
     support_weight: Array
@@ -506,7 +512,7 @@ class RadiusNeighborRegressorModel(AbstractArrayModel):
         return chunked_call(self, jnp.asarray(x), chunk_size)
 
 
-class RadiusNeighborClassifierModel(AbstractArrayModel):
+class RadiusNeighborClassifierModel(AbstractFittedModel):
     support: Array
     labels: Array
     support_weight: Array
@@ -593,7 +599,7 @@ class RadiusNeighborClassifierModel(AbstractArrayModel):
         return chunked_call(self, jnp.asarray(x), chunk_size)
 
 
-class NearestCentroidModel(AbstractArrayModel):
+class NearestCentroidModel(AbstractFittedModel):
     centroids: Array
     class_mask: Array
     metric: Any
@@ -765,10 +771,16 @@ class KNeighborsRegressorRecipe(AbstractRecipe):
             effective_samples=effective,
             method="exact-top-k-neighbors",
         )
-        contract = GradientContract(
-            prediction_inputs="almost-everywhere",
-            prediction_parameters="almost-everywhere",
-            fit_mode="stopped",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.ALMOST_EVERYWHERE
+                ),
+            ),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=("neighbor_indices",),
             conditions=("Top-k ordering is locally constant and tie-free.",),
         )
@@ -778,7 +790,7 @@ class KNeighborsRegressorRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="knn-regression",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -849,11 +861,16 @@ class KNeighborsClassifierRecipe(AbstractRecipe):
             effective_samples=effective,
             method="exact-top-k-neighbors",
         )
-        contract = GradientContract(
-            prediction_inputs="almost-everywhere",
-            prediction_parameters="almost-everywhere",
-            fit_targets="none",
-            fit_mode="stopped",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.ALMOST_EVERYWHERE
+                ),
+            ),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=("neighbor_indices", "predict"),
             conditions=("Top-k ordering is locally constant and tie-free.",),
         )
@@ -863,7 +880,7 @@ class KNeighborsClassifierRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="knn-classification",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -900,14 +917,20 @@ class KernelNeighborsRegressorRecipe(AbstractRecipe):
             case_shape=raw.case_shape,
             temperature=self.temperature,
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="smooth",
-            fit_targets="smooth",
-            fit_weights="smooth",
-            fit_hyperparameters="smooth",
-            fit_mode="relaxed",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.SMOOTH),
+                SurfaceDerivative(DerivativeSurface.FIT_TARGETS, GradientLevel.SMOOTH),
+                SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.RELAXED,
             conditions=("At least one positive support weight.",),
         )
         return FitResult(
@@ -916,7 +939,7 @@ class KernelNeighborsRegressorRecipe(AbstractRecipe):
             valid=result.valid,
             status=result.status,
             method="kernel-neighbor-regression",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -958,14 +981,19 @@ class KernelNeighborsClassifierRecipe(AbstractRecipe):
             case_shape=raw.case_shape,
             temperature=self.temperature,
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="smooth",
-            fit_targets="none",
-            fit_weights="smooth",
-            fit_hyperparameters="smooth",
-            fit_mode="relaxed",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.SMOOTH),
+                SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.RELAXED,
             nondifferentiable_outputs=("predict",),
             conditions=(
                 "Class labels are fixed and at least one support weight is positive.",
@@ -977,7 +1005,7 @@ class KernelNeighborsClassifierRecipe(AbstractRecipe):
             valid=result.valid,
             status=result.status,
             method="kernel-neighbor-classification",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -1014,10 +1042,16 @@ class RadiusNeighborsRegressorRecipe(AbstractRecipe):
             case_shape=raw.case_shape,
             radius=self.radius,
         )
-        contract = GradientContract(
-            prediction_inputs="almost-everywhere",
-            prediction_parameters="almost-everywhere",
-            fit_mode="stopped",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.ALMOST_EVERYWHERE
+                ),
+            ),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=("radius_membership",),
             conditions=("No distance lies on the radius boundary.",),
         )
@@ -1027,7 +1061,7 @@ class RadiusNeighborsRegressorRecipe(AbstractRecipe):
             valid=result.valid,
             status=result.status,
             method="radius-neighbor-regression",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -1069,11 +1103,16 @@ class RadiusNeighborsClassifierRecipe(AbstractRecipe):
             case_shape=raw.case_shape,
             radius=self.radius,
         )
-        contract = GradientContract(
-            prediction_inputs="almost-everywhere",
-            prediction_parameters="almost-everywhere",
-            fit_targets="none",
-            fit_mode="stopped",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.ALMOST_EVERYWHERE
+                ),
+            ),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=("radius_membership", "predict"),
             conditions=("No distance lies on the radius boundary.",),
         )
@@ -1083,7 +1122,7 @@ class RadiusNeighborsClassifierRecipe(AbstractRecipe):
             valid=result.valid,
             status=result.status,
             method="radius-neighbor-classification",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -1155,13 +1194,18 @@ class NearestCentroidRecipe(AbstractRecipe):
             effective_samples=jnp.sum(weights > 0, axis=-1),
             method="weighted-nearest-centroid",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="smooth",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_mode="direct",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
             nondifferentiable_outputs=("predict",),
             conditions=("Class membership and nonempty classes are fixed.",),
         )
@@ -1171,7 +1215,7 @@ class NearestCentroidRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="nearest-centroid",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

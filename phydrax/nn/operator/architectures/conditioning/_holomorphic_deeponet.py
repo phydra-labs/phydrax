@@ -4,17 +4,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._differentiation import AbstractConstructionCertificate
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._holomorphic import HolomorphicJet
 from phydrax._holomorphic_linear import HolomorphicLinearFrame
-from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.equations.trefftz._holomorphic_constraints import (
     HolomorphicAffineCoefficientMap,
@@ -34,9 +34,10 @@ from ._deeponet import (
 HolomorphicTrunkMode = Literal["unconstrained", "fixed-target", "variable-target"]
 
 
-class ConditionalHolomorphicMapCertificate(StrictModule, NonTrainableState):
+class ConditionalHolomorphicMapCertificate(AbstractConstructionCertificate):
     """Construction evidence for query-holomorphic conditional maps."""
 
+    capability_id: ClassVar[str] = "conditional-holomorphic-map"
     query_complex_input_size: int = eqx.field(static=True)
     complex_output_size: int = eqx.field(static=True)
     latent_size: int = eqx.field(static=True)
@@ -225,7 +226,7 @@ class HolomorphicBasisTrunk(AbstractBasisTrunk, NonTrainableState):
         certificate = frame.linear_frame_certificate()
         if constraint_operator is not None:
             constrained_frame = constraint_operator.plan.frame.linear_frame_certificate()
-            if constrained_frame.frame_id != certificate.frame_id:
+            if constrained_frame.certificate_id != certificate.certificate_id:
                 raise ValueError(
                     "Constraint operator and holomorphic trunk frame differ."
                 )
@@ -256,7 +257,7 @@ class HolomorphicBasisTrunk(AbstractBasisTrunk, NonTrainableState):
         self.trunk_id = canonical_fingerprint(
             {
                 "kind": "holomorphic-deeponet-basis-trunk",
-                "frame": certificate.frame_id,
+                "frame": certificate.certificate_id,
                 "mode": mode,
                 "constraint_operator": (
                     None
@@ -405,7 +406,7 @@ class ConditionalHolomorphicDeepONet(AbstractOperatorModel):
             latent_size=trunk.latent_size,
             maximum_derivative_order=frame.maximum_derivative_order,
             trunk_mode=trunk.mode,
-            frame_id=frame.frame_id,
+            frame_id=frame.certificate_id,
             constraint_operator_id=operator_id,
             coefficient_layout=(
                 "full-real-frame"

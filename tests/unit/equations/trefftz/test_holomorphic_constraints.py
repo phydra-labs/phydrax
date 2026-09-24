@@ -166,7 +166,7 @@ def test_biharmonic_and_plane_elasticity_functionals_match_physical_wrappers():
                 operations=("complex-polynomial",),
                 parameter_coverage="finite-parametric-family",
                 linear_in_parameters=False,
-                construction_dependencies=(certificate.frame_id,),
+                construction_dependencies=(certificate.certificate_id,),
             )
 
     provider = _FramePotential()

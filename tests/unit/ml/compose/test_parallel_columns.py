@@ -12,6 +12,15 @@ from phydrax._model import AbstractArrayModel, ModelBinding
 from phydrax.ml.compose import ColumnTransformer, FeatureUnion
 
 
+_SMOOTH_TRANSFORM_CONTRACT = phx.DerivativeContract.smooth(
+    (
+        phx.DerivativeSurface.INPUT,
+        phx.DerivativeSurface.MODEL_PARAMETER,
+        phx.DerivativeSurface.FIT_FEATURES,
+    )
+)
+
+
 class _DenseScaleModel(AbstractArrayModel):
     factor: jax.Array
     input_schema: phx.ml.FeatureSchema = eqx.field(static=True)
@@ -61,15 +70,7 @@ class _DenseScaleRecipe(phx.ml.AbstractRecipe):
             valid=True,
             status=phx.ml.ML_SUCCESS,
             method="dense-scale",
-            gradient_contract=phx.ml.GradientContract(
-                prediction_inputs="smooth",
-                prediction_parameters="smooth",
-                fit_features="smooth",
-                fit_targets="none",
-                fit_weights="none",
-                fit_hyperparameters="none",
-                fit_mode="direct",
-            ),
+            derivative_contract=_SMOOTH_TRANSFORM_CONTRACT,
         )
 
 
@@ -139,15 +140,7 @@ class _SparseFirstRecipe(phx.ml.AbstractRecipe):
             valid=True,
             status=phx.ml.ML_SUCCESS,
             method="sparse-first",
-            gradient_contract=phx.ml.GradientContract(
-                prediction_inputs="smooth",
-                prediction_parameters="smooth",
-                fit_features="smooth",
-                fit_targets="none",
-                fit_weights="none",
-                fit_hyperparameters="none",
-                fit_mode="direct",
-            ),
+            derivative_contract=_SMOOTH_TRANSFORM_CONTRACT,
         )
 
 
@@ -203,7 +196,10 @@ def test_feature_union_dense_outputs_are_ordered_prefixed_and_differentiable():
         jax.grad(lambda value: jnp.sum(fitted(value)))(point),
         jnp.ones_like(point),
     )
-    assert result.gradient_contract.prediction_inputs == "smooth"
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.INPUT)
+        is phx.GradientLevel.SMOOTH
+    )
     assert len(fitted.fit_results) == 2
 
 

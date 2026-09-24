@@ -14,18 +14,24 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
 )
+from .._schema import AbstractFittedModel
 
 
 CovarianceType: TypeAlias = Literal["full", "tied", "diagonal", "spherical"]
@@ -441,7 +447,7 @@ def _input_sample_ndim(values: Array, case_shape: tuple[int, ...], in_size: int)
     return values.ndim - minimum_rank
 
 
-class GaussianMixtureModel(AbstractArrayModel):
+class GaussianMixtureModel(AbstractFittedModel):
     mixing_weights: Array
     means: Array
     covariance: Array
@@ -520,7 +526,7 @@ class GaussianMixtureModel(AbstractArrayModel):
         return jax.lax.stop_gradient(jnp.argmax(self(x), axis=-1).astype(jnp.int32))
 
 
-class BayesianGaussianMixtureModel(AbstractArrayModel):
+class BayesianGaussianMixtureModel(AbstractFittedModel):
     mixing_weights: Array
     means: Array
     covariance: Array
@@ -695,13 +701,23 @@ class GaussianMixture(AbstractRecipe):
             converged=converged,
             method="gaussian-mixture",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
             nondifferentiable_outputs=("predict",),
             conditions=(
                 "fixed initialization indices",
@@ -715,7 +731,7 @@ class GaussianMixture(AbstractRecipe):
             valid=valid,
             status=status,
             method="gaussian-mixture",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -838,13 +854,23 @@ class BayesianGaussianMixture(AbstractRecipe):
             converged=converged,
             method="bayesian-gaussian-mixture",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
             nondifferentiable_outputs=("predict",),
             conditions=(
                 "fixed initialization indices",
@@ -858,7 +884,7 @@ class BayesianGaussianMixture(AbstractRecipe):
             valid=valid,
             status=status,
             method="bayesian-gaussian-mixture",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

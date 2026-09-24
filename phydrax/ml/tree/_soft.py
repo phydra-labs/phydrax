@@ -14,17 +14,23 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding, ValuePort
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
 )
-from .._schema import FeatureSchema, TargetSchema
+from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 from ._hard import _initial_score, _prepare_batch, TreeFitDiagnostics
 from ._representation import (
     _tree_output_shape,
@@ -37,14 +43,18 @@ from ._representation import (
 TemperatureSchedule: TypeAlias = Literal["constant", "linear", "geometric"]
 SoftObjective: TypeAlias = Literal["squared_error", "logistic", "softmax"]
 
-_SOFT_CONTRACT = GradientContract(
-    prediction_inputs="smooth",
-    prediction_parameters="smooth",
-    fit_features="conditional",
-    fit_targets="conditional",
-    fit_weights="conditional",
-    fit_hyperparameters="conditional",
-    fit_mode="unrolled",
+_SOFT_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(
+            DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+        ),
+    ),
+    route=DerivativeRoute.UNROLLED,
     nondifferentiable_outputs=("hardened structure", "hardened feature choices"),
     conditions=(
         "All scheduled temperatures are finite and strictly positive.",
@@ -113,7 +123,7 @@ def _soft_predict_case(
     return base_score + jnp.sum(trees * tree_weight[None, :, None], axis=1), trees
 
 
-class _AbstractSoftTree(AbstractArrayModel):
+class _AbstractSoftTree(AbstractFittedModel):
     """Shared differentiable complete-tree representation for the three soft families."""
 
     feature_logits: Array
@@ -131,6 +141,9 @@ class _AbstractSoftTree(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     _input_binding: ModelBinding = eqx.field(static=True)  # ty: ignore[invalid-attribute-override]
+
+    def output_ports(self) -> tuple[ValuePort, ...]:
+        return self.target_output_ports()
 
     def __init__(
         self,
@@ -787,7 +800,7 @@ class _AbstractSoftTreeRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method=f"soft_{self.ensemble_kind}",
-            gradient_contract=_SOFT_CONTRACT,
+            derivative_contract=_SOFT_CONTRACT,
         )
 
 

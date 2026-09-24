@@ -5,27 +5,28 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import AbstractConstructionCertificate
 from ..._fingerprint import canonical_fingerprint
 from ..._holomorphic_linear import (
     HolomorphicMultiIndexSet,
     MultivariableHolomorphicPotentialProvider,
 )
-from ..._model import AbstractArrayModel
-from ..._strict import StrictModule
-from ..._trainable import NonTrainableState, partition_trainable
-from ._core import TRIAL_SPACE_CERTIFICATE_KEY, TrialSpaceCertificate
+from ..._model import AbstractArrayModel, TRIAL_SPACE_CERTIFICATE_KEY
+from ..._trainable import partition_trainable
+from ._core import TrialSpaceCertificate
 
 
-class PluriharmonicCertificate(StrictModule, NonTrainableState):
+class PluriharmonicCertificate(AbstractConstructionCertificate):
     """Construction evidence for the real part of a holomorphic map on ℂᵐ."""
 
+    capability_id: ClassVar[str] = "pluriharmonic-map"
     complex_dimension: int = eqx.field(static=True)
     branch: int = eqx.field(static=True)
     holomorphic_certificate_id: str = eqx.field(static=True)

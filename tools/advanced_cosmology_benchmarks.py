@@ -101,7 +101,14 @@ def main() -> None:
         physics_policy_id="linear-total-matter",
         scale_id=background.scale.scale_id,
         source_kind="native",
-        differentiation="native-parameter",
+        differentiation=phx.DerivativeContract.smooth(
+            (
+                phx.DerivativeSurface.INPUT,
+                phx.DerivativeSurface.MODEL_PARAMETER,
+                phx.DerivativeSurface.PHYSICAL_PARAMETER,
+                phx.DerivativeSurface.STORED_VALUES,
+            )
+        ),
     )
     scales = jnp.linspace(0.2, 1.0, 64)
     k = jnp.geomspace(0.05, 50000.0, 512)
@@ -132,7 +139,13 @@ def main() -> None:
         k,
         1.0 + 0.1 * jnp.broadcast_to(k[None, :] / (1.0 + k[None, :]), values.shape),
         card,
-        differentiation="native-parameter",
+        differentiation=phx.DerivativeContract.smooth(
+            (
+                phx.DerivativeSurface.INPUT,
+                phx.DerivativeSurface.MODEL_PARAMETER,
+                phx.DerivativeSurface.STORED_VALUES,
+            )
+        ),
     )
     correction_function = jax.jit(
         lambda strength: correction.apply(power, strength=strength)

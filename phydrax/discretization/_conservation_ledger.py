@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._differentiation import BranchDifferentiationPolicy
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._numerics._compensated import compensated_sum, compensated_sum_chunks
 from .._strict import StrictModule
@@ -365,7 +366,7 @@ class ConservationStageLedger(StrictModule):
         troubled_cell_mask: ArrayLike | None = None,
         correction_level: ArrayLike | None = None,
         accepted: ArrayLike = True,
-        differentiability_policy_id: str = "smooth-discrete",
+        differentiability_policy_id: str = BranchDifferentiationPolicy.SMOOTH.value,
     ):
         geometry_family = _flux_identity(geometry_family_id, "geometry_family_id")
         geometry_layout = _flux_identity(geometry_layout_id, "geometry_layout_id")

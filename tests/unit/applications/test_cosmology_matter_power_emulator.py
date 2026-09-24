@@ -240,14 +240,7 @@ def test_analytic_provider_preserves_power_semantics_and_external_evidence(
     assert result.table.descriptor.stage == stage
     assert result.table.scale.length_coordinate_kind == "comoving"
     assert result.table.power_unit == request.cosmology.scale.power_spectrum_unit
-    differentiation = result.table.provenance.differentiation
-    assert (
-        differentiation.contract_id
-        == phx.artifacts.DifferentiationContract.constant().contract_id
-    )
-    assert not differentiation.upstream_physical_parameters
-    assert not differentiation.stored_values
-    assert not differentiation.query_coordinates
+    assert result.table.provenance.differentiation.supported_surfaces == ()
     gradient = jax.grad(lambda k: result.table.evaluate(k, 0.75))(jnp.asarray(0.2))
     np.testing.assert_allclose(gradient, 0.0)
     assert result.support.rectangular_range_covered

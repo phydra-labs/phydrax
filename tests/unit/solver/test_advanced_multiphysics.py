@@ -589,7 +589,7 @@ def test_cosmology_inference_and_closure_contracts():
         physics_policy_id="linear-cold-baryon-power",
         scale_id=background.scale.scale_id,
         source_kind="external",
-        differentiation="constant",
+        differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
     )
     power = MatterPowerTable(
         [0.1, 1.0],

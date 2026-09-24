@@ -20,6 +20,23 @@ The design separates six concerns:
 A solve returns `LinearSolveResult`: value, status, diagnostics, and static
 provenance. A failed numerical method never masquerades as a successful value.
 
+`LinearSolveResult.derivative_contract` is the canonical `DerivativeContract`
+of the executed `DifferentiationPolicy`. The right-hand side is the
+`SOLVER_ARGUMENT` surface and the operator arrays are the `PHYSICAL_PARAMETER`
+surface:
+
+| Mode | Route | Surfaces | Condition |
+|---|---|---|---|
+| `"mathematical"` | implicit | right-hand side, operator | `solve-converged` |
+| `"rhs-only"` | implicit | right-hand side (operator stopped) | `solve-converged` |
+| `"algorithmic"` | unrolled | right-hand side, operator | `decisions-frozen` |
+| `"none"` | stopped | none | none |
+
+`LinearSolveResult.derivative_valid` reports per right-hand side whether that
+contract holds for this solve: implicit contracts require convergence (the same
+evidence that guards the returned value's derivative), unrolled contracts
+require finite arithmetic, and a stopped contract is never valid.
+
 ## First workflow
 
 ```python

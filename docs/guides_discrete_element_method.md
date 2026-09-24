@@ -138,13 +138,15 @@ wall work is separated from contact balance loss.
 
 ## Differentiation
 
-Three explicit modes are available. `sharp_branchwise` differentiates only the
-executed discrete route and returns a local-validity certificate covering gap,
-no-tension, friction, frame, overlap, and neighborhood-cache margins.
-`smooth_surrogate` uses separately fingerprinted soft normal activation and
-smooth Coulomb projection, with an explicit forward-bias certificate.
-`hybrid_event_aware` localizes one transverse guard and returns its saltation
-matrix; grazing or simultaneous events fail qualification. Pair construction,
+`DEMSensitivityPolicy(mode=...)` takes a `phx.BranchDifferentiationPolicy` and
+accepts three members. `BRANCHWISE` differentiates only the executed discrete
+route and returns a local-validity certificate covering gap, no-tension,
+friction, frame, overlap, and neighborhood-cache margins. `SMOOTH_SURROGATE`
+uses separately fingerprinted soft normal activation and smooth Coulomb
+projection, with an explicit forward-bias certificate. `EVENT_AWARE` localizes
+one transverse guard and returns its saltation matrix; grazing or simultaneous
+events fail qualification. Any other member raises `ValueError`. Sensitivity
+results carry the policy's canonical `derivative_contract`. Pair construction,
 stable-ID remapping, material IDs, and topology events remain stopped-gradient.
 
 ## Failure semantics

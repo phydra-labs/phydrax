@@ -13,11 +13,17 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
@@ -190,13 +196,23 @@ class SpectralClustering(AbstractRecipe):
             degeneracy=disconnected,
             method="spectral-clustering",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="spectral",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             nondifferentiable_outputs=("hard_labels", "eigenvector ordering"),
             conditions=(
                 "separated retained eigenspace",
@@ -210,7 +226,7 @@ class SpectralClustering(AbstractRecipe):
             valid=valid,
             status=status,
             method="spectral-clustering",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -355,10 +371,9 @@ class AgglomerativeClustering(AbstractRecipe):
             converged=final_count == self.cluster_count,
             method="agglomerative-clustering",
         )
-        contract = GradientContract(
-            prediction_inputs="none",
-            prediction_parameters="none",
-            fit_mode="stopped",
+        contract = DerivativeContract(
+            (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=("labels", "merge tree"),
             conditions=("deterministic lexicographic merge ties",),
         )
@@ -368,7 +383,7 @@ class AgglomerativeClustering(AbstractRecipe):
             valid=valid,
             status=status,
             method="agglomerative-clustering",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

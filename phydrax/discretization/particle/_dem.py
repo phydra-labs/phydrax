@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
@@ -114,7 +115,7 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
     maximum_overlap_fraction: float = eqx.field(static=True)
     distance_tolerance: float = eqx.field(static=True)
     frame_tolerance: float = eqx.field(static=True)
-    differentiability: str = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     key: DiscretizationKey
     method_id: str = eqx.field(static=True)
 
@@ -187,7 +188,7 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
                 "maximum_overlap_fraction": overlap,
                 "distance_tolerance": distance,
                 "frame_tolerance": frame,
-                "differentiability": "branchwise",
+                "differentiability": BranchDifferentiationPolicy.BRANCHWISE.value,
                 "key": key.key_id,
             }
         )
@@ -201,7 +202,7 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
         self.maximum_overlap_fraction = overlap
         self.distance_tolerance = distance
         self.frame_tolerance = frame
-        self.differentiability = "branchwise"
+        self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.key = key
         self.method_id = identifier
 

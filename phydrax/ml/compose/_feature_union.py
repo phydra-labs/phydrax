@@ -9,10 +9,13 @@ from typing import Any, Literal
 
 import equinox as eqx
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+)
+from ..._model import AbstractArrayModel, ModelBinding, ValuePort
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, GradientContract
-from .._schema import FeatureSchema
+from .._contracts import AbstractRecipe, FitResult
+from .._schema import AbstractFittedModel, FeatureSchema, schema_port
 from ._common import (
     _combine_results,
     _composition_binding,
@@ -28,7 +31,7 @@ from ._common import (
 )
 
 
-class FittedFeatureUnion(AbstractArrayModel):
+class FittedFeatureUnion(AbstractFittedModel):
     """Immutable parallel fitted transforms with ordered, prefixed outputs."""
 
     transformer_list: tuple[tuple[str, AbstractArrayModel], ...]
@@ -36,10 +39,13 @@ class FittedFeatureUnion(AbstractArrayModel):
     branch_output_schemas: tuple[FeatureSchema, ...]
     input_schema: FeatureSchema
     output_schema: FeatureSchema
-    gradient_contract: GradientContract
+    derivative_contract: DerivativeContract
     in_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     _input_binding: ModelBinding = eqx.field(static=True)  # ty: ignore[invalid-attribute-override]
+
+    def output_ports(self) -> tuple[ValuePort, ...]:
+        return (schema_port(self.output_schema),)
 
     def __init__(
         self,
@@ -50,7 +56,7 @@ class FittedFeatureUnion(AbstractArrayModel):
         *,
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
-        gradient_contract: GradientContract,
+        derivative_contract: DerivativeContract,
     ):
         transformers = tuple(transformer_list)
         results = tuple(fit_results)
@@ -73,7 +79,7 @@ class FittedFeatureUnion(AbstractArrayModel):
         self.branch_output_schemas = schemas
         self.input_schema = input_schema
         self.output_schema = output_schema
-        self.gradient_contract = gradient_contract
+        self.derivative_contract = derivative_contract
         self.in_size = models[0].in_size
         self.out_size = len(output_schema.names)
         self._input_binding = _composition_binding(models)
@@ -148,14 +154,14 @@ class FeatureUnion(AbstractRecipe):
             branch_schemas.append(transformed.feature_schema)
 
         joined = _join_feature_batches(batch, outputs)
-        valid, status, contract = _combine_results(results)
+        valid, status, contract = _combine_results(results, sequential=False)
         model = FittedFeatureUnion(
             fitted,
             results,
             branch_schemas,
             input_schema=batch.feature_schema,
             output_schema=joined.feature_schema,
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
         diagnostics = CompositionDiagnostics(
             tuple(name for name, _ in self.transformer_list),
@@ -169,7 +175,7 @@ class FeatureUnion(AbstractRecipe):
             valid=valid,
             status=status,
             method="feature_union",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

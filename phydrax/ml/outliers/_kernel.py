@@ -11,10 +11,18 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from ...kernels import AbstractPositiveDefiniteKernel, SquaredExponentialKernel
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, GradientContract, ML_NONCONVERGED
+from .._contracts import AbstractRecipe, FitResult, ML_NONCONVERGED
+from .._schema import AbstractFittedModel
 from ._common import (
     _BLOCKWISE_BINDING,
     _case_count,
@@ -82,7 +90,7 @@ def _fit_ocsvm_one(
     return alpha, rho, decision, residual, objective
 
 
-class OneClassSVMModel(AbstractArrayModel):
+class OneClassSVMModel(AbstractFittedModel):
     """Native kernel one-class SVM with smooth novelty scores and hard prediction."""
 
     training_features: Array
@@ -249,14 +257,23 @@ class OneClassSVMRecipe(AbstractRecipe):
             self.kernel,
             case_shape=batch.case_shape,
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
             nondifferentiable_outputs=("support_partition", "predict", "valid", "status"),
             conditions=(
                 "kernel is differentiable at evaluated inputs",
@@ -270,7 +287,7 @@ class OneClassSVMRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="one-class-svm-native-kernel",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

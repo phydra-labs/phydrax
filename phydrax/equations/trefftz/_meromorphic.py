@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import ClassVar
 
 import equinox as eqx
 import jax
@@ -13,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import AbstractConstructionCertificate
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._holomorphic import ComplexAffineNormalization, HolomorphicJet
 from ..._strict import StrictModule
@@ -78,9 +80,13 @@ class TrainablePoleSet(StrictModule):
         return PoleSet(self.locations, self.orders)
 
 
-class MeromorphicLinearFrameCertificate(StrictModule, NonTrainableState):
-    """Finite real-coordinate frame with explicit pole-set analyticity boundary."""
+class MeromorphicLinearFrameCertificate(AbstractConstructionCertificate):
+    """Finite real-coordinate frame with explicit pole-set analyticity boundary.
 
+    `certificate_id` content-addresses the frame and is its frame identity.
+    """
+
+    capability_id: ClassVar[str] = "meromorphic-linear-frame"
     complex_input_size: int = eqx.field(static=True)
     complex_output_size: int = eqx.field(static=True)
     real_coefficient_count: int = eqx.field(static=True)
@@ -89,7 +95,7 @@ class MeromorphicLinearFrameCertificate(StrictModule, NonTrainableState):
     basis_construction: str = eqx.field(static=True)
     coefficient_mode: str = eqx.field(static=True)
     pole_set_id: str = eqx.field(static=True)
-    frame_id: str = eqx.field(static=True)
+    certificate_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -113,7 +119,7 @@ class MeromorphicLinearFrameCertificate(StrictModule, NonTrainableState):
         self.basis_construction = "polynomial-plus-fixed-principal-parts"
         self.coefficient_mode = "real-cartesian-meromorphic-frame"
         self.pole_set_id = str(pole_set_id)
-        self.frame_id = canonical_fingerprint(
+        self.certificate_id = canonical_fingerprint(
             {
                 "kind": "meromorphic-linear-frame-certificate",
                 "complex_output_size": output,
@@ -125,9 +131,10 @@ class MeromorphicLinearFrameCertificate(StrictModule, NonTrainableState):
         )
 
 
-class MeromorphicMapCertificate(StrictModule, NonTrainableState):
+class MeromorphicMapCertificate(AbstractConstructionCertificate):
     """Construction evidence for a finite meromorphic potential family."""
 
+    capability_id: ClassVar[str] = "meromorphic-map"
     complex_output_size: int = eqx.field(static=True)
     maximum_derivative_order: int = eqx.field(static=True)
     pole_set_id: str = eqx.field(static=True)
@@ -150,7 +157,7 @@ class MeromorphicMapCertificate(StrictModule, NonTrainableState):
         self.complex_output_size = frame.complex_output_size
         self.maximum_derivative_order = frame.maximum_derivative_order
         self.pole_set_id = frame.pole_set_id
-        self.frame_id = frame.frame_id
+        self.frame_id = frame.certificate_id
         self.parameter_mode = mode
         self.certificate_id = canonical_fingerprint(
             {
@@ -158,7 +165,7 @@ class MeromorphicMapCertificate(StrictModule, NonTrainableState):
                 "complex_output_size": frame.complex_output_size,
                 "maximum_derivative_order": frame.maximum_derivative_order,
                 "pole_set_id": frame.pole_set_id,
-                "frame_id": frame.frame_id,
+                "frame_id": frame.certificate_id,
                 "parameter_mode": mode,
                 "construction_dependency": dependency,
             }

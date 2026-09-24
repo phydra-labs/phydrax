@@ -32,7 +32,7 @@ from phydrax.domain import (
 from .._bvh import beam_select_leaf_items, build_point_bvh
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
-from .._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS
+from .._model import TRIAL_SPACE_CERTIFICATE_KEY
 from .._strict import StrictModule
 from ..operators.differential._domain_ops import (
     cauchy_stress,
@@ -372,10 +372,7 @@ def _boundary_ansatz_normal_extension(
 
 
 def _reject_certified_trial_space(u: DomainFunction, /, *, op_name: str) -> None:
-    certificates = tuple(
-        name for name in MODEL_CONSTRUCTION_CERTIFICATE_KEYS if name in u.metadata
-    )
-    if certificates:
+    if TRIAL_SPACE_CERTIFICATE_KEY in u.metadata:
         raise ValueError(
             f"{op_name} cannot transform a certified exact PDE trial field: generic "
             "hard enforcement need not preserve its solution space. Use a soft "

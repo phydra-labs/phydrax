@@ -625,18 +625,18 @@ def save_coordinate_model(
     return save_ml_artifact(
         path,
         fit.model,
-        feature_schema={
-            "support_id": fit.support.support_id,
-            "representation_id": fit.model.representation_id,
-            "coordinate_size": fit.model.coordinate_size,
-            "conditions": list(fit.model.condition_names),
-        },
-        target_schema={
-            "coordinates": fit.model.representation_id,
-            "length_unit": fit.support.template.scale.length_unit.to_dict(),
-            "meaning": "structural-proposals-not-Boltzmann-samples",
-        },
         provenance={
+            "conditioning": {
+                "support_id": fit.support.support_id,
+                "representation_id": fit.model.representation_id,
+                "coordinate_size": fit.model.coordinate_size,
+                "conditions": list(fit.model.condition_names),
+            },
+            "coordinates": {
+                "representation_id": fit.model.representation_id,
+                "length_unit": fit.support.template.scale.length_unit.to_dict(),
+                "meaning": "structural-proposals-not-Boltzmann-samples",
+            },
             "fit_id": fit.fit_id,
             "dataset_id": fit.dataset_id,
             "representation_id": fit.model.representation_id,

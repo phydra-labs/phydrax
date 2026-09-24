@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 
 import equinox as eqx
 
+from ..._identity import SemanticProvenance
 from ..._model import AbstractArrayModel, FrozenModel
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -22,7 +23,12 @@ class UnsupportedConversionError(ConversionError):
 
 
 class ConversionProvenance(StrictModule, NonTrainableState):
-    """Immutable source identity and configuration copied at conversion time."""
+    """Immutable source identity and configuration copied at conversion time.
+
+    `semantic_provenance` content-addresses the source model, configuration,
+    feature names, class labels, and license, naming the source library and
+    version as its external `"source"` resource.
+    """
 
     source: str = eqx.field(static=True)
     source_version: str = eqx.field(static=True)
@@ -31,6 +37,7 @@ class ConversionProvenance(StrictModule, NonTrainableState):
     feature_names: tuple[str, ...] = eqx.field(static=True)
     class_labels: tuple[str, ...] = eqx.field(static=True)
     license_id: str = eqx.field(static=True)
+    semantic_provenance: SemanticProvenance
 
     def __init__(
         self,
@@ -64,6 +71,17 @@ class ConversionProvenance(StrictModule, NonTrainableState):
         self.feature_names = tuple(str(name) for name in feature_names)
         self.class_labels = tuple(str(label) for label in class_labels)
         self.license_id = license_
+        self.semantic_provenance = SemanticProvenance(
+            {
+                "kind": "ml-conversion",
+                "source_model": self.source_model,
+                "configuration": self.configuration,
+                "feature_names": self.feature_names,
+                "class_labels": self.class_labels,
+                "license_id": self.license_id,
+            },
+            resource_ids={"source": f"{self.source}=={self.source_version}"},
+        )
 
 
 class ConversionResult(StrictModule):

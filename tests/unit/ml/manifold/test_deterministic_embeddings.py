@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeRoute, DerivativeSurface, GradientLevel
 from phydrax.ml import ML_INFEASIBLE, ML_NONCONVERGED, MLBatch
 from phydrax.ml.manifold import (
     build_neighbor_graph,
@@ -58,22 +59,46 @@ def test_every_lle_variant_has_declared_schema_and_exact_transform_support(varia
     assert model.training_embedding.shape == (8, 1)
     assert result.diagnostics.eigenvalues.shape == (1,)
     assert result.diagnostics.method == f"lle-{variant}"
-    assert result.gradient_contract.fit_mode == "spectral"
-    assert result.gradient_contract.fit_features == "conditional"
-    assert result.gradient_contract.fit_weights == "conditional"
-    assert result.gradient_contract.fit_hyperparameters == "conditional"
-    assert result.gradient_contract.fit_targets == "none"
+    assert result.derivative_contract.route is DerivativeRoute.SPECTRAL
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_WEIGHTS)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
+        is GradientLevel.NONE
+    )
 
     if variant in ("standard", "modified"):
         assert model(jnp.array([0.2, -0.1, 0.4])).shape == (1,)
         assert result.model(jnp.zeros((3, 3))).shape == (3, 1)
         assert jax.jit(model)(jnp.zeros((3, 3))).shape == (3, 1)
         assert jax.vmap(model)(jnp.zeros((3, 3))).shape == (3, 1)
-        assert result.gradient_contract.prediction_inputs == "conditional"
-        assert result.gradient_contract.prediction_parameters == "conditional"
+        assert (
+            result.derivative_contract.level(DerivativeSurface.INPUT)
+            is GradientLevel.CONDITIONAL
+        )
+        assert (
+            result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
+            is GradientLevel.CONDITIONAL
+        )
     else:
-        assert result.gradient_contract.prediction_inputs == "none"
-        assert result.gradient_contract.prediction_parameters == "none"
+        assert (
+            result.derivative_contract.level(DerivativeSurface.INPUT)
+            is GradientLevel.NONE
+        )
+        assert (
+            result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
+            is GradientLevel.NONE
+        )
         with pytest.raises(ValueError, match="not mathematically defined"):
             model(jnp.array([0.2, -0.1, 0.4]))
 
@@ -143,14 +168,16 @@ def test_spectral_embedding_is_jittable_vmappable_and_conditionally_differentiab
     assert parameter_leaves
     assert all(jnp.all(jnp.isfinite(leaf)) for leaf in parameter_leaves)
     assert any(jnp.any(jnp.abs(leaf) > 1e-8) for leaf in parameter_leaves)
-    contract = result.gradient_contract
-    assert contract.prediction_inputs == "conditional"
-    assert contract.prediction_parameters == "conditional"
-    assert contract.fit_features == "conditional"
-    assert contract.fit_weights == "conditional"
-    assert contract.fit_hyperparameters == "conditional"
-    assert contract.fit_targets == "none"
-    assert contract.fit_mode == "spectral"
+    contract = result.derivative_contract
+    assert contract.level(DerivativeSurface.INPUT) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.MODEL_PARAMETER) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
+    assert (
+        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is GradientLevel.CONDITIONAL
+    )
+    assert contract.level(DerivativeSurface.FIT_TARGETS) is GradientLevel.NONE
+    assert contract.route is DerivativeRoute.SPECTRAL
 
 
 def test_classical_mds_preserves_planar_distances_and_smacof_rejects_transform():
@@ -168,18 +195,27 @@ def test_classical_mds_preserves_planar_distances_and_smacof_rejects_transform()
     assert jnp.allclose(original_distances, embedded_distances, atol=2e-4)
     assert jax.jit(classical_model)(planar[:3]).shape == (3, 2)
     assert jax.vmap(classical_model)(planar[:3]).shape == (3, 2)
-    assert classical.gradient_contract.prediction_inputs == "smooth"
-    assert classical.gradient_contract.prediction_parameters == "smooth"
-    assert classical.gradient_contract.fit_mode == "spectral"
+    assert (
+        classical.derivative_contract.level(DerivativeSurface.INPUT)
+        is GradientLevel.SMOOTH
+    )
+    assert (
+        classical.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
+        is GradientLevel.SMOOTH
+    )
+    assert classical.derivative_contract.route is DerivativeRoute.SPECTRAL
 
     smacof = MultidimensionalScalingRecipe(
         2, method="smacof", iterations=3, tolerance=1e6
     ).fit_batch(MLBatch(planar))
     smacof_model = smacof.as_trainable()
     assert smacof_model.training_embedding.shape == (8, 2)
-    assert smacof.gradient_contract.prediction_inputs == "none"
-    assert smacof.gradient_contract.prediction_parameters == "none"
-    assert smacof.gradient_contract.fit_mode == "unrolled"
+    assert smacof.derivative_contract.level(DerivativeSurface.INPUT) is GradientLevel.NONE
+    assert (
+        smacof.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
+        is GradientLevel.NONE
+    )
+    assert smacof.derivative_contract.route is DerivativeRoute.UNROLLED
     with pytest.raises(ValueError, match="transductive"):
         smacof_model(planar[0])
     with pytest.raises(TypeError):
@@ -206,11 +242,26 @@ def test_isomap_exposes_geodesic_invariants_capacity_and_connectivity_status():
     assert jax.jit(model)(features[:3]).shape == (3, 2)
     assert jax.vmap(model)(features[:3]).shape == (3, 2)
     assert result.diagnostics.connected_components == 1
-    assert result.gradient_contract.prediction_inputs == "conditional"
-    assert result.gradient_contract.prediction_parameters == "conditional"
-    assert result.gradient_contract.fit_features == "conditional"
-    assert result.gradient_contract.fit_weights == "conditional"
-    assert result.gradient_contract.fit_hyperparameters == "conditional"
+    assert (
+        result.derivative_contract.level(DerivativeSurface.INPUT)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_WEIGHTS)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.CONDITIONAL
+    )
 
     with pytest.raises(ValueError, match="capacity exceeded"):
         IsomapRecipe(1, n_neighbors=2, max_samples=7).fit_batch(MLBatch(features))
@@ -277,7 +328,9 @@ def test_deterministic_manifold_fit_feature_and_weight_gradients_match_contract(
     weight_gradient = jax.grad(weight_loss)(weights)
     assert jnp.all(jnp.isfinite(feature_gradient))
     assert jnp.all(jnp.isfinite(weight_gradient))
-    contract = recipe.fit_batch(MLBatch(features)).gradient_contract
-    assert contract.fit_features == "conditional"
-    assert contract.fit_weights == "conditional"
-    assert contract.fit_hyperparameters == "conditional"
+    contract = recipe.fit_batch(MLBatch(features)).derivative_contract
+    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
+    assert (
+        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is GradientLevel.CONDITIONAL
+    )

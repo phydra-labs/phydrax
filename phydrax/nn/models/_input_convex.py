@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Mapping
+from typing import Any, ClassVar, Literal, TypeAlias
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from ..._differentiation import AbstractConstructionCertificate
 from ..._doc import DOC_KEY0
+from ..._fingerprint import canonical_fingerprint
+from ..._model import INPUT_CONVEX_CERTIFICATE_KEY
 from .._base import _AbstractBaseModel, _AbstractStructuredInputModel
 from .._keys import EvalKey, fold_in_eval_key
 from .._utils import _canonical_size, SizeLike
@@ -18,6 +23,10 @@ from ..parameters import PositiveTransform
 
 
 ConvexActivation = Literal["softplus", "relu", "squared_relu"]
+InputConvexConstruction = Literal[
+    "input-convex-network", "partially-input-convex-network"
+]
+_CanonicalSize: TypeAlias = int | tuple[int, ...] | Literal["scalar"]
 
 
 def _convex_activation(name: ConvexActivation, values: Array, /) -> Array:
@@ -29,6 +38,84 @@ def _convex_activation(name: ConvexActivation, values: Array, /) -> Array:
         positive = jax.nn.relu(values)
         return positive * positive
     raise ValueError("activation must be 'softplus', 'relu', or 'squared_relu'.")
+
+
+def _size_payload(size: _CanonicalSize | None, /) -> Any:
+    return list(size) if isinstance(size, tuple) else size
+
+
+class InputConvexCertificate(AbstractConstructionCertificate):
+    """Construction evidence that a scalar potential is convex in its input.
+
+    Convexity is structural and holds for every parameter value: the convex
+    input enters only through affine maps, every hidden-to-hidden and final
+    hidden coupling is a positive-transformed linear map, and the activation is
+    convex and nondecreasing. `context_size` is `None` for a potential that is
+    jointly convex in its whole input; otherwise the potential is convex in its
+    second argument for every fixed context of that size.
+    """
+
+    capability_id: ClassVar[str] = "input-convex"
+    construction: InputConvexConstruction = eqx.field(static=True)
+    convex_input_size: _CanonicalSize = eqx.field(static=True)
+    context_size: _CanonicalSize | None = eqx.field(static=True)
+    activation: ConvexActivation = eqx.field(static=True)
+    depth: int = eqx.field(static=True)
+    width_size: int = eqx.field(static=True)
+    certificate_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        construction: InputConvexConstruction,
+        convex_input_size: SizeLike,
+        context_size: SizeLike | None,
+        activation: ConvexActivation,
+        depth: int,
+        width_size: int,
+    ):
+        if construction not in (
+            "input-convex-network",
+            "partially-input-convex-network",
+        ):
+            raise ValueError("Unknown input-convex construction.")
+        if (context_size is None) != (construction == "input-convex-network"):
+            raise ValueError(
+                "Only partially input-convex constructions declare a context size."
+            )
+        if activation not in ("softplus", "relu", "squared_relu"):
+            raise ValueError("activation must be 'softplus', 'relu', or 'squared_relu'.")
+        depth_ = int(depth)
+        width = int(width_size)
+        if depth_ <= 0 or width <= 0:
+            raise ValueError("Input-convex depth and width_size must be positive.")
+        convex_size = _canonical_size(convex_input_size)
+        context = None if context_size is None else _canonical_size(context_size)
+        self.construction = construction
+        self.convex_input_size = convex_size
+        self.context_size = context
+        self.activation = activation
+        self.depth = depth_
+        self.width_size = width
+        self.certificate_id = canonical_fingerprint(
+            {
+                "kind": "input-convex-certificate",
+                "construction": construction,
+                "convex_input_size": _size_payload(convex_size),
+                "context_size": _size_payload(context),
+                "activation": activation,
+                "depth": depth_,
+                "width_size": width,
+                "hidden_coupling": "positive-transform",
+            }
+        )
+
+
+def _require_positive_couplings(layers: tuple[Linear, ...], /) -> None:
+    if any(not isinstance(layer.weight_transform, PositiveTransform) for layer in layers):
+        raise ValueError(
+            "Input-convex certificates require positive hidden-state couplings."
+        )
 
 
 def _positive_linear(
@@ -131,6 +218,22 @@ class InputConvexNetwork(_AbstractBaseModel):
     def hessian(self, x: Array, /) -> Array:
         """Return the input Hessian of this scalar potential."""
         return jax.hessian(lambda value: self(value))(x)
+
+    def input_convex_certificate(self) -> InputConvexCertificate:
+        """Return the construction certificate of joint input convexity."""
+        _require_positive_couplings(self.state_layers)
+        return InputConvexCertificate(
+            construction="input-convex-network",
+            convex_input_size=self.in_size,
+            context_size=None,
+            activation=self.activation,
+            depth=len(self.state_layers),
+            width_size=self.width_size,
+        )
+
+    def model_metadata(self) -> Mapping[str, Any]:
+        """Attach the input-convex certificate to a bound domain function."""
+        return {INPUT_CONVEX_CERTIFICATE_KEY: self.input_convex_certificate()}
 
 
 class PartiallyInputConvexNetwork(_AbstractStructuredInputModel):
@@ -268,5 +371,26 @@ class PartiallyInputConvexNetwork(_AbstractStructuredInputModel):
         """Return the Hessian with respect to the structurally convex input."""
         return jax.hessian(lambda value: self((context, value)))(convex_input)
 
+    def input_convex_certificate(self) -> InputConvexCertificate:
+        """Return the construction certificate of convexity in the second input."""
+        _require_positive_couplings(self.state_layers)
+        context_size, convex_size = self.in_size
+        return InputConvexCertificate(
+            construction="partially-input-convex-network",
+            convex_input_size=convex_size,
+            context_size=context_size,
+            activation=self.activation,
+            depth=len(self.state_layers),
+            width_size=self.width_size,
+        )
 
-__all__ = ["InputConvexNetwork", "PartiallyInputConvexNetwork"]
+    def model_metadata(self) -> Mapping[str, Any]:
+        """Attach the input-convex certificate to a bound domain function."""
+        return {INPUT_CONVEX_CERTIFICATE_KEY: self.input_convex_certificate()}
+
+
+__all__ = [
+    "InputConvexCertificate",
+    "InputConvexNetwork",
+    "PartiallyInputConvexNetwork",
+]

@@ -11,9 +11,17 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, GradientContract
+from .._contracts import AbstractRecipe, FitResult
+from .._schema import AbstractFittedModel
 from ._common import (
     _BLOCKWISE_BINDING,
     _case_count,
@@ -195,7 +203,7 @@ def _smooth_forest_scores_one(
     return jax.vmap(score_point)(queries)
 
 
-class IsolationForestModel(AbstractArrayModel):
+class IsolationForestModel(AbstractFittedModel):
     """Exact hard isolation forest; splits, paths, and predictions are nondifferentiable."""
 
     feature_indices: Array
@@ -285,7 +293,7 @@ class IsolationForestModel(AbstractArrayModel):
         )
 
 
-class SmoothIsolationForestModel(AbstractArrayModel):
+class SmoothIsolationForestModel(AbstractFittedModel):
     """Differentiable sigmoid-routing relaxation of a fitted isolation forest."""
 
     feature_indices: Array
@@ -468,14 +476,9 @@ class IsolationForestRecipe(AbstractRecipe):
             feature_count=batch.feature_count,
             case_shape=batch.case_shape,
         )
-        contract = GradientContract(
-            prediction_inputs="none",
-            prediction_parameters="none",
-            fit_features="none",
-            fit_targets="none",
-            fit_weights="none",
-            fit_hyperparameters="none",
-            fit_mode="stopped",
+        contract = DerivativeContract(
+            (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=(
                 "tree_topology",
                 "split_features",
@@ -496,7 +499,7 @@ class IsolationForestRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="isolation-forest",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

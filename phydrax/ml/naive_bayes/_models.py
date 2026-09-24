@@ -14,20 +14,26 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import AbstractArrayModel, ValuePort
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
 )
 from .._numerics import effective_sample_size
-from .._schema import TargetSchema
+from .._schema import AbstractFittedModel, TargetSchema
 from ..discriminant._models import _labels_for, _reshape_for_samples
 
 
@@ -64,12 +70,14 @@ class NaiveBayesDiagnostics(StrictModule):
         self.method = str(method)
 
 
-class AbstractNaiveBayesModel(AbstractArrayModel):
+class AbstractNaiveBayesModel(AbstractFittedModel):
     """Common normalized classification API for native Naive Bayes models."""
 
     labels: eqx.AbstractVar[Array]
-    target_schema: eqx.AbstractVar[TargetSchema]
     case_shape: eqx.AbstractVar[tuple[int, ...]]
+
+    def output_ports(self) -> tuple[ValuePort, ...]:
+        return self.target_output_ports()
 
     @abstractmethod
     def joint_log_likelihood(self, x: Any, /) -> Array:
@@ -370,16 +378,22 @@ def _result(
         domain_valid=domain_valid,
         method=method,
     )
-    contract = GradientContract(
-        prediction_inputs="almost-everywhere"
-        if method in {"bernoulli-nb", "categorical-nb"}
-        else "smooth",
-        prediction_parameters="smooth",
-        fit_features="conditional",
-        fit_targets="none",
-        fit_weights="conditional",
-        fit_hyperparameters="conditional",
-        fit_mode="direct",
+    contract = DerivativeContract(
+        (
+            SurfaceDerivative(
+                DerivativeSurface.INPUT,
+                GradientLevel.ALMOST_EVERYWHERE
+                if method in {"bernoulli-nb", "categorical-nb"}
+                else GradientLevel.SMOOTH,
+            ),
+            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(
+                DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+            ),
+        ),
+        route=DerivativeRoute.DIRECT,
         nondifferentiable_outputs=("predict", "predict_indices"),
         conditions=(
             "fixed class vocabulary",
@@ -393,7 +407,7 @@ def _result(
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=contract,
+        derivative_contract=contract,
     )
 
 

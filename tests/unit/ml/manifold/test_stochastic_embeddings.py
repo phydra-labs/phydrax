@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeRoute, DerivativeSurface, GradientLevel
 from phydrax.ml import ML_INSUFFICIENT_DATA, MLBatch
 from phydrax.ml.manifold import (
     FuzzyGraphEmbeddingModel,
@@ -64,13 +65,28 @@ def test_tsne_requires_explicit_key_is_deterministic_and_is_exactly_transductive
     assert first.diagnostics.iterations == 4
     assert first.diagnostics.minimum_degree == 6
     assert first.diagnostics.maximum_degree == 6
-    assert first.gradient_contract.prediction_inputs == "none"
-    assert first.gradient_contract.prediction_parameters == "none"
-    assert first.gradient_contract.fit_features == "conditional"
-    assert first.gradient_contract.fit_weights == "conditional"
-    assert first.gradient_contract.fit_hyperparameters == "conditional"
-    assert first.gradient_contract.fit_targets == "none"
-    assert first.gradient_contract.fit_mode == "unrolled"
+    assert first.derivative_contract.level(DerivativeSurface.INPUT) is GradientLevel.NONE
+    assert (
+        first.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
+        is GradientLevel.NONE
+    )
+    assert (
+        first.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        first.derivative_contract.level(DerivativeSurface.FIT_WEIGHTS)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        first.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        first.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
+        is GradientLevel.NONE
+    )
+    assert first.derivative_contract.route is DerivativeRoute.UNROLLED
     with pytest.raises(ValueError, match="transductive"):
         model(features[0])
     with pytest.raises(ValueError, match="capacity exceeded"):
@@ -165,14 +181,16 @@ def test_fuzzy_graph_embedding_key_transform_jit_vmap_and_gradient_surfaces():
     assert all(jnp.all(jnp.isfinite(leaf)) for leaf in leaves)
     assert any(jnp.any(jnp.abs(leaf) > 1e-8) for leaf in leaves)
 
-    contract = first.gradient_contract
-    assert contract.prediction_inputs == "conditional"
-    assert contract.prediction_parameters == "conditional"
-    assert contract.fit_features == "conditional"
-    assert contract.fit_weights == "conditional"
-    assert contract.fit_hyperparameters == "conditional"
-    assert contract.fit_targets == "none"
-    assert contract.fit_mode == "unrolled"
+    contract = first.derivative_contract
+    assert contract.level(DerivativeSurface.INPUT) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.MODEL_PARAMETER) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
+    assert (
+        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is GradientLevel.CONDITIONAL
+    )
+    assert contract.level(DerivativeSurface.FIT_TARGETS) is GradientLevel.NONE
+    assert contract.route is DerivativeRoute.UNROLLED
 
     with pytest.raises(ValueError, match="capacity exceeded"):
         FuzzyGraphEmbeddingRecipe(

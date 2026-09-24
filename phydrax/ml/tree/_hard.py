@@ -13,12 +13,18 @@ import jax.core as jax_core
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._strict import StrictModule
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_CAPACITY_EXHAUSTED,
     ML_INSUFFICIENT_DATA,
     ML_SUCCESS,
@@ -37,14 +43,13 @@ XGBObjective: TypeAlias = Literal[
     "pairwise_ranking",
 ]
 
-_HARD_CONTRACT = GradientContract(
-    prediction_inputs="none",
-    prediction_parameters="almost-everywhere",
-    fit_features="none",
-    fit_targets="none",
-    fit_weights="none",
-    fit_hyperparameters="none",
-    fit_mode="stopped",
+_HARD_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(
+            DerivativeSurface.MODEL_PARAMETER, GradientLevel.ALMOST_EVERYWHERE
+        ),
+    ),
+    route=DerivativeRoute.STOPPED,
     nondifferentiable_outputs=(
         "split structure",
         "leaf indices",
@@ -887,7 +892,7 @@ def _finish_result(
         valid=valid_array,
         status=status_array,
         method=method,
-        gradient_contract=_HARD_CONTRACT,
+        derivative_contract=_HARD_CONTRACT,
     )
 
 

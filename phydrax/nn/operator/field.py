@@ -10,6 +10,8 @@ from typing import Any, Literal
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ..._fingerprint import canonical_fingerprint
+from ..._model import ValuePort
 from ..._strict import StrictModule
 from ...discretization import CochainFieldSpec
 from ...units import DIMENSIONLESS, DimensionSignature
@@ -259,6 +261,76 @@ class OperatorFieldSpec(StrictModule):
                 f"Field {self.name!r} expected {self.channel_count} channels; got {array.shape[-1]}."
             )
         return array * scale + offset
+
+    def value_port(self) -> ValuePort:
+        """Return the canonical port of this field's physical value.
+
+        The port's `semantic_id` is the field `name`. Scalar fields have event
+        shape `()`; channel fields have the packed channel axis
+        `(channel_count,)`, including tensor and Clifford fields, whose layouts
+        declare heterogeneous packed blocks rather than one structured event
+        shape. Component IDs are `component_names` when declared, otherwise
+        `name` for scalar fields and `f"{name}[{i}]"` for channel fields. Every
+        component carries the field `dimension`. `representation` is the field
+        representation; `vector` maps to contravariant and `covector` to
+        covariant variance, every other representation is neutral.
+        `normalization_id` fingerprints the declared per-channel affine
+        `(scale, offset)`, so identity scaling is an explicit declaration.
+        `space_id` fingerprints the declared cochain, tensor, and Clifford
+        layouts and is `None` when none is declared. Frames and event axes are
+        undeclared.
+        """
+        count = self.channel_count
+        if self.component_names:
+            components = self.component_names
+        elif self.channels == "scalar":
+            components = (self.name,)
+        else:
+            components = tuple(f"{self.name}[{index}]" for index in range(count))
+        match self.representation:
+            case "vector":
+                variance = "contravariant"
+            case "covector":
+                variance = "covariant"
+            case _:
+                variance = "neutral"
+        structures = (self.cochain, self.tensor_layout, self.clifford_layout)
+        space_id = (
+            None
+            if all(structure is None for structure in structures)
+            else canonical_fingerprint(
+                {
+                    "kind": "operator-field-space",
+                    "cochain": None if self.cochain is None else self.cochain.to_dict(),
+                    "tensor_layout": (
+                        None
+                        if self.tensor_layout is None
+                        else self.tensor_layout.to_dict()
+                    ),
+                    "clifford_layout": (
+                        None
+                        if self.clifford_layout is None
+                        else self.clifford_layout.representation_id
+                    ),
+                }
+            )
+        )
+        return ValuePort(
+            self.name,
+            event_shape=() if self.channels == "scalar" else (count,),
+            component_ids=components,
+            representation=self.representation,
+            space_id=space_id,
+            dimensions=(self.dimension,) * count,
+            normalization_id=canonical_fingerprint(
+                {
+                    "kind": "affine-normalization",
+                    "scale": list(self.scale),
+                    "offset": list(self.offset),
+                }
+            ),
+            variance=variance,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Return a canonical JSON-compatible field specification."""

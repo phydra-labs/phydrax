@@ -11,19 +11,26 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
 )
 from .._numerics import effective_sample_size, soft_threshold
+from .._schema import AbstractFittedModel
 
 
 class FactorizationDiagnostics(StrictModule):
@@ -121,7 +128,7 @@ def _ista_codes(
     return jax.lax.fori_loop(0, int(iterations), body, codes)
 
 
-class SparseCodingModel(AbstractArrayModel):
+class SparseCodingModel(AbstractFittedModel):
     """Fixed dictionary with a deterministic unrolled proximal encoder."""
 
     dictionary: Array
@@ -190,7 +197,7 @@ class SparseCodingModel(AbstractArrayModel):
         return self.transform(x)
 
 
-class NMFModel(AbstractArrayModel):
+class NMFModel(AbstractFittedModel):
     """Nonnegative basis with multiplicative nonnegative encoding."""
 
     components: Array
@@ -422,11 +429,22 @@ class NMF(AbstractRecipe):
             valid=valid,
             status=status,
             method="multiplicative-nmf",
-            gradient_contract=GradientContract(
-                prediction_inputs="almost-everywhere",
-                fit_features="almost-everywhere",
-                fit_weights="conditional",
-                fit_mode="unrolled",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(
+                        DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.ALMOST_EVERYWHERE
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.UNROLLED,
                 conditions=("multiplicative iterates must stay strictly positive",),
             ),
         )
@@ -555,11 +573,19 @@ class SparseCoding(AbstractRecipe):
             valid=valid,
             status=status,
             method="fixed-dictionary-ista",
-            gradient_contract=GradientContract(
-                prediction_inputs="almost-everywhere",
-                prediction_parameters="almost-everywhere",
-                fit_features="almost-everywhere",
-                fit_mode="unrolled",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(
+                        DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.ALMOST_EVERYWHERE
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.ALMOST_EVERYWHERE
+                    ),
+                ),
+                route=DerivativeRoute.UNROLLED,
                 nondifferentiable_outputs=("active_set",),
                 conditions=("ISTA gradients exclude soft-threshold knots",),
             ),
@@ -732,12 +758,22 @@ class DictionaryLearning(AbstractRecipe):
             valid=valid,
             status=status,
             method="alternating-ista-dictionary-learning",
-            gradient_contract=GradientContract(
-                prediction_inputs="almost-everywhere",
-                prediction_parameters="almost-everywhere",
-                fit_features="almost-everywhere",
-                fit_weights="conditional",
-                fit_mode="unrolled",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(
+                        DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.ALMOST_EVERYWHERE
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.ALMOST_EVERYWHERE
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.UNROLLED,
                 nondifferentiable_outputs=("active_set",),
                 conditions=(
                     "unrolled sparse-code gradients exclude soft-threshold knots",

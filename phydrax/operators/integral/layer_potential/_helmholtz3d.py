@@ -16,8 +16,8 @@ from phydrax._strict import StrictModule
 from phydrax.ein import contract
 
 from ...._fingerprint import canonical_fingerprint
-from ...._model import AbstractArrayModel
-from ....equations.trefftz._core import TRIAL_SPACE_CERTIFICATE_KEY, TrialSpaceCertificate
+from ...._model import AbstractArrayModel, TRIAL_SPACE_CERTIFICATE_KEY
+from ....equations.trefftz._core import TrialSpaceCertificate
 from ._core import LayerDiscretizationReport
 from ._surface3d import SurfacePanelization3D
 

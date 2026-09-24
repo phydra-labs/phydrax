@@ -10,7 +10,13 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._model._binding import ModelBinding
 from ...uq._gp_classification import (
     BernoulliGaussianProcessPosterior,
@@ -28,11 +34,11 @@ from .._contracts import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
 )
+from .._schema import AbstractFittedModel
 from ._utils import finite_array, validated_weights
 
 
@@ -43,7 +49,7 @@ def _size(shape: tuple[int, ...]) -> int:
     return result
 
 
-class GaussianProcessClassifierModel(AbstractArrayModel):
+class GaussianProcessClassifierModel(AbstractFittedModel):
     """Smooth class probabilities from UQ Laplace-conditioned GP factors."""
 
     posteriors: tuple[
@@ -245,14 +251,23 @@ class GaussianProcessClassifierRecipe(AbstractRecipe):
             effective_samples=effective,
             method="uq-gp-laplace-classification",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
             nondifferentiable_outputs=("predict",),
             conditions=("Class labels and Newton iteration count are fixed.",),
         )
@@ -262,7 +277,7 @@ class GaussianProcessClassifierRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="gp-classification",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

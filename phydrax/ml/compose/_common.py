@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import functools
+from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
 
 import equinox as eqx
@@ -12,11 +13,14 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ..._differentiation import (
+    DerivativeContract,
+)
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._batch import MLBatch
-from .._contracts import FitResult, GradientContract
+from .._contracts import FitResult
 from .._schema import FeatureSchema
 from .._sparse_features import FeatureArray, SparseFeatures
 
@@ -77,7 +81,7 @@ class CompositionDiagnostics(StrictModule):
     methods: tuple[str, ...] = eqx.field(static=True)
     child_valid: tuple[Array, ...]
     child_status: tuple[Array, ...]
-    gradient_contracts: tuple[GradientContract, ...]
+    derivative_contracts: tuple[DerivativeContract, ...]
     valid: Array
     status: Array
 
@@ -99,7 +103,9 @@ class CompositionDiagnostics(StrictModule):
         self.methods = tuple(result.method for result in results_)
         self.child_valid = tuple(result.valid for result in results_)
         self.child_status = tuple(result.status for result in results_)
-        self.gradient_contracts = tuple(result.gradient_contract for result in results_)
+        self.derivative_contracts = tuple(
+            result.derivative_contract for result in results_
+        )
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
 
@@ -494,7 +500,10 @@ def _composition_binding(
 def _combine_results(
     results: Sequence[FitResult],
     /,
-) -> tuple[Array, Array, GradientContract]:
+    *,
+    sequential: bool,
+) -> tuple[Array, Array, DerivativeContract]:
+    """Combine child fits; stages compose in order, parallel children meet."""
     results_ = tuple(results)
     if not results_:
         raise ValueError("Cannot combine an empty set of fit results.")
@@ -503,43 +512,11 @@ def _combine_results(
     for result in results_:
         valid = valid & result.valid
         status = jnp.maximum(status, result.status)
-
-    level_order = {"none": 0, "conditional": 1, "almost-everywhere": 2, "smooth": 3}
-
-    def minimum_level(select: Callable[[GradientContract], str], /) -> Any:
-        return min(
-            (select(result.gradient_contract) for result in results_),
-            key=level_order.__getitem__,
-        )
-
-    modes = tuple(result.gradient_contract.fit_mode for result in results_)
-    fit_mode = modes[0] if all(mode == modes[0] for mode in modes) else "stopped"
-    nondifferentiable: list[str] = []
-    conditions: list[str] = []
-    for result in results_:
-        for name in result.gradient_contract.nondifferentiable_outputs:
-            if name not in nondifferentiable:
-                nondifferentiable.append(name)
-        for condition in result.gradient_contract.conditions:
-            if condition not in conditions:
-                conditions.append(condition)
-    if fit_mode == "stopped" and any(mode != "stopped" for mode in modes):
-        conditions.append(
-            "Child fits use different differentiation modes; the composite fit mode is conservatively declared stopped."
-        )
-    contract = GradientContract(
-        prediction_inputs=minimum_level(lambda contract: contract.prediction_inputs),
-        prediction_parameters=minimum_level(
-            lambda contract: contract.prediction_parameters
-        ),
-        fit_features=minimum_level(lambda contract: contract.fit_features),
-        fit_targets=minimum_level(lambda contract: contract.fit_targets),
-        fit_weights=minimum_level(lambda contract: contract.fit_weights),
-        fit_hyperparameters=minimum_level(lambda contract: contract.fit_hyperparameters),
-        fit_mode=fit_mode,
-        nondifferentiable_outputs=tuple(nondifferentiable),
-        conditions=tuple(conditions),
-    )
+    contracts = tuple(result.derivative_contract for result in results_)
+    if sequential:
+        contract = functools.reduce(DerivativeContract.compose, contracts)
+    else:
+        contract = contracts[0].meet(*contracts[1:])
     return (
         jnp.asarray(valid, dtype=jnp.bool_),
         jnp.asarray(status, dtype=jnp.int32),
@@ -552,6 +529,7 @@ def _prefixed_schema(name: str, schema: FeatureSchema, /) -> FeatureSchema:
         tuple(f"{name}__{feature_name}" for feature_name in schema.names),
         kinds=schema.kinds,
         layout_id=(f"{name}:{schema.layout_id}" if schema.layout_id else name),
+        dimensions=schema.dimensions,
     )
 
 
@@ -563,8 +541,16 @@ def _join_schemas(named: Sequence[tuple[str, FeatureSchema]], /) -> FeatureSchem
         for output_name in _prefixed_schema(name, schema).names
     )
     kinds = tuple(kind for _, schema in schemas for kind in schema.kinds)
+    dimensions = (
+        None
+        if any(schema.dimensions is None for _, schema in schemas)
+        else tuple(dimension for _, schema in schemas for dimension in schema.dimensions)
+    )
     return FeatureSchema(
-        names, kinds=kinds, layout_id="|".join(name for name, _ in schemas)
+        names,
+        kinds=kinds,
+        layout_id="|".join(name for name, _ in schemas),
+        dimensions=dimensions,
     )
 
 

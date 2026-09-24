@@ -15,14 +15,11 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 import phydrax.linalg as la
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._conservation_boundary import evaluate_conservation_boundary
-from ...discretization._conservation_policy import (
-    DifferentiabilityPolicy,
-    validate_differentiability_policy,
-)
 from ...discretization.fem._boundary import (
     FiniteElementBoundarySet,
     tensor_local_face,
@@ -553,7 +550,7 @@ class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
     viscous: ViscousDGPlan | None
     explicit_mass: str = eqx.field(static=True)
     accumulation: str = eqx.field(static=True)
-    differentiability: DifferentiabilityPolicy = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
     def __init__(
@@ -566,7 +563,9 @@ class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
         viscous: ViscousDGPlan | None = None,
         explicit_mass: str = "diagonal_gll",
         accumulation: str = "deterministic",
-        differentiability: DifferentiabilityPolicy = "branchwise",
+        differentiability: BranchDifferentiationPolicy = (
+            BranchDifferentiationPolicy.BRANCHWISE
+        ),
     ):
         if not isinstance(volume_flux, AbstractSymmetricTwoPointFluxPlan):
             raise TypeError("DGSEM volume_flux must be a symmetric two-point flux plan.")
@@ -590,14 +589,29 @@ class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
         accumulation_ = str(accumulation)
         if accumulation_ not in ("fast", "deterministic", "compensated"):
             raise ValueError("Unknown DGSEM finite-element accumulation policy.")
-        differentiability_ = validate_differentiability_policy(differentiability)
+        if not isinstance(differentiability, BranchDifferentiationPolicy):
+            raise TypeError("differentiability must be a BranchDifferentiationPolicy.")
+        match differentiability:
+            case (
+                BranchDifferentiationPolicy.SMOOTH
+                | BranchDifferentiationPolicy.BRANCHWISE
+                | BranchDifferentiationPolicy.SMOOTH_SURROGATE
+                | BranchDifferentiationPolicy.UNSUPPORTED
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "DGSEMConservationMethodPlan supports SMOOTH, BRANCHWISE, "
+                    "SMOOTH_SURROGATE, or UNSUPPORTED; got "
+                    f"{differentiability.name}."
+                )
         self.volume_flux = volume_flux
         self.interface_flux = interface_flux
         self.compatibility = compatibility
         self.viscous = viscous
         self.explicit_mass = mass
         self.accumulation = accumulation_
-        self.differentiability = differentiability_
+        self.differentiability = differentiability
         self.method_id = canonical_fingerprint(
             {
                 "kind": "dgsem-conservation-method",
@@ -609,7 +623,7 @@ class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
                 "viscous": None if viscous is None else viscous.plan_id,
                 "explicit_mass": mass,
                 "accumulation": accumulation_,
-                "differentiability": differentiability_,
+                "differentiability": differentiability.value,
                 "shock_capturing": None,
                 "positivity": None,
                 "motion": None,

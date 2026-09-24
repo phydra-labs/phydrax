@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Literal, Protocol, runtime_checkable
+from typing import ClassVar, Literal, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ._differentiation import AbstractConstructionCertificate
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
@@ -100,9 +101,10 @@ class ComplexAffineNormalization(StrictModule, NonTrainableState):
         )
 
 
-class HolomorphicMapCertificate(StrictModule, NonTrainableState):
+class HolomorphicMapCertificate(AbstractConstructionCertificate):
     """Construction evidence that a complex map is holomorphic."""
 
+    capability_id: ClassVar[str] = "holomorphic-map"
     complex_input_size: int = eqx.field(static=True)
     complex_output_size: int = eqx.field(static=True)
     construction: str = eqx.field(static=True)

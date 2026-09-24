@@ -25,7 +25,14 @@ def _linear_power():
         physics_policy_id="linear-total-matter",
         scale_id=scale.scale_id,
         source_kind="native",
-        differentiation="native-parameter",
+        differentiation=phx.DerivativeContract.smooth(
+            (
+                phx.DerivativeSurface.INPUT,
+                phx.DerivativeSurface.MODEL_PARAMETER,
+                phx.DerivativeSurface.PHYSICAL_PARAMETER,
+                phx.DerivativeSurface.STORED_VALUES,
+            )
+        ),
     )
     power = cosmology.MatterPowerTable(
         [0.5, 1.0],
@@ -58,7 +65,13 @@ def test_multiplicative_correction_preserves_grid_and_chains_provenance():
         power.wavenumbers,
         2.0 * jnp.ones_like(power.power_values),
         card,
-        differentiation="native-parameter",
+        differentiation=phx.DerivativeContract.smooth(
+            (
+                phx.DerivativeSurface.INPUT,
+                phx.DerivativeSurface.MODEL_PARAMETER,
+                phx.DerivativeSurface.STORED_VALUES,
+            )
+        ),
     )
     identity = plan.apply(power, strength=0.0)
     np.testing.assert_allclose(identity.power.power_values, power.power_values)

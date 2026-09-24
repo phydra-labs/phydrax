@@ -1,39 +1,111 @@
-# ML differentiation contracts
+# Derivative contracts
 
-This appendix defines what a derivative claim in `phydrax.ml` means. It is a
-mathematical contract, not merely a statement that JAX can trace an implementation.
+This appendix defines what a derivative claim means anywhere in Phydrax and how
+fitted `phydrax.ml` models state theirs. A claim is a mathematical contract, not
+merely a statement that JAX can trace an implementation. Every owner — native
+solvers, learned components, fitted ML models, and artifacts — uses the same
+root vocabulary; the rendered reference is
+[API → Derivative contracts and ports](../api/differentiation.md).
 
-## Two derivative surfaces
-
-A fitted predictor creates two different maps:
-
-```text
-prediction: (fitted parameters, query) -> output
-fit:        (training data, weights, hyperparameters) -> fitted parameters
+```python
+from phydrax import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    DifferentiationRequest,
+    GradientLevel,
+    RegularityPolicy,
+    SurfaceDerivative,
+)
 ```
 
-A model may have smooth prediction while its fit is nondifferentiable. Hard trees
-are the simplest example: leaf values are differentiable parameters, but split
-feature and threshold selection are discrete. Conversely, a fitted spectral basis
-may be callable through smooth matrix multiplication while the basis returned by
-fitting is not uniquely differentiable at repeated singular values.
+## Surfaces
 
-`GradientContract` records prediction gradients and fit gradients separately. Its
-levels are:
+A `DerivativeSurface` names the quantity a derivative is taken with respect to.
 
-- `smooth`: continuously differentiable under the listed domain conditions;
-- `almost-everywhere`: nondifferentiable only on declared boundaries;
-- `conditional`: valid only while listed regularity or active-set conditions hold;
-- `none`: no mathematical derivative is provided.
+| Surface | Kind | Meaning |
+| --- | --- | --- |
+| `INPUT` | capability, value | query or call input of the map |
+| `PRIMAL_STATE` | capability, value | solver primal state |
+| `PHYSICAL_PARAMETER` | capability | physical coefficient of a problem |
+| `SOLVER_ARGUMENT` | capability | continuous solver argument |
+| `STORED_VALUES` | capability | values stored in an artifact |
+| `FIT_FEATURES` | capability | training features of a fit |
+| `FIT_TARGETS` | capability | training targets of a fit |
+| `FIT_WEIGHTS` | capability | statistical or measure weights of a fit |
+| `FIT_HYPERPARAMETERS` | capability | continuous fit hyperparameters |
+| `MODEL_PARAMETER` | owned | parameters held by a component |
+| `MODEL_STATE` | owned | internal state held by a component |
+| `EVENT` | owned | event times or event locations |
+| `STOCHASTIC_REALIZATION` | owned | a realized random draw |
 
-`MLGradientRequest` makes the intended surface and differentiated inputs
-explicit. `GradientContract.admit` and `FitResult.gradient_admission` return
-`MLGradientAdmission`; `require_gradient` rejects an unsupported request
-before a transformed workflow is entered. The top-level `fit` helper accepts
-the same optional request. Raw calls to a recipe's low-level `fit_batch`
-remain expert surfaces and are not magically intercepted by JAX.
+`is_owned_surface(surface)` separates the two kinds:
 
-## Direct differentiation
+- a **capability** surface must propagate through every participant of a
+  combined map. A participant that does not declare it does not support it, so
+  an undeclared capability has level `NONE`. `DerivativeContract` therefore
+  drops explicit `NONE` capability entries: they carry no information;
+- an **owned** surface belongs to the components that hold it. A participant
+  that does not declare it does not own it. An explicit `NONE` owned entry is
+  kept because it records ownership without a derivative: a hard k-means fit owns
+  its centers but supplies no derivative for them.
+
+`INPUT` and `PRIMAL_STATE` are the *value* surfaces. Declared regularity
+describes the map in these arguments.
+
+## Levels and condition resolution
+
+`GradientLevel` orders claims from strongest to weakest:
+
+| Level | Meaning |
+| --- | --- |
+| `SMOOTH` | continuously differentiable under the listed conditions |
+| `ALMOST_EVERYWHERE` | differentiable except on a declared null set such as kinks or thresholds |
+| `CONDITIONAL` | valid only while listed regularity, active-set, or topology conditions hold |
+| `NONE` | no mathematical derivative is supplied |
+
+`weakest_level(levels)` returns the minimum of this order. Levels are never
+compared blindly: a claim carrying conditions that are not known to hold resolves
+to at most `CONDITIONAL` before any comparison.
+
+```python
+import phydrax as phx
+
+phx.resolve_gradient_level(GradientLevel.SMOOTH, conditions=("positive-gap",))
+# GradientLevel.CONDITIONAL
+phx.gradient_level_at_least(
+    GradientLevel.SMOOTH,
+    GradientLevel.SMOOTH,
+    conditions=("positive-gap",),
+    satisfied=("positive-gap",),
+)
+# True
+```
+
+A contract, its surface entries, and each admission are canonical: conditions and
+nondifferentiable outputs are sorted, de-duplicated tuples and surfaces are stored
+in `DerivativeSurface` order. Compare them as sets.
+
+## Routes
+
+`DerivativeRoute` names the mechanism that forms the declared derivatives.
+
+- `DIRECT`: closed-form or fixed array operations differentiated by JAX.
+- `IMPLICIT`: a root or KKT system differentiated through its linearization.
+- `UNROLLED`: the finite iterative program actually executed is differentiated.
+- `SPECTRAL`: eigenspace, singular-subspace, or projector derivatives under gap
+  conditions.
+- `RELAXED`: an explicitly smooth replacement for a discrete algorithm is
+  differentiated.
+- `EXTERNAL_ADJOINT`: an adjoint supplied by an external or dedicated solver.
+- `STOPPED`: no derivative mechanism is claimed for the combined map.
+
+The route never changes declared surface levels. A `STOPPED` ML fit may still
+declare prediction surfaces — a RANSAC fit is stopped yet its fitted linear
+prediction is smooth in its input and coefficients — but it declares no `FIT_*`
+surface. `authority_admits` never admits `STOPPED` as a training route.
+
+### Direct differentiation
 
 Closed-form and fixed array programs use ordinary JAX differentiation. Examples
 include strictly regularized ridge regression, affine scaling, Gaussian moment
@@ -54,9 +126,12 @@ fit invalid rather than being silently clipped.
 Ordinary unregularized least squares is differentiable only while rank remains
 constant. At a rank change, the pseudoinverse map is not continuously
 differentiable; the result records rank deficiency instead of hiding it behind a
-fallback.
+fallback. The least-squares contract therefore declares its `FIT_*` surfaces
+`CONDITIONAL` with the conditions that masks and sparse index structure are fixed,
+the retained singular subspace is locally constant, and every fitted augmented
+design has full column rank.
 
-## Implicit differentiation
+### Implicit differentiation
 
 A fitted state `z*` defined by a residual equation
 
@@ -71,14 +146,14 @@ can be differentiated by solving the linearized system
 ```
 
 This is used only when the relevant Jacobian or KKT system is nonsingular and the
-active constraints are stable. The result lists these conditions. At an active-set
-change, hinge, quantile, constrained sparse, or QP fit is generally only
-piecewise-smooth.
+active constraints are stable. At an active-set change, a hinge, quantile,
+constrained sparse, or QP fit is generally only piecewise-smooth. An implicit
+custom derivative must preserve the primal solver's tolerance and regularization
+semantics; it may not substitute a different backward objective. Admission
+requires classical `C¹` regularity on an implicit route (see
+[Admission](#admission)).
 
-An implicit custom derivative must preserve the primal solver's tolerance and
-regularization semantics. It may not substitute a different backward objective.
-
-## Unrolled differentiation
+### Unrolled differentiation
 
 Fixed-iteration algorithms execute a shape-stable `jax.lax.scan`. The gradient is
 that of the finite program actually executed, including its initialization and
@@ -88,24 +163,19 @@ clustering, iterative reweighting, and differentiable boosting.
 Convergence masking freezes a converged state while retaining a fixed output
 structure. Diagnostics report both the fixed capacity and the iteration at which
 the tolerance was first met. Nonconvergence does not silently increase the number
-of iterations under `jit`.
+of iterations under `jit`. Unrolled gradients can differ numerically from the
+derivative of an ideal infinite-iteration fixed point; the `UNROLLED` route makes
+this distinction visible.
 
-Unrolled gradients can have different numerical behavior from the derivative of an
-ideal infinite-iteration fixed point. The fit mode makes this distinction visible.
-
-## Spectral differentiation
+### Spectral differentiation
 
 PCA, POD, CCA, spectral clustering, and related methods involve eigenspaces or
 singular subspaces.
-
-### Projector derivatives
 
 A subspace projector is invariant to sign, complex phase, and rotations inside the
 subspace. Its derivative is well-defined while the retained subspace is separated
 from the discarded subspace by a nonzero spectral gap. Projector-valued operations
 are therefore the strongest default differentiation surface.
-
-### Basis derivatives
 
 An individual basis is not unique:
 
@@ -118,12 +188,339 @@ the minimum retained gap. This removes incidental sign or phase flips but cannot
 make a repeated eigenspace basis uniquely differentiable. Basis-gradient claims
 are conditional on the reported gap and canonical pivot remaining nondegenerate.
 
-### Rank selection
-
 Selecting a rank from an energy threshold is discrete. A fixed-rank fit can be
 spectrally differentiated under its gap conditions; the selected integer rank
 cannot. Exact rank and retained-energy diagnostics remain available as terminal
 outputs.
+
+## Regularity algebra
+
+`DerivativeRegularity` declares the smoothness of a map in its value surfaces:
+
+- `continuity`: `-1` for a discontinuous map, `k >= 0` for `Cᵏ`, or `"smooth"`;
+- `pieces`: the structure between non-smooth loci — `"polynomial"` pieces with a
+  `degree_bound`, `"smooth"` non-polynomial pieces, or `"none"` for no declared
+  decomposition;
+- `conditions` and an optional `support` region (`None` is the whole domain).
+
+The constructors `DerivativeRegularity.smooth(degree_bound=None)`,
+`piecewise_polynomial(continuity=, degree_bound=)`,
+`piecewise_smooth(continuity=)`, and `discontinuous()` cover the common cases.
+Declarations are canonical: a `Cᵏ` piecewise polynomial of degree at most `k` is
+one global polynomial and is stored as smooth, and a smooth map always has smooth
+or polynomial pieces.
+
+`admits_order(order)` returns the level and conditions of value derivatives of
+that order:
+
+| Case | Level |
+| --- | --- |
+| `continuity == "smooth"` or `order <= continuity` | `SMOOTH` |
+| polynomial pieces with `degree_bound < order` | `NONE` (proven degenerate) |
+| `continuity == -1` with `pieces == "none"` | `NONE` (proven degenerate) |
+| any other order | `ALMOST_EVERYWHERE` |
+
+From `order >= continuity + 2` the distributional derivative has a singular part
+on the non-smooth locus; the almost-everywhere claim then carries the condition
+`"singular-part-ignored"`. For example:
+
+```python
+from phydrax import DerivativeRegularity
+
+relu = DerivativeRegularity.piecewise_polynomial(continuity=0, degree_bound=1)
+relu.admits_order(1)  # (ALMOST_EVERYWHERE, ())
+relu.admits_order(2)  # (NONE, ()) — the a.e. second derivative vanishes identically
+
+spline = DerivativeRegularity.piecewise_polynomial(continuity=2, degree_bound=3)
+spline.admits_order(2)  # (SMOOTH, ())
+spline.admits_order(3)  # (ALMOST_EVERYWHERE, ())
+spline.admits_order(4)  # (NONE, ())
+
+step_like = DerivativeRegularity.piecewise_smooth(continuity=-1)
+step_like.admits_order(1)  # (ALMOST_EVERYWHERE, ("singular-part-ignored",))
+```
+
+Regularity combines through three operations. Each takes the minimum continuity,
+the most general piece structure (`polynomial` < `smooth` < `none`), the union of
+conditions, and a common support (two different explicit supports are rejected):
+
+| Operation | Map | Polynomial degree bound |
+| --- | --- | --- |
+| `a.add(b)` | sum or juxtaposition | `max(a, b)` |
+| `a.multiply(b)` | product | `a + b` |
+| `inner.compose(outer)` | `outer` applied after `inner` | `inner * outer` |
+
+A degree bound survives only while both operands have polynomial pieces. So the
+sum of a ReLU and a cubic spline is `C⁰` with degree bound 3, the product of two
+ReLUs is `C⁰` with degree bound 2, and a ReLU of a ReLU is `C⁰` with degree
+bound 1.
+
+## Contracts
+
+A `DerivativeContract` is the canonical static declaration of one component:
+
+```python
+contract = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+        SurfaceDerivative(
+            DerivativeSurface.FIT_FEATURES,
+            GradientLevel.CONDITIONAL,
+            conditions=("positive-gap",),
+        ),
+    ),
+    route=DerivativeRoute.SPECTRAL,
+    regularity=DerivativeRegularity.smooth(),
+    nondifferentiable_outputs=("selected_rank",),
+)
+contract.level(DerivativeSurface.FIT_TARGETS)  # GradientLevel.NONE — undeclared
+contract.supported_surfaces  # surfaces whose level is not NONE
+```
+
+`DerivativeContract.smooth(surfaces, route=...)` declares every listed surface
+`SMOOTH` with smooth regularity. `contract_id` content-addresses the canonical
+declaration, so two equal declarations share one identity. `regularity=None`
+means undeclared.
+
+## Admission
+
+A consumer never infers support from whether `jax.grad` returns an array. It asks:
+
+```python
+request = DifferentiationRequest(
+    (DerivativeSurface.INPUT, DerivativeSurface.MODEL_PARAMETER),
+    order=1,
+    authority=None,
+)
+admission = contract.admit(request, policy=RegularityPolicy())
+admission.supported  # bool
+admission.status  # DERIVATIVE_SUPPORTED or DERIVATIVE_UNSUPPORTED
+admission.level(DerivativeSurface.INPUT)
+admission.route, admission.conditions, admission.reasons
+```
+
+`DifferentiationRequest(surfaces, *, order=1, authority=None)` stores its surfaces
+as a set in canonical order; `admission.levels` align with `request.surfaces`, so
+read them with `admission.level(surface)`. One request may mix prediction and fit
+surfaces. `authority` is the `ComponentAuthority` of the requesting owner; `None`
+denotes direct eager differentiation outside scientific preparation.
+
+Each admitted level is the weakest of the declared level and the regularity bound
+computed by `admit_regularity` under the owner's `RegularityPolicy`:
+
+1. Regularity is consulted only when the request touches a value surface
+   (`INPUT`, `PRIMAL_STATE`) or the route is `IMPLICIT`; otherwise the bound is
+   `SMOOTH`.
+2. Declared regularity is evaluated with `admits_order(request.order)`. A proven
+   degeneracy is rejected with the reason `"regularity-degenerate"`; an
+   almost-everywhere level needs `RegularityPolicy(allow_almost_everywhere=True)`
+   and is otherwise rejected with `"almost-everywhere-not-allowed"`; an implicit
+   route needs classical `C¹` (or a `"branch-margin"` regularity condition) and is
+   otherwise rejected with `"implicit-requires-c1"`.
+3. Undeclared regularity depends on the authority. It is admitted for
+   `authority=None` and then carries the condition `"regularity-undeclared"`. It
+   is rejected with the reason `"regularity-undeclared"` for `MODEL` and
+   `DISCRETIZATION` authorities. `SURROGATE`, `ACCELERATOR`, and `DECISION`
+   authorities admit it only with `RegularityPolicy(allow_undeclared=True)` on a
+   non-implicit route.
+4. The bound applies to the value surfaces, or to every surface on an implicit
+   route.
+
+A requested surface the contract does not declare (or declares `NONE`) is rejected
+with the reason `"surface-unsupported:<surface>"`, for example
+`"surface-unsupported:fit-features"`. The admission is supported exactly when no
+requested level is `NONE`; an unsupported admission names its reasons and a
+supported one carries none. `admission.conditions` collect the contract,
+requested-surface, and regularity conditions and qualify every admitted level —
+resolve them with `gradient_level_at_least` before relying on the level.
+
+`contract.require(request, policy=...)` returns the same admission or raises
+`ValueError` whose message starts with `derivative-unsupported` and names the
+unsupported surfaces and reasons:
+
+```text
+derivative-unsupported: order-1 derivatives with respect to ('fit-features',) are
+unsupported (reasons: surface-unsupported:fit-features); inspect
+DerivativeContract.admit before transforming.
+```
+
+### Authority
+
+`ComponentAuthority` states what a component is trusted to decide inside its
+owner, and `authority_admits(authority, route, objective_kind)` states which
+(route, `ObjectiveKind`) pairs may train it:
+
+| Authority | Admitted (route, objective) pairs |
+| --- | --- |
+| `ACCELERATOR` | (unrolled, algorithmic-work), (direct, supervised-proxy) |
+| `DISCRETIZATION` | (unrolled, rollout), (direct, rollout), (implicit, solution-map), (direct, supervised-proxy), (direct, physical-residual) |
+| `MODEL` | (direct, data-fit), (direct, physical-residual), (direct, supervised-proxy), (implicit, solution-map), (unrolled, rollout), (external-adjoint, solution-map), (external-adjoint, rollout) |
+| `SURROGATE` | (direct, physical-residual), (direct, data-fit), (unrolled, rollout) |
+| `DECISION` | (direct, rollout), (unrolled, rollout), (relaxed, rollout), (direct, supervised-proxy) |
+
+An accelerator therefore never trains through an implicit solution map, and no
+authority trains through a `STOPPED` route.
+
+## Meet and compose
+
+Two operations combine contracts. Both combine routes the same way: equal routes
+are kept, and differing routes become `STOPPED` with the condition
+`"mixed-derivative-routes:<routes joined by ,>"` unless an explicit
+`composition_route=` is supplied. Conditions and nondifferentiable outputs are
+unions.
+
+`a.meet(b, ...)` combines **parallel** parts of one map:
+
+- a capability surface takes the weakest level over every participant, counting
+  an undeclared capability as `NONE`;
+- an owned surface takes the weakest level over the participants that own it and
+  stays absent when none does;
+- regularity is the `add` of all participants and is undeclared if any is.
+
+`upstream.compose(downstream)` is the **sequential** map
+`downstream(upstream(...))`. The downstream `INPUT` level is the passage through
+which every upstream derivative reaches the output:
+
+- `INPUT` is the weakest of both stages' `INPUT` levels;
+- a capability surface is the weakest of the upstream level, the downstream
+  `INPUT` level, and the downstream level (undeclared is `NONE`);
+- an owned surface is the weakest of the upstream level together with the
+  downstream `INPUT` level (when upstream owns it) and the downstream level (when
+  downstream owns it), and stays absent when neither owns it;
+- regularity is `upstream.regularity.compose(downstream.regularity)` and is
+  undeclared if either is.
+
+```python
+smooth = DerivativeContract.smooth(
+    (DerivativeSurface.INPUT, DerivativeSurface.MODEL_PARAMETER)
+)
+kinked = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+    ),
+    route=DerivativeRoute.UNROLLED,
+)
+smooth.meet(kinked).conditions  # ("mixed-derivative-routes:direct,unrolled",)
+smooth.compose(kinked).level(DerivativeSurface.MODEL_PARAMETER)
+# ALMOST_EVERYWHERE: the upstream parameters pass through the kinked input
+```
+
+ML aggregators use exactly these operations on their child fit contracts:
+
+- `Pipeline` composes its stage contracts in order;
+- `FeatureUnion` and `ColumnTransformer` meet their child contracts;
+- `cross_validate` (and the outer-fold record of nested cross-validation) meets
+  the fold contracts, then adds fixed-fold and differentiable-scorer conditions
+  and reports `fold_indices`, `valid`, and `status` as nondifferentiable outputs;
+  exact searches and the nested selection itself are `STOPPED`;
+- `TransformedTargetRegressor` is `regressor.compose(view)`, where `view` is the
+  fitted target transform seen as the stage applied after the regressor: its
+  `FIT_TARGETS` level is the weakest of the transform's `FIT_FEATURES` and `INPUT`
+  levels. The composite `FIT_TARGETS` is therefore the weakest of the transform
+  `FIT_FEATURES`, the transform `INPUT`, and the regressor `FIT_TARGETS`, and
+  every other composite surface is additionally weakened by the transform `INPUT`
+  level.
+
+Multiclass compositions, calibrated classifiers, and ensembles declare their own
+family contracts (see the [family table](#family-contracts)) rather than meeting
+child contracts.
+
+## Branch policies
+
+A discrete branch decision — a threshold, an event, a selected regime — has one of
+six canonical differentiation semantics. `branch_policy_contract(policy,
+surfaces=...)` returns the canonical contract of a `BranchDifferentiationPolicy`
+on the given surfaces:
+
+| Policy | Level | Route | Regularity | Condition |
+| --- | --- | --- | --- | --- |
+| `SMOOTH` | smooth | direct | smooth | none |
+| `BRANCHWISE` | almost-everywhere | direct | piecewise smooth, `C⁻¹` | `executed-branch` |
+| `FROZEN_DECISION` | smooth | direct | smooth | `decisions-frozen` |
+| `SMOOTH_SURROGATE` | smooth | relaxed | smooth | `smooth-surrogate` |
+| `EVENT_AWARE` | almost-everywhere | direct | piecewise smooth, `C⁻¹` | `transversal-events` |
+| `UNSUPPORTED` | none | stopped | undeclared | none |
+
+The conditions name what is differentiated: the executed branch, the map with
+decisions held fixed, a smooth surrogate of the sharp map, or the event-aware flow
+away from grazing events. Because `BRANCHWISE` and `EVENT_AWARE` declare
+discontinuous piecewise-smooth regularity, their value derivatives are admitted
+only under `RegularityPolicy(allow_almost_everywhere=True)` and carry
+`"singular-part-ignored"`.
+
+## Fitted ML models
+
+A fitted predictor creates two different maps:
+
+```text
+prediction: (fitted parameters, query) -> output
+fit:        (training data, weights, hyperparameters) -> fitted parameters
+```
+
+`FitResult.derivative_contract` declares both in one contract. `INPUT` and
+`MODEL_PARAMETER` describe prediction; `FIT_FEATURES`, `FIT_TARGETS`,
+`FIT_WEIGHTS`, and `FIT_HYPERPARAMETERS` describe the fit; the contract route is
+the fit route. `MODEL_PARAMETER` is owned and always declared by ML results. A
+model may have smooth prediction while its fit is nondifferentiable: hard trees
+are the simplest example, because leaf values are parameters but split feature
+and threshold selection are discrete. Conversely, a fitted spectral basis may be
+callable through smooth matrix multiplication while the basis returned by fitting
+is not uniquely differentiable at repeated singular values.
+
+ML families do not declare `regularity`. Admitting a request that touches `INPUT`
+with `authority=None` therefore adds the condition `"regularity-undeclared"`,
+while a `MODEL` or `DISCRETIZATION` authority is refused with that reason until
+the family declares its regularity. An implicit-route fit such as dense-QP
+quantile regression consults regularity for every requested surface.
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+features = jnp.array([[-1.0, 0.2], [-0.4, -0.7], [0.1, 0.3], [0.8, -0.2], [1.0, 0.9]])
+targets = 0.7 * features[:, 0] - 0.25 * features[:, 1] + 1.2
+result = phx.ml.fit(phx.ml.linear.RidgeRecipe(alpha=1e-3), features, targets)
+
+contract = result.derivative_contract
+contract.route  # DerivativeRoute.DIRECT
+contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)  # GradientLevel.CONDITIONAL
+
+prediction = DifferentiationRequest(
+    (DerivativeSurface.INPUT, DerivativeSurface.MODEL_PARAMETER)
+)
+admission = result.derivative_admission(prediction)
+admission.status  # "derivative-supported"
+"regularity-undeclared" in admission.conditions  # True
+```
+
+`result.derivative_admission(request, policy=None)` and
+`result.require_derivative(request, policy=None)` forward to the contract.
+
+### Fit-time derivative preflight
+
+`phydrax.ml.fit(..., derivative_request=request)` requires the request against
+the returned contract before the result reaches the caller. An unsupported
+request raises the `derivative-unsupported` `ValueError` instead of returning a
+result that a later transformation would silently misuse:
+
+```python
+tree_fit = DifferentiationRequest((DerivativeSurface.FIT_FEATURES,))
+phx.ml.fit(
+    phx.ml.tree.DecisionTreeRegressor(max_depth=2),
+    features,
+    targets,
+    derivative_request=tree_fit,
+)
+# ValueError: derivative-unsupported: ... (reasons: surface-unsupported:fit-features) ...
+```
+
+The contract is static, so the check runs identically inside `jax.jit` or
+`jax.grad` tracing. `fit` also binds the batch feature schema, and the target
+schema of a supervised fit, into the fitted executable. Calling a recipe's
+low-level `fit_batch` directly neither checks a request nor binds schemas; it
+remains an expert surface that JAX does not intercept.
 
 ## Discrete algorithms
 
@@ -141,8 +538,8 @@ The following operations have no continuous derivative through their exact choic
 
 JAX may return a zero or branch-local derivative for part of such a program. That
 does not make the discrete choice differentiable. These outputs appear in
-`nondifferentiable_outputs`, and the exact fit uses `fit_mode="stopped"` where the
-choice controls learned structure.
+`nondifferentiable_outputs`, and an exact fit whose learned structure is chosen
+this way uses `DerivativeRoute.STOPPED`.
 
 ## Relaxed alternatives
 
@@ -163,11 +560,11 @@ hard rank relaxation can have an exactly discrete local value with zero derivati
 
 Temperature and regularization remain array-valued continuous hyperparameters when
 possible. `ContinuousSparseGateRecipe.temperature` and `.sparsity` are differentiable
-array leaves, but their derivatives are conditional: score functions must be
-differentiable, masks and positive effective mass must remain fixed, score
-normalization needs a nonzero range with stable extrema, and the default absolute
-correlation must stay away from zero covariance and variance. A temperature
-approaching zero can make derivatives singular or ill-conditioned.
+array leaves, but their `FIT_HYPERPARAMETERS` level is `CONDITIONAL`: score
+functions must be differentiable, masks and positive effective mass must remain
+fixed, score normalization needs a nonzero range with stable extrema, and the
+default absolute correlation must stay away from zero covariance and variance. A
+temperature approaching zero can make derivatives singular or ill-conditioned.
 
 Relaxed quantile interiors inherit their solver's regularity. Exact minimum/maximum
 endpoints remain only almost-everywhere differentiable, and an absolute-discrepancy
@@ -185,10 +582,11 @@ The fit contract distinguishes:
 - their explicit product;
 - structural masks, which remove observations or entries before arithmetic.
 
-Gradients with respect to a positive weight are meaningful for smooth weighted
-objectives. At zero weight, inclusion can change and the derivative is generally
-one-sided or conditional. Mask booleans and group identifiers are structural and
-nondifferentiable.
+`FIT_WEIGHTS` derivatives with respect to a positive weight are meaningful for
+smooth weighted objectives. At zero weight, inclusion can change and the
+derivative is generally one-sided or conditional, which is why nearly every family
+declares `FIT_WEIGHTS` at most `CONDITIONAL`. Mask booleans and group identifiers
+are structural and nondifferentiable.
 
 ## Complex values
 
@@ -207,79 +605,125 @@ Before using a fitting gradient, inspect:
 
 1. `result.valid` and `result.status`;
 2. rank, condition number, convergence, and capacity diagnostics;
-3. `result.gradient_contract.fit_mode`;
-4. the per-input gradient levels;
-5. every listed condition and nondifferentiable output;
+3. `result.derivative_contract.route`;
+4. `result.derivative_admission(request)`: its per-surface levels, `reasons`, and
+   `conditions`;
+5. every listed nondifferentiable output;
 6. family-specific eigengap, active-set, temperature, or topology evidence.
 
-`ML_UNSUPPORTED_GRADIENT` belongs to `MLGradientAdmission.status`, not the
-primal fit status. It means at least one explicitly requested input has level
-`none`. Changing the solver, adding regularization, fixing rank/capacity, or
-using an explicit relaxed model may create a valid contract; suppressing the
-admission does not.
+`DERIVATIVE_UNSUPPORTED` belongs to `DerivativeAdmission.status`, not the primal
+fit status. It means at least one requested surface admits level `NONE`, and
+`reasons` say why. Changing the solver, adding regularization, fixing
+rank/capacity, or using an explicit relaxed model may create a valid contract;
+suppressing the admission does not.
 
-## Family contract matrix
+## Family contracts
 
-The exact `GradientContract` is stored on each `FitResult`; constructor options
-can change a row below from direct to implicit/unrolled/stopped. This matrix is the
-family-level rule, not a substitute for reading the returned conditions.
+Each `FitResult` stores the exact `DerivativeContract` of its fit, including the
+conditions and nondifferentiable outputs; the table records the declared route and
+levels. Constructor options select between the rows where noted. Legend: `S`
+smooth, `AE` almost-everywhere, `C` conditional, `N` declared `NONE` (owned
+surface only), `–` undeclared capability (level `NONE`). Columns: `IN` = `INPUT`,
+`MP` = `MODEL_PARAMETER`, `FF`/`FT`/`FW`/`FH` = `FIT_FEATURES`/`FIT_TARGETS`/
+`FIT_WEIGHTS`/`FIT_HYPERPARAMETERS`.
 
-| Family | Smooth or conditional surface | Terminal or nondifferentiable surface | Principal validity conditions |
-| --- | --- | --- | --- |
-| Affine scaling and imputation | transform values; fitted moments for fixed masks | missingness mask and strategy choice | positive effective mass, finite observed values |
-| Categorical encoding | transform for a fixed vocabulary | vocabulary discovery, category order, unknown-category policy | schema consistency and fixed vocabulary |
-| Polynomial, spline, and Fourier bases | values, knots/frequencies when declared continuous | degree, knot count, sampled frequency identity | finite domain; explicit key for sampled bases |
-| Random projections and hashing | values for a fixed projection/hash layout | sampled matrix, hash bucket, collisions | explicit key/capacity and fixed layout |
-| OLS/ridge/Tikhonov | direct solve and prediction | rank/status diagnostics | constant rank or positive regularization |
-| Lasso/elastic/group sparse fits | finite proximal program or stable KKT solution | active support and exact zero pattern | fixed iterations or stable active set |
-| GLMs and logistic models | logits/means and finite iterative fit | decoded labels | finite link domain, positive curvature, convergence |
-| Huber/quantile fits | piecewise-smooth objective or stable KKT solution | kink/active constraint identity | no residual on a changing kink; nonsingular KKT system |
-| RANSAC and Theil--Sen | prediction conditional on fitted coefficients | random subset, inlier set, median/order statistic | fixed selected structure only |
-| SGD/perceptron/passive-aggressive | fixed unrolled update program | shuffling/violation branch identity | explicit key where randomized, fixed capacity |
-| Discriminant analysis | scores/probabilities and regularized covariance fit | labels and class vocabulary | positive class mass and nonsingular regularized covariance |
-| Naive Bayes | log probabilities and probabilities | class/category vocabulary and labels | positive smoothed mass, valid event domain |
-| Multiclass compositions | child scores/probabilities | one-vs-one vote, code/chain order, labels | every child fit valid; fixed composition |
-| Platt/temperature/vector/matrix calibration | calibrated probabilities and smooth fit | labels | positive scale/temperature, rank and convergence |
-| Exact isotonic calibration | piecewise-linear prediction for fixed blocks | pool-adjacent-violator block construction | fixed block partition |
-| Smooth isotonic calibration | relaxed weights and calibrated prediction | none beyond optional reporting labels | positive finite bandwidth |
-| PCA/POD/truncated SVD | projector and fixed-rank reconstruction | selected rank | retained/discarded eigengap and fixed rank |
-| Spectral bases, ICA, CCA, factor analysis | basis conditional on canonical phase and gap | component permutation and selected rank | nonzero gap, nondegenerate pivot, required rank |
-| NMF/dictionary/sparse coding | fixed unrolled factorization | exact support/component identity | finite iterations and positive/regularized updates |
-| Kernel ridge/least-squares SVM | kernel parameters, support values, solve, prediction | none beyond status for the dense solve | positive regularization and conditioned kernel system |
-| Support-vector models | prediction and stable KKT solution | support/active-set identity, hard labels | stable active set and nonsingular KKT system |
-| Kernel PCA/Nyström | fixed-landmark spectral map | landmark choice and retained rank | fixed landmarks, eigengap, conditioned normalization |
-| Random Fourier features | values/continuous kernel scales for fixed draws | sampled frequencies/phases | explicit fixed key and finite positive scales |
-| GP classification | latent/probability prediction and fixed iterative approximation | class labels | positive covariance/noise and converged finite approximation |
-| Exact k/radius neighbors | weighted target values inside a fixed neighborhood | top-k order, ties, radius membership, indices | no distance tie/boundary crossing for local piecewise derivatives |
-| Kernel neighbors/KDE | kernel weights, density, targets, continuous metric | optional hard labels | positive bandwidth, positive effective mass |
-| Mahalanobis/NCA metric learning | linear metric and finite unrolled objective | neighbor target identity/labels | positive regularization and fixed iterations |
-| Empirical/weighted covariance | moments, log density, regularization | rank/status diagnostics | positive effective mass and positive regularized covariance |
-| Shrinkage/factor covariance | shrinkage and fixed-rank covariance | selected factor rank | finite shrinkage denominator and eigengap |
-| Robust covariance/graphical lasso | finite unrolled reweighting/proximal program | support pattern and convergence event | fixed capacity, finite positive covariance |
-| Gaussian mixtures | responsibilities and finite EM program | component identity, pruning, hard assignments | positive component mass/covariance and fixed initialization |
-| Soft k-means | centroids, responsibilities, temperature | optional hardened indices | positive temperature/mass and fixed iterations |
-| Hard centroid/medoid/density clustering | values conditional on fixed assignment | assignments, medoids, connectivity, cluster count | no assignment/tie/connectivity change |
-| Hierarchical/affinity clustering | values conditional on fixed graph/merge sequence | merge pair/order and exemplars | no tie or topology change |
-| Spectral clustering/biclustering | relaxed embedding/projector | graph edges, rank/order, hard labels | connected graph as required and nonzero eigengap |
-| LLE/Isomap/spectral embedding | regular reconstruction/geodesic/spectral coordinates | neighbor graph, shortest-path predecessor, basis rank | fixed connected graph, local rank, eigengap |
-| MDS/t-SNE/fuzzy embeddings | finite objective/update program | initialization identity and graph construction | explicit key when stochastic, fixed graph/capacity |
-| Label propagation/spreading | soft class probabilities | graph topology, external hard labels | fixed graph and converged/fixed iterations |
-| Self-training/one-class compositions | soft child scores | acceptance/pseudo-label set and hard output | fixed acceptance structure for conditional derivatives |
-| Hard trees and forests | leaf values, base score, smooth post-transform | split feature/threshold/route/topology/bootstrap/label | fixed valid structure and traversal capacity |
-| Soft trees and soft boosting | gates, leaves, temperatures, finite boosting fit | hardening and any sampled structure | positive temperature and fixed capacity |
-| AdaBoost/gradient/histogram/XGBoost fits | leaf/score updates conditional on structure | split/bin/tree choice and early-stop length | fixed chosen structure, positive Hessian/mass, capacity |
-| Bagging/random subspaces | child predictions conditional on sampled subsets | sample/feature subset identity | explicit fixed key and valid child fits |
-| Soft voting/mixture of experts | probabilities, expert weights, gate | optional hard expert/vote | normalized finite weights and valid children |
-| Hard voting/stacking selection | meta-model values conditional on child outputs | hard vote and fold/candidate identity | fixed folds/children and valid meta-design |
-| Exact feature selection | transformed retained values | selected indices, bins, recursive/sequential path | fixed selected set |
-| Continuous sparse gates | gate values and relaxed fit, conditionally including features, targets, weights, temperature, and sparsity | optional hard threshold | differentiable scorer, fixed masks, positive effective mass, nonzero score range, stable extrema, and no absolute-correlation kink |
-| Sensitivity and partial dependence | derivative of the actual callable and weighted reduction | hard model branches inherited from the model | model's own prediction contract and valid domain |
-| Permutation importance | score conditional on a fixed permutation | permutation draw and ranking | explicit fixed key and valid scorer |
-| Influence functions | implicit parameter/data influence | active set inherited from objective | nonsingular regularized Hessian/KKT system |
-| Exact metrics | smooth value only where their exact formula is smooth | labels, counts, sorts, ranks, cluster assignments | nonempty domain and nonzero denominators |
-| `smooth_*` metrics | probabilities, soft ranks/assignments and continuous reductions | no claim for later hardening | positive temperature and valid denominators |
-| Model selection/search | fold-local continuous candidate scores | split, candidate index, ranking, halving survival | fixed split/candidate set; valid fold fits |
-| Artifacts/converters/export | no derivative through serialization/conversion | byte layout, source schema, conversion decision | checksum/schema/version/configuration support |
+| Family | Route | IN | MP | FF | FT | FW | FH | Nondifferentiable outputs; principal conditions |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `StandardScaler` | direct | S | S | C | – | C | – | feature masks and positive-weight support fixed |
+| `MinMaxScaler` | direct | S (AE with `clip`) | S | AE | – | – | – | extremum identities and positive-weight support fixed |
+| `MaxAbsScaler` | direct | S | S | AE | – | – | – | maximum-absolute-value identities fixed |
+| `RobustScaler` | stopped | S | S | – | – | – | – | median, interquartile range; fitted order statistics fixed during apply |
+| `NormScaler` | direct | AE | N | – | – | – | – | the zero vector maps to itself |
+| `SimpleImputer` (`strategy="mean"`) | direct | C | S | C | – | C | – | missingness, masks, and positive-weight support fixed |
+| `SimpleImputer` (other strategies) | stopped | C | S | – | – | – | – | imputation choice |
+| `OrdinalEncoder`, `OneHotEncoder` | stopped | – | N | – | – | – | – | codes, unknown indicators |
+| `TargetEncoder` | direct | – | S | – | C | C | C | category membership, unknown indicators; category membership and target masks fixed |
+| `PolynomialFeatures` | direct | S | N | – | – | – | – | none |
+| `SplineTransformer` | stopped | AE | C | – | – | – | – | knot spans; knot order and active spans fixed |
+| `FourierFeatures` | direct | S | S | AE when `period` or `origin` is fitted, else – | – | – | – | extremum identities and positive-weight support fixed |
+| `RandomFourierFeatures` (preprocessing) | direct | S | S | – | – | – | S | random frequencies and phases; explicit key fixed |
+| `GaussianRandomProjection`, `SparseRandomProjection` | direct | S | S | – | – | – | – | projection draw, sparse support and signs; explicit key fixed |
+| `FeatureHasher` | direct | S | N | – | – | – | – | hash routes and signs |
+| `PowerTransformer` | stopped | AE | S | – | – | – | – | selected lambda |
+| `QuantileTransformer` | stopped | AE | C | – | – | – | – | weighted order statistics; quantile order and interpolation intervals fixed |
+| `Pipeline` | stage contracts composed in order | | | | | | | see [Meet and compose](#meet-and-compose) |
+| `FeatureUnion`, `ColumnTransformer` | child contracts met | | | | | | | see [Meet and compose](#meet-and-compose) |
+| `TransformedTargetRegressor` | regressor composed with the inverse-target view | | | | | | | see [Meet and compose](#meet-and-compose) |
+| `OLSRecipe`, `RidgeRecipe`, `TikhonovRecipe` | direct | S | S | C | C | C | C | masks and sparse structure fixed, retained singular subspace locally constant, full-column-rank augmented design |
+| `LassoRecipe`, `ElasticNetRecipe`, `GroupLassoRecipe`, `SparseGroupLassoRecipe`, `HuberRegressorRecipe`, `QuantileRegressorRecipe(solver="fixed-subgradient")`, `SGDRegressorRecipe`, `PassiveAggressiveRegressorRecipe` | unrolled | S | AE | AE | AE | C | AE | masks, sparse structure, and iteration count fixed |
+| `QuantileRegressorRecipe(solver="dense-qp")` | implicit | S | S | C | C | C | C | dense-QP active set locally constant; masks and active inequality identities fixed |
+| `RANSACRegressorRecipe`, `TheilSenRegressorRecipe` | stopped | S | S | – | – | – | – | selected subset, inlier mask, subset scores |
+| `LogisticRegressionRecipe`, `MultinomialLogisticRegressionRecipe`, `SGDClassifierRecipe(loss="logistic")` | unrolled | S | S | S | – | C | S | `predict`, `predict_indices`; masks, sparse structure, and iteration count fixed |
+| `SGDClassifierRecipe(loss="hinge")`, `PerceptronRecipe`, `PassiveAggressiveClassifierRecipe` | unrolled | S | AE | AE | – | C | AE | `predict`, `predict_indices`, mistake or margin updates |
+| `PoissonRegressorRecipe`, `GammaRegressorRecipe`, `TweedieRegressorRecipe` | unrolled | S | S | S | S | C | S | masks, sparse structure, and iteration count fixed |
+| `LinearDiscriminantRecipe`, `QuadraticDiscriminantRecipe`, `ShrinkageDiscriminantRecipe`, `RegularizedDiscriminantRecipe` | direct | S | S | C | – | C | C | `predict`, `predict_indices`; fixed vocabulary, positive class mass, nonsingular regularized covariance |
+| `GaussianNaiveBayesRecipe`, `MultinomialNaiveBayesRecipe`, `ComplementNaiveBayesRecipe` | direct | S | S | C | – | C | C | `predict`, `predict_indices`; fixed vocabulary, positive class mass, valid feature domain |
+| `BernoulliNaiveBayesRecipe`, `CategoricalNaiveBayesRecipe` | direct | AE | S | C | – | C | C | as above |
+| `OneVsRestRecipe`, `OneVsOneRecipe`, `OutputCodeRecipe`, `MultilabelRecipe`, `SmoothClassifierChainRecipe` | direct | S | S | C | – | C | C | `predict`, `predict_indices`; every binary component fit valid, fixed vocabulary |
+| `ClassifierChainRecipe` | direct | – | C | C | – | C | C | as above |
+| `PlattCalibrationRecipe`, `TemperatureCalibrationRecipe`, `VectorCalibrationRecipe`, `MatrixCalibrationRecipe`, `MulticlassCalibrationRecipe`, `CalibratedClassifierRecipe` | unrolled | S | S | C | – | C | C | `predict`, `predict_indices`; fixed vocabulary, positive class support, finite calibration scores |
+| `IsotonicCalibrationRecipe` | stopped | – | AE | – | – | – | – | `predict`, `predict_indices`; pool-adjacent-violator blocks fixed |
+| `SmoothIsotonicCalibrationRecipe` | stopped | S | S | – | – | – | – | `predict`, `predict_indices` |
+| `PCA`, `TruncatedSVD`, `POD` (`differentiate="projector"`, default) | spectral | S | S | C | – | C | – | retained and discarded spectra separated |
+| `PCA`, `TruncatedSVD`, `POD` (`differentiate="basis"`) | spectral | S | S | C | – | C | – | non-repeated retained spectrum; unique nonzero canonicalization pivots |
+| `PCA`, `TruncatedSVD`, `POD` (`differentiate="none"`) | stopped | S | S | – | – | – | – | none |
+| `IncrementalPCA` | spectral | S | S | C | – | C | – | spectral separation at every merge |
+| `FactorAnalysis`, `ICA` | unrolled | S | S | C | – | C | – | separated retained eigenspaces; ICA key fixed, FastICA converges without component collisions |
+| `CCA`, `PLS` | spectral | S | S | C | C | C | – | separated singular subspaces or cross-covariance spectrum |
+| `NMF` | unrolled | AE | S | AE | – | C | – | multiplicative iterates strictly positive |
+| `SparseCoding` | unrolled | AE | AE | AE | – | – | – | active set; away from soft-threshold knots |
+| `DictionaryLearning` | unrolled | AE | AE | AE | – | C | – | active set; away from soft-threshold knots, nonzero atoms |
+| `KernelRidgeRecipe` | direct | S | S | C | C | C | C | support capacity and rank branch fixed |
+| `LeastSquaresSVMRecipe` | direct | S | S | C | – | C | C | `predict`; binary labels fixed |
+| `SupportVectorClassifierRecipe`, `OneClassSVMRecipe` (kernel methods and outliers) | unrolled | S | S | C | – | C | C | `predict`, support partition; active set and optimization path fixed |
+| `SupportVectorRegressorRecipe` | unrolled | S | S | C | AE | AE | AE | away from epsilon-tube and active-mask boundaries |
+| `KernelPCARecipe` | spectral | S | S | C | – | C | C | selected eigenspace separated, support mask fixed |
+| `NystromRecipe` | spectral | S | S | C (`selection="even"`), – (`"random"`) | – | – | C | landmark indices; landmark selection and eigenspace rank fixed |
+| `RandomFourierFeaturesRecipe` (kernel methods) | stopped | S | S | – | – | – | C | sampled frequencies; explicit key fixed |
+| `GaussianProcessClassifierRecipe`, `BernoulliGaussianProcessClassifierRecipe`, `CategoricalGaussianProcessClassifierRecipe` | unrolled | S | S | C | – | C | C | `predict`; class labels and Newton iteration count fixed |
+| k-neighbors and radius-neighbors regressors and classifiers | stopped | AE | AE | – | – | – | – | neighbor indices or radius membership, `predict`; tie-free top-k, no distance on the radius |
+| `KernelNeighborsRegressorRecipe` | relaxed | S | S | S | S | S | S | at least one positive support weight |
+| `KernelNeighborsClassifierRecipe` | relaxed | S | S | S | – | S | S | `predict`; fixed labels, a positive support weight |
+| `NearestCentroidRecipe` | direct | S | S | S | – | C | – | `predict`; class membership and nonempty classes fixed |
+| `KernelDensityRecipe` | direct | S | S | S | – | S | S | none |
+| `LocalOutlierFactorRecipe` | stopped | AE | AE | – | – | – | – | neighbor indices, `predict`; tie-free neighbor ordering |
+| `NeighborhoodComponentsAnalysisRecipe` | unrolled | S | S | S | – | C | S | labels and active sample mask fixed |
+| `MahalanobisMetricRecipe` | spectral | S | S | C | – | C | C | selected eigenspace separated, labels fixed |
+| `EmpiricalCovariance`, `WeightedCovariance`, `DiagonalCovariance`, `FactorCovariance`, `LedoitWolfCovariance`, `OASCovariance` | direct | S | S | C | – | C | – | active mask fixed, positive regularized covariance |
+| `RobustCovariance`, `GraphicalLasso` | unrolled | S | S | C | – | C | – | active mask fixed, positive regularized covariance |
+| `GaussianMixture`, `BayesianGaussianMixture` | unrolled | S | S | C | – | C | C | `predict`; initialization and active mask fixed, nondegenerate covariance or positive prior |
+| `KMeans`, `KMedoids`, `MiniBatchKMeans`, `AgglomerativeClustering` | stopped | – | N | – | – | – | – | labels, assignments, medoids, sampled mini-batches, merge tree |
+| `SoftKMeans`, `MeanShift`, `AffinityPropagation` | unrolled | S | S | C | – | C | C | hard labels, merged modes, exemplars; positive temperature or bandwidth, fixed initialization and iterations |
+| `SpectralClustering`, `SpectralBiclustering`, `SpectralCoclustering` | spectral | S | S | C | – | C | C | hard labels, eigenvector ordering; separated eigenspace, fixed graph support and partitions |
+| `DBSCAN`, `ConnectivityClustering` | stopped | C | C | – | – | – | – | labels, core mask, connected components |
+| `LocallyLinearEmbeddingRecipe` | spectral | C (– for Hessian LLE and LTSA) | C (N for Hessian LLE and LTSA) | C | – | C | C | neighbor graph; simple retained eigenspaces |
+| `SpectralEmbeddingRecipe`, `IsomapRecipe` | spectral | C | C | C | – | C | C | neighbor graph and shortest paths fixed; simple retained eigenvalues |
+| `MultidimensionalScalingRecipe` | spectral (classical), unrolled (transductive SMACOF) | S (– for SMACOF) | S (N for SMACOF) | C | – | C | C | simple retained eigenspaces |
+| `TSNERecipe` | unrolled | – | N | C | – | C | C | transductive; initialization key, iterations, and perplexity bisection fixed |
+| `FuzzyGraphEmbeddingRecipe` | unrolled | C | C | C | – | C | C | k-NN topology, initialization key, and iterations fixed |
+| `LabelPropagationRecipe`, `LabelSpreadingRecipe`, `SoftSelfTrainingRecipe`, `SoftOneClassCompositionRecipe` | unrolled | S | S | C | C | C | C | vocabulary and labeled mask fixed |
+| `HardLabelPropagationRecipe` | stopped | – | N | – | – | – | – | class index |
+| `HardSelfTrainingRecipe` | stopped | C | C | – | – | – | – | pseudo labels and their acceptance |
+| `HardOneClassCompositionRecipe` | stopped | – | C | – | – | – | – | one-class acceptance |
+| Hard trees, forests, and boosted trees | stopped | – | AE | – | – | – | – | split structure, leaf indices, decision paths, class labels |
+| `SoftDecisionTreeRecipe`, `SoftRandomForestRecipe`, `SoftGradientBoostedTreesRecipe` | unrolled | S | S | C | C | C | C | hardened structure and feature choices; positive finite temperatures |
+| `BaggingRecipe`, `RandomSubspaceRecipe`, `SoftVotingRecipe`, `StackingRecipe` | stopped | S | S | – | – | – | – | bootstrap indices, feature subspaces, fold assignment |
+| `HardVotingRecipe` | stopped | – | N | – | – | – | – | majority vote |
+| `MixtureOfExpertsRecipe` | unrolled | S | S | C | C | C | – | expert and gate recipes expose the corresponding fit gradients |
+| Exact feature selection (variance, score, mutual-information, recursive, sequential, model-based) | stopped | S | N | – | – | – | – | selected indices and mask |
+| `ContinuousSparseGateRecipe` | relaxed | S | S | C | C | C | C | see [Relaxed alternatives](#relaxed-alternatives) |
+| `CovarianceOutlierRecipe` | direct | S | S | C | – | C | C | `predict`, threshold, rank; score ordering at the threshold fixed |
+| `EllipticEnvelopeRecipe`, `RobustNoveltyRecipe` | unrolled | S | S | C | – | C | C | `predict`, threshold; IRLS iterations and threshold ordering fixed |
+| `KernelDensityOutlierRecipe` | direct | S | S | C | – | C | S | `predict`, threshold |
+| `IsolationForestRecipe` | stopped | – | N | – | – | – | – | tree topology, split features, hard paths, `predict`; `relaxed()` returns a distinct smooth model |
+| `CircuitFeatureTransformRecipe` | direct | C | C | – | – | – | – | dense program and local observables valid |
+| `VariationalCircuitClassifierRecipe` | stopped | C | C | – | – | – | – | `predict`; parameter shift certifies first-order Pauli-angle derivatives only |
+| Split plans; `GridSearch`, `RandomSearch`, `SuccessiveHalvingSearch`, nested cross-validation results | stopped | – | N | – | – | – | – | split membership, candidate indices, surviving candidates |
+| `cross_validate` | fold contracts met | | | | | | | fold indices, validity, status; differentiable scorer |
+| `DifferentiableSearchAdapter` | stopped (`derivative_contract`) | – | N | – | – | – | – | `objective_derivative_contract` is the audited cross-validation contract at a fixed vector and fixed folds |
+
+Artifacts, converters, and export are terminal serialization or copy boundaries:
+they carry the recorded contract but never a derivative through the source format.
 
 ## Status and derivative precedence
 
@@ -296,9 +740,9 @@ primal precedence:
 7. exhausted structural storage reports `ML_CAPACITY_EXHAUSTED`;
 8. otherwise the fit reports `ML_SUCCESS`.
 
-Derivative admission is separate. An explicit request outside the mathematical
-contract reports `ML_UNSUPPORTED_GRADIENT` without rewriting successful primal
-fit evidence.
+Derivative admission is separate. A request outside the contract yields a
+`DerivativeAdmission` with status `DERIVATIVE_UNSUPPORTED` without rewriting
+successful primal fit evidence.
 
 A family can refine precedence when one condition makes another undefined, but its
 diagnostics must retain the underlying evidence. Regularization can resolve a

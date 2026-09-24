@@ -162,6 +162,14 @@ are convex and nondecreasing. `PartiallyInputConvexNetwork` accepts
 `(context, convex_input)` and preserves convexity only in its second argument for
 each fixed context.
 
+Both networks emit an `InputConvexCertificate` (capability `"input-convex"`)
+through `input_convex_certificate()`. The certificate records the construction,
+convex input and context sizes, activation, depth, and width; its
+`certificate_id` is independent of parameter values because convexity holds for
+every parameter value. Binding either network with `Domain.Model` attaches the
+certificate to the domain function under `"input_convex_certificate"`;
+arithmetic and other transforms that do not preserve convexity drop it.
+
 ::: phydrax.nn.models.InputConvexNetwork
     options:
         members:
@@ -169,6 +177,11 @@ each fixed context.
             - __call__
             - gradient
             - hessian
+            - input_convex_certificate
+
+---
+
+::: phydrax.nn.models.InputConvexCertificate
 
 ---
 
@@ -179,6 +192,7 @@ each fixed context.
             - __call__
             - convex_gradient
             - convex_hessian
+            - input_convex_certificate
 
 ---
 
@@ -870,6 +884,27 @@ both its volume and boundary sources.
 
 ::: phydrax.nn.operator.OperatorBatch
 
+### Field and query value ports
+
+`OperatorFieldSpec.value_port()` derives the canonical `ValuePort` of a field's
+physical value from its declared name, channels, component names, dimension,
+representation, affine normalization, and cochain/tensor/Clifford layout; tensor and
+Clifford fields keep their packed channel axis. `OperatorQuerySpec.value_port()`
+describes one query coordinate point by its coordinate components and, when
+declared, their dimensions.
+
+::: phydrax.nn.operator.OperatorFieldSpec
+    options:
+        members:
+            - value_port
+
+---
+
+::: phydrax.nn.operator.OperatorQuerySpec
+    options:
+        members:
+            - value_port
+
 ### Learned eigenspace predictions
 
 A neural operator should emit trial-space channels rather than mode-indexed
@@ -1358,7 +1393,9 @@ than an unconstrained learned coordinate MLP. Fixed-target mode decodes only
 nullspace coordinates and supplies the prepared affine lift. Variable-target mode
 decodes deterministic source targets followed by learned nullspace coordinates.
 `ConditionalHolomorphicDeepONet` certifies analyticity in the query coordinate only;
-source encoders remain unrestricted.
+source encoders remain unrestricted. Its `ConditionalHolomorphicMapCertificate` is
+a `phydrax.AbstractConstructionCertificate` with capability ID
+`conditional-holomorphic-map`.
 
 ::: phydrax.nn.operator.architectures.HolomorphicBasisTrunk
 

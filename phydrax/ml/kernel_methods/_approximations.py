@@ -12,7 +12,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._model._binding import ModelBinding
 from ...kernels import FiniteFeatureKernel, SquaredExponentialKernel
 from .._batch import MLBatch, WeightPolicy
@@ -20,11 +26,11 @@ from .._contracts import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
 )
+from .._schema import AbstractFittedModel
 from .._sparse_features import SparseFeatures
 from ._utils import (
     case_kernel_matrix,
@@ -55,7 +61,7 @@ def _case_matmul(matrix: Array, factor: Array, case_shape: tuple[int, ...]) -> A
     return output.reshape(case_shape + query_shape + (factor.shape[-1],))
 
 
-class KernelPCAModel(AbstractArrayModel):
+class KernelPCAModel(AbstractFittedModel):
     support: Array
     support_mask: Array
     normalized_weight: Array
@@ -201,13 +207,23 @@ class KernelPCARecipe(AbstractRecipe):
             rank=jnp.sum(values > self.eigenvalue_floor, axis=-1),
             method="weighted-kernel-eigh",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="spectral",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             conditions=("Selected eigenspace is separated and support mask is fixed.",),
         )
         return FitResult(
@@ -216,11 +232,11 @@ class KernelPCARecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="kernel-pca",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
-class NystromModel(AbstractArrayModel):
+class NystromModel(AbstractFittedModel):
     landmarks: Array
     whitening: Array
     kernel: Any
@@ -370,12 +386,23 @@ class NystromRecipe(AbstractRecipe):
             ),
             method=f"nystrom-{self.selection}",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional" if self.selection == "even" else "none",
-            fit_hyperparameters="conditional",
-            fit_mode="spectral",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES,
+                    GradientLevel.CONDITIONAL
+                    if self.selection == "even"
+                    else GradientLevel.NONE,
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             nondifferentiable_outputs=("landmark_indices",),
             conditions=("Landmark selection and eigenspace rank are fixed.",),
         )
@@ -385,11 +412,11 @@ class NystromRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="nystrom",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
-class RandomFourierFeatureModel(AbstractArrayModel):
+class RandomFourierFeatureModel(AbstractFittedModel):
     frequencies: Array
     phases: Array
     scale: Array
@@ -495,11 +522,17 @@ class RandomFourierFeaturesRecipe(AbstractRecipe):
             rank=self.n_components,
             method="squared-exponential-spectral-sampling",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_hyperparameters="conditional",
-            fit_mode="stopped",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=("sampled_frequencies",),
             conditions=("Random draw is fixed by the explicit key.",),
         )
@@ -509,7 +542,7 @@ class RandomFourierFeaturesRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="random-fourier-features",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

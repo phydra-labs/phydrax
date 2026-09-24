@@ -7,6 +7,12 @@ derivative scope, and explicit non-claims.
 
 ## Shared geophysical data and observation contracts
 
+`GeophysicalFieldBinding.value_port()` derives the `ValuePort` of a state-layout
+binding: its semantic identity is the bound quantity ID, its component IDs are the
+selected state components, and every component carries the quantity's declared
+dimension. Field-space and operator-task bindings take their ports from the native
+storage owner.
+
 ::: phydrax.applications.geophysics.GeophysicalFieldBinding
 
 ::: phydrax.applications.geophysics.GeophysicalQuantity

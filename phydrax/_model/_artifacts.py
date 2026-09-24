@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 
 from .._frozendict import frozendict
+from ._binding import ModelBinding
 
 
 ArchitectureEncoder = Callable[[Any], Mapping[str, Any]]
@@ -80,6 +81,7 @@ register_artifact_value("jax.artifact:silu", jax.nn.silu)
 register_artifact_value("jax.artifact:softplus", jax.nn.softplus)
 register_artifact_value("equinox.nn:Linear", eqx.nn.Linear)
 register_artifact_value("phydrax.core:frozendict", frozendict)
+register_artifact_value("phydrax.core:ModelBinding", ModelBinding)
 
 
 @dataclass(frozen=True, slots=True)

@@ -15,9 +15,11 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint
+from .._model import ValuePort
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..linalg import AbstractVectorSpace
+from ..axes import AxisKey
+from ..linalg import AbstractVectorSpace, DualSpace
 from ..sparse import RowRelation
 from ._core import nonempty_identifier, resolved_identifier
 
@@ -449,6 +451,64 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
                 "reconstruction": reconstruction,
                 "trace_space": trace,
             },
+        )
+
+    def value_port(self) -> ValuePort:
+        """Return the `ValuePort` of this field's complete coefficient array.
+
+        `semantic_id` is `name`, `space_id` is `field_space_id`, and
+        `representation` is the declared field representation. The event shape
+        follows the DOF layout: tensor layouts use `axis_shape + component_shape`,
+        entity layouts `(global_dof_count, *component_shape)`, modal layouts
+        `(len(mode_ids), *component_shape)`, and block layouts their concatenated
+        `(size,)` coordinate vector. Component IDs are the declared mode IDs
+        (suffixed `[j]` per row-major field component) for modal layouts and
+        `f"{name}[{i}]"` in row-major order otherwise. Axis keys are declared only
+        when the owner names every event axis, i.e. a tensor layout without
+        component axes: `AxisKey(f"dof-layout:{layout_id}", axis_name)`.
+        `variance` is `"dual"` when `vector_space` is a `DualSpace` and
+        `"primal"` otherwise. Field spaces declare no units, frame, or
+        normalization, so those fields are undeclared. A field without
+        coefficients raises `ValueError`.
+        """
+        layout = self.layout
+        if layout.size == 0:
+            raise ValueError(
+                f"Discrete field space {self.name!r} has no coefficients; "
+                "it has no ValuePort view."
+            )
+        components = None
+        axis_keys = None
+        match layout:
+            case TensorDofLayout():
+                shape = layout.value_shape
+                if not layout.component_shape:
+                    scope = f"dof-layout:{layout.layout_id}"
+                    axis_keys = tuple(AxisKey(scope, name) for name in layout.axis_names)
+            case EntityDofLayout():
+                shape = (layout.global_dof_count, *layout.component_shape)
+            case ModalDofLayout():
+                shape = (len(layout.mode_ids), *layout.component_shape)
+                width = prod(layout.component_shape)
+                components = tuple(
+                    mode if not layout.component_shape else f"{mode}[{j}]"
+                    for mode in layout.mode_ids
+                    for j in range(width)
+                )
+            case BlockDofLayout():
+                shape = (layout.size,)
+            case _:
+                raise TypeError("layout must be a supported DofLayout value.")
+        if components is None:
+            components = tuple(f"{self.name}[{i}]" for i in range(prod(shape)))
+        return ValuePort(
+            self.name,
+            event_shape=shape,
+            component_ids=components,
+            representation=self.representation,
+            space_id=self.field_space_id,
+            axis_keys=axis_keys,
+            variance="dual" if isinstance(self.vector_space, DualSpace) else "primal",
         )
 
 

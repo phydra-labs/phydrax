@@ -8,12 +8,18 @@ import jax.numpy as jnp
 import opt_einsum as oe
 import pytest
 
+from phydrax import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from phydrax._model import AbstractArrayModel
 from phydrax.ml import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_SUCCESS,
     MLBatch,
 )
@@ -45,6 +51,21 @@ class _LinearModel(AbstractArrayModel):
         return oe.contract("...f,f->...", jnp.asarray(x), self.coefficients)
 
 
+_DIRECT_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(
+            DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+        ),
+    ),
+    route=DerivativeRoute.DIRECT,
+)
+
+
 class _ImportanceRecipe(AbstractRecipe):
     def fit_batch(self, batch, /, *, key=None):
         del key
@@ -67,7 +88,7 @@ class _ImportanceRecipe(AbstractRecipe):
             valid=valid,
             status=ML_SUCCESS,
             method="test-linear",
-            gradient_contract=GradientContract.direct(),
+            derivative_contract=_DIRECT_CONTRACT,
         )
 
 
@@ -125,10 +146,10 @@ def test_variance_and_score_filters_preserve_case_axes_masks_weights_and_gradien
         jax.grad(lambda x: jnp.sum(model(x)))(point), jnp.array([1.0, 0.0, 0.0])
     )
     assert jax.vmap(model)(batch.dense_features()[0]).shape == (6, 1)
-    assert score.gradient_contract.nondifferentiable_outputs == (
+    assert set(score.derivative_contract.nondifferentiable_outputs) == {
         "selected_indices",
         "selected_mask",
-    )
+    }
 
 
 def test_mutual_information_is_deterministic_fixed_capacity_and_fail_closed():
@@ -188,7 +209,7 @@ def test_continuous_sparse_gate_is_distinct_smooth_jittable_and_vmap_safe():
     assert jnp.allclose(jax.jit(model)(point), model(point))
     assert jnp.allclose(jax.grad(lambda x: jnp.sum(model(x)))(point), model.gates)
     assert jax.vmap(model)(batch.dense_features()[0]).shape == (6, 3)
-    assert result.gradient_contract.fit_mode == "relaxed"
+    assert result.derivative_contract.route is DerivativeRoute.RELAXED
 
 
 def test_continuous_sparse_gate_hyperparameters_are_validated_array_leaves():
@@ -286,12 +307,15 @@ def test_continuous_sparse_gate_gradients_match_its_conditional_contract():
         sparsity=0.4,
         scorer=_smooth_feature_scores,
     ).fit_batch(batch)
-    contract = result.gradient_contract
-    assert contract.fit_features == "conditional"
-    assert contract.fit_targets == "conditional"
-    assert contract.fit_weights == "conditional"
-    assert contract.fit_hyperparameters == "conditional"
-    assert contract.fit_mode == "relaxed"
+    contract = result.derivative_contract
+    for surface in (
+        DerivativeSurface.FIT_FEATURES,
+        DerivativeSurface.FIT_TARGETS,
+        DerivativeSurface.FIT_WEIGHTS,
+        DerivativeSurface.FIT_HYPERPARAMETERS,
+    ):
+        assert contract.level(surface) is GradientLevel.CONDITIONAL
+    assert contract.route is DerivativeRoute.RELAXED
     assert len(contract.conditions) == 4
 
 
@@ -318,8 +342,14 @@ def test_continuous_sparse_gate_preserves_values_and_stays_finite_at_degeneracy(
     zero_variance = ContinuousSparseGateRecipe().fit_batch(constant_batch)
     assert jnp.all(jnp.isfinite(equal.as_trainable().gates))
     assert jnp.all(jnp.isfinite(zero_variance.as_trainable().gates))
-    assert equal.gradient_contract.fit_features == "conditional"
-    assert zero_variance.gradient_contract.fit_targets == "conditional"
+    assert (
+        equal.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        zero_variance.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
+        is GradientLevel.CONDITIONAL
+    )
 
 
 def test_selector_capacity_scores_weights_and_importance_fail_closed():

@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeRoute
 from phydrax.ml import ML_INSUFFICIENT_DATA, MLBatch, SparseFeatures
 from phydrax.ml.outliers import (
     IsolationForestModel,
@@ -60,14 +61,10 @@ def test_isolation_forest_requires_key_has_exact_tree_capacity_and_is_determinis
     assert not same_changed_topology
     assert first.diagnostics.iterations == recipe.max_depth
     assert first.diagnostics.method == "isolation-forest"
-    assert first.gradient_contract.prediction_inputs == "none"
-    assert first.gradient_contract.prediction_parameters == "none"
-    assert first.gradient_contract.fit_features == "none"
-    assert first.gradient_contract.fit_targets == "none"
-    assert first.gradient_contract.fit_weights == "none"
-    assert first.gradient_contract.fit_hyperparameters == "none"
-    assert first.gradient_contract.fit_mode == "stopped"
-    assert "exactly 2^(max_depth+1)-1" in " ".join(first.gradient_contract.conditions)
+    contract = first.derivative_contract
+    assert contract.supported_surfaces == ()
+    assert contract.route is DerivativeRoute.STOPPED
+    assert "exactly 2^(max_depth+1)-1" in " ".join(contract.conditions)
 
 
 def test_hard_isolation_forest_is_exactly_stopped_and_relaxed_model_is_smooth():

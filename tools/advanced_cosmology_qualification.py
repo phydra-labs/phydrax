@@ -31,7 +31,14 @@ def main() -> None:
         physics_policy_id="linear-components",
         scale_id=background.scale.scale_id,
         source_kind="native",
-        differentiation="native-parameter",
+        differentiation=phx.DerivativeContract.smooth(
+            (
+                phx.DerivativeSurface.INPUT,
+                phx.DerivativeSurface.MODEL_PARAMETER,
+                phx.DerivativeSurface.PHYSICAL_PARAMETER,
+                phx.DerivativeSurface.STORED_VALUES,
+            )
+        ),
     )
     descriptor = lambda left, right: cosmo.MatterPowerDescriptor(left, right)
     common = (

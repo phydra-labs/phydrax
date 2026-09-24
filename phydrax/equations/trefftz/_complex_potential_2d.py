@@ -15,10 +15,10 @@ from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._holomorphic import HolomorphicPotentialProvider
-from ..._model import AbstractArrayModel
+from ..._model import AbstractArrayModel, TRIAL_SPACE_CERTIFICATE_KEY
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, partition_trainable
-from ._core import TRIAL_SPACE_CERTIFICATE_KEY, TrialSpaceCertificate
+from ._core import TrialSpaceCertificate
 
 
 def _parameter_count(value: Any, /) -> int:

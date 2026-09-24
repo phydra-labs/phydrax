@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import opt_einsum as oe
 import pytest
 
+from phydrax import DerivativeSurface, GradientLevel
 from phydrax.ml import (
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
@@ -117,14 +118,14 @@ def test_discriminant_families_preserve_case_label_probability_and_weight_contra
     assert result.diagnostics.class_mass.shape == (2, 3)
     assert result.diagnostics.effective_samples.shape == (2,)
     assert recipe.weight_policy == "product"
-    assert result.gradient_contract.fit_features == "conditional"
-    assert result.gradient_contract.fit_weights == "conditional"
-    assert result.gradient_contract.fit_hyperparameters == "conditional"
-    assert result.gradient_contract.fit_targets == "none"
-    assert set(result.gradient_contract.nondifferentiable_outputs) == {
-        "predict",
-        "predict_indices",
-    }
+    contract = result.derivative_contract
+    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
+    assert (
+        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is GradientLevel.CONDITIONAL
+    )
+    assert contract.level(DerivativeSurface.FIT_TARGETS) is GradientLevel.NONE
+    assert set(contract.nondifferentiable_outputs) == {"predict", "predict_indices"}
 
 
 def test_discriminant_dense_complex_and_new_sample_execution_reject_sparse_input():

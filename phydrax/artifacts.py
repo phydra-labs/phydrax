@@ -10,106 +10,10 @@ from enum import StrEnum
 
 import equinox as eqx
 
+from ._differentiation import DerivativeContract
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
-
-
-class DifferentiationContract(StrictModule, NonTrainableState):
-    upstream_physical_parameters: bool = eqx.field(static=True)
-    stored_values: bool = eqx.field(static=True)
-    query_coordinates: bool = eqx.field(static=True)
-    local_parameters: bool = eqx.field(static=True)
-    stochastic_realization: bool = eqx.field(static=True)
-    higher_order: bool = eqx.field(static=True)
-    contract_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        *,
-        upstream_physical_parameters: bool,
-        stored_values: bool,
-        query_coordinates: bool,
-        local_parameters: bool,
-        stochastic_realization: bool = False,
-        higher_order: bool = True,
-    ):
-        values = tuple(
-            bool(value)
-            for value in (
-                upstream_physical_parameters,
-                stored_values,
-                query_coordinates,
-                local_parameters,
-                stochastic_realization,
-                higher_order,
-            )
-        )
-        (
-            self.upstream_physical_parameters,
-            self.stored_values,
-            self.query_coordinates,
-            self.local_parameters,
-            self.stochastic_realization,
-            self.higher_order,
-        ) = values
-        self.contract_id = canonical_fingerprint(
-            {"kind": "differentiation-contract", "capabilities": list(values)}
-        )
-
-    @classmethod
-    def native(cls) -> DifferentiationContract:
-        return cls(
-            upstream_physical_parameters=True,
-            stored_values=True,
-            query_coordinates=True,
-            local_parameters=True,
-        )
-
-    @classmethod
-    def coordinate_only(cls) -> DifferentiationContract:
-        return cls(
-            upstream_physical_parameters=False,
-            stored_values=False,
-            query_coordinates=True,
-            local_parameters=False,
-        )
-
-    @classmethod
-    def constant(cls) -> DifferentiationContract:
-        return cls(
-            upstream_physical_parameters=False,
-            stored_values=False,
-            query_coordinates=False,
-            local_parameters=False,
-            higher_order=False,
-        )
-
-    @classmethod
-    def from_label(cls, label: str, /) -> DifferentiationContract:
-        value = str(label).strip()
-        if value == "native-parameter":
-            return cls.native()
-        if value == "coordinate-only":
-            return cls.coordinate_only()
-        if value == "constant":
-            return cls.constant()
-        raise ValueError("Unknown differentiation contract label.")
-
-    def meet(self, *others: DifferentiationContract) -> DifferentiationContract:
-        contracts = (self, *others)
-        return DifferentiationContract(
-            upstream_physical_parameters=all(
-                value.upstream_physical_parameters for value in contracts
-            ),
-            stored_values=all(value.stored_values for value in contracts),
-            query_coordinates=all(value.query_coordinates for value in contracts),
-            local_parameters=any(value.local_parameters for value in contracts),
-            stochastic_realization=any(
-                value.stochastic_realization for value in contracts
-            ),
-            higher_order=all(value.higher_order for value in contracts),
-        )
 
 
 class DerivativeEstimatorKind(StrEnum):
@@ -126,9 +30,14 @@ class DerivativeEstimatorKind(StrEnum):
 
 
 class DerivativeEvidence(StrictModule, NonTrainableState):
-    """Parameter- and event-level evidence augmenting a differentiation contract."""
+    """Parameter- and event-level evidence augmenting a derivative contract.
 
-    contract: DifferentiationContract
+    `contract` declares the derivative surfaces; `estimator` records how the
+    declared derivatives are estimated. An `UNSUPPORTED` estimator requires a
+    contract that declares no supported surface.
+    """
+
+    contract: DerivativeContract
     estimator: DerivativeEstimatorKind = eqx.field(static=True)
     differentiable_parameters: tuple[str, ...] = eqx.field(static=True)
     discrete_parameters: tuple[str, ...] = eqx.field(static=True)
@@ -139,7 +48,7 @@ class DerivativeEvidence(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        contract: DifferentiationContract,
+        contract: DerivativeContract,
         /,
         *,
         estimator: DerivativeEstimatorKind,
@@ -149,8 +58,8 @@ class DerivativeEvidence(StrictModule, NonTrainableState):
         support_id: str,
         evidence_ids: Sequence[str] = (),
     ):
-        if not isinstance(contract, DifferentiationContract):
-            raise TypeError("contract must be DifferentiationContract.")
+        if not isinstance(contract, DerivativeContract):
+            raise TypeError("contract must be DerivativeContract.")
         if not isinstance(estimator, DerivativeEstimatorKind):
             raise TypeError("estimator must be DerivativeEstimatorKind.")
 
@@ -175,17 +84,12 @@ class DerivativeEvidence(StrictModule, NonTrainableState):
             raise ValueError("A supported estimator requires differentiable parameters.")
         if estimator is not DerivativeEstimatorKind.UNSUPPORTED and not evidence:
             raise ValueError("A supported estimator requires evidence.")
-        if estimator is DerivativeEstimatorKind.UNSUPPORTED and any(
-            (
-                contract.upstream_physical_parameters,
-                contract.stored_values,
-                contract.query_coordinates,
-                contract.local_parameters,
-                contract.stochastic_realization,
-            )
+        if (
+            estimator is DerivativeEstimatorKind.UNSUPPORTED
+            and contract.supported_surfaces
         ):
             raise ValueError(
-                "An unsupported estimator requires a constant differentiation contract."
+                "An unsupported estimator requires a contract without supported surfaces."
             )
         self.contract = contract
         self.estimator = estimator
@@ -365,6 +269,5 @@ __all__ = [
     "ArtifactManifest",
     "DerivativeEstimatorKind",
     "DerivativeEvidence",
-    "DifferentiationContract",
     "ScientificArtifactEnvelope",
 ]

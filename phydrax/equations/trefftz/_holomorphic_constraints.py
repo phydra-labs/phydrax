@@ -448,7 +448,7 @@ class HolomorphicConstraintOperatorPlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "holomorphic-constraint-operator-plan",
-                "frame": certificate.frame_id,
+                "frame": certificate.certificate_id,
                 "functionals": [functional.functional_id for functional in functionals_],
                 "rank_cutoff": cutoff,
                 "maximum_factor_bytes": factor_bytes,
@@ -780,7 +780,7 @@ class ConstrainedHolomorphicPotential(StrictModule):
             ),
             linear_in_parameters=homogeneous,
             construction_dependencies=(
-                frame_certificate.frame_id,
+                frame_certificate.certificate_id,
                 coefficient_map.map_id,
             ),
         )

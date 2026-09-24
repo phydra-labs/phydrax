@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import DerivativeSurface, GradientLevel
 from phydrax.ml import (
     ML_INFEASIBLE,
     ML_NONCONVERGED,
@@ -159,9 +160,12 @@ def test_binary_logistic_probabilities_labels_sparse_jit_vmap_and_declared_gradi
     assert model.predict(features).shape == targets.shape
     assert jax.jit(model)(features).shape == targets.shape
     assert jax.vmap(model)(features).shape == targets.shape
-    assert result.gradient_contract.fit_targets == "none"
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
+        is GradientLevel.NONE
+    )
     assert {"predict", "predict_indices"}.issubset(
-        result.gradient_contract.nondifferentiable_outputs
+        result.derivative_contract.nondifferentiable_outputs
     )
     _assert_model_gradients(model, features[0])
 
@@ -202,7 +206,10 @@ def test_multinomial_logistic_classes_case_axes_sparse_and_gradients():
     assert jnp.allclose(jnp.sum(model.predict_proba(features), axis=-1), 1.0)
     assert jax.jit(model)(features).shape == (features.shape[0], 3)
     assert jax.vmap(model)(features).shape == (features.shape[0], 3)
-    assert result.gradient_contract.fit_targets == "none"
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
+        is GradientLevel.NONE
+    )
     _assert_model_gradients(model, features[0])
 
     sparse_result = recipe.fit_batch(MLBatch(_sparse(features), targets))

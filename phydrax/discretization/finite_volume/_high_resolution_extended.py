@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import Literal
 
 import equinox as eqx
 import jax
@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -23,9 +24,6 @@ from ...linalg import (
     LinearSolvePolicy,
     solve,
 )
-
-
-FilterADPolicy: TypeAlias = Literal["exact", "frozen", "smooth", "forbid"]
 
 
 def _lagrange_coefficients(offsets: tuple[int, ...], point: float, /) -> np.ndarray:
@@ -243,10 +241,16 @@ class _HighOrderTENOPlan(StrictModule, NonTrainableState):
 
 
 class ExplicitStabilizationPlan(StrictModule, NonTrainableState):
-    """Separate conservative nearest-neighbor filter with declared AD semantics."""
+    """Separate conservative nearest-neighbor filter with declared AD semantics.
+
+    `differentiability` governs the sensor: `SMOOTH` differentiates the filter map
+    as given (the map is bilinear in values and sensor; sensor regularity is owned
+    by its producer), `FROZEN_DECISION` stops sensor gradients, `SMOOTH_SURROGATE`
+    passes the sensor through a sigmoid, and `UNSUPPORTED` rejects traced values.
+    """
 
     strength: float = eqx.field(static=True)
-    ad_policy: FilterADPolicy = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     periodic: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -255,22 +259,36 @@ class ExplicitStabilizationPlan(StrictModule, NonTrainableState):
         strength: float,
         /,
         *,
-        ad_policy: FilterADPolicy = "frozen",
+        differentiability: BranchDifferentiationPolicy = BranchDifferentiationPolicy.FROZEN_DECISION,
         periodic: bool = False,
     ):
         strength_ = float(strength)
         if not np.isfinite(strength_) or strength_ < 0.0 or strength_ > 0.5:
             raise ValueError("Filter strength must lie in [0, 0.5].")
-        if ad_policy not in ("exact", "frozen", "smooth", "forbid"):
-            raise ValueError("Unknown filter AD policy.")
+        if not isinstance(differentiability, BranchDifferentiationPolicy):
+            raise TypeError("differentiability must be a BranchDifferentiationPolicy.")
+        match differentiability:
+            case (
+                BranchDifferentiationPolicy.SMOOTH
+                | BranchDifferentiationPolicy.FROZEN_DECISION
+                | BranchDifferentiationPolicy.SMOOTH_SURROGATE
+                | BranchDifferentiationPolicy.UNSUPPORTED
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "ExplicitStabilizationPlan supports SMOOTH, FROZEN_DECISION, "
+                    "SMOOTH_SURROGATE, or UNSUPPORTED; got "
+                    f"{differentiability.name}."
+                )
         self.strength = strength_
-        self.ad_policy = ad_policy
+        self.differentiability = differentiability
         self.periodic = bool(periodic)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "explicit-stabilization",
                 "strength": strength_,
-                "ad_policy": ad_policy,
+                "differentiability": differentiability.value,
                 "periodic": bool(periodic),
             }
         )
@@ -307,12 +325,24 @@ class ExplicitStabilizationPlan(StrictModule, NonTrainableState):
             jnp.any(~jnp.isfinite(sensor_)),
             "Filter sensor must be finite.",
         )
-        if self.ad_policy == "forbid" and isinstance(value, jax.core.Tracer):
-            raise ValueError("Filter AD policy forbids differentiation.")
-        if self.ad_policy == "frozen":
-            sensor_ = jax.lax.stop_gradient(sensor_)
-        elif self.ad_policy == "smooth":
-            sensor_ = jax.nn.sigmoid(sensor_)
+        match self.differentiability:
+            case BranchDifferentiationPolicy.SMOOTH:
+                pass
+            case BranchDifferentiationPolicy.FROZEN_DECISION:
+                sensor_ = jax.lax.stop_gradient(sensor_)
+            case BranchDifferentiationPolicy.SMOOTH_SURROGATE:
+                sensor_ = jax.nn.sigmoid(sensor_)
+            case BranchDifferentiationPolicy.UNSUPPORTED:
+                if isinstance(value, jax.core.Tracer):
+                    raise ValueError(
+                        "ExplicitStabilizationPlan with UNSUPPORTED differentiability "
+                        "rejects traced values."
+                    )
+            case _:
+                raise ValueError(
+                    "ExplicitStabilizationPlan supports SMOOTH, FROZEN_DECISION, "
+                    f"SMOOTH_SURROGATE, or UNSUPPORTED; got {self.differentiability.name}."
+                )
         update = (
             self.strength
             * sensor_.reshape(sensor_.shape + (1,) * (value.ndim - 1))
@@ -340,6 +370,5 @@ class ExplicitStabilizationPlan(StrictModule, NonTrainableState):
 
 __all__ = [
     "ExplicitStabilizationPlan",
-    "FilterADPolicy",
     "TENOQualification",
 ]

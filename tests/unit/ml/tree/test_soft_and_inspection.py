@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeRoute, DerivativeSurface, GradientLevel
 from phydrax.ml import FeatureSchema, ML_INSUFFICIENT_DATA, MLBatch, TargetSchema
 from phydrax.ml.tree import (
     capacity_diagnostics,
@@ -220,14 +221,31 @@ def test_every_soft_recipe_requires_keys_is_deterministic_and_declares_unrolled_
     assert first.valid.shape == (2,)
     assert first_model(batch.features).shape == (2, 6)
     assert jnp.array_equal(first_model(batch.features), second_model(batch.features))
-    assert first.gradient_contract.prediction_inputs == "smooth"
-    assert first.gradient_contract.prediction_parameters == "smooth"
-    assert first.gradient_contract.fit_features == "conditional"
-    assert first.gradient_contract.fit_targets == "conditional"
-    assert first.gradient_contract.fit_weights == "conditional"
-    assert first.gradient_contract.fit_hyperparameters == "conditional"
-    assert first.gradient_contract.fit_mode == "unrolled"
-    assert "hardened structure" in first.gradient_contract.nondifferentiable_outputs
+    assert (
+        first.derivative_contract.level(DerivativeSurface.INPUT) is GradientLevel.SMOOTH
+    )
+    assert (
+        first.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
+        is GradientLevel.SMOOTH
+    )
+    assert (
+        first.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        first.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        first.derivative_contract.level(DerivativeSurface.FIT_WEIGHTS)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        first.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.CONDITIONAL
+    )
+    assert first.derivative_contract.route is DerivativeRoute.UNROLLED
+    assert "hardened structure" in first.derivative_contract.nondifferentiable_outputs
     diagnostics = convergence_diagnostics(first.diagnostics)
     assert isinstance(diagnostics, TreeConvergenceDiagnostics)
     assert jnp.all(diagnostics.valid)

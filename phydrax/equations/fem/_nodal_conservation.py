@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 import phydrax.linalg as la
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -26,10 +27,6 @@ from ...discretization._cell_complex import (
 from ...discretization._conservation_boundary import (
     evaluate_conservation_boundary,
     PrescribedNormalFluxBoundary,
-)
-from ...discretization._conservation_policy import (
-    DifferentiabilityPolicy,
-    validate_differentiability_policy,
 )
 from ...discretization._reference_cell import reference_cell_topology
 from ...discretization.fem._boundary import FiniteElementBoundarySet
@@ -90,7 +87,7 @@ class NodalDGConservationMethodPlan(StrictModule, NonTrainableState):
     entropy_stability: EntropyStableDGPlan | None
     equilibrium: WellBalancedEquilibriumPlan | None
     accumulation: str = eqx.field(static=True)
-    differentiability: DifferentiabilityPolicy = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
     def __init__(
@@ -105,7 +102,9 @@ class NodalDGConservationMethodPlan(StrictModule, NonTrainableState):
         entropy_stability: EntropyStableDGPlan | None = None,
         equilibrium: WellBalancedEquilibriumPlan | None = None,
         accumulation: str = "deterministic",
-        differentiability: DifferentiabilityPolicy = "branchwise",
+        differentiability: BranchDifferentiationPolicy = (
+            BranchDifferentiationPolicy.BRANCHWISE
+        ),
     ):
         if not isinstance(interface_flux, AbstractArbitraryNormalNumericalFluxPlan):
             raise TypeError("Nodal DG requires an arbitrary-normal interface flux.")
@@ -138,7 +137,22 @@ class NodalDGConservationMethodPlan(StrictModule, NonTrainableState):
         accumulation_ = str(accumulation)
         if accumulation_ not in ("fast", "deterministic", "compensated"):
             raise ValueError("Unknown nodal DG accumulation policy.")
-        differentiability_ = validate_differentiability_policy(differentiability)
+        if not isinstance(differentiability, BranchDifferentiationPolicy):
+            raise TypeError("differentiability must be a BranchDifferentiationPolicy.")
+        match differentiability:
+            case (
+                BranchDifferentiationPolicy.SMOOTH
+                | BranchDifferentiationPolicy.BRANCHWISE
+                | BranchDifferentiationPolicy.SMOOTH_SURROGATE
+                | BranchDifferentiationPolicy.UNSUPPORTED
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "NodalDGConservationMethodPlan supports SMOOTH, BRANCHWISE, "
+                    "SMOOTH_SURROGATE, or UNSUPPORTED; got "
+                    f"{differentiability.name}."
+                )
         self.interface_flux = interface_flux
         self.volume_quadrature = volume
         self.interior_facet_quadrature = interior
@@ -147,7 +161,7 @@ class NodalDGConservationMethodPlan(StrictModule, NonTrainableState):
         self.entropy_stability = entropy_stability
         self.equilibrium = equilibrium
         self.accumulation = accumulation_
-        self.differentiability = differentiability_
+        self.differentiability = differentiability
         self.method_id = canonical_fingerprint(
             {
                 "kind": "nodal-dg-conservation-method",
@@ -163,7 +177,7 @@ class NodalDGConservationMethodPlan(StrictModule, NonTrainableState):
                 "mass": "exact-cell-local",
                 "accumulation": accumulation_,
                 "entropy_evidence": "uncertified",
-                "differentiability": differentiability_,
+                "differentiability": differentiability.value,
             }
         )
 

@@ -15,16 +15,13 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.linalg as la
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._conservation_boundary import PrescribedNormalFluxBoundary
-from .._conservation_policy import (
-    DifferentiabilityPolicy,
-    validate_differentiability_policy,
-)
 from ._boundary import FiniteVolumeBoundarySet
 from ._closure import ConservativeFaceClosurePlan
 from ._entropy import (
@@ -116,7 +113,7 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
     wave_limiter: WaveFamilyLimiterPlan | None
     viscous: ViscousFluxPlan | None
     closure: ConservativeFaceClosurePlan | None
-    differentiability: DifferentiabilityPolicy = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
     def __init__(
@@ -137,8 +134,26 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
         wave_limiter: WaveFamilyLimiterPlan | None = None,
         viscous: ViscousFluxPlan | None = None,
         closure: ConservativeFaceClosurePlan | None = None,
-        differentiability: DifferentiabilityPolicy = "branchwise",
+        differentiability: BranchDifferentiationPolicy = (
+            BranchDifferentiationPolicy.BRANCHWISE
+        ),
     ):
+        if not isinstance(differentiability, BranchDifferentiationPolicy):
+            raise TypeError("differentiability must be a BranchDifferentiationPolicy.")
+        match differentiability:
+            case (
+                BranchDifferentiationPolicy.SMOOTH
+                | BranchDifferentiationPolicy.BRANCHWISE
+                | BranchDifferentiationPolicy.SMOOTH_SURROGATE
+                | BranchDifferentiationPolicy.UNSUPPORTED
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "FiniteVolumeMethodPlan supports SMOOTH, BRANCHWISE, "
+                    "SMOOTH_SURROGATE, or UNSUPPORTED; got "
+                    f"{differentiability.name}."
+                )
         if not isinstance(
             reconstruction,
             (
@@ -184,10 +199,14 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Initial hydrostatic shallow water does not support viscous or learned face closures."
                 )
-            if differentiability != "branchwise":
-                raise ValueError(
-                    "Robust hydrostatic shallow water is branchwise differentiable."
-                )
+            match differentiability:
+                case BranchDifferentiationPolicy.BRANCHWISE:
+                    pass
+                case _:
+                    raise ValueError(
+                        "FiniteVolumeMethodPlan with hydrostatic shallow water "
+                        f"supports BRANCHWISE; got {differentiability.name}."
+                    )
         if viscous is not None and not isinstance(viscous, ViscousFluxPlan):
             raise TypeError("viscous must be ViscousFluxPlan or None.")
         if closure is not None and not isinstance(closure, ConservativeFaceClosurePlan):
@@ -199,7 +218,6 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
                 "Learned face closures require a numerical-flux interface solver; "
                 "wave-propagation residuals do not apply closures."
             )
-        differentiability_ = validate_differentiability_policy(differentiability)
         if isinstance(interface_solver, AbstractNumericalFluxPlan):
             interface_id = interface_solver.flux_id
         elif isinstance(interface_solver, AbstractWavePropagationPlan):
@@ -213,7 +231,7 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
         self.wave_limiter = wave_limiter
         self.viscous = viscous
         self.closure = closure
-        self.differentiability = differentiability_
+        self.differentiability = differentiability
         self.method_id = canonical_fingerprint(
             {
                 "kind": "finite-volume-method",
@@ -223,7 +241,7 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
                 "wave_limiter": None if wave_limiter is None else wave_limiter.limiter_id,
                 "viscous": None if viscous is None else viscous.plan_id,
                 "closure": None if closure is None else closure.closure_id,
-                "differentiability": differentiability_,
+                "differentiability": differentiability.value,
             }
         )
 
@@ -1418,7 +1436,6 @@ class PreparedFiniteVolumeDynamics(StrictModule):
 
 __all__ = [
     "ConvexStateLimiterPlan",
-    "DifferentiabilityPolicy",
     "FiniteVolumeMethodPlan",
     "FiniteVolumeResidualDiagnostics",
     "PreparedFiniteVolumeDynamics",

@@ -13,6 +13,13 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
@@ -21,7 +28,6 @@ from .._contracts import (
     AbstractRecipe,
     DecisionFunctionModel,
     FitResult,
-    GradientContract,
     LogProbabilityModel,
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
@@ -29,7 +35,7 @@ from .._contracts import (
     ML_SUCCESS,
 )
 from .._numerics import effective_sample_size, run_fixed_iterations
-from .._schema import FeatureSchema, TargetSchema
+from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 from ..discriminant._models import _labels_for, _reshape_for_samples
 
 
@@ -200,16 +206,30 @@ def _diagnostics(
 
 
 def _contract(
-    *, smooth_inputs: bool = True, fit_mode: str = "unrolled"
-) -> GradientContract:
-    return GradientContract(
-        prediction_inputs="smooth" if smooth_inputs else "none",
-        prediction_parameters="smooth" if smooth_inputs else "almost-everywhere",
-        fit_features="conditional" if fit_mode != "stopped" else "none",
-        fit_targets="none",
-        fit_weights="conditional" if fit_mode != "stopped" else "none",
-        fit_hyperparameters="conditional" if fit_mode != "stopped" else "none",
-        fit_mode=fit_mode,
+    *, smooth_inputs: bool = True, route: DerivativeRoute = DerivativeRoute.UNROLLED
+) -> DerivativeContract:
+    fit_level = (
+        GradientLevel.NONE
+        if route is DerivativeRoute.STOPPED
+        else GradientLevel.CONDITIONAL
+    )
+    return DerivativeContract(
+        (
+            SurfaceDerivative(
+                DerivativeSurface.INPUT,
+                GradientLevel.SMOOTH if smooth_inputs else GradientLevel.NONE,
+            ),
+            SurfaceDerivative(
+                DerivativeSurface.MODEL_PARAMETER,
+                GradientLevel.SMOOTH
+                if smooth_inputs
+                else GradientLevel.ALMOST_EVERYWHERE,
+            ),
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, fit_level),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, fit_level),
+            SurfaceDerivative(DerivativeSurface.FIT_HYPERPARAMETERS, fit_level),
+        ),
+        route=route,
         nondifferentiable_outputs=("predict", "predict_indices"),
         conditions=(
             "fixed class vocabulary",
@@ -219,7 +239,7 @@ def _contract(
     )
 
 
-class PlattCalibrationModel(AbstractArrayModel):
+class PlattCalibrationModel(AbstractFittedModel):
     slope: Array
     intercept: Array
     labels: Array
@@ -275,7 +295,7 @@ class PlattCalibrationModel(AbstractArrayModel):
         return self.predict_proba(x)
 
 
-class TemperatureCalibrationModel(AbstractArrayModel):
+class TemperatureCalibrationModel(AbstractFittedModel):
     temperature: Array
     labels: Array
     target_schema: TargetSchema
@@ -325,7 +345,7 @@ class TemperatureCalibrationModel(AbstractArrayModel):
         return self.predict_proba(x)
 
 
-class VectorCalibrationModel(AbstractArrayModel):
+class VectorCalibrationModel(AbstractFittedModel):
     scale: Array
     bias: Array
     labels: Array
@@ -379,7 +399,7 @@ class VectorCalibrationModel(AbstractArrayModel):
         return self.predict_proba(x)
 
 
-class MatrixCalibrationModel(AbstractArrayModel):
+class MatrixCalibrationModel(AbstractFittedModel):
     matrix: Array
     bias: Array
     labels: Array
@@ -433,7 +453,7 @@ class MatrixCalibrationModel(AbstractArrayModel):
         return self.predict_proba(x)
 
 
-class MulticlassCalibrationModel(AbstractArrayModel):
+class MulticlassCalibrationModel(AbstractFittedModel):
     slope: Array
     intercept: Array
     labels: Array
@@ -633,7 +653,7 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
         valid=diagnostics.valid,
         status=diagnostics.status,
         method=kind,
-        gradient_contract=_contract(),
+        derivative_contract=_contract(),
     )
 
 
@@ -871,7 +891,7 @@ def _pav_one(scores: Array, targets: Array, weights: Array) -> tuple[Array, Arra
     return thresholds, levels, block_count
 
 
-class IsotonicCalibrationModel(AbstractArrayModel):
+class IsotonicCalibrationModel(AbstractFittedModel):
     thresholds: Array
     values: Array
     block_count: Array
@@ -942,7 +962,7 @@ class IsotonicCalibrationModel(AbstractArrayModel):
         return self.predict_proba(x)
 
 
-class SmoothIsotonicCalibrationModel(AbstractArrayModel):
+class SmoothIsotonicCalibrationModel(AbstractFittedModel):
     thresholds: Array
     values: Array
     block_count: Array
@@ -1082,7 +1102,9 @@ def _fit_isotonic(recipe: Any, batch: MLBatch, *, smooth: bool) -> FitResult:
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=_contract(smooth_inputs=smooth, fit_mode="stopped"),
+        derivative_contract=_contract(
+            smooth_inputs=smooth, route=DerivativeRoute.STOPPED
+        ),
     )
 
 
@@ -1157,7 +1179,7 @@ def _calibration_input(model: AbstractArrayModel, x: Any, in_size: int) -> Array
     return score[..., None]
 
 
-class CalibratedClassifierModel(AbstractArrayModel):
+class CalibratedClassifierModel(AbstractFittedModel):
     base_model: AbstractArrayModel
     calibration_model: AbstractArrayModel
     labels: Array
@@ -1299,7 +1321,7 @@ class CalibratedClassifierRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="calibrated-classifier",
-            gradient_contract=_contract(),
+            derivative_contract=_contract(),
         )
 
 

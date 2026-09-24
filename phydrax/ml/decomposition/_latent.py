@@ -13,14 +13,20 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from ..._strict import StrictModule
 from ...linalg import FactorizationPolicy, pseudoinverse, RankPolicy
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
@@ -29,6 +35,7 @@ from .._contracts import (
 )
 from .._numerics import effective_sample_size, fit_weighted_subspace
 from .._numerics._spectral import _canonicalize_rows
+from .._schema import AbstractFittedModel
 
 
 class LatentDecompositionDiagnostics(StrictModule):
@@ -105,7 +112,7 @@ def _apply_matrix(
     return result.reshape(leading + (matrix.shape[-1],))
 
 
-class FactorAnalysisModel(AbstractArrayModel):
+class FactorAnalysisModel(AbstractFittedModel):
     """Diagonal-noise latent Gaussian factor encoder and affine decoder."""
 
     mean: Array
@@ -316,10 +323,20 @@ class FactorAnalysis(AbstractRecipe):
             valid=valid,
             status=status,
             method="principal-axis-factor-analysis",
-            gradient_contract=GradientContract(
-                fit_features="conditional",
-                fit_weights="conditional",
-                fit_mode="unrolled",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.UNROLLED,
                 conditions=(
                     "factor loading gradients require separated retained eigenspaces",
                     "convergence-masked uniqueness iterations are piecewise smooth",
@@ -328,7 +345,7 @@ class FactorAnalysis(AbstractRecipe):
         )
 
 
-class ICAModel(AbstractArrayModel):
+class ICAModel(AbstractFittedModel):
     """Fixed independent-component encoder and affine mixing decoder."""
 
     mean: Array
@@ -528,10 +545,20 @@ class ICA(AbstractRecipe):
             valid=valid,
             status=status,
             method="symmetric-fastica",
-            gradient_contract=GradientContract(
-                fit_features="conditional",
-                fit_weights="conditional",
-                fit_mode="unrolled",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.UNROLLED,
                 conditions=(
                     "ICA initialization key is explicit and fixed during differentiation",
                     "whitening gradients require separated retained and discarded spectra",

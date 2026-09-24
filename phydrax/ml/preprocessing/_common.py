@@ -10,11 +10,13 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ..._differentiation import (
+    DerivativeContract,
+)
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
@@ -207,7 +209,7 @@ def _diagnostics(
 def _fit_result(
     model,
     diagnostics: PreprocessingDiagnostics,
-    contract: GradientContract,
+    contract: DerivativeContract,
     /,
 ) -> FitResult:
     return FitResult(
@@ -216,7 +218,7 @@ def _fit_result(
         valid=diagnostics.valid,
         status=diagnostics.status,
         method=diagnostics.method,
-        gradient_contract=contract,
+        derivative_contract=contract,
     )
 
 

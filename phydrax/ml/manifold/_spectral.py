@@ -13,15 +13,22 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_NONCONVERGED,
 )
 from .._numerics import pairwise_distances
+from .._schema import AbstractFittedModel
 from ._common import (
     _BLOCKWISE_BINDING,
     _canonicalize_columns,
@@ -40,7 +47,7 @@ from ._common import (
 )
 
 
-class SpectralEmbeddingModel(AbstractArrayModel):
+class SpectralEmbeddingModel(AbstractFittedModel):
     """Normalized-graph eigenmap with conditional Nyström extension."""
 
     training_features: Array
@@ -238,14 +245,23 @@ class SpectralEmbeddingRecipe(AbstractRecipe):
             n_neighbors=self.n_neighbors,
             case_shape=batch.case_shape,
         )
-        contract = GradientContract(
-            prediction_inputs="conditional",
-            prediction_parameters="conditional",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="spectral",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             nondifferentiable_outputs=(
                 "neighbor_indices",
                 "connectivity",
@@ -260,14 +276,14 @@ class SpectralEmbeddingRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="spectral-embedding",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
 MDSMethod = Literal["classical", "smacof"]
 
 
-class MultidimensionalScalingModel(AbstractArrayModel):
+class MultidimensionalScalingModel(AbstractFittedModel):
     """Metric MDS coordinates; only classical MDS has a Gower transform."""
 
     training_features: Array
@@ -486,14 +502,29 @@ class MultidimensionalScalingRecipe(AbstractRecipe):
             case_shape=batch.case_shape,
         )
         transform_supported = self.method == "classical"
-        contract = GradientContract(
-            prediction_inputs="smooth" if transform_supported else "none",
-            prediction_parameters="smooth" if transform_supported else "none",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="spectral" if transform_supported else "unrolled",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.INPUT,
+                    GradientLevel.SMOOTH if transform_supported else GradientLevel.NONE,
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER,
+                    GradientLevel.SMOOTH if transform_supported else GradientLevel.NONE,
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL
+            if transform_supported
+            else DerivativeRoute.UNROLLED,
             nondifferentiable_outputs=("valid", "status"),
             conditions=("retained eigenspaces are simple", "SMACOF is transductive only"),
         )
@@ -503,11 +534,11 @@ class MultidimensionalScalingRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method=f"mds-{self.method}",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
-class IsomapModel(AbstractArrayModel):
+class IsomapModel(AbstractFittedModel):
     """Geodesic landmark embedding with hard-neighbor out-of-sample extension."""
 
     training_features: Array
@@ -716,14 +747,23 @@ class IsomapRecipe(AbstractRecipe):
             n_neighbors=self.n_neighbors,
             case_shape=batch.case_shape,
         )
-        contract = GradientContract(
-            prediction_inputs="conditional",
-            prediction_parameters="conditional",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="spectral",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             nondifferentiable_outputs=(
                 "neighbor_indices",
                 "shortest_path_topology",
@@ -742,7 +782,7 @@ class IsomapRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="isomap",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

@@ -12,14 +12,20 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from ..._strict import StrictModule
 from ...linalg import FactorizationPolicy, pseudoinverse, RankPolicy
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
@@ -27,6 +33,7 @@ from .._contracts import (
 )
 from .._numerics import effective_sample_size, solve_weighted_least_squares
 from .._numerics._spectral import _canonicalize_rows
+from .._schema import AbstractFittedModel
 
 
 def _reconstruction_pseudoinverse(matrix: Array, /) -> Array:
@@ -149,7 +156,7 @@ def _apply_matrix(
     return result.reshape(leading + (matrix.shape[-1],))
 
 
-class CCAModel(AbstractArrayModel):
+class CCAModel(AbstractFittedModel):
     """Canonical correlation encoder with paired target coordinates."""
 
     x_mean: Array
@@ -352,11 +359,23 @@ class CCA(AbstractRecipe):
             valid=valid,
             status=status,
             method="regularized-cca-svd",
-            gradient_contract=GradientContract(
-                fit_features="conditional",
-                fit_targets="conditional",
-                fit_weights="conditional",
-                fit_mode="spectral",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.SPECTRAL,
                 conditions=(
                     "canonical subspace gradients require separated singular subspaces",
                     "basis gradients additionally require non-repeated canonical correlations",
@@ -365,7 +384,7 @@ class CCA(AbstractRecipe):
         )
 
 
-class PLSModel(AbstractArrayModel):
+class PLSModel(AbstractFittedModel):
     """Two-block PLS latent encoder, decoder, and target predictor."""
 
     x_mean: Array
@@ -549,11 +568,23 @@ class PLS(AbstractRecipe):
             valid=valid,
             status=status,
             method="two-block-pls-svd",
-            gradient_contract=GradientContract(
-                fit_features="conditional",
-                fit_targets="conditional",
-                fit_weights="conditional",
-                fit_mode="spectral",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.SPECTRAL,
                 conditions=(
                     "PLS weight gradients require separated cross-covariance spectrum",
                 ),

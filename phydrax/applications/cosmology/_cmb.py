@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import DerivativeSurface
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -164,7 +165,10 @@ class CmbSpectrumTable(StrictModule):
             | jnp.any(jnp.abs(values - jnp.swapaxes(values, -1, -2)) > 1.0e-10),
             "CMB spectra must be finite and symmetric.",
         )
-        if not provenance.differentiation.stored_values:
+        if (
+            DerivativeSurface.STORED_VALUES
+            not in provenance.differentiation.supported_surfaces
+        ):
             ell = jax.lax.stop_gradient(ell)
             values = jax.lax.stop_gradient(values)
         self.multipoles = ell

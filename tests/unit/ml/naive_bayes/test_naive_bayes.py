@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeSurface, GradientLevel
 from phydrax.ml import (
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
@@ -137,13 +138,18 @@ def test_every_naive_bayes_family_has_normalized_schema_aware_jit_vmap_behavior(
     if method == "complement-nb":
         assert model.complement
     expected_input_level = (
-        "almost-everywhere" if method in {"bernoulli-nb", "categorical-nb"} else "smooth"
+        GradientLevel.ALMOST_EVERYWHERE
+        if method in {"bernoulli-nb", "categorical-nb"}
+        else GradientLevel.SMOOTH
     )
-    assert result.gradient_contract.prediction_inputs == expected_input_level
-    assert result.gradient_contract.prediction_parameters == "smooth"
-    assert result.gradient_contract.fit_features == "conditional"
-    assert result.gradient_contract.fit_weights == "conditional"
-    assert result.gradient_contract.fit_hyperparameters == "conditional"
+    contract = result.derivative_contract
+    assert contract.level(DerivativeSurface.INPUT) is expected_input_level
+    assert contract.level(DerivativeSurface.MODEL_PARAMETER) is GradientLevel.SMOOTH
+    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
+    assert (
+        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is GradientLevel.CONDITIONAL
+    )
 
 
 def test_gaussian_nb_preserves_case_masks_product_weights_and_string_vocabulary():

@@ -12,10 +12,11 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..._array_archive import read_array_archive, write_array_archive
+from ..._differentiation import DerivativeContract, DerivativeRoute
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._closure import DifferentiationContract, ScientificArtifactEnvelope
+from ._closure import ScientificArtifactEnvelope
 from ._linear_theory import (
     CosmologyModelRequest,
     CosmologyModelResult,
@@ -231,7 +232,7 @@ def _provenance(
         physics_policy_id=f"{build.backend}-canonical-linear-theory",
         scale_id=request.scale.scale_id,
         source_kind="external",
-        differentiation=DifferentiationContract.constant(),
+        differentiation=DerivativeContract(route=DerivativeRoute.DIRECT),
     )
 
 

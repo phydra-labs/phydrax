@@ -6,6 +6,16 @@ import pytest
 import phydrax as phx
 
 
+NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
+    (
+        phx.DerivativeSurface.INPUT,
+        phx.DerivativeSurface.MODEL_PARAMETER,
+        phx.DerivativeSurface.PHYSICAL_PARAMETER,
+        phx.DerivativeSurface.STORED_VALUES,
+    )
+)
+
+
 def _cosmology_context():
     cosmology = phx.applications.cosmology
     scale = cosmology.CosmologyScaleContract(
@@ -23,7 +33,7 @@ def _cosmology_context():
         physics_policy_id="closure",
         scale_id=scale.scale_id,
         source_kind="native",
-        differentiation="native-parameter",
+        differentiation=NATIVE_DIFFERENTIATION,
     )
     return scale, background, provenance
 
@@ -150,7 +160,7 @@ def test_physical_dependency_projection_checks_only_shared_parameters():
     assert first.content_id() != second.content_id()
 
 
-def test_artifact_content_identity_and_derivative_contracts():
+def test_artifact_envelope_has_content_identity():
     artifact = cosmology.ScientificArtifactEnvelope(
         artifact_kind="fixture",
         content_digest="abc123",
@@ -162,12 +172,14 @@ def test_artifact_content_identity_and_derivative_contracts():
         status="complete",
     )
     assert artifact.artifact_id
-    native = cosmology.DifferentiationContract.native()
-    constant = cosmology.DifferentiationContract.constant()
-    combined = native.meet(constant)
-    assert not combined.upstream_physical_parameters
-    assert not combined.query_coordinates
-    assert combined.local_parameters
+
+
+def test_product_contract_meet_keeps_owned_model_parameters():
+    constant = phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT)
+    combined = NATIVE_DIFFERENTIATION.meet(constant)
+    assert combined.supported_surfaces == (phx.DerivativeSurface.MODEL_PARAMETER,)
+    assert combined.route is phx.DerivativeRoute.DIRECT
+    assert combined.regularity is None
 
 
 def test_shared_observation_and_correlated_gaussian_are_differentiable():

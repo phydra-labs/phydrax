@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, Literal, TypeAlias
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -22,15 +23,6 @@ from ._high_resolution import (
     NonuniformWENOReconstructionPlan,
 )
 from ._weno import WENOOrder, WENOReconstructionPlan
-
-
-DifferentiabilityClass: TypeAlias = Literal[
-    "smooth_discrete",
-    "almost_everywhere",
-    "frozen_decision",
-    "smooth_surrogate",
-    "unsupported",
-]
 
 
 def _move_front(value: ArrayLike, axis: int, /) -> Array:
@@ -59,7 +51,7 @@ class AbstractFaceReconstructionPlan(StrictModule, NonTrainableState):
 
     formal_order: int = eqx.field(static=True)
     ghost_width: int = eqx.field(static=True)
-    differentiability: DifferentiabilityClass = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     @abc.abstractmethod
@@ -83,7 +75,7 @@ class PiecewiseConstantReconstruction(AbstractFaceReconstructionPlan):
     def __init__(self):
         self.formal_order = 1
         self.ghost_width = 1
-        self.differentiability = "smooth_discrete"
+        self.differentiability = BranchDifferentiationPolicy.SMOOTH
         self.plan_id = canonical_fingerprint({"kind": "piecewise-constant-fv"})
 
     def reconstruct_axis(
@@ -193,7 +185,7 @@ class MUSCLReconstruction(AbstractFaceReconstructionPlan):
         self.limiter = limiter_
         self.formal_order = 2
         self.ghost_width = 2
-        self.differentiability = "frozen_decision"
+        self.differentiability = BranchDifferentiationPolicy.FROZEN_DECISION
         self.plan_id = canonical_fingerprint(
             {"kind": "muscl-fv", "limiter": limiter_.limiter_id}
         )
@@ -309,7 +301,6 @@ __all__ = [
     "AbstractSlopeLimiter",
     "CharacteristicReconstructionPlan",
     "CharacteristicSystem",
-    "DifferentiabilityClass",
     "HighResolutionMethod",
     "HighResolutionReconstructionPlan",
     "MCLimiter",

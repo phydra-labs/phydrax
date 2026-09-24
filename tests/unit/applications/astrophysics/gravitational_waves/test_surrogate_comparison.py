@@ -7,6 +7,16 @@ import pytest
 import phydrax as phx
 
 
+NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
+    (
+        phx.DerivativeSurface.INPUT,
+        phx.DerivativeSurface.MODEL_PARAMETER,
+        phx.DerivativeSurface.PHYSICAL_PARAMETER,
+        phx.DerivativeSurface.STORED_VALUES,
+    )
+)
+
+
 def _surrogate_plan(
     *,
     resource_policy=None,
@@ -99,7 +109,11 @@ def test_nr_surrogate_reconstructs_polynomial_nodes_and_mode_symmetry():
     assert bool(result.valid)
     assert float(result.symmetry_defect) == 0.0
     assert bool(result.intrinsic_derivative_valid)
-    assert not plan.artifact.differentiation.higher_order
+    assert plan.artifact.differentiation.regularity is None
+    assert (
+        phx.DerivativeSurface.STORED_VALUES
+        not in plan.artifact.differentiation.supported_surfaces
+    )
     assert plan.artifact.normalization_report.valid
     assert not bool(result.qualified)
     assert not plan.artifact.source_authenticated
@@ -218,7 +232,7 @@ def test_nr_surrogate_keeps_caller_provenance_unqualified_and_enforces_caps():
         source_id="source:external-surrogate",
         checksum="0" * 64,
         license_id="CC-BY-4.0",
-        differentiation="native-parameter",
+        differentiation=NATIVE_DIFFERENTIATION,
     )
     caller_artifact = gw.AlignedNRSurrogateArtifact(
         native.geometric_time,

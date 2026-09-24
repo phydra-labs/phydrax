@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -288,7 +289,7 @@ class ShallowWaterHydrostaticHLLPlan(StrictModule, NonTrainableState):
     """Chen--Noelle hydrostatic reconstruction with a dry-safe HLL flux."""
 
     wet_dry: ShallowWaterWetDryPolicy
-    differentiability: str = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, wet_dry: ShallowWaterWetDryPolicy | None = None, /):
@@ -296,7 +297,7 @@ class ShallowWaterHydrostaticHLLPlan(StrictModule, NonTrainableState):
         if not isinstance(policy, ShallowWaterWetDryPolicy):
             raise TypeError("wet_dry must be a ShallowWaterWetDryPolicy.")
         self.wet_dry = policy
-        self.differentiability = "branchwise"
+        self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "shallow-water-hydrostatic-hll",

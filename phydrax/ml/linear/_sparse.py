@@ -182,7 +182,7 @@ def _fit_penalized(
             case_shape=prepared.case_shape,
             target_shape=prepared.target_shape,
         ),
-        gradient_contract=unrolled_contract(nonsmooth=True),
+        derivative_contract=unrolled_contract(nonsmooth=True),
     )
 
 

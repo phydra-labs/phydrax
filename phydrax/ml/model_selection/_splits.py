@@ -12,20 +12,21 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._strict import StrictModule
 from ...data_utils._splits import kfold_indices
 from .._batch import MLBatch
-from .._contracts import GradientContract
 
 
-_SPLIT_GRADIENT_CONTRACT = GradientContract(
-    prediction_inputs="none",
-    prediction_parameters="none",
-    fit_features="none",
-    fit_targets="none",
-    fit_weights="none",
-    fit_hyperparameters="none",
-    fit_mode="stopped",
+_SPLIT_DERIVATIVE_CONTRACT = DerivativeContract(
+    (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+    route=DerivativeRoute.STOPPED,
     nondifferentiable_outputs=("train_indices", "validation_indices"),
     conditions=("Split membership is a discrete, stopped choice.",),
 )
@@ -96,7 +97,7 @@ class SplitPlanResult(StrictModule):
     folds: tuple[FoldRecord, ...]
     sample_indices: Array
     key: Any
-    gradient_contract: GradientContract
+    derivative_contract: DerivativeContract
     method: str = eqx.field(static=True)
 
     def __init__(
@@ -127,7 +128,7 @@ class SplitPlanResult(StrictModule):
         self.folds = tuple(folds)
         self.sample_indices = samples
         self.key = _require_key(key)
-        self.gradient_contract = _SPLIT_GRADIENT_CONTRACT
+        self.derivative_contract = _SPLIT_DERIVATIVE_CONTRACT
         self.method = str(method)
 
 
@@ -490,7 +491,7 @@ class NestedSplitResult(StrictModule):
 
     folds: tuple[NestedFoldRecord, ...]
     key: Any
-    gradient_contract: GradientContract
+    derivative_contract: DerivativeContract
     method: str = eqx.field(static=True)
 
     def __init__(self, folds: tuple[NestedFoldRecord, ...], /, *, key: Any):
@@ -500,7 +501,7 @@ class NestedSplitResult(StrictModule):
             raise TypeError("folds must contain only NestedFoldRecord objects.")
         self.folds = tuple(folds)
         self.key = _require_key(key)
-        self.gradient_contract = _SPLIT_GRADIENT_CONTRACT
+        self.derivative_contract = _SPLIT_DERIVATIVE_CONTRACT
         self.method = "nested"
 
 

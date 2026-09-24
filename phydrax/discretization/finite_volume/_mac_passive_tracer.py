@@ -15,6 +15,12 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import (
+    branch_policy_contract,
+    BranchDifferentiationPolicy,
+    DerivativeContract,
+    DerivativeSurface,
+)
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation import (
     apply_gather_stencil,
@@ -30,7 +36,6 @@ from ._incompressible import FaceVelocity, PreparedMACOperators
 
 MACPassiveTracerCharacteristicIntegrator: TypeAlias = Literal["midpoint"]
 MACPassiveTracerInterpolation: TypeAlias = Literal["multilinear"]
-MACPassiveTracerDifferentiation: TypeAlias = Literal["almost_everywhere"]
 MACPassiveTracerConservation: TypeAlias = Literal["diagnostic_only"]
 
 
@@ -72,7 +77,8 @@ class MACPassiveTracerMacCormackResult(StrictModule):
     donor_bounded: Array
     success: Array
     status: Array
-    differentiation: MACPassiveTracerDifferentiation = eqx.field(static=True)
+    derivative_contract: DerivativeContract
+    differentiation: BranchDifferentiationPolicy = eqx.field(static=True)
     conservation: MACPassiveTracerConservation = eqx.field(static=True)
     field_space_id: str = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
@@ -222,7 +228,7 @@ class PreparedMACPassiveTracerMacCormack(StrictModule, NonTrainableState):
         static=True
     )
     interpolation: MACPassiveTracerInterpolation = eqx.field(static=True)
-    differentiation: MACPassiveTracerDifferentiation = eqx.field(static=True)
+    differentiation: BranchDifferentiationPolicy = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
     cell_shape: tuple[int, ...] = eqx.field(static=True)
     stencil_evaluations: int = eqx.field(static=True)
@@ -283,7 +289,7 @@ class PreparedMACPassiveTracerMacCormack(StrictModule, NonTrainableState):
                 ],
                 "stencil_evaluations": stencil_evaluations,
                 "route_count": route_count,
-                "differentiation": "almost_everywhere",
+                "differentiation": BranchDifferentiationPolicy.BRANCHWISE.value,
                 "conservation": "diagnostic_only",
             }
         )
@@ -300,7 +306,7 @@ class PreparedMACPassiveTracerMacCormack(StrictModule, NonTrainableState):
         self.correction_strength = plan.correction_strength
         self.characteristic_integrator = plan.characteristic_integrator
         self.interpolation = plan.interpolation
-        self.differentiation = "almost_everywhere"
+        self.differentiation = BranchDifferentiationPolicy.BRANCHWISE
         self.dimension = dimension
         self.cell_shape = cell_shape
         self.stencil_evaluations = stencil_evaluations
@@ -503,6 +509,9 @@ class PreparedMACPassiveTracerMacCormack(StrictModule, NonTrainableState):
             donor_bounded=donor_bounded,
             success=success,
             status=status,
+            derivative_contract=branch_policy_contract(
+                self.differentiation, surfaces=(DerivativeSurface.PRIMAL_STATE,)
+            ),
             differentiation=self.differentiation,
             conservation="diagnostic_only",
             field_space_id=self.tracer_space.field_space_id,
@@ -517,7 +526,6 @@ class PreparedMACPassiveTracerMacCormack(StrictModule, NonTrainableState):
 __all__ = [
     "MACPassiveTracerCharacteristicIntegrator",
     "MACPassiveTracerConservation",
-    "MACPassiveTracerDifferentiation",
     "MACPassiveTracerInterpolation",
     "MACPassiveTracerMacCormackPlan",
     "MACPassiveTracerMacCormackResult",

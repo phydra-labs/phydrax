@@ -17,10 +17,16 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...artifacts import DifferentiationContract
 from ...qualification import (
     PromotionState,
     QualificationRoleTrust,
@@ -118,22 +124,18 @@ class _MetricRequirement:
 
 @dataclass(frozen=True, slots=True)
 class _DifferentiationSpec:
-    label: str
-    upstream_physical_parameters: bool
-    stored_values: bool
-    query_coordinates: bool
-    local_parameters: bool
-    stochastic_realization: bool = False
-    higher_order: bool = False
+    """Profile derivative gate: first-order surfaces, no higher-order claim."""
 
-    def contract(self) -> DifferentiationContract:
-        return DifferentiationContract(
-            upstream_physical_parameters=self.upstream_physical_parameters,
-            stored_values=self.stored_values,
-            query_coordinates=self.query_coordinates,
-            local_parameters=self.local_parameters,
-            stochastic_realization=self.stochastic_realization,
-            higher_order=self.higher_order,
+    label: str
+    surfaces: tuple[DerivativeSurface, ...]
+
+    def contract(self) -> DerivativeContract:
+        return DerivativeContract(
+            (
+                SurfaceDerivative(surface, GradientLevel.SMOOTH)
+                for surface in self.surfaces
+            ),
+            route=DerivativeRoute.DIRECT,
         )
 
 
@@ -158,25 +160,18 @@ class _ClaimDefinition:
 
 _CONTINUOUS_FIXED = _DifferentiationSpec(
     "continuous-fixed-topology",
-    True,
-    True,
-    True,
-    True,
+    (
+        DerivativeSurface.INPUT,
+        DerivativeSurface.MODEL_PARAMETER,
+        DerivativeSurface.PHYSICAL_PARAMETER,
+        DerivativeSurface.STORED_VALUES,
+    ),
 )
 _COORDINATE_ONLY = _DifferentiationSpec(
     "coordinate-only-external-closure-stop-gradient",
-    False,
-    False,
-    True,
-    False,
+    (DerivativeSurface.INPUT,),
 )
-_NONDIFFERENTIABLE = _DifferentiationSpec(
-    "nondifferentiable-discrete-runtime",
-    False,
-    False,
-    False,
-    False,
-)
+_NONDIFFERENTIABLE = _DifferentiationSpec("nondifferentiable-discrete-runtime", ())
 
 
 def _metric(
@@ -747,7 +742,7 @@ def full_dark_sector_claim_criteria(
 def full_dark_sector_differentiation_contract(
     profile_name: FullDarkSectorClaimName,
     /,
-) -> DifferentiationContract:
+) -> DerivativeContract:
     """Return the exact derivative gate for one profile."""
     if profile_name not in _DEFINITIONS:
         raise ValueError("Unknown full dark-sector claim profile.")
@@ -1025,7 +1020,7 @@ class PromotedFullDarkSectorClaim(StrictModule, NonTrainableState):
 
     claim: ScientificClaimProfile
     promotion: PromotionState = eqx.field(static=True)
-    differentiation: DifferentiationContract
+    differentiation: DerivativeContract
     qualification_level: FullDarkSectorQualificationLevel = eqx.field(static=True)
     unsupported_claims: tuple[str, ...] = eqx.field(static=True)
     refusal_reasons: tuple[str, ...] = eqx.field(static=True)
@@ -1038,7 +1033,7 @@ class PromotedFullDarkSectorClaim(StrictModule, NonTrainableState):
         self,
         claim: ScientificClaimProfile,
         promotion: PromotionState,
-        differentiation: DifferentiationContract,
+        differentiation: DerivativeContract,
         qualification_level: FullDarkSectorQualificationLevel,
         unsupported_claims: Sequence[str],
         refusal_reasons: Sequence[str],
@@ -1051,8 +1046,8 @@ class PromotedFullDarkSectorClaim(StrictModule, NonTrainableState):
             raise TypeError("claim must be ScientificClaimProfile.")
         if not isinstance(promotion, PromotionState):
             raise TypeError("promotion must be PromotionState.")
-        if not isinstance(differentiation, DifferentiationContract):
-            raise TypeError("differentiation must be DifferentiationContract.")
+        if not isinstance(differentiation, DerivativeContract):
+            raise TypeError("differentiation must be DerivativeContract.")
         definition = _definition_for_claim(claim)
         expected_differentiation = definition.differentiation.contract()
         if differentiation.contract_id != expected_differentiation.contract_id:
@@ -1128,7 +1123,7 @@ def bind_full_dark_sector_promotion(
     claim: ScientificClaimProfile,
     promotion: PromotionState,
     trust: QualificationRoleTrust,
-    differentiation: DifferentiationContract,
+    differentiation: DerivativeContract,
     /,
     *,
     at_time: int,
@@ -1143,8 +1138,8 @@ def bind_full_dark_sector_promotion(
         raise TypeError("promotion must be a PromotionState.")
     if not isinstance(trust, QualificationRoleTrust):
         raise TypeError("trust must be QualificationRoleTrust.")
-    if not isinstance(differentiation, DifferentiationContract):
-        raise TypeError("differentiation must be a DifferentiationContract.")
+    if not isinstance(differentiation, DerivativeContract):
+        raise TypeError("differentiation must be a DerivativeContract.")
     expected_differentiation = definition.differentiation.contract()
     if differentiation.contract_id != expected_differentiation.contract_id:
         raise ValueError("Requested derivative gate does not exactly match the claim.")

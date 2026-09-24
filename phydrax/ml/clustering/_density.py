@@ -13,17 +13,23 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_CAPACITY_EXHAUSTED,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
 )
+from .._schema import AbstractFittedModel
 from ._common import (
     active_data,
     ClusterDiagnostics,
@@ -35,7 +41,7 @@ from ._common import (
 )
 
 
-class DensityClusterModel(AbstractArrayModel):
+class DensityClusterModel(AbstractFittedModel):
     """Fixed-capacity core-point model with hard radius labels and smooth memberships."""
 
     core_points: Array
@@ -263,10 +269,14 @@ def _fit_density(
         degeneracy=exhausted | (core_count == 0),
         method=method,
     )
-    contract = GradientContract(
-        prediction_inputs="conditional",
-        prediction_parameters="conditional",
-        fit_mode="stopped",
+    contract = DerivativeContract(
+        (
+            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(
+                DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
+            ),
+        ),
+        route=DerivativeRoute.STOPPED,
         nondifferentiable_outputs=("labels", "core mask", "connected components"),
         conditions=(
             "soft_membership is smooth away from zero normalization",
@@ -280,7 +290,7 @@ def _fit_density(
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=contract,
+        derivative_contract=contract,
     )
 
 

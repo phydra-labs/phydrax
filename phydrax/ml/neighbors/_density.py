@@ -11,18 +11,24 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._model._binding import ModelBinding
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_CAPACITY_EXHAUSTED,
     ML_INSUFFICIENT_DATA,
     ML_SUCCESS,
 )
+from .._schema import AbstractFittedModel
 from ._utils import (
     broadcast_support,
     case_distances,
@@ -34,7 +40,7 @@ from ._utils import (
 )
 
 
-class KernelDensityModel(AbstractArrayModel):
+class KernelDensityModel(AbstractFittedModel):
     support: Array
     support_weight: Array
     support_mask: Array
@@ -196,13 +202,19 @@ class KernelDensityRecipe(AbstractRecipe):
             effective_samples=effective,
             method="gaussian-kernel-density",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="smooth",
-            fit_weights="smooth",
-            fit_hyperparameters="smooth",
-            fit_mode="direct",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.SMOOTH),
+                SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
         )
         return FitResult(
             model,
@@ -210,11 +222,11 @@ class KernelDensityRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="kernel-density",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
-class LocalOutlierFactorModel(AbstractArrayModel):
+class LocalOutlierFactorModel(AbstractFittedModel):
     support: Array
     support_mask: Array
     support_weight: Array
@@ -425,10 +437,16 @@ class LocalOutlierFactorRecipe(AbstractRecipe):
             effective_samples=effective,
             method="chunked-local-outlier-factor",
         )
-        contract = GradientContract(
-            prediction_inputs="almost-everywhere",
-            prediction_parameters="almost-everywhere",
-            fit_mode="stopped",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.ALMOST_EVERYWHERE
+                ),
+            ),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=("neighbor_indices", "predict"),
             conditions=("Neighbor ordering is fixed and tie-free.",),
         )
@@ -438,7 +456,7 @@ class LocalOutlierFactorRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="local-outlier-factor",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

@@ -91,7 +91,7 @@ def test_zero_velocity_and_constant_tracers_are_preserved_exactly():
         constant, moving_velocity, jnp.asarray(0.19, dtype=dtype)
     )
     np.testing.assert_array_equal(translated.values, constant)
-    assert translated.differentiation == "almost_everywhere"
+    assert translated.differentiation is phx.BranchDifferentiationPolicy.BRANCHWISE
     assert translated.conservation == "diagnostic_only"
     assert translated.field_space_id == tracer_space.field_space_id
     assert translated.layout_id == tracer_space.layout.layout_id

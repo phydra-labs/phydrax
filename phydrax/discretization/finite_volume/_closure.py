@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -22,7 +23,7 @@ class ConservativeFaceClosurePlan(StrictModule, NonTrainableState):
 
     correction: Callable = eqx.field(static=True)
     consistency_tolerance: float = eqx.field(static=True)
-    differentiability: str = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     closure_id: str = eqx.field(static=True)
 
     def __init__(
@@ -32,19 +33,29 @@ class ConservativeFaceClosurePlan(StrictModule, NonTrainableState):
         *,
         closure_id: str,
         consistency_tolerance: float = 1e-10,
-        differentiability: str = "smooth_discrete",
+        differentiability: BranchDifferentiationPolicy = (
+            BranchDifferentiationPolicy.SMOOTH
+        ),
     ):
         if not callable(correction):
             raise TypeError("correction must be callable.")
+        if not isinstance(differentiability, BranchDifferentiationPolicy):
+            raise TypeError("differentiability must be a BranchDifferentiationPolicy.")
+        match differentiability:
+            case (
+                BranchDifferentiationPolicy.SMOOTH
+                | BranchDifferentiationPolicy.BRANCHWISE
+                | BranchDifferentiationPolicy.SMOOTH_SURROGATE
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "ConservativeFaceClosurePlan supports SMOOTH, BRANCHWISE, or "
+                    f"SMOOTH_SURROGATE; got {differentiability.name}."
+                )
         identifier = str(closure_id)
         tolerance = float(consistency_tolerance)
-        if (
-            not identifier
-            or not np.isfinite(tolerance)
-            or tolerance < 0.0
-            or differentiability
-            not in ("smooth_discrete", "branchwise", "smooth_surrogate")
-        ):
+        if not identifier or not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("Conservative face closure metadata is invalid.")
         self.correction = correction
         self.consistency_tolerance = tolerance
@@ -54,7 +65,7 @@ class ConservativeFaceClosurePlan(StrictModule, NonTrainableState):
                 "kind": "conservative-face-closure",
                 "declared_id": identifier,
                 "consistency_tolerance": tolerance,
-                "differentiability": differentiability,
+                "differentiability": differentiability.value,
             }
         )
 

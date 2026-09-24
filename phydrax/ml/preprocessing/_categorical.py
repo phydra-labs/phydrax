@@ -12,20 +12,26 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
 )
-from .._schema import FeatureSchema
+from .._schema import AbstractFittedModel, FeatureSchema
 from ._common import (
     _align_parameter,
     _check_features,
@@ -210,7 +216,7 @@ def _categorical_fit_diagnostics(
     )
 
 
-class FittedSimpleImputer(AbstractArrayModel):
+class FittedSimpleImputer(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     fill_values: Array
@@ -415,27 +421,33 @@ class SimpleImputer(AbstractRecipe):
             details=(("strategy", self.strategy), ("add_indicator", self.add_indicator)),
         )
         contract = (
-            GradientContract(
-                prediction_inputs="conditional",
-                prediction_parameters="smooth",
-                fit_features="conditional",
-                fit_targets="none",
-                fit_weights="conditional",
-                fit_hyperparameters="none",
-                fit_mode="direct",
+            DerivativeContract(
+                (
+                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.DIRECT,
                 conditions=(
                     "Missingness, masks, and positive-weight support are held fixed.",
                 ),
             )
             if self.strategy == "mean"
-            else GradientContract(
-                prediction_inputs="conditional",
-                prediction_parameters="smooth",
-                fit_features="none",
-                fit_targets="none",
-                fit_weights="none",
-                fit_hyperparameters="none",
-                fit_mode="stopped",
+            else DerivativeContract(
+                (
+                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                ),
+                route=DerivativeRoute.STOPPED,
                 nondifferentiable_outputs=("imputation_choice",),
                 conditions=("The hard fitted imputation choice is fixed during apply.",),
             )
@@ -443,7 +455,7 @@ class SimpleImputer(AbstractRecipe):
         return _fit_result(model, diagnostics, contract)
 
 
-class FittedOrdinalEncoder(AbstractArrayModel, NonTrainableState):
+class FittedOrdinalEncoder(AbstractFittedModel, NonTrainableState):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     categories: Array
@@ -576,16 +588,19 @@ class OrdinalEncoder(AbstractRecipe):
             valid=diagnostics.valid,
             status=diagnostics.status,
             method=diagnostics.method,
-            gradient_contract=GradientContract(
-                prediction_inputs="none",
-                prediction_parameters="none",
-                fit_mode="stopped",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE
+                    ),
+                ),
+                route=DerivativeRoute.STOPPED,
                 nondifferentiable_outputs=("ordinal_codes", "unknown_indicators"),
             ),
         )
 
 
-class FittedOneHotEncoder(AbstractArrayModel, NonTrainableState):
+class FittedOneHotEncoder(AbstractFittedModel, NonTrainableState):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     categories: Array
@@ -730,16 +745,19 @@ class OneHotEncoder(AbstractRecipe):
             valid=diagnostics.valid,
             status=diagnostics.status,
             method=diagnostics.method,
-            gradient_contract=GradientContract(
-                prediction_inputs="none",
-                prediction_parameters="none",
-                fit_mode="stopped",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE
+                    ),
+                ),
+                route=DerivativeRoute.STOPPED,
                 nondifferentiable_outputs=("one_hot_codes", "unknown_indicators"),
             ),
         )
 
 
-class FittedTargetEncoder(AbstractArrayModel):
+class FittedTargetEncoder(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     category_schema: CategoricalSchema = eqx.field(static=True)
@@ -934,14 +952,22 @@ class TargetEncoder(AbstractRecipe):
             valid=valid,
             status=status,
             method="target_encoder",
-            gradient_contract=GradientContract(
-                prediction_inputs="none",
-                prediction_parameters="smooth",
-                fit_features="none",
-                fit_targets="conditional",
-                fit_weights="conditional",
-                fit_hyperparameters="conditional",
-                fit_mode="direct",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.DIRECT,
                 nondifferentiable_outputs=("category_membership", "unknown_indicators"),
                 conditions=("Category membership and target masks are held fixed.",),
             ),

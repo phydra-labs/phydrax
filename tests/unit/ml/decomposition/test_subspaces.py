@@ -5,6 +5,7 @@
 import jax
 import jax.numpy as jnp
 
+from phydrax import DerivativeRoute
 from phydrax.ml import MLBatch
 from phydrax.ml.decomposition import IncrementalPCA, PCA, POD, TruncatedSVD
 
@@ -47,8 +48,8 @@ def test_pca_preserves_case_sample_mask_weight_and_canonicalization_contracts():
     pivots = _pivot_values(model.weighted_components)
     assert jnp.allclose(jnp.imag(pivots), 0.0)
     assert jnp.all(jnp.real(pivots) >= 0.0)
-    assert result.gradient_contract.fit_mode == "spectral"
-    assert "basis representatives" in " ".join(result.gradient_contract.conditions)
+    assert result.derivative_contract.route is DerivativeRoute.SPECTRAL
+    assert "basis representatives" in " ".join(result.derivative_contract.conditions)
 
 
 def test_pca_projector_prediction_fit_feature_and_fit_weight_gradients_are_finite():

@@ -6,6 +6,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from phydrax import DerivativeSurface, GradientLevel
 from phydrax.kernels import SquaredExponentialKernel
 from phydrax.ml import MLBatch
 from phydrax.ml.kernel_methods import (
@@ -60,13 +61,18 @@ def test_kernel_ridge_direct_contract_covers_features_targets_weights_and_kernel
     )
     _assert_finite(gradients)
     result = base.fit_batch(MLBatch(features, targets, sample_weight=weights))
-    contract = result.gradient_contract
+    contract = result.derivative_contract
     assert (
-        contract.fit_features,
-        contract.fit_targets,
-        contract.fit_weights,
-        contract.fit_hyperparameters,
-    ) == ("conditional", "conditional", "conditional", "conditional")
+        contract.level(DerivativeSurface.FIT_FEATURES),
+        contract.level(DerivativeSurface.FIT_TARGETS),
+        contract.level(DerivativeSurface.FIT_WEIGHTS),
+        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS),
+    ) == (
+        GradientLevel.CONDITIONAL,
+        GradientLevel.CONDITIONAL,
+        GradientLevel.CONDITIONAL,
+        GradientLevel.CONDITIONAL,
+    )
     assert result.as_trainable()(query).shape == (2, 2)
     _assert_prediction_parameter_gradient(result.as_trainable(), query)
 
@@ -113,12 +119,17 @@ def test_categorical_gp_branch_covers_declared_fit_and_prediction_gradients():
     )
     _assert_finite(gradients)
     result = base.fit_batch(MLBatch(features, labels, sample_weight=weights))
-    contract = result.gradient_contract
+    contract = result.derivative_contract
     assert (
-        contract.fit_features,
-        contract.fit_targets,
-        contract.fit_weights,
-        contract.fit_hyperparameters,
-    ) == ("conditional", "none", "conditional", "conditional")
+        contract.level(DerivativeSurface.FIT_FEATURES),
+        contract.level(DerivativeSurface.FIT_TARGETS),
+        contract.level(DerivativeSurface.FIT_WEIGHTS),
+        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS),
+    ) == (
+        GradientLevel.CONDITIONAL,
+        GradientLevel.NONE,
+        GradientLevel.CONDITIONAL,
+        GradientLevel.CONDITIONAL,
+    )
     assert result.as_trainable()(query).shape == (2, 3)
     _assert_prediction_parameter_gradient(result.as_trainable(), query)

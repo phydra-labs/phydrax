@@ -14,6 +14,13 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
 from ...kernels import AbstractPositiveDefiniteKernel, SquaredExponentialKernel
@@ -21,12 +28,12 @@ from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
 )
+from .._schema import AbstractFittedModel
 from .._sparse_features import SparseFeatures
 
 
@@ -217,7 +224,7 @@ def _target_distributions(
     return distributions, labeled, classes, class_labels
 
 
-class LabelPropagationModel(AbstractArrayModel):
+class LabelPropagationModel(AbstractFittedModel):
     """Blockwise kernel interpolation of propagated class distributions."""
 
     training_features: Array
@@ -312,7 +319,7 @@ class LabelPropagationModel(AbstractArrayModel):
         return probabilities[..., 0, :] if squeeze else probabilities
 
 
-class HardLabelPropagationModel(AbstractArrayModel):
+class HardLabelPropagationModel(AbstractFittedModel):
     """Exact class reporting counterpart to LabelPropagationModel."""
 
     soft_model: LabelPropagationModel
@@ -417,12 +424,26 @@ class LabelPropagationRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="label-propagation",
-            gradient_contract=GradientContract(
-                fit_features="conditional",
-                fit_targets="conditional",
-                fit_weights="conditional",
-                fit_hyperparameters="conditional",
-                fit_mode="unrolled",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.UNROLLED,
                 conditions=("The class vocabulary and labeled mask are fixed.",),
             ),
         )
@@ -522,12 +543,26 @@ class LabelSpreadingRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="label-spreading",
-            gradient_contract=GradientContract(
-                fit_features="conditional",
-                fit_targets="conditional",
-                fit_weights="conditional",
-                fit_hyperparameters="conditional",
-                fit_mode="unrolled",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.UNROLLED,
                 conditions=("The class vocabulary and labeled mask are fixed.",),
             ),
         )
@@ -552,10 +587,13 @@ class HardLabelPropagationRecipe(AbstractRecipe):
             valid=result.valid,
             status=result.status,
             method="hard-label-propagation",
-            gradient_contract=GradientContract(
-                prediction_inputs="none",
-                prediction_parameters="none",
-                fit_mode="stopped",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE
+                    ),
+                ),
+                route=DerivativeRoute.STOPPED,
                 nondifferentiable_outputs=("class_index",),
             ),
         )
@@ -623,7 +661,7 @@ def _self_training_targets(batch: MLBatch) -> tuple[Array, Array]:
     return jnp.where(labeled[..., None], known, uniform), labeled
 
 
-class SoftSelfTrainingModel(AbstractArrayModel):
+class SoftSelfTrainingModel(AbstractFittedModel):
     model: AbstractArrayModel
     in_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
@@ -638,7 +676,7 @@ class SoftSelfTrainingModel(AbstractArrayModel):
         return self.model(x, key=key)
 
 
-class HardSelfTrainingModel(AbstractArrayModel):
+class HardSelfTrainingModel(AbstractFittedModel):
     model: AbstractArrayModel
     in_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
@@ -729,12 +767,26 @@ class SoftSelfTrainingRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="soft-self-training",
-            gradient_contract=GradientContract(
-                fit_features="conditional",
-                fit_targets="conditional",
-                fit_weights="conditional",
-                fit_hyperparameters="conditional",
-                fit_mode="unrolled",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.UNROLLED,
                 conditions=("The labeled mask and class axis are fixed.",),
             ),
         )
@@ -829,10 +881,14 @@ class HardSelfTrainingRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="hard-self-training",
-            gradient_contract=GradientContract(
-                prediction_inputs="conditional",
-                prediction_parameters="conditional",
-                fit_mode="stopped",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.STOPPED,
                 nondifferentiable_outputs=("pseudo_label", "pseudo_label_acceptance"),
                 conditions=(
                     "Inference gradients are those of the final child model only.",
@@ -849,7 +905,7 @@ def _score_vector(score: Array, leading_shape: tuple[int, ...]) -> Array:
     return score
 
 
-class SoftOneClassCompositionModel(AbstractArrayModel):
+class SoftOneClassCompositionModel(AbstractFittedModel):
     detector: AbstractArrayModel
     predictor: AbstractArrayModel
     threshold: Array
@@ -895,7 +951,7 @@ class SoftOneClassCompositionModel(AbstractArrayModel):
         )
 
 
-class HardOneClassCompositionModel(AbstractArrayModel):
+class HardOneClassCompositionModel(AbstractFittedModel):
     detector: AbstractArrayModel
     predictor: AbstractArrayModel
     threshold: Array
@@ -1027,12 +1083,26 @@ class SoftOneClassCompositionRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="soft-one-class-composition",
-            gradient_contract=GradientContract(
-                fit_features="conditional",
-                fit_targets="conditional",
-                fit_weights="conditional",
-                fit_hyperparameters="conditional",
-                fit_mode="unrolled",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.UNROLLED,
                 conditions=(
                     "Detector and predictor recipes must expose compatible gradients.",
                 ),
@@ -1111,10 +1181,13 @@ class HardOneClassCompositionRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="hard-one-class-composition",
-            gradient_contract=GradientContract(
-                prediction_inputs="none",
-                prediction_parameters="conditional",
-                fit_mode="stopped",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.STOPPED,
                 nondifferentiable_outputs=("one_class_acceptance",),
             ),
         )

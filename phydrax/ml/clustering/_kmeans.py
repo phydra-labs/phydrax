@@ -13,12 +13,18 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
     ML_NONFINITE,
@@ -190,22 +196,31 @@ def _fit_result(
     )
     if soft_temperature is None:
         model = HardClusterModel(centers, active, method=method)
-        contract = GradientContract(
-            prediction_inputs="none",
-            prediction_parameters="none",
-            fit_mode="stopped",
+        contract = DerivativeContract(
+            (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=("labels", "assignments"),
             conditions=("deterministic lowest-index tie breaking",),
         )
     else:
         model = SoftClusterModel(centers, active, soft_temperature, method=method)
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
             nondifferentiable_outputs=("hard_labels",),
             conditions=(
                 "positive temperature",
@@ -231,7 +246,7 @@ def _fit_result(
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=contract,
+        derivative_contract=contract,
     )
 
 
@@ -442,10 +457,9 @@ class KMedoids(AbstractRecipe):
             converged=converged,
             method="k-medoids",
         )
-        contract = GradientContract(
-            prediction_inputs="none",
-            prediction_parameters="none",
-            fit_mode="stopped",
+        contract = DerivativeContract(
+            (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=("labels", "medoid indices"),
             conditions=("deterministic lowest-index tie breaking",),
         )
@@ -455,7 +469,7 @@ class KMedoids(AbstractRecipe):
             valid=valid,
             status=status,
             method="k-medoids",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -670,10 +684,9 @@ class MiniBatchKMeans(AbstractRecipe):
             converged=jnp.ones_like(valid),
             method="mini-batch-k-means",
         )
-        contract = GradientContract(
-            prediction_inputs="none",
-            prediction_parameters="none",
-            fit_mode="stopped",
+        contract = DerivativeContract(
+            (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=("labels", "sampled mini-batches"),
             conditions=("explicit random key", "fixed iteration count"),
         )
@@ -683,7 +696,7 @@ class MiniBatchKMeans(AbstractRecipe):
             valid=valid,
             status=status,
             method="mini-batch-k-means",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

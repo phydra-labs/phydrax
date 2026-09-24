@@ -157,6 +157,20 @@ not a distributional derivative. Backsolve, checkpointed reverse, forward-mode,
 and bidirectional direct routes therefore remain distinguishable in persisted
 evidence.
 
+`TemporalDifferentiationEvidence.derivative_contract` restates those semantics
+as a canonical `DerivativeContract` on the initial state (`PRIMAL_STATE`) and
+problem arguments (`PHYSICAL_PARAMETER`). Discretize-then-optimize routes are
+unrolled, an implicit solution map is implicit with the `steady-state-reached`
+condition, and backsolve is an `external-adjoint` route with the
+`continuous-adjoint-approximation` condition. Frozen adaptive schedules,
+unqualified branchwise events, and implicit event replay contribute the
+`FROZEN_DECISION`, `BRANCHWISE`, and `EVENT_AWARE` branch-policy contracts;
+fixed-realization stochastic solves add `fixed-realization`, and an unverified
+classification lowers every surface to conditional with
+`derivative-classification-unverified`. Unknown forms or semantics, empty
+orientations, and unsupported events give a stopped contract. Regularity stays
+undeclared because the vector field's regularity is not known to the solve.
+
 `TemporalPrecisionPolicy` separates coefficient, stored-state, stage, accumulation,
 residual, acceptance-decision, checkpoint, and returned-output precision. The
 Phydrax SSP, Rosenbrock-W, Gauss--Legendre IRK, multirate, generalized-alpha, and

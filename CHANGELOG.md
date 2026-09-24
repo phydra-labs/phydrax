@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### Added
+- Added one canonical derivative vocabulary at the package root: derivative
+  surfaces, gradient levels, routes, regularity with polynomial-degree algebra,
+  `DerivativeContract` meet/compose/admission, branch-differentiation policies,
+  objective kinds, component authorities, capability evidence requirements, and
+  construction certificates.
+- Added semantic value ports (`ValuePort`, `ModelPorts`, `PortMapping`,
+  `resolve_port_mapping`) with derived views for ML schemas, operator fields and
+  queries, dynamics state/input layouts, domains, discrete field spaces,
+  geophysical fields, and closure schemas.
+- Linear solve results and temporal differentiation evidence report canonical
+  derivative contracts; input-convex networks emit a construction certificate.
 - Added native quantum Hall workflows spanning Haldane, Kane--Mele, and
   Hofstadter lattices; Chern, time-reversal Z2, ribbon, and Bott topology;
   matrix-free projected-sphere pseudopotential spectra and gaps; monopole-sphere
@@ -21,6 +32,21 @@
   and bounded rendering/video adapters.
 
 ### Changed
+- ML fitting uses the canonical derivative vocabulary: `FitResult` exposes
+  `derivative_contract`, `derivative_admission`, `require_derivative`, and model
+  ports; `fit(..., derivative_request=...)` replaces the ML gradient request.
+  The ML-specific gradient contract types are removed.
+- Fitted ML executables retain feature/target schemas (with optional physical
+  dimensions) and ports. Native ML artifacts persist the canonical contract,
+  schemas, ports, and semantic/numeric/executable identity; `load_ml_model`
+  returns the bound executable and previous artifact records fail closed.
+- Scientific artifact evidence uses `DerivativeContract`; the local
+  differentiation contract and `DerivativeAvailability` are removed.
+- Branch sensitivity, conservation, spectral, particle, reconstruction, and
+  filter differentiation policies are unified as
+  `BranchDifferentiationPolicy`; each owner accepts its supported subset.
+  `HybridSensitivityMode` and the owner-specific policy types are removed.
+  Fingerprints that hashed the previous policy spellings change.
 - Public API inventory now follows canonical access paths rather than private
   implementation module names, traverses without a depth cutoff, and includes
   explicitly supported lazy scientific leaves. Documentation directives,

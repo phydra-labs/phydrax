@@ -10,6 +10,7 @@ from typing import Any
 
 from ..._fingerprint import canonical_fingerprint
 from ..._frozendict import frozendict
+from ..._model import ValuePort
 from ..._strict import StrictModule
 from ...equations._ir import PDEProblemIR
 from ...equations._serialize import pde_ir_from_dict, pde_ir_to_dict
@@ -165,6 +166,26 @@ class OperatorQuerySpec(StrictModule):
     @property
     def coordinate_dimension(self) -> int:
         return len(self.coordinate_components)
+
+    def value_port(self) -> ValuePort:
+        """Return the canonical port of one query coordinate point.
+
+        The port's `semantic_id` is the query `name`, its event shape is
+        `(coordinate_dimension,)`, and its component IDs are
+        `coordinate_components`. Dimensions are `coordinate_dimensions` when
+        declared and `None` otherwise. The representation is the fixed literal
+        `query-coordinates` with neutral variance. Geometry kind, topology site,
+        quadrature, and fixed-geometry flags describe how query sets are sampled,
+        not the coordinate value, so they do not enter the port; spaces, frames,
+        normalizations, and event axes are undeclared.
+        """
+        return ValuePort(
+            self.name,
+            event_shape=(self.coordinate_dimension,),
+            component_ids=self.coordinate_components,
+            representation="query-coordinates",
+            dimensions=self.coordinate_dimensions or None,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {

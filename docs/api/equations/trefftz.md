@@ -7,6 +7,11 @@ for scientific assumptions and workflows.
 Holomorphic polynomial potentials and their coefficient-space constraints are
 documented under [Holomorphic potential fields](holomorphic.md).
 
+`TrialSpaceCertificate` is a `phydrax.AbstractConstructionCertificate` with
+capability ID `exact-pde-trial-space`. `Domain.Model` attaches it under
+`"trial_space_certificate"`; transforms that do not preserve the trial space
+drop it, and hard enforcement refuses fields that carry it.
+
 ::: phydrax.equations.trefftz.SimilarityNormalization
 
 ---

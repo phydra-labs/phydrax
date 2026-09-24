@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import DerivativeContract, DerivativeSurface
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics import gauss_legendre_data
 from ..._strict import StrictModule
@@ -191,7 +192,14 @@ class FLRWDistancePlan(StrictModule, NonTrainableState):
             physics_policy_id="flrw-background-geometry",
             scale_id=background.scale.scale_id,
             source_kind="native",
-            differentiation="native-parameter",
+            differentiation=DerivativeContract.smooth(
+                (
+                    DerivativeSurface.INPUT,
+                    DerivativeSurface.MODEL_PARAMETER,
+                    DerivativeSurface.PHYSICAL_PARAMETER,
+                    DerivativeSurface.STORED_VALUES,
+                )
+            ),
         )
         return FLRWDistanceResult(
             redshift=z,

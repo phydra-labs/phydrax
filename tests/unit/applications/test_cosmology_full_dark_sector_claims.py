@@ -7,13 +7,13 @@ from __future__ import annotations
 import jax.numpy as jnp
 import pytest
 
+import phydrax as phx
 from phydrax._physical import DimensionalScaleContract, RelativityScaleContract
 from phydrax.applications.cosmology import _full_dark_sector_claims as claims
 from phydrax.applications.relativistic_scattering._unit_contract import (
     LocalRelativisticFramePlan,
     RelativisticUnitContract,
 )
-from phydrax.artifacts import DifferentiationContract
 from phydrax.metrix import (
     ADMGridGeometry,
     CoordinateChart,
@@ -359,7 +359,7 @@ def test_signed_promotion_binds_exact_claim_derivative_gate_and_source_rights():
             claim,
             promotion,
             trust,
-            DifferentiationContract.constant(),
+            phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
             at_time=20,
             qualification_level="production",
             expected_index_id="release-index",

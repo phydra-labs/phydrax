@@ -14,6 +14,7 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -86,7 +87,7 @@ class AbstractNumericalFluxPlan(StrictModule, NonTrainableState):
     """Interface solver returning a conservative normal flux density."""
 
     flux_id: str = eqx.field(static=True)
-    differentiability: str = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
 
     @abc.abstractmethod
     def face_flux(
@@ -171,7 +172,9 @@ class RusanovFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan):
             raise ValueError("smooth_epsilon must be finite and non-negative.")
         self.smooth_epsilon = epsilon
         self.differentiability = (
-            "almost_everywhere" if epsilon == 0.0 else "smooth_surrogate"
+            BranchDifferentiationPolicy.BRANCHWISE
+            if epsilon == 0.0
+            else BranchDifferentiationPolicy.SMOOTH_SURROGATE
         )
         self.flux_id = canonical_fingerprint(
             {
@@ -258,7 +261,7 @@ class HLLFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan):
     """Two-wave Harten–Lax–van Leer numerical flux."""
 
     def __init__(self):
-        self.differentiability = "almost_everywhere"
+        self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.flux_id = canonical_fingerprint(
             {"kind": "hll-flux", "normal_ale_contract": _NORMAL_ALE_CONTRACT}
         )
@@ -365,7 +368,7 @@ class HLLCFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan):
     """Contact-resolving HLLC flux for Euler-compatible state layouts."""
 
     def __init__(self):
-        self.differentiability = "almost_everywhere"
+        self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.flux_id = canonical_fingerprint(
             {"kind": "hllc-euler-flux", "normal_ale_contract": _NORMAL_ALE_CONTRACT}
         )
@@ -677,7 +680,7 @@ class HLLDFluxPlan(AbstractNumericalFluxPlan):
             raise ValueError("HLLD tolerances are invalid.")
         self.denominator_epsilon = epsilon
         self.normal_field_tolerance = tolerance
-        self.differentiability = "branchwise"
+        self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.flux_id = canonical_fingerprint(
             {
                 "kind": "hlld-ideal-mhd-flux",
@@ -1031,7 +1034,7 @@ class RoeFluxPlan(AbstractNumericalFluxPlan):
         if not np.isfinite(fix) or fix <= 0.0:
             raise ValueError("entropy_fix must be finite and positive.")
         self.entropy_fix = fix
-        self.differentiability = "almost_everywhere"
+        self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.flux_id = canonical_fingerprint({"kind": "roe-flux", "entropy_fix": fix})
 
     def face_flux(
@@ -1087,7 +1090,7 @@ class EntropyConservativeEulerFluxPlan(AbstractSymmetricTwoPointFluxPlan):
     def __init__(self):
         self.symmetric = True
         self.consistent = True
-        self.differentiability = "smooth_discrete"
+        self.differentiability = BranchDifferentiationPolicy.SMOOTH
         self.flux_id = canonical_fingerprint(
             {
                 "kind": "entropy-conservative-euler-flux",
@@ -1203,7 +1206,7 @@ class EntropyStableFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
         self.central = central
         self.entropy_pair = entropy_pair
         self.dissipation = coefficient
-        self.differentiability = "almost_everywhere"
+        self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.flux_id = canonical_fingerprint(
             {
                 "kind": "pair-bound-entropy-stable-flux",
@@ -1288,7 +1291,7 @@ class EntropyStableEulerFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
             raise ValueError("dissipation must be finite and non-negative.")
         self.central = EntropyConservativeEulerFluxPlan()
         self.dissipation = coefficient
-        self.differentiability = "almost_everywhere"
+        self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.flux_id = canonical_fingerprint(
             {"kind": "entropy-stable-euler-flux", "dissipation": coefficient}
         )

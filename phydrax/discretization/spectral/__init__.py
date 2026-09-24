@@ -133,7 +133,6 @@ from ._lattice import (
 from ._method import (
     PreparedPseudospectralMethod,
     PseudospectralMethodPlan,
-    SpectralDifferentiabilityPolicy,
     SpectralResidualDiagnostics,
 )
 from ._modal_discovery import (
@@ -311,7 +310,6 @@ __all__ = [
     "SpectralBoundaryKind",
     "SpectralConservationDiagnostics",
     "SpectralConservationMethodPlan",
-    "SpectralDifferentiabilityPolicy",
     "SpectralEntropyDiagnostics",
     "SpectralSplitFormPlan",
     "SpectralSplitFormReport",

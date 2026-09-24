@@ -11,12 +11,12 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._model import TRIAL_SPACE_CERTIFICATE_KEY
 from ...domain import DomainFunction, GridBatch, PointBatch
 from ...metrix.clifford import CliffordAlgebraSpec, CliffordBladeLayout
 from ...operators.differential import clifford_dirac, laplacian
 from ._core import (
     AbstractTrialSpaceAdmissibility,
-    TRIAL_SPACE_CERTIFICATE_KEY,
     TRIAL_SPACE_REPRESENTATION_KEY,
     trial_target_fingerprint,
     TrialSpaceAuditReport,

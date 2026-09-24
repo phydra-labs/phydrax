@@ -12,9 +12,15 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ...._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ...._strict import StrictModule
 from ....ml._contracts import (
-    GradientContract,
     ML_INFEASIBLE,
 )
 from ....ml._numerics import effective_sample_size, fit_weighted_subspace
@@ -57,7 +63,7 @@ class OperatorPODFit(StrictModule):
     physical_weights: Array
     valid: Array
     status: Array
-    gradient_contract: GradientContract
+    derivative_contract: DerivativeContract
     field_name: str = eqx.field(static=True)
     query_name: str = eqx.field(static=True)
     sample_shape: tuple[int, ...] = eqx.field(static=True)
@@ -226,26 +232,54 @@ def fit_operator_pod(
         method="operator-physical-pod-weighted-svd",
     )
     if differentiate == "projector":
-        gradient_contract = GradientContract(
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_mode="spectral",
+        derivative_contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             conditions=(
                 "projector gradients require retained/discarded spectral separation",
             ),
         )
     elif differentiate == "basis":
-        gradient_contract = GradientContract(
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_mode="spectral",
+        derivative_contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             conditions=(
                 "basis gradients require a non-repeated retained spectrum",
                 "canonicalization pivots must remain unique and nonzero",
             ),
         )
     else:
-        gradient_contract = GradientContract(fit_mode="stopped")
+        derivative_contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.STOPPED,
+        )
     return OperatorPODFit(
         basis=decoder,
         diagnostics=diagnostics,
@@ -254,7 +288,7 @@ def fit_operator_pod(
         physical_weights=physical_weights,
         valid=valid,
         status=status,
-        gradient_contract=gradient_contract,
+        derivative_contract=derivative_contract,
         field_name=str(field_name),
         query_name=field.query_name,
         sample_shape=query.sample_shape,

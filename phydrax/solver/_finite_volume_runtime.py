@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._differentiation import BranchDifferentiationPolicy
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
@@ -541,7 +542,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             fallback_method = FiniteVolumeMethodPlan(
                 PiecewiseConstantReconstruction(),
                 dynamics.method.interface_solver,
-                differentiability="branchwise",
+                differentiability=BranchDifferentiationPolicy.BRANCHWISE,
             )
             fallback = PreparedFiniteVolumeDynamics(
                 dynamics.system,
@@ -558,7 +559,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 PiecewiseConstantReconstruction(),
                 positivity.fallback_flux,
                 viscous=dynamics.method.viscous,
-                differentiability="branchwise",
+                differentiability=BranchDifferentiationPolicy.BRANCHWISE,
             )
             fallback = PreparedFiniteVolumeDynamics(
                 dynamics.system,

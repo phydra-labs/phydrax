@@ -32,8 +32,13 @@ result = phx.ml.fit(
     features,
     targets,
     sample_weight=reliability,
-    feature_schema=phx.ml.FeatureSchema(("strain", "temperature")),
-    target_schema=phx.ml.TargetSchema("continuous", names=("stress",)),
+    feature_schema=phx.ml.FeatureSchema(
+        ("strain", "temperature"),
+        dimensions=(phx.units.DIMENSIONLESS, phx.units.TEMPERATURE),
+    ),
+    target_schema=phx.ml.TargetSchema(
+        "continuous", names=("stress",), dimensions=(phx.units.PRESSURE,)
+    ),
 )
 
 if not bool(result.valid):
@@ -41,7 +46,13 @@ if not bool(result.valid):
 
 closure = result.model
 prediction = jax.jit(closure)(jnp.array([0.25, -0.1]))
+ports = result.model_ports()
 ```
+
+`phx.ml.fit` binds both schemas into the fitted executable, so `ports.inputs`
+holds the `strain`/`temperature` feature port with its declared dimensions and
+`ports.outputs` holds the `stress` target port. A recipe's low-level `fit_batch`
+does not bind schemas.
 
 `result.model` is an immutable `FrozenModel`: ordinary JAX differentiation still
 works through its prediction, but Phydrax solvers keep its leaves outside the
@@ -62,12 +73,19 @@ meaning and remain separately inspectable.
 
 Ridge fitting is a direct differentiable solve while the reported augmented system
 has the required rank. A continuous regularization parameter can therefore be
-selected by an outer JAX objective without an estimator callback.
+selected by an outer JAX objective without an estimator callback. Declare the
+derivative you rely on; `fit` rejects the request with a `derivative-unsupported`
+`ValueError` when the recipe's contract does not declare it.
 
 ```python
 validation_features = jnp.array([[-0.75, 0.1], [0.2, 0.4], [0.9, -0.2]])
 validation_targets = (
     1.2 + 0.7 * validation_features[:, 0] - 0.25 * validation_features[:, 1]
+)
+
+
+hyperparameter_request = phx.DifferentiationRequest(
+    (phx.DerivativeSurface.FIT_HYPERPARAMETERS,)
 )
 
 
@@ -77,6 +95,7 @@ def validation_loss(alpha):
         features,
         targets,
         sample_weight=reliability,
+        derivative_request=hyperparameter_request,
     ).as_trainable()
     residual = jax.vmap(fitted)(validation_features) - validation_targets
     return jnp.mean(residual**2)
@@ -85,10 +104,13 @@ def validation_loss(alpha):
 dloss_dalpha = jax.grad(validation_loss)(jnp.asarray(1e-3))
 ```
 
-The derivative is a property of the fit map, not merely of prediction. Inspect
-`result.gradient_contract.fit_hyperparameters` and every listed condition before
-using it in a larger inverse problem. A hard tree split, selected neighbor index,
-or selected feature set would not supply the same derivative.
+The derivative is a property of the fit map, not merely of prediction.
+`result.derivative_contract.level(phx.DerivativeSurface.FIT_HYPERPARAMETERS)` is
+`CONDITIONAL`: the admission lists its conditions (fixed masks, a locally constant
+retained singular subspace, and a full-column-rank augmented design), which must
+hold before the derivative is used in a larger inverse problem. A hard tree split,
+selected neighbor index, or selected feature set would not supply the same
+derivative; see [Derivative contracts](../appendix/ml_differentiability.md).
 
 ## Bind the fitted model to a Phydrax domain
 
@@ -141,7 +163,8 @@ algorithmic contract.
 
 ## Preserve and export the result
 
-A native artifact records registered model structure, schemas, fit metadata,
+A native artifact records registered model structure, the executable's schemas
+and ports, the fit's derivative contract and status, the identity triplet,
 provenance, and checksums without pickle:
 
 ```python
@@ -152,11 +175,18 @@ with TemporaryDirectory() as directory:
         f"{directory}/closure.phxml",
         result.model,
         fit_result=result,
-        feature_schema=phx.ml.FeatureSchema(("strain", "temperature")),
-        target_schema=phx.ml.TargetSchema("continuous", names=("stress",)),
     )
+    manifest = phx.ml.artifacts.read_ml_artifact(path).manifest
     restored = phx.ml.artifacts.load_ml_model(path)
 ```
+
+Schemas come from the executable, so archive a model fitted by `phx.ml.fit`.
+`manifest.feature_schema`, `manifest.target_schema`, `manifest.ports`, and
+`manifest.derivative_contract` restore the recorded values, and the identity
+triplet is recomputed and verified on load. `restored` is the same frozen,
+schema-bound executable; `restored.as_trainable().model_ports()` equals `ports`.
+Artifacts written in an earlier manifest format fail closed rather than being
+reinterpreted.
 
 Selected already-fitted sklearn estimators and saved XGBoost artifacts can instead
 cross the one-time fail-closed conversion boundary. The returned model is native;
@@ -164,5 +194,5 @@ prediction does not call the source package. ONNX export is available only when 
 native JAX primitives used by that model are representable.
 
 See [Native machine learning](../guides/ml.md),
-[ML differentiation contracts](../appendix/ml_differentiability.md), and the
+[Derivative contracts](../appendix/ml_differentiability.md), and the
 [complete ML API](../api/ml/index.md).

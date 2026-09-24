@@ -21,7 +21,6 @@ from .._conservation_ledger import (
     ConservationStageFluxRateBlock,
     ConservationStageLedger,
 )
-from .._conservation_policy import DifferentiabilityPolicy
 from ._amr import BlockAMRConservationPlan
 from ._amr_diffusion import (
     composite_amr_multigrid_builder,
@@ -141,7 +140,6 @@ from ._high_resolution import (
 )
 from ._high_resolution_extended import (
     ExplicitStabilizationPlan,
-    FilterADPolicy,
     TENOQualification,
 )
 from ._hybrid_diffusion import HybridMimeticDiffusion
@@ -233,7 +231,6 @@ from ._mac_ocean import MACOceanForcingEvidence, PreparedMACOceanForcing
 from ._mac_passive_tracer import (
     MACPassiveTracerCharacteristicIntegrator,
     MACPassiveTracerConservation,
-    MACPassiveTracerDifferentiation,
     MACPassiveTracerInterpolation,
     MACPassiveTracerMacCormackPlan,
     MACPassiveTracerMacCormackResult,
@@ -685,7 +682,6 @@ __all__ = [
     "ConstantStateBoundary",
     "ConvexStateLimiterPlan",
     "ConservativeFaceClosurePlan",
-    "DifferentiabilityPolicy",
     "EntropyConservativeEulerFluxPlan",
     "BlockAMRConservationPlan",
     "BlockAMRFiniteVolumePlan",
@@ -780,7 +776,6 @@ __all__ = [
     "MACPressureClosureKind",
     "MACPassiveTracerCharacteristicIntegrator",
     "MACPassiveTracerConservation",
-    "MACPassiveTracerDifferentiation",
     "MACPassiveTracerInterpolation",
     "MACPassiveTracerMacCormackPlan",
     "MACPassiveTracerMacCormackResult",
@@ -846,7 +841,6 @@ __all__ = [
     "HighResolutionMethod",
     "HighResolutionReconstructionPlan",
     "ExplicitStabilizationPlan",
-    "FilterADPolicy",
     "TENOQualification",
     "MCLimiter",
     "MUSCLReconstruction",

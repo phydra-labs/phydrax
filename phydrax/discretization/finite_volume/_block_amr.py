@@ -949,7 +949,7 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
             evidence_policy_id=self.plan.precision.policy_id,
             evidence_version=jnp.asarray(evidence_version),
             topology_epoch_id=self.topology.epoch.epoch_id,
-            differentiability_policy_id=self.plan.method.differentiability,
+            differentiability_policy_id=self.plan.method.differentiability.value,
         )
         content_rate = ledger.scatter_content_rate()
         residuals = []

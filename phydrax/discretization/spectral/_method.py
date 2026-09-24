@@ -5,12 +5,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
@@ -24,19 +24,11 @@ from ._space import TensorSpectralDiscretization
 from ._spherical import SphericalSpectralDiscretization
 
 
-SpectralDifferentiabilityPolicy: TypeAlias = Literal[
-    "smooth_discrete",
-    "branchwise",
-    "smooth_surrogate",
-    "unsupported",
-]
-
-
 class PseudospectralMethodPlan(StrictModule, NonTrainableState):
     """Nonlinear realization, differentiability, and diagnostics policy."""
 
     dealiasing: AbstractDealiasingPlan | None
-    differentiability: SpectralDifferentiabilityPolicy = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     diagnostics: bool = eqx.field(static=True)
     real_projection_tolerance: float = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
@@ -46,19 +38,30 @@ class PseudospectralMethodPlan(StrictModule, NonTrainableState):
         /,
         *,
         dealiasing: AbstractDealiasingPlan | None = None,
-        differentiability: SpectralDifferentiabilityPolicy = "smooth_discrete",
+        differentiability: BranchDifferentiationPolicy = (
+            BranchDifferentiationPolicy.SMOOTH
+        ),
         diagnostics: bool = False,
         real_projection_tolerance: float = 1e-10,
     ):
         if dealiasing is not None and not isinstance(dealiasing, AbstractDealiasingPlan):
             raise TypeError("dealiasing must be an AbstractDealiasingPlan or None.")
-        if differentiability not in (
-            "smooth_discrete",
-            "branchwise",
-            "smooth_surrogate",
-            "unsupported",
-        ):
-            raise ValueError("Unknown spectral differentiability policy.")
+        if not isinstance(differentiability, BranchDifferentiationPolicy):
+            raise TypeError("differentiability must be a BranchDifferentiationPolicy.")
+        match differentiability:
+            case (
+                BranchDifferentiationPolicy.SMOOTH
+                | BranchDifferentiationPolicy.BRANCHWISE
+                | BranchDifferentiationPolicy.SMOOTH_SURROGATE
+                | BranchDifferentiationPolicy.UNSUPPORTED
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "PseudospectralMethodPlan supports SMOOTH, BRANCHWISE, "
+                    "SMOOTH_SURROGATE, or UNSUPPORTED; got "
+                    f"{differentiability.name}."
+                )
         tolerance = float(real_projection_tolerance)
         if not jnp.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("real_projection_tolerance must be finite and non-negative.")
@@ -70,7 +73,7 @@ class PseudospectralMethodPlan(StrictModule, NonTrainableState):
             {
                 "kind": "pseudospectral-method",
                 "dealiasing": None if dealiasing is None else dealiasing.plan_id,
-                "differentiability": differentiability,
+                "differentiability": differentiability.value,
                 "diagnostics": bool(diagnostics),
                 "real_projection_tolerance": tolerance,
             }
@@ -222,6 +225,5 @@ class SpectralResidualDiagnostics(StrictModule):
 __all__ = [
     "PreparedPseudospectralMethod",
     "PseudospectralMethodPlan",
-    "SpectralDifferentiabilityPolicy",
     "SpectralResidualDiagnostics",
 ]

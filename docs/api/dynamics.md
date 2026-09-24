@@ -60,6 +60,13 @@ input layout is present and `callback(coordinate, state, args)` otherwise. Input
 supplied by an explicit `AbstractInputPolicy`; they are not captured from a global
 schedule.
 
+`StateLayout.value_port(role=...)` derives the canonical `ValuePort` of the stored
+state point (`role="point"`, with `state-layout:<layout_id>` axis keys and the geometry
+ID as its space) or of one differential role (`"local"`, `"tangent"`,
+`"local_cotangent"`, `"cotangent"`) in the flattened coordinates of its declared space,
+so point, local, tangent, and cotangent values never share a port.
+`InputLayout.value_port()` describes the exogenous input array under its layout ID.
+
 `continuous_model_system` binds an `AbstractArrayModel` into this system contract
 without capturing trainable leaves in a closure. A flat model is state-only; a
 structured `(state, input)` model requires a matching `InputLayout`. Input/output

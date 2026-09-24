@@ -466,9 +466,10 @@ Phydrax differentiates the executed finite-dimensional JAX program:
 - a failed admissibility, finite, conservation, solver, or evidence gate has no valid
   derivative claim.
 
-A learned stress with `energy_policy="signed"` reports smooth-discrete semantics for
-the bound predictor/normalizer. Dissipative and bounded-backscatter policies are
-branchwise. A model-error assimilation correction is a different object: it is an
+A learned stress with `energy_policy="signed"` reports
+`differentiation_semantics=BranchDifferentiationPolicy.SMOOTH` for the bound
+predictor/normalizer. Dissipative and bounded-backscatter policies report
+`BranchDifferentiationPolicy.BRANCHWISE`. A model-error assimilation correction is a different object: it is an
 additive divergence-free momentum rate and is explicitly not identifiable as SGS
 stress.
 
@@ -685,6 +686,19 @@ stress.
 ---
 
 ::: phydrax.closure_data.prepare_periodic_les_analysis
+
+---
+
+`LearnedStressFeatureSchema.value_port()` and `LearnedStressOutputContract.value_port()`
+derive the per-sample feature and 3x3 stress-tensor `ValuePort`s from the declared
+names, units, and target identity; leading declared shape axes are sample axes, and
+units resolve through `phydrax.units.parse_unit`.
+
+::: phydrax.closure_data.LearnedStressFeatureSchema
+
+---
+
+::: phydrax.closure_data.LearnedStressOutputContract
 
 ---
 

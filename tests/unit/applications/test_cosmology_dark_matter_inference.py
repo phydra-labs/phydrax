@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax as phx
 from phydrax.applications.cosmology._dark_matter_inference import (
     ConstantExternalDarkMatterProduct,
     DarkMatterCoordinateContract,
@@ -20,7 +21,7 @@ from phydrax.applications.cosmology._dark_matter_inference import (
     SmoothFixedGridDarkMatterInferencePlan,
 )
 from phydrax.applications.cosmology._products import CosmologyProductProvenance
-from phydrax.artifacts import DifferentiationContract, ScientificArtifactEnvelope
+from phydrax.artifacts import ScientificArtifactEnvelope
 from phydrax.observation import (
     CholeskyCovarianceAction,
     CoordinateLayout,
@@ -29,13 +30,21 @@ from phydrax.observation import (
 from phydrax.qualification import ReferenceArtifactManifest
 
 
+NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
+    (
+        phx.DerivativeSurface.INPUT,
+        phx.DerivativeSurface.MODEL_PARAMETER,
+        phx.DerivativeSurface.PHYSICAL_PARAMETER,
+        phx.DerivativeSurface.STORED_VALUES,
+    )
+)
+
+
 jax.config.update("jax_enable_x64", True)
 
 
 def _provenance(*, source_kind="native", differentiation=None):
-    contract = (
-        DifferentiationContract.native() if differentiation is None else differentiation
-    )
+    contract = NATIVE_DIFFERENTIATION if differentiation is None else differentiation
     return CosmologyProductProvenance(
         producer="test-dark-matter-inference",
         producer_version="native",
@@ -96,7 +105,7 @@ def _external_product(values):
         artifact,
         _provenance(
             source_kind="external",
-            differentiation=DifferentiationContract.constant(),
+            differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
         ),
         coordinates,
         decoder_id="float64-vector",
@@ -452,7 +461,7 @@ def test_external_emulator_calibration_denies_unlicensed_use_and_raw_bypass():
     )
     external_provenance = _provenance(
         source_kind="external",
-        differentiation=DifferentiationContract.constant(),
+        differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
     )
     with pytest.raises(PermissionError, match="commercial-use-not-permitted"):
         ExternalDarkMatterEmulatorProduct(

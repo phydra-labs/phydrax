@@ -14,7 +14,7 @@ from jaxtyping import Array, Key
 from phydrax.domain import DomainFunction
 
 from .._doc import DOC_KEY0
-from .._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS
+from .._model import TRIAL_SPACE_CERTIFICATE_KEY
 from .._strict import StrictModule
 from ..domain._base import EnforcementGateMethod
 from ._compile import EnforcementProgram, InteriorAnchors
@@ -162,10 +162,7 @@ def compile(
         spec.field
         for spec in resolved_specs
         if spec.realization is None
-        and any(
-            name in resolved_functions[spec.field].metadata
-            for name in MODEL_CONSTRUCTION_CERTIFICATE_KEYS
-        )
+        and TRIAL_SPACE_CERTIFICATE_KEY in resolved_functions[spec.field].metadata
     )
     if certified_targets:
         raise ValueError(

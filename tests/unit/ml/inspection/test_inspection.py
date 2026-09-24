@@ -8,8 +8,15 @@ import jax.numpy as jnp
 import opt_einsum as oe
 import pytest
 
+from phydrax import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from phydrax._model import AbstractArrayModel, ModelBinding
-from phydrax.ml import FitDiagnostics, FitResult, GradientContract, ML_SUCCESS, MLBatch
+from phydrax.ml import FitDiagnostics, FitResult, ML_SUCCESS, MLBatch
 from phydrax.ml.inspection import (
     gradient_sensitivity,
     hessian_sensitivity,
@@ -93,8 +100,23 @@ def _fit_result(model, contract):
         valid=True,
         status=ML_SUCCESS,
         method="test-fit",
-        gradient_contract=contract,
+        derivative_contract=contract,
     )
+
+
+_DIRECT_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(
+            DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+        ),
+    ),
+    route=DerivativeRoute.DIRECT,
+)
 
 
 def _batch(case=False):
@@ -203,12 +225,12 @@ def test_leverage_and_cooks_diagnostics_preserve_cases_masks_and_complex_values(
     assert jnp.all(jnp.isfinite(complex_diagnostics.leverage))
 
 
-def test_influence_functions_obey_gradient_contract_and_return_jax_arrays():
+def test_influence_functions_obey_derivative_contract_and_return_jax_arrays():
     model = _QuadraticModel(jnp.array([1.0, -0.5]), jnp.array([0.1, 0.2]))
     x = jnp.array([[-1.0, 0.0], [0.0, 1.0], [1.0, 2.0], [2.0, -1.0]])
     targets = model(x) + jnp.array([0.1, -0.1, 0.2, -0.2])
     batch = MLBatch(x, targets, sample_weight=jnp.array([1.0, 2.0, 1.0, 0.5]))
-    result = _fit_result(model, GradientContract.direct())
+    result = _fit_result(model, _DIRECT_CONTRACT)
     influence = influence_functions(result, batch, damping=1e-3)
     assert isinstance(influence, InfluenceFunctionResult)
     assert influence.parameter_influence.shape == (4, 4)
@@ -217,12 +239,18 @@ def test_influence_functions_obey_gradient_contract_and_return_jax_arrays():
     assert influence.valid
     assert jnp.all(jnp.isfinite(influence.loss_influence))
 
-    stopped = _fit_result(model, GradientContract())
+    stopped = _fit_result(
+        model,
+        DerivativeContract(
+            (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),),
+            route=DerivativeRoute.STOPPED,
+        ),
+    )
     with pytest.raises(ValueError, match="does not permit"):
         influence_functions(stopped, batch)
     complex_result = _fit_result(
         _LinearModel(jnp.array([1.0 + 1.0j, 2.0 + 0.0j])),
-        GradientContract.direct(),
+        _DIRECT_CONTRACT,
     )
     with pytest.raises(TypeError, match="real parameterization"):
         influence_functions(complex_result, batch)

@@ -13,6 +13,13 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ...linalg import RankPolicy
 from ...linalg._dense_pseudoinverse import (
     apply_pseudoinverse,
@@ -23,7 +30,6 @@ from .._contracts import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_NONFINITE,
     ML_RANK_DEFICIENT,
     ML_SUCCESS,
@@ -62,13 +68,24 @@ def _validated_rcond(value: float | None, /) -> float | None:
     return result
 
 
-def _direct_contract() -> GradientContract:
-    return GradientContract.direct(
+def _direct_contract() -> DerivativeContract:
+    return DerivativeContract(
+        (
+            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(
+                DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+            ),
+        ),
+        route=DerivativeRoute.DIRECT,
         conditions=(
             "Masks and sparse index structure are fixed.",
             "The retained singular subspace is locally constant.",
             "Every fitted augmented design has full column rank.",
-        )
+        ),
     )
 
 
@@ -85,7 +102,7 @@ def _aggregate_direct(
     solver_status: Array,
     method: str,
     model_type: type[AbstractLinearRegressorModel],
-    gradient_contract: GradientContract,
+    derivative_contract: DerivativeContract,
 ) -> FitResult:
     parameter_finite = (
         jnp.all(jnp.isfinite(jnp.real(coefficients)), axis=(1, 2))
@@ -122,7 +139,7 @@ def _aggregate_direct(
         valid=valid_cases,
         status=status_cases,
         method=method,
-        gradient_contract=gradient_contract,
+        derivative_contract=derivative_contract,
     )
 
 
@@ -175,7 +192,7 @@ def _dense_isotropic_solve(
         solver_status=solved.status,
         method=method,
         model_type=model_type,
-        gradient_contract=_direct_contract(),
+        derivative_contract=_direct_contract(),
     )
 
 
@@ -277,7 +294,7 @@ def _normal_solve(
         solver_status=solver_status,
         method=method,
         model_type=model_type,
-        gradient_contract=_direct_contract(),
+        derivative_contract=_direct_contract(),
     )
 
 

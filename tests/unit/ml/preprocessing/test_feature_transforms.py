@@ -50,8 +50,14 @@ def test_polynomial_and_interaction_features_names_inverse_complex_and_vmap():
     assert model.output_schema.names == ("x", "y", "x^2", "x*y", "y^2")
     assert jnp.allclose(transformed[0], jnp.array([2.0, 3.0, 4.0, 6.0, 9.0]))
     assert jnp.allclose(model.inverse_transform(transformed), probe)
-    assert result.gradient_contract.prediction_inputs == "smooth"
-    assert result.gradient_contract.prediction_parameters == "none"
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.INPUT)
+        is phx.GradientLevel.SMOOTH
+    )
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.MODEL_PARAMETER)
+        is phx.GradientLevel.NONE
+    )
 
     interactions = PolynomialFeatures(
         degree=3, interaction_only=True, include_bias=False
@@ -81,9 +87,12 @@ def test_spline_transformer_uses_fixed_basis_schema_partition_of_unity_and_hard_
     assert model.output_schema.names[0] == "position_spline_0"
     assert model.output_schema.names[-1] == "time_spline_4"
     assert result.diagnostics.output_shape == (7, 10)
-    assert result.gradient_contract.fit_mode == "stopped"
-    assert result.gradient_contract.prediction_inputs == "almost-everywhere"
-    assert "knot_spans" in result.gradient_contract.nondifferentiable_outputs
+    assert result.derivative_contract.route is phx.DerivativeRoute.STOPPED
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.INPUT)
+        is phx.GradientLevel.ALMOST_EVERYWHERE
+    )
+    assert "knot_spans" in result.derivative_contract.nondifferentiable_outputs
     gradient = jax.grad(lambda value: jnp.sum(model(value) ** 2))(
         jnp.array([0.125, 1.375])
     )
@@ -114,8 +123,14 @@ def test_deterministic_fourier_features_explicit_schema_inverse_and_fit_contract
     assert jnp.array_equal(first, second)
     assert jnp.allclose(model.inverse_transform(first), probe)
     assert model.output_schema.names[:3] == ("x", "t", "fourier_bias")
-    assert result.gradient_contract.fit_features == "none"
-    assert result.gradient_contract.prediction_inputs == "smooth"
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.FIT_FEATURES)
+        is phx.GradientLevel.NONE
+    )
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.INPUT)
+        is phx.GradientLevel.SMOOTH
+    )
 
     periodic = FourierFeatures(1, period=2.0, origin=0.0).fit_batch(batch).as_trainable()
     with pytest.raises(NotImplementedError, match="not injective"):
@@ -140,8 +155,11 @@ def test_random_fourier_features_require_keys_are_deterministic_and_differentiab
     assert jax.jit(jax.vmap(model))(probe).shape == (2, 12)
     gradient = jax.grad(lambda value: jnp.sum(model(value)))(probe[0])
     assert jnp.all(jnp.isfinite(gradient))
-    assert first.gradient_contract.fit_features == "none"
-    assert "random_frequencies" in first.gradient_contract.nondifferentiable_outputs
+    assert (
+        first.derivative_contract.level(phx.DerivativeSurface.FIT_FEATURES)
+        is phx.GradientLevel.NONE
+    )
+    assert "random_frequencies" in first.derivative_contract.nondifferentiable_outputs
     with pytest.raises(NotImplementedError, match="not invertible"):
         model.inverse_transform(model(probe[0]))
 
@@ -160,8 +178,11 @@ def test_feature_hasher_is_name_deterministic_sparse_in_action_and_noninvertible
     assert jnp.array_equal(model.buckets, second.as_trainable().buckets)
     assert jnp.allclose(transformed, expected)
     assert model.output_schema.names == ("hash_0", "hash_1", "hash_2", "hash_3")
-    assert first.gradient_contract.prediction_parameters == "none"
-    assert "hash_routes" in first.gradient_contract.nondifferentiable_outputs
+    assert (
+        first.derivative_contract.level(phx.DerivativeSurface.MODEL_PARAMETER)
+        is phx.GradientLevel.NONE
+    )
+    assert "hash_routes" in first.derivative_contract.nondifferentiable_outputs
     with pytest.raises(NotImplementedError, match="not invertible"):
         model.inverse_transform(transformed)
 
@@ -193,9 +214,15 @@ def test_random_projections_require_explicit_keys_are_deterministic_jittable_and
     else:
         assert jnp.array_equal(model.projection, second.as_trainable().projection)
         assert jnp.allclose(output, probe @ model.projection)
-    assert first.gradient_contract.fit_features == "none"
-    assert first.gradient_contract.prediction_inputs == "smooth"
-    assert first.gradient_contract.nondifferentiable_outputs
+    assert (
+        first.derivative_contract.level(phx.DerivativeSurface.FIT_FEATURES)
+        is phx.GradientLevel.NONE
+    )
+    assert (
+        first.derivative_contract.level(phx.DerivativeSurface.INPUT)
+        is phx.GradientLevel.SMOOTH
+    )
+    assert first.derivative_contract.nondifferentiable_outputs
     with pytest.raises(NotImplementedError, match="not invertible"):
         model.inverse_transform(output)
 
@@ -212,9 +239,12 @@ def test_power_transformer_hard_fit_smooth_apply_inverse_domains_and_schema():
 
     assert jnp.allclose(model.inverse_transform(transformed), probe, rtol=2e-5, atol=2e-5)
     assert model.output_schema.names == ("signed", "positive")
-    assert result.gradient_contract.fit_mode == "stopped"
-    assert result.gradient_contract.prediction_inputs == "almost-everywhere"
-    assert "selected_lambda" in result.gradient_contract.nondifferentiable_outputs
+    assert result.derivative_contract.route is phx.DerivativeRoute.STOPPED
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.INPUT)
+        is phx.GradientLevel.ALMOST_EVERYWHERE
+    )
+    assert "selected_lambda" in result.derivative_contract.nondifferentiable_outputs
     gradient = jax.grad(lambda value: jnp.sum(model(value)))(probe[0])
     assert jnp.all(jnp.isfinite(gradient))
 
@@ -239,11 +269,14 @@ def test_quantile_transform_uniform_normal_inverse_ties_empty_status_and_grad_co
         uniform.inverse_transform(transformed), probe, rtol=2e-5, atol=2e-5
     )
     assert uniform.output_schema.names == ("x", "y")
-    assert uniform_result.gradient_contract.fit_mode == "stopped"
-    assert uniform_result.gradient_contract.prediction_inputs == "almost-everywhere"
+    assert uniform_result.derivative_contract.route is phx.DerivativeRoute.STOPPED
+    assert (
+        uniform_result.derivative_contract.level(phx.DerivativeSurface.INPUT)
+        is phx.GradientLevel.ALMOST_EVERYWHERE
+    )
     assert (
         "weighted_order_statistics"
-        in uniform_result.gradient_contract.nondifferentiable_outputs
+        in uniform_result.derivative_contract.nondifferentiable_outputs
     )
     gradient = jax.grad(lambda value: jnp.sum(uniform(value)))(probe[0])
     assert jnp.all(jnp.isfinite(gradient))

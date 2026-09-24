@@ -11,10 +11,18 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, GradientContract, ML_NONCONVERGED
+from .._contracts import AbstractRecipe, FitResult, ML_NONCONVERGED
 from .._numerics import pairwise_distances, weighted_mean
+from .._schema import AbstractFittedModel
 from ._common import (
     _BLOCKWISE_BINDING,
     _case_count,
@@ -82,7 +90,7 @@ def _kde_leave_one_out_one(
     return -log_density
 
 
-class KernelDensityOutlierModel(AbstractArrayModel):
+class KernelDensityOutlierModel(AbstractFittedModel):
     """Gaussian KDE negative-log-density anomaly score."""
 
     training_features: Array
@@ -199,14 +207,23 @@ class KernelDensityOutlierRecipe(AbstractRecipe):
             bandwidth=self.bandwidth,
             case_shape=batch.case_shape,
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="smooth",
-            fit_mode="direct",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
             nondifferentiable_outputs=("predict", "threshold", "valid", "status"),
             conditions=(
                 "leave-one-out score ordering at contamination threshold is fixed",
@@ -218,7 +235,7 @@ class KernelDensityOutlierRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="kernel-density-outlier",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -282,7 +299,7 @@ def _fit_robust_one(
     return location, scale, scores, residual, objective
 
 
-class RobustNoveltyModel(AbstractArrayModel):
+class RobustNoveltyModel(AbstractFittedModel):
     """Smooth pseudo-Huber standardized novelty score with a separate hard cutoff."""
 
     location: Array
@@ -426,14 +443,23 @@ class RobustNoveltyRecipe(AbstractRecipe):
             tuning=self.tuning,
             case_shape=batch.case_shape,
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
             nondifferentiable_outputs=("predict", "threshold", "valid", "status"),
             conditions=(
                 "fixed IRLS iteration count",
@@ -446,7 +472,7 @@ class RobustNoveltyRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="robust-pseudo-huber-novelty",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

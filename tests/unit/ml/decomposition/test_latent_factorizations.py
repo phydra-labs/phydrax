@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeSurface, GradientLevel
 from phydrax.ml import ML_NONCONVERGED, MLBatch
 from phydrax.ml.decomposition import (
     CCA,
@@ -58,9 +59,10 @@ def test_cca_weighted_masked_scores_inverse_complex_policy_and_gradients():
     assert model.predict_targets(x).shape == y.shape
     assert jnp.all(result.diagnostics.singular_values >= 0.0)
     assert result.diagnostics.minimum_eigengap.shape == ()
-    assert result.gradient_contract.fit_features == "conditional"
-    assert result.gradient_contract.fit_targets == "conditional"
-    assert result.gradient_contract.fit_weights == "conditional"
+    contract = result.derivative_contract
+    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_TARGETS) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
     assert jax.jit(model.transform)(x).shape == (8, 2)
     assert jax.vmap(model.transform)(x).shape == (8, 2)
 
@@ -273,7 +275,7 @@ def test_sparse_coding_and_dictionary_learning_masks_complex_keys_and_gradients(
     assert scores.shape == (6, 2)
     assert sparse_model.inverse_transform(scores).shape == values.shape
     assert jax.jit(sparse_model.transform)(values).shape == scores.shape
-    assert "active_set" in sparse.gradient_contract.nondifferentiable_outputs
+    assert "active_set" in sparse.derivative_contract.nondifferentiable_outputs
 
     complex_dictionary = dictionary.astype(jnp.complex64) * (1.0 + 0.3j)
     complex_values = values.astype(jnp.complex64) * (1.0 - 0.2j)

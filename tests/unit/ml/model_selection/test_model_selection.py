@@ -10,13 +10,19 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
+from phydrax import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from phydrax._model import AbstractArrayModel
 from phydrax._strict import StrictModule
 from phydrax.ml import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_SUCCESS,
     MLBatch,
 )
@@ -42,6 +48,12 @@ from phydrax.ml.model_selection import (
     TimeSeriesSplitPlan,
 )
 from phydrax.optim import DifferentialEvolutionSearch
+
+
+_STOPPED_CONTRACT = DerivativeContract(
+    (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+    route=DerivativeRoute.STOPPED,
+)
 
 
 class _ConstantModel(AbstractArrayModel):
@@ -101,17 +113,27 @@ class _MeanRecipe(AbstractRecipe):
             method="test_mean",
         )
         contract = (
-            GradientContract(
-                prediction_inputs="smooth",
-                prediction_parameters="smooth",
-                fit_targets="smooth",
-                fit_weights="conditional",
-                fit_hyperparameters="smooth",
-                fit_mode="direct",
+            DerivativeContract(
+                (
+                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_TARGETS, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.SMOOTH
+                    ),
+                ),
+                route=DerivativeRoute.DIRECT,
                 conditions=("Positive training mass.",),
             )
             if self.differentiable
-            else GradientContract()
+            else _STOPPED_CONTRACT
         )
         return FitResult(
             _ConstantModel(center),
@@ -119,7 +141,7 @@ class _MeanRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="test_mean",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -151,7 +173,7 @@ class _ResponseClassifierRecipe(AbstractRecipe):
             valid=True,
             status=0,
             method="response-test",
-            gradient_contract=GradientContract(),
+            derivative_contract=_STOPPED_CONTRACT,
         )
 
 
@@ -457,8 +479,14 @@ def test_grid_random_and_successive_halving_are_deterministic_and_exact():
     )
     assert halving.best_candidate.as_kwargs()["offset"] == 0.0
     assert halving.rungs[-1].num_folds == len(splits.folds)
-    assert grid.gradient_contract.fit_hyperparameters == "none"
-    assert halving.gradient_contract.fit_hyperparameters == "none"
+    assert (
+        grid.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.NONE
+    )
+    assert (
+        halving.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.NONE
+    )
 
 
 def test_nested_search_never_exposes_outer_holdouts_to_inner_fits():
@@ -512,7 +540,10 @@ def test_fixed_fold_objective_is_differentiable_but_choices_are_stopped():
 
     derivative = jax.grad(objective)(jnp.asarray(0.25))
     assert jnp.isfinite(derivative)
-    assert splits.gradient_contract.fit_hyperparameters == "none"
+    assert (
+        splits.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.NONE
+    )
 
     adapter = DifferentiableSearchAdapter(
         jnp.asarray([0.0]),

@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeRoute, DerivativeSurface, GradientLevel
 from phydrax.kernels import Matern32Kernel, SquaredExponentialKernel
 from phydrax.ml import (
     ML_INSUFFICIENT_DATA,
@@ -62,13 +63,16 @@ def test_one_class_svm_uses_native_kernel_score_and_dual_invariants():
     assert jnp.allclose(result.model(points), scores)
     assert result.diagnostics.threshold == 0.0
     assert result.diagnostics.score_maximum >= result.diagnostics.score_minimum
-    assert result.gradient_contract.prediction_inputs == "smooth"
-    assert result.gradient_contract.prediction_parameters == "smooth"
-    assert result.gradient_contract.fit_features == "conditional"
-    assert result.gradient_contract.fit_targets == "none"
-    assert result.gradient_contract.fit_weights == "conditional"
-    assert result.gradient_contract.fit_hyperparameters == "conditional"
-    assert result.gradient_contract.fit_mode == "unrolled"
+    contract = result.derivative_contract
+    assert contract.level(DerivativeSurface.INPUT) is GradientLevel.SMOOTH
+    assert contract.level(DerivativeSurface.MODEL_PARAMETER) is GradientLevel.SMOOTH
+    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_TARGETS) is GradientLevel.NONE
+    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
+    assert (
+        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is GradientLevel.CONDITIONAL
+    )
+    assert contract.route is DerivativeRoute.UNROLLED
 
 
 def test_one_class_svm_case_axes_masks_and_inactive_dual_capacity():

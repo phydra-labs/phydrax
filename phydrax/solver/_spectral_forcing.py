@@ -211,7 +211,7 @@ class PreparedSpectralOUForcing(AbstractPreparedBalanceLawProcess):
         )
         self.requires_realization = True
         self.realization_name = plan.realization_name
-        self.differentiability = "smooth_discrete"
+        self.differentiability = "smooth"
         self.modified_components = tuple(
             names[index] for index in self.momentum_indices
         ) + ("total_energy",)

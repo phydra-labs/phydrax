@@ -13,10 +13,18 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, GradientContract, ML_NONCONVERGED
+from .._contracts import AbstractRecipe, FitResult, ML_NONCONVERGED
 from .._numerics import weighted_covariance
+from .._schema import AbstractFittedModel
 from ._common import (
     _BLOCKWISE_BINDING,
     _case_count,
@@ -66,7 +74,7 @@ def _mahalanobis_one(query: Array, location: Array, precision: Array) -> Array:
     return jnp.real(ein.contract("qi,ij,qj->q", jnp.conj(delta), precision, delta))
 
 
-class CovarianceOutlierModel(AbstractArrayModel):
+class CovarianceOutlierModel(AbstractFittedModel):
     """Smooth squared-Mahalanobis score with separate hard and relaxed decisions."""
 
     location: Array
@@ -205,14 +213,23 @@ class CovarianceOutlierRecipe(AbstractRecipe):
             log_determinant,
             case_shape=batch.case_shape,
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="direct",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
             nondifferentiable_outputs=("predict", "threshold", "rank", "valid", "status"),
             conditions=(
                 "covariance rank is fixed",
@@ -225,11 +242,11 @@ class CovarianceOutlierRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="covariance-mahalanobis",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
-class EllipticEnvelopeModel(AbstractArrayModel):
+class EllipticEnvelopeModel(AbstractFittedModel):
     """Continuously robust Mahalanobis score with explicit hard envelope membership."""
 
     location: Array
@@ -420,14 +437,23 @@ class EllipticEnvelopeRecipe(AbstractRecipe):
         model = EllipticEnvelopeModel(
             location, precision, threshold, case_shape=batch.case_shape
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
             nondifferentiable_outputs=("predict", "threshold", "rank", "valid", "status"),
             conditions=(
                 "fixed IRLS iteration count",
@@ -440,7 +466,7 @@ class EllipticEnvelopeRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="elliptic-envelope-cauchy",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

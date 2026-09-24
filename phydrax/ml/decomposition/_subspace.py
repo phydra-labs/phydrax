@@ -12,16 +12,23 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
 )
 from .._numerics import effective_sample_size, fit_weighted_subspace
+from .._schema import AbstractFittedModel
 
 
 SubspaceGradientTarget = Literal["projector", "basis", "none"]
@@ -52,7 +59,7 @@ class SubspaceDiagnostics(StrictModule):
     method: str = eqx.field(static=True)
 
 
-class SubspaceModel(AbstractArrayModel):
+class SubspaceModel(AbstractFittedModel):
     """Fixed affine subspace with metric-correct encoding and decoding."""
 
     offset: Array
@@ -194,28 +201,54 @@ def _shape_product(shape: tuple[int, ...], /) -> int:
     return result
 
 
-def _gradient_contract(target: SubspaceGradientTarget, /) -> GradientContract:
+def _derivative_contract(target: SubspaceGradientTarget, /) -> DerivativeContract:
     if target == "projector":
-        return GradientContract(
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_mode="spectral",
+        return DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             conditions=(
                 "projector gradients require separation between retained and discarded spectra",
             ),
         )
     if target == "basis":
-        return GradientContract(
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_mode="spectral",
+        return DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             conditions=(
                 "basis gradients require a non-repeated retained spectrum",
                 "basis representatives use the largest-magnitude-entry positive-real convention",
                 "canonicalization pivots must remain unique and nonzero",
             ),
         )
-    return GradientContract(fit_mode="stopped")
+    return DerivativeContract(
+        (
+            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+        ),
+        route=DerivativeRoute.STOPPED,
+    )
 
 
 def _fit_subspace(
@@ -323,7 +356,7 @@ def _fit_subspace(
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=_gradient_contract(differentiate),
+        derivative_contract=_derivative_contract(differentiate),
     )
 
 

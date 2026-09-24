@@ -13,12 +13,13 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax._interpolation import linear_interpolate
 
+from ..._differentiation import DerivativeContract, DerivativeSurface
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
 from ...units import derived_unit, UnitDefinition
-from ._closure import CosmologyRealizationSignature, DifferentiationContract
+from ._closure import CosmologyRealizationSignature
 from ._scales import CosmologyScaleContract
 
 
@@ -45,7 +46,7 @@ class CosmologyProductProvenance(StrictModule, NonTrainableState):
     scale_id: str = eqx.field(static=True)
     parent_product_ids: tuple[str, ...] = eqx.field(static=True)
     source_kind: CosmologyProductSource = eqx.field(static=True)
-    differentiation: DifferentiationContract
+    differentiation: DerivativeContract
     provenance_id: str = eqx.field(static=True)
 
     def __init__(
@@ -59,7 +60,7 @@ class CosmologyProductProvenance(StrictModule, NonTrainableState):
         physics_policy_id: str,
         scale_id: str,
         source_kind: CosmologyProductSource,
-        differentiation: DifferentiationContract | str,
+        differentiation: DerivativeContract,
         parent_product_ids: tuple[str, ...] = (),
     ):
         values = tuple(
@@ -79,13 +80,8 @@ class CosmologyProductProvenance(StrictModule, NonTrainableState):
             raise ValueError("Cosmology product provenance fields must be non-empty.")
         if source_kind not in ("native", "external"):
             raise ValueError("source_kind must be 'native' or 'external'.")
-        differentiation_ = (
-            DifferentiationContract.from_label(differentiation)
-            if isinstance(differentiation, str)
-            else differentiation
-        )
-        if not isinstance(differentiation_, DifferentiationContract):
-            raise TypeError("differentiation must be DifferentiationContract.")
+        if not isinstance(differentiation, DerivativeContract):
+            raise TypeError("differentiation must be DerivativeContract.")
         (
             self.producer,
             self.producer_version,
@@ -97,7 +93,7 @@ class CosmologyProductProvenance(StrictModule, NonTrainableState):
         ) = values
         self.parent_product_ids = parents
         self.source_kind = source_kind
-        self.differentiation = differentiation_
+        self.differentiation = differentiation
         self.provenance_id = canonical_fingerprint(
             {
                 "kind": "cosmology-product-provenance",
@@ -110,29 +106,19 @@ class CosmologyProductProvenance(StrictModule, NonTrainableState):
                 "scale_id": values[6],
                 "parent_product_ids": list(parents),
                 "source_kind": source_kind,
-                "differentiation": differentiation_.contract_id,
+                "differentiation": differentiation.contract_id,
             }
         )
 
 
-def combine_differentiation(
-    *contracts: DifferentiationContract,
-) -> DifferentiationContract:
-    if not contracts:
-        raise ValueError("At least one differentiation contract is required.")
-    if any(not isinstance(value, DifferentiationContract) for value in contracts):
-        raise TypeError("All values must be DifferentiationContract.")
-    return contracts[0].meet(*contracts[1:])
-
-
-def _stored(values: Array, contract_: DifferentiationContract, /) -> Array:
-    if contract_.stored_values:
+def _stored(values: Array, contract_: DerivativeContract, /) -> Array:
+    if DerivativeSurface.STORED_VALUES in contract_.supported_surfaces:
         return values
     return jax.lax.stop_gradient(values)
 
 
-def _evaluated(values: Array, contract_: DifferentiationContract, /) -> Array:
-    if not contract_.query_coordinates:
+def _evaluated(values: Array, contract_: DerivativeContract, /) -> Array:
+    if DerivativeSurface.INPUT not in contract_.supported_surfaces:
         return jax.lax.stop_gradient(values)
     return values
 
@@ -723,8 +709,7 @@ def reconstruct_total_matter_power(
         + 2.0 * fractions[0] * fractions[1] * cross.power_values
         + fractions[1] ** 2 * neutrino.power_values
     )
-    differentiation = combine_differentiation(
-        cold_baryon.provenance.differentiation,
+    differentiation = cold_baryon.provenance.differentiation.meet(
         neutrino.provenance.differentiation,
         cross.provenance.differentiation,
     )
@@ -816,7 +801,6 @@ __all__ = [
     "CosmologyProductProvenance",
     "CosmologyProductSource",
     "CosmologyRealizationSignature",
-    "DifferentiationContract",
     "ExpansionHistory",
     "LagrangianGrowthHistory",
     "LinearTransferDescriptor",
@@ -828,7 +812,6 @@ __all__ = [
     "ShotNoiseConvention",
     "ThermodynamicsHistory",
     "TransferGauge",
-    "combine_differentiation",
     "cosmology_product_content_id",
     "reconstruct_total_matter_power",
 ]

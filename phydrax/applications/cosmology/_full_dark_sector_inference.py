@@ -24,13 +24,13 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._differentiation import DerivativeContract, DerivativeRoute
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...artifacts import (
     DerivativeEstimatorKind,
     DerivativeEvidence,
-    DifferentiationContract,
     ScientificArtifactEnvelope,
 )
 
@@ -168,7 +168,7 @@ class FullDarkSectorDifferentiationPolicy(StrictModule, NonTrainableState):
         if artifact.artifact_id not in self.external_artifact_ids:
             raise ValueError("External artifact is not bound by this fixed profile.")
         return DerivativeEvidence(
-            DifferentiationContract.constant(),
+            DerivativeContract(route=DerivativeRoute.DIRECT),
             estimator=DerivativeEstimatorKind.UNSUPPORTED,
             discrete_parameters=("external-artifact",),
             stopped_events=("external-artifact-selection",),

@@ -999,6 +999,7 @@ def solve(
         status_out,
         diagnostics,
         provenance,
+        differentiation=prepared.plan.policy.differentiation,
         iteration_evidence=iteration_evidence,
     )
 
@@ -1542,7 +1543,13 @@ def _solve_prepared_transformed(
         **_preconditioner_provenance(prepared),
         **_precision_provenance(prepared),
     )
-    return LinearSolveResult(value, status_out, diagnostics, provenance)
+    return LinearSolveResult(
+        value,
+        status_out,
+        diagnostics,
+        provenance,
+        differentiation=prepared.plan.policy.differentiation,
+    )
 
 
 def _transformed_problem(

@@ -494,6 +494,7 @@ nav:
         - Overview: "examples/index.md"
     - API:
         - Overview: "api/phydrax.md"
+        - Derivative contracts and ports: "api/differentiation.md"
         - Logging: "api/logging.md"
         - Differential privacy: "api/privacy.md"
         - Execution worksets: "api/execution.md"
@@ -877,6 +878,6 @@ nav:
     - Appendix:
         - Overview: "appendix/index.md"
         - Differentiation modes: "appendix/differentiation_modes.md"
-        - ML differentiation contracts: "appendix/ml_differentiability.md"
+        - Derivative contracts: "appendix/ml_differentiability.md"
         - Physics-Constrained Interpolation: "appendix/physics_constrained_interpolation.md"
         - Surely You're Joking!: "appendix/surely_youre_joking.md"

@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeRoute, DerivativeSurface, GradientLevel
 from phydrax.ml import (
     FeatureSchema,
     ML_CAPACITY_EXHAUSTED,
@@ -136,13 +137,28 @@ def test_every_hard_regression_family_fits_frozen_executable_ensembles(
     assert jnp.all(jnp.isfinite(model(probes)))
     assert bool(result.valid)
     assert bool(result.diagnostics.converged)
-    assert result.gradient_contract.prediction_inputs == "none"
-    assert result.gradient_contract.prediction_parameters == "almost-everywhere"
-    assert result.gradient_contract.fit_mode == "stopped"
-    assert result.gradient_contract.fit_features == "none"
-    assert result.gradient_contract.fit_targets == "none"
-    assert result.gradient_contract.fit_weights == "none"
-    assert result.gradient_contract.fit_hyperparameters == "none"
+    assert result.derivative_contract.level(DerivativeSurface.INPUT) is GradientLevel.NONE
+    assert (
+        result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
+        is GradientLevel.ALMOST_EVERYWHERE
+    )
+    assert result.derivative_contract.route is DerivativeRoute.STOPPED
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
+        is GradientLevel.NONE
+    )
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
+        is GradientLevel.NONE
+    )
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_WEIGHTS)
+        is GradientLevel.NONE
+    )
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.NONE
+    )
 
 
 _CLASSIFIERS = (

@@ -20,7 +20,7 @@ from .._doc import DOC_KEY0
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._iteration import IterationSession
-from .._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS
+from .._model import TRIAL_SPACE_CERTIFICATE_KEY
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm, AbstractScalarTerm
@@ -93,14 +93,7 @@ def _functional_discretization_bundle(
     trial_records = []
     trial_key_ids = []
     for name, function in functions.items():
-        certificate_values = tuple(
-            function.metadata[name]
-            for name in MODEL_CONSTRUCTION_CERTIFICATE_KEYS
-            if name in function.metadata
-        )
-        if len(certificate_values) > 1:
-            raise ValueError("Trial function carries multiple construction certificates.")
-        certificate = certificate_values[0] if certificate_values else None
+        certificate = function.metadata.get(TRIAL_SPACE_CERTIFICATE_KEY)
         if certificate is not None and not isinstance(certificate, TrialSpaceCertificate):
             raise TypeError("Trial-space certificate metadata has an invalid value.")
         key = DiscretizationKey(

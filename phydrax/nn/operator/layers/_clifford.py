@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from typing import ClassVar
 
 import equinox as eqx
 import jax.nn as jnn
@@ -13,6 +14,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike
 
+from phydrax._differentiation import AbstractConstructionCertificate
 from phydrax._doc import DOC_KEY0
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
@@ -30,9 +32,10 @@ from phydrax.nn.operator.representations import (
 )
 
 
-class CliffordEquivarianceCertificate(StrictModule, NonTrainableState):
+class CliffordEquivarianceCertificate(AbstractConstructionCertificate):
     """By-construction equivariance claim for one Clifford neural primitive."""
 
+    capability_id: ClassVar[str] = "clifford-equivariance"
     algebra_id: str = eqx.field(static=True)
     input_representation_id: str = eqx.field(static=True)
     output_representation_id: str = eqx.field(static=True)

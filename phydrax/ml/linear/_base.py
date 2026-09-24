@@ -14,13 +14,19 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ValuePort
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
@@ -28,7 +34,7 @@ from .._contracts import (
     ML_SUCCESS,
 )
 from .._numerics import run_fixed_iterations
-from .._schema import TargetSchema
+from .._schema import AbstractFittedModel, TargetSchema
 from .._sparse_features import SparseFeatures
 
 
@@ -379,7 +385,7 @@ def linear_prediction(
     return result.reshape(case_shape + sample_shape + target_shape)
 
 
-class AbstractLinearModel(AbstractArrayModel):
+class AbstractLinearModel(AbstractFittedModel):
     """Shared immutable affine state for linear model families."""
 
     coefficients: Array
@@ -388,6 +394,9 @@ class AbstractLinearModel(AbstractArrayModel):
     target_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
+
+    def output_ports(self) -> tuple[ValuePort, ...]:
+        return self.target_output_ports()
 
     def __init__(
         self,
@@ -491,7 +500,7 @@ class LogisticClassifierModel(AbstractLinearScoreClassifierModel):
         return self.positive_probability(x)
 
 
-class MultinomialLogisticModel(AbstractArrayModel):
+class MultinomialLogisticModel(AbstractFittedModel):
     """Identified multiclass softmax model with explicit hard prediction methods."""
 
     coefficients: Array
@@ -500,6 +509,9 @@ class MultinomialLogisticModel(AbstractArrayModel):
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
+
+    def output_ports(self) -> tuple[ValuePort, ...]:
+        return self.target_output_ports()
 
     def __init__(
         self,
@@ -638,7 +650,7 @@ def iterative_fit(
     method: str,
     objective,
     model_factory,
-    gradient_contract: GradientContract,
+    derivative_contract: DerivativeContract,
     extra_valid: Array | bool = True,
 ) -> FitResult:
     """Run a fixed differentiable optimization and package common diagnostics."""
@@ -697,26 +709,31 @@ def iterative_fit(
         valid=valid_cases,
         status=status_cases,
         method=method,
-        gradient_contract=gradient_contract,
+        derivative_contract=derivative_contract,
     )
 
 
 def unrolled_contract(
     *,
-    prediction_inputs: str = "smooth",
+    prediction_inputs: GradientLevel = GradientLevel.SMOOTH,
     nonsmooth: bool = False,
-    fit_targets: str | None = None,
+    fit_targets: GradientLevel | None = None,
     hard_outputs: tuple[str, ...] = (),
-) -> GradientContract:
-    level = "almost-everywhere" if nonsmooth else "smooth"
-    return GradientContract(
-        prediction_inputs=prediction_inputs,  # type: ignore[arg-type]
-        prediction_parameters=level,
-        fit_features=level,
-        fit_targets=level if fit_targets is None else fit_targets,  # type: ignore[arg-type]
-        fit_weights="conditional",
-        fit_hyperparameters=level,
-        fit_mode="unrolled",
+) -> DerivativeContract:
+    level = GradientLevel.ALMOST_EVERYWHERE if nonsmooth else GradientLevel.SMOOTH
+    return DerivativeContract(
+        (
+            SurfaceDerivative(DerivativeSurface.INPUT, prediction_inputs),
+            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, level),
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, level),
+            SurfaceDerivative(
+                DerivativeSurface.FIT_TARGETS,
+                level if fit_targets is None else fit_targets,
+            ),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_HYPERPARAMETERS, level),
+        ),
+        route=DerivativeRoute.UNROLLED,
         nondifferentiable_outputs=hard_outputs,
         conditions=(
             "Masks, sparse index structure, and iteration count are fixed.",

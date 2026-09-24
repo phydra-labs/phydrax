@@ -2,14 +2,35 @@
 
 The top-level namespace owns the common lifecycle. `MLBatch` fixes axis, mask,
 weight, group, and schema semantics. `FitResult` carries the frozen executable,
-diagnostics, validity/status, resolved method, and `GradientContract`.
+diagnostics, validity/status, resolved method, and the canonical
+`phydrax.DerivativeContract` of the fit (`result.derivative_contract`).
+`result.derivative_admission(request)` and `result.require_derivative(request)`
+admit a `phydrax.DifferentiationRequest` against that contract, and
+`phydrax.ml.fit(..., derivative_request=request)` requires it before returning;
+see [Derivative contracts](../../appendix/ml_differentiability.md) and
+[API → Derivative contracts and ports](../differentiation.md).
 `SparseFeatures` is a fixed-width sparse-row value; dense-only recipes reject it
 rather than materializing it implicitly.
 
+`FeatureSchema(names, *, kinds=None, layout_id="", dimensions=None)` and
+`TargetSchema(kind, *, names=(), class_labels=(), dimensions=None)` optionally
+declare one `phydrax.units.DimensionSignature` per feature or per named target
+component; target dimensions require target names. `phydrax.ml.fit` binds the
+batch feature schema, and the target schema of a supervised fit, into the fitted
+executable while keeping any schema the fit itself recorded, such as a learned
+class vocabulary. Calling a recipe's `fit_batch` directly binds nothing. A bound
+executable, and its `FitResult`, report derived ports through `model_ports()`:
+the input port is the feature schema, and target-valued families (linear,
+kernel-linear, naive Bayes, tree, and transformed-target models) add the target
+port; `FeatureUnion` and `ColumnTransformer` output their joined feature schema,
+and `Pipeline` outputs the ports of its final stage.
+
 Status values distinguish success, insufficient data, nonfinite input,
-nonconvergence, infeasibility, rank deficiency, capacity exhaustion, and an
-unsupported requested derivative. The temperature and soft-discrete functions are
-explicit relaxations, not straight-through versions of exact discrete operations.
+nonconvergence, infeasibility, rank deficiency, and capacity exhaustion. An
+unsupported derivative request is not a fit status: it is reported by
+`DerivativeAdmission.status == phydrax.DERIVATIVE_UNSUPPORTED`. The temperature
+and soft-discrete functions are explicit relaxations, not straight-through
+versions of exact discrete operations.
 
 ## Rank and top-k semantics
 
@@ -39,7 +60,6 @@ hardens its forward value or installs a straight-through gradient.
             - FeatureSchema
             - FitDiagnostics
             - FitResult
-            - GradientContract
             - MLBatch
             - ML_CAPACITY_EXHAUSTED
             - ML_INFEASIBLE
@@ -48,7 +68,6 @@ hardens its forward value or installs a straight-through gradient.
             - ML_NONFINITE
             - ML_RANK_DEFICIENT
             - ML_SUCCESS
-            - ML_UNSUPPORTED_GRADIENT
             - SparseFeatures
             - TargetKind
             - TargetSchema

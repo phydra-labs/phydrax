@@ -39,6 +39,7 @@ from ...solver._quantum_program import (
     DenseQuantumProgramPolicy,
     DenseQuantumProgramResult,
 )
+from .._schema import AbstractFittedModel
 
 
 CircuitGradientMethod: TypeAlias = Literal["autodiff", "parameter-shift"]
@@ -117,7 +118,7 @@ def _validate_angle_model(
     return angle_model.in_size, angle_model.out_size
 
 
-class DenseCircuitStateModel(AbstractArrayModel):
+class DenseCircuitStateModel(AbstractFittedModel):
     """Pointwise exact dense state feature map from one angle model and template."""
 
     angle_model: AbstractArrayModel
@@ -177,7 +178,7 @@ class DenseCircuitStateModel(AbstractArrayModel):
         )
 
 
-class DenseCircuitExpectationModel(AbstractArrayModel):
+class DenseCircuitExpectationModel(AbstractFittedModel):
     """Pointwise exact dense local-observable feature model."""
 
     angle_model: AbstractArrayModel
@@ -278,7 +279,7 @@ class DenseCircuitExpectationModel(AbstractArrayModel):
         ).real_values
 
 
-class BinaryVariationalCircuitClassifier(AbstractArrayModel):
+class BinaryVariationalCircuitClassifier(AbstractFittedModel):
     """Binary probabilistic classifier over exact circuit expectation features."""
 
     feature_model: DenseCircuitExpectationModel

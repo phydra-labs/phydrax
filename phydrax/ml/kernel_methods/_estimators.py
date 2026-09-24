@@ -11,19 +11,26 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ValuePort
 from ..._model._binding import ModelBinding
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
 )
 from .._numerics import solve_weighted_least_squares
+from .._schema import AbstractFittedModel
 from .._soft_discrete import temperature_sigmoid
 from .._sparse_features import SparseFeatures
 from ._utils import (
@@ -58,7 +65,7 @@ def _apply_coefficients(
     return out.reshape(case_shape + query_shape + (coefficients.shape[-1],))
 
 
-class AbstractKernelLinearModel(AbstractArrayModel):
+class AbstractKernelLinearModel(AbstractFittedModel):
     """Smooth kernel expansion shared by ridge, LS-SVM, SVC and SVR."""
 
     support: Array
@@ -72,6 +79,9 @@ class AbstractKernelLinearModel(AbstractArrayModel):
     method: str = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
     out_size: Any = eqx.field(static=True)
+
+    def output_ports(self) -> tuple[ValuePort, ...]:
+        return self.target_output_ports()
 
     def __init__(
         self,
@@ -246,8 +256,27 @@ class KernelRidgeRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="kernel-ridge",
-            gradient_contract=GradientContract.direct(
-                conditions=("Fixed support capacity and rank branch.",)
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.DIRECT,
+                conditions=("Fixed support capacity and rank branch.",),
             ),
         )
 
@@ -320,14 +349,23 @@ class LeastSquaresSVMRecipe(AbstractRecipe):
             case_shape=raw.case_shape,
             method="least-squares-svm",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="direct",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
             nondifferentiable_outputs=("predict",),
             conditions=("Binary labels are fixed discrete data.",),
         )
@@ -337,7 +375,7 @@ class LeastSquaresSVMRecipe(AbstractRecipe):
             valid=result.valid,
             status=result.status,
             method="least-squares-svm",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -469,14 +507,23 @@ class SupportVectorClassifierRecipe(AbstractRecipe):
             effective_samples=effective,
             method="projected-dual-svc",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
             nondifferentiable_outputs=("predict",),
             conditions=("Fixed projected-optimization path and binary labels.",),
         )
@@ -486,7 +533,7 @@ class SupportVectorClassifierRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="svc",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -618,14 +665,27 @@ class SupportVectorRegressorRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="svr",
-            gradient_contract=GradientContract(
-                prediction_inputs="smooth",
-                prediction_parameters="smooth",
-                fit_features="conditional",
-                fit_targets="almost-everywhere",
-                fit_weights="almost-everywhere",
-                fit_hyperparameters="almost-everywhere",
-                fit_mode="unrolled",
+            derivative_contract=DerivativeContract(
+                (
+                    SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                    SurfaceDerivative(
+                        DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_TARGETS, GradientLevel.ALMOST_EVERYWHERE
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.ALMOST_EVERYWHERE
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_HYPERPARAMETERS,
+                        GradientLevel.ALMOST_EVERYWHERE,
+                    ),
+                ),
+                route=DerivativeRoute.UNROLLED,
                 conditions=("Away from epsilon-tube and active-mask boundaries.",),
             ),
         )
@@ -730,13 +790,23 @@ class OneClassSVMRecipe(AbstractRecipe):
             effective_samples=effective,
             method="projected-one-class-svm",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
             nondifferentiable_outputs=("predict",),
             conditions=("Fixed active-set branch.",),
         )
@@ -746,7 +816,7 @@ class OneClassSVMRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="one-class-svm",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

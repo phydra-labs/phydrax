@@ -14,7 +14,13 @@ import jax.numpy as jnp
 import optax
 from jaxtyping import Array
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._strict import StrictModule
 from ..._trainable import combine_trainable, partition_trainable
 from ..._tree_math import tree_allfinite, tree_inner, tree_norm
@@ -23,20 +29,19 @@ from .._contracts import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
 )
 from .._numerics import run_fixed_iterations
-from .._schema import FeatureSchema
+from .._schema import AbstractFittedModel, FeatureSchema
 from ._models import (
     BinaryVariationalCircuitClassifier,
     DenseCircuitExpectationModel,
 )
 
 
-class FittedCircuitFeatureTransform(AbstractArrayModel):
+class FittedCircuitFeatureTransform(AbstractFittedModel):
     """Schema-bound exact dense quantum expectation feature transform."""
 
     model: DenseCircuitExpectationModel
@@ -162,10 +167,14 @@ class CircuitFeatureTransformRecipe(AbstractRecipe):
             effective_samples=effective,
             method="circuit_feature_transform",
         )
-        contract = GradientContract(
-            prediction_inputs="conditional",
-            prediction_parameters="conditional",
-            fit_mode="direct",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
             conditions=(
                 "The dense program and local observables remain valid.",
                 "The circuit feature model is frozen by this fit-free recipe.",
@@ -177,7 +186,7 @@ class CircuitFeatureTransformRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="circuit_feature_transform",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -373,10 +382,14 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
             self.feature_model.execution.shift_plan.occurrence_count,
             self.feature_model.gradient_method,
         )
-        contract = GradientContract(
-            prediction_inputs="conditional",
-            prediction_parameters="conditional",
-            fit_mode="stopped",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=("predict",),
             conditions=(
                 "The dense quantum program and local observables remain valid.",
@@ -389,7 +402,7 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="variational_circuit_classifier",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

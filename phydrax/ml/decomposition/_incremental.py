@@ -10,13 +10,21 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from .._batch import MLBatch, WeightPolicy
-from .._contracts import AbstractRecipe, FitResult, GradientContract
+from .._contracts import AbstractRecipe, FitResult
+from .._schema import AbstractFittedModel
 from ._subspace import _fit_subspace, SubspaceModel
 
 
-class IncrementalPCAModel(AbstractArrayModel):
+class IncrementalPCAModel(AbstractFittedModel):
     """Principal subspace summary that can be immutably merged with later batches."""
 
     subspace: SubspaceModel
@@ -143,10 +151,20 @@ def _wrap_incremental(
         valid=result.valid,
         status=result.status,
         method="incremental-pca-merge-svd",
-        gradient_contract=GradientContract(
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_mode="spectral",
+        derivative_contract=DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             conditions=(
                 "each merge differentiates through its rank-truncated covariance summary",
                 "projector gradients require retained/discarded spectral separation at every merge",

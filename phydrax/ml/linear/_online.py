@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._differentiation import GradientLevel
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -181,7 +182,7 @@ def _finish_online(
     model,
     extra_valid: Array | bool = True,
     nonsmooth: bool = False,
-    fit_targets: str | None = None,
+    fit_targets: GradientLevel | None = None,
     hard_outputs: tuple[str, ...] = (),
 ) -> FitResult:
     finite = (
@@ -221,7 +222,7 @@ def _finish_online(
         valid=valid_cases,
         status=status_cases,
         method=method,
-        gradient_contract=unrolled_contract(
+        derivative_contract=unrolled_contract(
             nonsmooth=nonsmooth,
             fit_targets=fit_targets,
             hard_outputs=hard_outputs,
@@ -447,7 +448,7 @@ class SGDClassifierRecipe(AbstractRecipe):
             objective=objective,
             passes=self.passes,
             method=f"weighted-online-sgd-{self.loss}-classification",
-            fit_targets="none",
+            fit_targets=GradientLevel.NONE,
             model=model,
             extra_valid=label_valid,
             nonsmooth=self.loss == "hinge",
@@ -527,7 +528,7 @@ class PerceptronRecipe(AbstractRecipe):
             objective=objective,
             passes=self.passes,
             method="weighted-online-perceptron",
-            fit_targets="none",
+            fit_targets=GradientLevel.NONE,
             model=model,
             extra_valid=label_valid,
             nonsmooth=True,
@@ -726,7 +727,7 @@ class PassiveAggressiveClassifierRecipe(_AbstractPassiveAggressiveRecipe):
             objective=objective,
             passes=self.passes,
             method=f"weighted-online-passive-aggressive-classification-{self.variant}",
-            fit_targets="none",
+            fit_targets=GradientLevel.NONE,
             model=model,
             extra_valid=label_valid,
             nonsmooth=True,

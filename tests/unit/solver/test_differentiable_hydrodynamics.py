@@ -100,7 +100,7 @@ class _AbstractPreparedLinearSource(phx.solver.AbstractPreparedBalanceLawProcess
         self.process_id = "adaptive-linear-source"
         self.requires_realization = False
         self.realization_name = None
-        self.differentiability = "smooth_discrete"
+        self.differentiability = "smooth"
         self.modified_components = ("total_energy",)
 
     def initialize(self, source_view, args: Any = None, /):

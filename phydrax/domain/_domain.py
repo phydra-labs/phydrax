@@ -4,11 +4,14 @@
 
 import abc
 from collections.abc import Callable, Mapping
+from math import prod
 from typing import Any, TYPE_CHECKING
 
 import jax.numpy as jnp
 
+from .._model import ValuePort
 from .._strict import StrictModule
+from ..axes import AxisKey
 from ._coordinate import CoordinateSpec
 
 
@@ -51,6 +54,46 @@ class Domain(StrictModule):
         """Return the static coordinate schema bound to ``label``."""
         factor = self.factor(label)
         return factor.coordinate_specs[factor.labels.index(label)]
+
+    def value_ports(self) -> tuple[ValuePort, ...]:
+        """Return one coordinate `ValuePort` per label, in `labels` order.
+
+        Each port is label-scoped: `semantic_id` is the label, a scalar
+        coordinate has the single component ID `label`, and an event of shape
+        `s` has components `f"{label}[{i}]"` in row-major order. Event axis `j`
+        has key `AxisKey(f"domain-label:{label}", str(j))`, so equal coordinate
+        schemas under different labels never share a port. Coordinates are
+        points, not vector components, so `variance` is `"neutral"`, and
+        `representation` is `"domain-coordinates"`. Domains declare no coordinate
+        units, space, frame, or normalization, so those fields are undeclared.
+        PyTree and graph coordinates have no dense event and raise `ValueError`.
+        """
+        ports = []
+        for label in self.labels:
+            spec = self.coordinate(label)
+            shape = spec.event_shape
+            if shape is None:
+                raise ValueError(
+                    f"Domain label {label!r} declares a {spec.kind} coordinate "
+                    "without a dense event; it has no ValuePort view."
+                )
+            scope = f"domain-label:{label}"
+            ports.append(
+                ValuePort(
+                    label,
+                    event_shape=shape,
+                    component_ids=(
+                        (label,)
+                        if not shape
+                        else tuple(f"{label}[{i}]" for i in range(prod(shape)))
+                    ),
+                    representation="domain-coordinates",
+                    axis_keys=tuple(
+                        AxisKey(scope, str(axis)) for axis in range(len(shape))
+                    ),
+                )
+            )
+        return tuple(ports)
 
     def factor(self, label: str, /) -> "JointFactor":
         """Return the complete joint factor owning ``label``."""

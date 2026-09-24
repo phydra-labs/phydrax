@@ -62,9 +62,15 @@ def test_ordinal_encoder_fail_and_indicator_policies_names_inverse_jit_and_vmap(
     assert jnp.array_equal(model.inverse_transform(encoded[:1]), jnp.array([[1, 20]]))
     with pytest.raises((eqx.EquinoxRuntimeError, ValueError), match="not invertible"):
         model.inverse_transform(encoded[1:])
-    assert result.gradient_contract.prediction_inputs == "none"
-    assert result.gradient_contract.prediction_parameters == "none"
-    assert "ordinal_codes" in result.gradient_contract.nondifferentiable_outputs
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.INPUT)
+        is phx.GradientLevel.NONE
+    )
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.MODEL_PARAMETER)
+        is phx.GradientLevel.NONE
+    )
+    assert "ordinal_codes" in result.derivative_contract.nondifferentiable_outputs
 
 
 def test_onehot_encoder_schema_unknown_indicator_inverse_and_hard_contract():
@@ -102,8 +108,11 @@ def test_onehot_encoder_schema_unknown_indicator_inverse_and_hard_contract():
     assert result.diagnostics.category_weight.shape == (2, 3)
     assert result.diagnostics.input_shape == (3, 2)
     assert result.diagnostics.output_shape == (3, 7)
-    assert result.gradient_contract.prediction_inputs == "none"
-    assert "one_hot_codes" in result.gradient_contract.nondifferentiable_outputs
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.INPUT)
+        is phx.GradientLevel.NONE
+    )
+    assert "one_hot_codes" in result.derivative_contract.nondifferentiable_outputs
 
 
 def test_target_encoder_preserves_case_sample_axes_masks_weights_and_target_gradients():
@@ -133,10 +142,22 @@ def test_target_encoder_preserves_case_sample_axes_masks_weights_and_target_grad
     assert jnp.array_equal(unknown[..., 1], jnp.ones((2, 1)))
     assert model.output_schema.names == ("group_target", "group_unknown")
     assert result.diagnostics.category_weight.shape == (2, 1, 2)
-    assert result.gradient_contract.prediction_inputs == "none"
-    assert result.gradient_contract.fit_features == "none"
-    assert result.gradient_contract.fit_targets == "conditional"
-    assert result.gradient_contract.fit_weights == "conditional"
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.INPUT)
+        is phx.GradientLevel.NONE
+    )
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.FIT_FEATURES)
+        is phx.GradientLevel.NONE
+    )
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.FIT_TARGETS)
+        is phx.GradientLevel.CONDITIONAL
+    )
+    assert (
+        result.derivative_contract.level(phx.DerivativeSurface.FIT_WEIGHTS)
+        is phx.GradientLevel.CONDITIONAL
+    )
     with pytest.raises(NotImplementedError, match="not invertible"):
         model.inverse_transform(transformed)
 

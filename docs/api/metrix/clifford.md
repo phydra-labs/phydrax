@@ -75,6 +75,10 @@ separate contracts.
 
 ::: phydrax.nn.operator.layers.clifford_gated_activation
 
+`CliffordEquivarianceCertificate` is a `phydrax.AbstractConstructionCertificate`
+with capability ID `clifford-equivariance`; the sampled
+`CliffordEquivarianceAuditReport` remains separate runtime evidence.
+
 ::: phydrax.nn.operator.layers.CliffordEquivarianceCertificate
 
 ::: phydrax.nn.operator.layers.CliffordEquivarianceAuditReport

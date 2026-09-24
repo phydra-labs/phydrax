@@ -8,8 +8,9 @@ from typing import Any
 
 from jaxtyping import ArrayLike
 
+from .._differentiation import DifferentiationRequest
 from ._batch import MLBatch
-from ._contracts import AbstractRecipe, FitResult, MLGradientRequest
+from ._contracts import AbstractRecipe, FitResult
 from ._schema import FeatureSchema, TargetSchema
 from ._sparse_features import SparseFeatures
 
@@ -29,9 +30,14 @@ def fit(
     feature_schema: FeatureSchema | None = None,
     target_schema: TargetSchema | None = None,
     key: Any = None,
-    gradient_request: MLGradientRequest | None = None,
+    derivative_request: DifferentiationRequest | None = None,
 ) -> FitResult:
-    """Fit one immutable recipe to a canonical batch or raw feature arrays."""
+    """Fit one immutable recipe to a canonical batch or raw feature arrays.
+
+    The fitted executable is bound to the batch feature schema, and to the batch
+    target schema when the fit is supervised. A `derivative_request` is required
+    against the fit's derivative contract before the result is returned.
+    """
     if not isinstance(recipe, AbstractRecipe):
         raise TypeError("recipe must be an AbstractRecipe.")
     if isinstance(features, MLBatch):
@@ -63,8 +69,14 @@ def fit(
             target_schema=target_schema,
         )
     result = recipe.fit_batch(batch, key=key)
-    if gradient_request is not None:
-        result.require_gradient(gradient_request)
+    if not isinstance(result, FitResult):
+        raise TypeError("Recipe.fit_batch must return a FitResult.")
+    result = result.bind_schemas(
+        batch.feature_schema,
+        None if batch.targets is None else batch.target_schema,
+    )
+    if derivative_request is not None:
+        result.require_derivative(derivative_request)
     return result
 
 

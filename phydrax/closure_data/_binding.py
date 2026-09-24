@@ -14,7 +14,9 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from .._differentiation import BranchDifferentiationPolicy
 from .._fingerprint import canonical_fingerprint
+from .._model import ValuePort
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.finite_volume._closure import ConservativeFaceClosurePlan
@@ -27,7 +29,7 @@ from ..discretization.spectral._incompressible import PeriodicLerayProjector
 from ..equations._les_closures import LESParameterProvenance, ResolvedLESFilter
 from ._dataset import TrainOnlyNormalizer
 from ._les import LESStressConvention
-from ._state import FlowStateSchema
+from ._state import _declared_dimension, FlowStateSchema
 
 
 ClosureDeploymentKind = Literal["conservative_face", "spectral_drift"]
@@ -45,7 +47,7 @@ class LearnedClosureBindingPlan(StrictModule, NonTrainableState):
     output_component_names: tuple[str, ...] = eqx.field(static=True)
     model_artifact_id: str = eqx.field(static=True)
     normalizer_provenance_id: str = eqx.field(static=True)
-    differentiability: str = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
     def __init__(
@@ -59,17 +61,32 @@ class LearnedClosureBindingPlan(StrictModule, NonTrainableState):
         output_component_names: tuple[str, ...],
         model_artifact_id: str,
         normalizer_provenance_id: str,
-        differentiability: str = "smooth_discrete",
+        differentiability: BranchDifferentiationPolicy = (
+            BranchDifferentiationPolicy.SMOOTH
+        ),
     ):
         if not callable(predictor):
             raise TypeError("predictor must be callable.")
+        if not isinstance(differentiability, BranchDifferentiationPolicy):
+            raise TypeError("differentiability must be a BranchDifferentiationPolicy.")
+        match differentiability:
+            case (
+                BranchDifferentiationPolicy.SMOOTH
+                | BranchDifferentiationPolicy.BRANCHWISE
+                | BranchDifferentiationPolicy.SMOOTH_SURROGATE
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "LearnedClosureBindingPlan supports SMOOTH, BRANCHWISE, or "
+                    f"SMOOTH_SURROGATE; got {differentiability.name}."
+                )
         deployment = str(deployment_kind).strip()
         schema = str(schema_id).strip()
         inputs = tuple(str(value).strip() for value in input_component_names)
         outputs = tuple(str(value).strip() for value in output_component_names)
         artifact = str(model_artifact_id).strip()
         normalizer = str(normalizer_provenance_id).strip()
-        differentiability_ = str(differentiability).strip()
         if (
             deployment not in ("conservative_face", "spectral_drift")
             or not schema
@@ -80,8 +97,6 @@ class LearnedClosureBindingPlan(StrictModule, NonTrainableState):
             or len(set(outputs)) != len(outputs)
             or not artifact
             or not normalizer
-            or differentiability_
-            not in ("smooth_discrete", "branchwise", "smooth_surrogate")
         ):
             raise ValueError("Learned closure binding metadata is invalid.")
         self.predictor = predictor
@@ -91,7 +106,7 @@ class LearnedClosureBindingPlan(StrictModule, NonTrainableState):
         self.output_component_names = outputs
         self.model_artifact_id = artifact
         self.normalizer_provenance_id = normalizer
-        self.differentiability = differentiability_
+        self.differentiability = differentiability
         self.binding_id = canonical_fingerprint(
             {
                 "kind": "learned-closure-binding-plan",
@@ -101,7 +116,7 @@ class LearnedClosureBindingPlan(StrictModule, NonTrainableState):
                 "output_components": list(outputs),
                 "model_artifact": artifact,
                 "normalizer_provenance": normalizer,
-                "differentiability": differentiability_,
+                "differentiability": differentiability.value,
             }
         )
 
@@ -238,6 +253,39 @@ class LearnedStressFeatureSchema(StrictModule, NonTrainableState):
             }
         )
 
+    def value_port(self) -> ValuePort:
+        """Return the per-sample feature port in declared component order.
+
+        `shape` is the declared sample layout followed by the component axis, so
+        the event is the trailing axis: `event_shape` is `(shape[-1],)` and the
+        leading `shape[:-1]` axes are sample axes, not event axes.
+        `semantic_id` is the declared feature `name`, `component_ids` are
+        `component_names`, and each dimension is
+        `phydrax.units.parse_unit(unit).dimension` of the declared component
+        unit. The representation is the fixed literal
+        `"learned-stress-features"`; space, frame, normalization, and event axes
+        are undeclared; variance is neutral. `dtype` and `flow_schema_id` stay
+        enforced by the binding plan through `feature_schema_id`.
+
+        Raises `ValueError` for a component unit that `parse_unit` cannot
+        resolve.
+        """
+        return ValuePort(
+            self.name,
+            event_shape=(self.shape[-1],),
+            component_ids=self.component_names,
+            representation="learned-stress-features",
+            dimensions=tuple(
+                _declared_dimension(
+                    unit,
+                    f"Learned stress feature schema {self.name!r} component {name!r}",
+                )
+                for name, unit in zip(
+                    self.component_names, self.component_units, strict=True
+                )
+            ),
+        )
+
 
 class LearnedStressOutputContract(StrictModule, NonTrainableState):
     """Validated ABI for constant-density specific deviatoric SGS stress."""
@@ -325,6 +373,35 @@ class LearnedStressOutputContract(StrictModule, NonTrainableState):
             }
         )
 
+    def value_port(self) -> ValuePort:
+        """Return the per-sample 3x3 stress-tensor port.
+
+        The declared `shape` ends with the `(3, 3)` tensor, which is the event
+        shape; the leading `shape[:-2]` axes are sample axes. `semantic_id` is
+        `target_id`. The contract names no tensor components, so
+        `component_ids` are `f"{target_id}[{i}]"` for the row-major flat index
+        `i`. Every component has `phydrax.units.parse_unit(units).dimension`.
+        The representation is `f"{stress_convention}-{density_semantics}"`
+        (`"deviatoric-constant-density-specific"`) and `space_id` is the
+        declared `discretization_id`; frame, normalization, and event axes are
+        undeclared, and variance is neutral. `dtype`, `filter_id`, `regime`,
+        and the tolerances stay enforced by the binding plan through
+        `contract_id`.
+
+        Raises `ValueError` when `units` cannot be resolved by `parse_unit`.
+        """
+        dimension = _declared_dimension(
+            self.units, f"Learned stress output contract {self.target_id!r}"
+        )
+        return ValuePort(
+            self.target_id,
+            event_shape=(3, 3),
+            component_ids=tuple(f"{self.target_id}[{index}]" for index in range(9)),
+            representation=f"{self.stress_convention}-{self.density_semantics}",
+            space_id=self.discretization_id,
+            dimensions=(dimension,) * 9,
+        )
+
 
 class LearnedStressBindingPlan(StrictModule, NonTrainableState):
     """Declarative artifact and LES-identity contract for a stress predictor."""
@@ -337,7 +414,7 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
     normalizer_id: str = eqx.field(static=True)
     energy_policy: StressEnergyPolicy = eqx.field(static=True)
     maximum_backscatter_fraction: float | None = eqx.field(static=True)
-    differentiation_semantics: str = eqx.field(static=True)
+    differentiation_semantics: BranchDifferentiationPolicy = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -407,7 +484,9 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
         self.energy_policy = policy
         self.maximum_backscatter_fraction = fraction
         self.differentiation_semantics = (
-            "smooth_discrete" if policy == "signed" else "branchwise"
+            BranchDifferentiationPolicy.SMOOTH
+            if policy == "signed"
+            else BranchDifferentiationPolicy.BRANCHWISE
         )
         self.plan_id = canonical_fingerprint(
             {
@@ -420,7 +499,7 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
                 "normalizer": normalizer,
                 "energy_policy": policy,
                 "maximum_backscatter_fraction": fraction,
-                "differentiation_semantics": self.differentiation_semantics,
+                "differentiation_semantics": self.differentiation_semantics.value,
             }
         )
 
@@ -493,7 +572,7 @@ class LearnedStressEvidence(StrictModule, NonTrainableState):
     parameter_provenance_id: str = eqx.field(static=True)
     energy_policy: StressEnergyPolicy = eqx.field(static=True)
     maximum_backscatter_fraction: float | None = eqx.field(static=True)
-    differentiation_semantics: str = eqx.field(static=True)
+    differentiation_semantics: BranchDifferentiationPolicy = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
     def __init__(
@@ -551,7 +630,7 @@ class LearnedStressEvidence(StrictModule, NonTrainableState):
                 "parameter_provenance": self.parameter_provenance_id,
                 "energy_policy": self.energy_policy,
                 "maximum_backscatter_fraction": self.maximum_backscatter_fraction,
-                "differentiation_semantics": self.differentiation_semantics,
+                "differentiation_semantics": self.differentiation_semantics.value,
             }
         )
 

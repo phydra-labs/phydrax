@@ -20,7 +20,20 @@ from ..._array_archive import (
     read_array_archive,
     write_array_archive,
 )
-from ..._model import AbstractArrayModel, artifact_value_id, model_structure_recipe
+from ..._differentiation import (
+    derivative_contract_from_payload,
+    derivative_contract_payload,
+    DerivativeContract,
+)
+from ..._identity import ExecutableSignature, NumericRevision, SemanticProvenance
+from ..._model import (
+    AbstractArrayModel,
+    artifact_value_id,
+    FrozenModel,
+    model_structure_recipe,
+    ModelPorts,
+    PortProvider,
+)
 from ..._model._structure import (
     model_from_array_recipe,
     model_recipe_array_inventory,
@@ -28,6 +41,7 @@ from ..._model._structure import (
     pack_model_array_tree,
 )
 from .._contracts import FitResult
+from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 from ._registry import register_native_ml_artifacts
 
 
@@ -38,17 +52,46 @@ _ML_ARTIFACT_LIMITS = dataclasses.replace(
     # modules. Keep every byte/member/rank limit while admitting that bounded tree.
     max_manifest_nesting=32,
 )
+_LEAF_PREFIX = "model/leaves"
+_MANIFEST_FIELDS = frozenset(
+    {
+        "format",
+        "model_type",
+        "model_recipe",
+        "feature_schema",
+        "target_schema",
+        "ports",
+        "derivative_contract",
+        "fit",
+        "identity",
+        "provenance",
+        "licenses",
+        "versions",
+        "arrays",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
 class MLArtifactManifest:
-    """Validated metadata for one portable native Phydrax ML model."""
+    """Validated metadata for one portable native Phydrax ML model.
+
+    `feature_schema`, `target_schema`, and `ports` are those of the restored
+    executable (verified against the recorded ones); `derivative_contract` and
+    `fit` describe the archived fit when one was supplied. The identity triplet
+    is recomputed from the restored executable and verified on load.
+    """
 
     model_type: str
     model_recipe: Mapping[str, Any]
-    feature_schema: Mapping[str, Any] | None
-    target_schema: Mapping[str, Any] | None
+    feature_schema: FeatureSchema | None
+    target_schema: TargetSchema | None
+    ports: ModelPorts | None
+    derivative_contract: DerivativeContract | None
     fit: Mapping[str, Any] | None
+    semantic_provenance: SemanticProvenance
+    numeric_revision: NumericRevision
+    executable_signature: ExecutableSignature
     provenance: Mapping[str, Any]
     licenses: tuple[str, ...]
     versions: Mapping[str, str]
@@ -100,6 +143,124 @@ def _json_value(value: Any, /, *, path: str) -> Any:
     raise TypeError(f"{path} contains a non-scalar value that is not JSON serializable.")
 
 
+def _identity_triplet(
+    recipe: Mapping[str, Any],
+    arrays: Mapping[str, np.ndarray],
+    resource_ids: Mapping[str, str] | Sequence[tuple[str, str]],
+    /,
+) -> tuple[SemanticProvenance, NumericRevision, ExecutableSignature]:
+    semantic = SemanticProvenance(
+        {"kind": "native-ml-executable", "structure": recipe},
+        resource_ids=resource_ids,
+    )
+    numeric = NumericRevision(semantic, dict(arrays))
+    signature = ExecutableSignature(
+        shapes={name: array.shape for name, array in arrays.items()},
+        dtypes={name: array.dtype for name, array in arrays.items()},
+        algorithm_facts={"model_type": recipe["type"]},
+    )
+    return semantic, numeric, signature
+
+
+def executable_identity(
+    model: AbstractArrayModel,
+    /,
+    *,
+    resource_ids: Mapping[str, str] | Sequence[tuple[str, str]] = (),
+) -> tuple[SemanticProvenance, NumericRevision, ExecutableSignature]:
+    """Return the canonical identity triplet of one native ML executable.
+
+    The semantic provenance content-addresses the executable's portable structure
+    recipe (types, static fields, schemas, and array specifications) together
+    with any named external `resource_ids`; the numeric revision binds the exact
+    array values to it; the executable signature records the array shapes and
+    dtypes and the model type.
+    """
+    if not isinstance(model, AbstractArrayModel):
+        raise TypeError("Executable identity requires an AbstractArrayModel.")
+    register_native_ml_artifacts()
+    recipe = model_structure_recipe(model)
+    arrays = pack_model_array_tree(
+        model, recipe, prefix=_LEAF_PREFIX, limits=_ML_ARTIFACT_LIMITS
+    )
+    return _identity_triplet(recipe, arrays, resource_ids)
+
+
+def _identity_record(
+    triplet: tuple[SemanticProvenance, NumericRevision, ExecutableSignature], /
+) -> dict[str, str]:
+    semantic, numeric, signature = triplet
+    return {
+        "semantic_id": semantic.semantic_id,
+        "numeric_revision_id": numeric.revision_id,
+        "executable_signature_id": signature.signature_id,
+    }
+
+
+def _executable(model: AbstractArrayModel, /) -> AbstractArrayModel:
+    return model.as_trainable() if isinstance(model, FrozenModel) else model
+
+
+def _schemas(
+    model: AbstractArrayModel, /
+) -> tuple[FeatureSchema | None, TargetSchema | None]:
+    executable = _executable(model)
+    if not isinstance(executable, AbstractFittedModel):
+        return None, None
+    return executable.feature_schema, executable.target_schema
+
+
+def _ports(model: AbstractArrayModel, /) -> ModelPorts | None:
+    executable = _executable(model)
+    if isinstance(executable, AbstractFittedModel):
+        if executable.feature_schema is None:
+            return None
+        return executable.model_ports()
+    if isinstance(executable, PortProvider):
+        return executable.model_ports()
+    return None
+
+
+def _dimensions_record(dimensions: Any, /) -> Any:
+    if dimensions is None:
+        return None
+    return [[list(term) for term in dimension.terms] for dimension in dimensions]
+
+
+def _feature_schema_record(schema: FeatureSchema | None, /) -> Any:
+    if schema is None:
+        return None
+    return {
+        "names": list(schema.names),
+        "kinds": list(schema.kinds),
+        "layout_id": schema.layout_id,
+        "dimensions": _dimensions_record(schema.dimensions),
+    }
+
+
+def _target_schema_record(schema: TargetSchema | None, /) -> Any:
+    if schema is None:
+        return None
+    return {
+        "kind": schema.kind,
+        "names": list(schema.names),
+        "class_labels": _json_value(
+            schema.class_labels, path="target_schema.class_labels"
+        ),
+        "dimensions": _dimensions_record(schema.dimensions),
+    }
+
+
+def _ports_record(ports: ModelPorts | None, /) -> Any:
+    if ports is None:
+        return None
+    return {
+        "ports_id": ports.ports_id,
+        "inputs": [port.port_id for port in ports.inputs],
+        "outputs": [port.port_id for port in ports.outputs],
+    }
+
+
 def _fit_metadata(result: FitResult | None, /) -> dict[str, Any] | None:
     if result is None:
         return None
@@ -107,19 +268,6 @@ def _fit_metadata(result: FitResult | None, /) -> dict[str, Any] | None:
         "valid": np.asarray(result.valid).tolist(),
         "status": np.asarray(result.status).tolist(),
         "method": result.method,
-        "gradient_contract": {
-            "prediction_inputs": result.gradient_contract.prediction_inputs,
-            "prediction_parameters": result.gradient_contract.prediction_parameters,
-            "fit_features": result.gradient_contract.fit_features,
-            "fit_targets": result.gradient_contract.fit_targets,
-            "fit_weights": result.gradient_contract.fit_weights,
-            "fit_hyperparameters": result.gradient_contract.fit_hyperparameters,
-            "fit_mode": result.gradient_contract.fit_mode,
-            "nondifferentiable_outputs": list(
-                result.gradient_contract.nondifferentiable_outputs
-            ),
-            "conditions": list(result.gradient_contract.conditions),
-        },
     }
 
 
@@ -129,12 +277,16 @@ def save_ml_artifact(
     /,
     *,
     fit_result: FitResult | None = None,
-    feature_schema: Any = None,
-    target_schema: Any = None,
     provenance: Mapping[str, Any] | None = None,
     licenses: Sequence[str] = (),
 ) -> Path:
-    """Write a checksum-validated, pickle-free native ML model artifact."""
+    """Write a checksum-validated, pickle-free native ML model artifact.
+
+    Schemas and ports are those the executable carries (`phydrax.ml.fit` binds
+    them); a supplied `fit_result` contributes its derivative contract, validity,
+    status, and method. The canonical identity triplet of the executable is
+    recorded and verified again on load.
+    """
     if not isinstance(model, AbstractArrayModel):
         raise TypeError("Native ML artifacts require an AbstractArrayModel.")
     if (
@@ -150,27 +302,24 @@ def save_ml_artifact(
     arrays = pack_model_array_tree(
         model,
         recipe,
-        prefix="model/leaves",
+        prefix=_LEAF_PREFIX,
         limits=_ML_ARTIFACT_LIMITS,
     )
-    fit_metadata = _fit_metadata(fit_result)
-    encoded_feature_schema = (
-        None
-        if feature_schema is None
-        else _json_value(feature_schema, path="feature_schema")
-    )
-    encoded_target_schema = (
-        None
-        if target_schema is None
-        else _json_value(target_schema, path="target_schema")
-    )
+    feature_schema, target_schema = _schemas(model)
     manifest = {
         "format": _ML_ARTIFACT_FORMAT,
         "model_type": recipe["type"],
         "model_recipe": recipe,
-        "feature_schema": encoded_feature_schema,
-        "target_schema": encoded_target_schema,
-        "fit": fit_metadata,
+        "feature_schema": _feature_schema_record(feature_schema),
+        "target_schema": _target_schema_record(target_schema),
+        "ports": _ports_record(_ports(model)),
+        "derivative_contract": (
+            None
+            if fit_result is None
+            else derivative_contract_payload(fit_result.derivative_contract)
+        ),
+        "fit": _fit_metadata(fit_result),
+        "identity": _identity_record(_identity_triplet(recipe, arrays, ())),
         "provenance": _json_value(dict(provenance or {}), path="provenance"),
         "licenses": [str(item) for item in licenses],
         "versions": _runtime_versions(),
@@ -183,44 +332,30 @@ def save_ml_artifact(
     )
 
 
-def read_ml_artifact(path: str | Path, /) -> MLArtifact:
-    """Restore and verify one portable native ML model artifact."""
-    register_native_ml_artifacts()
-    manifest, arrays = read_array_archive(path, limits=_ML_ARTIFACT_LIMITS)
-    expected = {
-        "format",
-        "model_type",
-        "model_recipe",
-        "feature_schema",
-        "target_schema",
-        "fit",
-        "provenance",
-        "licenses",
-        "versions",
-        "arrays",
-    }
-    if set(manifest) != expected:
+def _validated_metadata(manifest: Mapping[str, Any], /) -> None:
+    if set(manifest) != _MANIFEST_FIELDS:
         raise ArrayArchiveCorruptionError("ML artifact manifest fields are invalid.")
     if manifest["format"] != _ML_ARTIFACT_FORMAT:
         raise ArrayArchiveCorruptionError(
             "Archive is not a supported Phydrax ML artifact."
         )
-    recipe = manifest["model_recipe"]
     licenses = manifest["licenses"]
-    provenance = manifest["provenance"]
     versions = manifest["versions"]
     optional_mappings = (
         manifest["feature_schema"],
         manifest["target_schema"],
+        manifest["ports"],
+        manifest["derivative_contract"],
         manifest["fit"],
     )
     if (
         not isinstance(manifest["model_type"], str)
         or not manifest["model_type"]
-        or not isinstance(recipe, dict)
+        or not isinstance(manifest["model_recipe"], dict)
+        or not isinstance(manifest["identity"], dict)
         or not isinstance(licenses, list)
         or any(not isinstance(item, str) or not item for item in licenses)
-        or not isinstance(provenance, dict)
+        or not isinstance(manifest["provenance"], dict)
         or not isinstance(versions, dict)
         or any(
             not isinstance(key, str) or not key or not isinstance(value, str) or not value
@@ -232,11 +367,16 @@ def read_ml_artifact(path: str | Path, /) -> MLArtifact:
         )
     ):
         raise ArrayArchiveCorruptionError("ML artifact metadata is invalid.")
+
+
+def _restored_model(
+    recipe: Mapping[str, Any], arrays: Mapping[str, Any], model_type: str, /
+) -> AbstractArrayModel:
     try:
         template = model_recipe_template(recipe, limits=_ML_ARTIFACT_LIMITS)
         inventory = model_recipe_array_inventory(
             recipe,
-            prefix="model/leaves",
+            prefix=_LEAF_PREFIX,
             limits=_ML_ARTIFACT_LIMITS,
         )
     except (KeyError, TypeError, ValueError) as error:
@@ -248,7 +388,7 @@ def read_ml_artifact(path: str | Path, /) -> MLArtifact:
             "ML artifact recipe did not declare an AbstractArrayModel."
         )
     expected_type = artifact_value_id(type(template))
-    if manifest["model_type"] != expected_type or recipe["type"] != expected_type:
+    if model_type != expected_type or recipe["type"] != expected_type:
         raise ArrayArchiveCorruptionError("ML artifact model type is inconsistent.")
     if set(arrays) != {entry.name for entry in inventory}:
         raise ArrayArchiveCorruptionError(
@@ -258,7 +398,7 @@ def read_ml_artifact(path: str | Path, /) -> MLArtifact:
         model = model_from_array_recipe(
             recipe,
             arrays,
-            prefix="model/leaves",
+            prefix=_LEAF_PREFIX,
             limits=_ML_ARTIFACT_LIMITS,
         )
     except (KeyError, TypeError, ValueError) as error:
@@ -273,35 +413,79 @@ def read_ml_artifact(path: str | Path, /) -> MLArtifact:
         raise ArrayArchiveCorruptionError(
             "ML artifact model structure changed during restoration."
         )
+    return model
+
+
+def _recorded_contract(payload: Any, /) -> DerivativeContract | None:
+    if payload is None:
+        return None
+    try:
+        return derivative_contract_from_payload(payload)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ArrayArchiveCorruptionError(
+            "ML artifact derivative contract is invalid."
+        ) from error
+
+
+def read_ml_artifact(path: str | Path, /) -> MLArtifact:
+    """Restore and verify one portable native ML model artifact."""
+    register_native_ml_artifacts()
+    manifest, arrays = read_array_archive(path, limits=_ML_ARTIFACT_LIMITS)
+    _validated_metadata(manifest)
+    recipe = manifest["model_recipe"]
+    model = _restored_model(recipe, arrays, manifest["model_type"])
+    triplet = _identity_triplet(
+        recipe,
+        pack_model_array_tree(
+            model, recipe, prefix=_LEAF_PREFIX, limits=_ML_ARTIFACT_LIMITS
+        ),
+        (),
+    )
+    if manifest["identity"] != _identity_record(triplet):
+        raise ArrayArchiveCorruptionError(
+            "ML artifact identity does not match the restored executable."
+        )
+    feature_schema, target_schema = _schemas(model)
+    ports = _ports(model)
+    if (
+        manifest["feature_schema"] != _feature_schema_record(feature_schema)
+        or manifest["target_schema"] != _target_schema_record(target_schema)
+        or manifest["ports"] != _ports_record(ports)
+    ):
+        raise ArrayArchiveCorruptionError(
+            "ML artifact schemas or ports do not match the restored executable."
+        )
+    fit = manifest["fit"]
+    if fit is not None and set(fit) != {"valid", "status", "method"}:
+        raise ArrayArchiveCorruptionError("ML artifact fit metadata is invalid.")
+    semantic, numeric, signature = triplet
     parsed = MLArtifactManifest(
-        model_type=expected_type,
+        model_type=manifest["model_type"],
         model_recipe=MappingProxyType(recipe),
-        feature_schema=(
-            None
-            if manifest["feature_schema"] is None
-            else MappingProxyType(manifest["feature_schema"])
-        ),
-        target_schema=(
-            None
-            if manifest["target_schema"] is None
-            else MappingProxyType(manifest["target_schema"])
-        ),
-        fit=(None if manifest["fit"] is None else MappingProxyType(manifest["fit"])),
-        provenance=MappingProxyType(provenance),
-        licenses=tuple(licenses),
-        versions=MappingProxyType(dict(versions)),
+        feature_schema=feature_schema,
+        target_schema=target_schema,
+        ports=ports,
+        derivative_contract=_recorded_contract(manifest["derivative_contract"]),
+        fit=None if fit is None else MappingProxyType(fit),
+        semantic_provenance=semantic,
+        numeric_revision=numeric,
+        executable_signature=signature,
+        provenance=MappingProxyType(manifest["provenance"]),
+        licenses=tuple(manifest["licenses"]),
+        versions=MappingProxyType(dict(manifest["versions"])),
     )
     return MLArtifact(model=model, manifest=parsed)
 
 
 def load_ml_model(path: str | Path, /) -> Any:
-    """Restore only the model payload from a verified native ML artifact."""
+    """Restore the verified schema- and port-bound executable of an ML artifact."""
     return read_ml_artifact(path).model
 
 
 __all__ = [
     "MLArtifact",
     "MLArtifactManifest",
+    "executable_identity",
     "load_ml_model",
     "read_ml_artifact",
     "save_ml_artifact",

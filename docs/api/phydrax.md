@@ -9,6 +9,11 @@ through aggregate facades. Underscore module paths are implementation details.
 `phydrax.StrictModule` is the supported base for user-defined immutable Phydrax
 modules.
 
+The root namespace also owns the shared derivative vocabulary (surfaces, gradient
+levels, routes, regularity, contracts, admission, branch policies, component
+authority, capability evidence) and explicit scientific value ports; see
+[Derivative contracts and ports](differentiation.md).
+
 - `phydrax.domain`: domains, geometry, sampling, and domain functions
 - `phydrax.discretization`: finite topology, support, field spaces, measures,
   prepared tensor/spectral/cochain/FEM/FV methods, transfers, temporal meshes,
@@ -449,6 +454,11 @@ trajectory, realization, and time identities. Filters and target constructors cr
 an immutable `ClosureAnalysisDAG`. `ChunkedClosureDatasetManifest` verifies complete,
 non-overlapping sample/byte coverage and delegates storage only through
 `ClosureArtifactRepository`.
+
+`FlowStateSchema.value_port(representation=...)` derives the per-point `ValuePort`
+of a snapshot representation: component IDs are the declared component names, each
+dimension is resolved from the declared unit with `phydrax.units.parse_unit`, and
+nondimensional values carry the reference-scale fingerprint as their normalization.
 
 `LeakageSafePartitionPlan` groups by declared case/trajectory/realization/time-block
 identity. `TrainOnlyNormalizer` records the exact training assignments used for its

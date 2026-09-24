@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeRoute, DerivativeSurface, GradientLevel
 from phydrax.ml import (
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
@@ -160,12 +161,26 @@ def test_every_smooth_calibration_family_normalizes_labels_and_jit_vmap_outputs(
     assert model.target_schema.class_labels == schema.class_labels
     assert jax.jit(model)(features[:2]).shape == (2, classes)
     assert jax.vmap(model)(features[:2]).shape == (2, classes)
-    assert result.gradient_contract.prediction_inputs == "smooth"
-    assert result.gradient_contract.prediction_parameters == "smooth"
-    assert result.gradient_contract.fit_features == "conditional"
-    assert result.gradient_contract.fit_weights == "conditional"
-    assert result.gradient_contract.fit_hyperparameters == "conditional"
-    assert result.gradient_contract.fit_mode == "unrolled"
+    assert (
+        result.derivative_contract.level(DerivativeSurface.INPUT) is GradientLevel.SMOOTH
+    )
+    assert (
+        result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
+        is GradientLevel.SMOOTH
+    )
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_WEIGHTS)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        result.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.CONDITIONAL
+    )
+    assert result.derivative_contract.route is DerivativeRoute.UNROLLED
 
 
 def test_platt_calibration_preserves_case_masks_product_weights_and_frozen_execution():
@@ -349,13 +364,28 @@ def test_exact_and_smooth_isotonic_are_monotone_distinct_and_extrapolate_constan
     assert jnp.allclose(boundary, jnp.array([exact.values[0], exact.values[last]]))
     assert not jnp.allclose(exact_positive, smooth_positive)
     assert exact.predict_indices(probes).dtype == jnp.int32
-    assert exact_result.gradient_contract.prediction_inputs == "none"
-    assert exact_result.gradient_contract.prediction_parameters == "almost-everywhere"
-    assert exact_result.gradient_contract.fit_mode == "stopped"
-    assert exact_result.gradient_contract.fit_features == "none"
-    assert smooth_result.gradient_contract.prediction_inputs == "smooth"
-    assert smooth_result.gradient_contract.prediction_parameters == "smooth"
-    assert smooth_result.gradient_contract.fit_mode == "stopped"
+    assert (
+        exact_result.derivative_contract.level(DerivativeSurface.INPUT)
+        is GradientLevel.NONE
+    )
+    assert (
+        exact_result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
+        is GradientLevel.ALMOST_EVERYWHERE
+    )
+    assert exact_result.derivative_contract.route is DerivativeRoute.STOPPED
+    assert (
+        exact_result.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
+        is GradientLevel.NONE
+    )
+    assert (
+        smooth_result.derivative_contract.level(DerivativeSurface.INPUT)
+        is GradientLevel.SMOOTH
+    )
+    assert (
+        smooth_result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
+        is GradientLevel.SMOOTH
+    )
+    assert smooth_result.derivative_contract.route is DerivativeRoute.STOPPED
     assert jax.jit(exact)(probes).shape == (41, 2)
     assert jax.vmap(smooth)(probes).shape == (41, 2)
 

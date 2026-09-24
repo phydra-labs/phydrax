@@ -14,20 +14,25 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_RANK_DEFICIENT,
     ML_SUCCESS,
 )
 from .._numerics import effective_sample_size
-from .._schema import TargetSchema
+from .._schema import AbstractFittedModel, TargetSchema
 
 
 class DiscriminantDiagnostics(StrictModule):
@@ -202,7 +207,7 @@ def _reshape_for_samples(
     )
 
 
-class LinearDiscriminantModel(AbstractArrayModel):
+class LinearDiscriminantModel(AbstractFittedModel):
     """Fitted shared-covariance Gaussian discriminant classifier."""
 
     coefficients: Array
@@ -261,7 +266,7 @@ class LinearDiscriminantModel(AbstractArrayModel):
         return self.predict_proba(x)
 
 
-class QuadraticDiscriminantModel(AbstractArrayModel):
+class QuadraticDiscriminantModel(AbstractFittedModel):
     """Fitted class-specific covariance Gaussian discriminant classifier."""
 
     means: Array
@@ -417,14 +422,17 @@ def _fit_discriminant(
         raw_singular=raw_singular,
         method=method,
     )
-    contract = GradientContract(
-        prediction_inputs="smooth",
-        prediction_parameters="smooth",
-        fit_features="conditional",
-        fit_targets="none",
-        fit_weights="conditional",
-        fit_hyperparameters="conditional",
-        fit_mode="direct",
+    contract = DerivativeContract(
+        (
+            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(
+                DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+            ),
+        ),
+        route=DerivativeRoute.DIRECT,
         nondifferentiable_outputs=("predict", "predict_indices"),
         conditions=(
             "fixed class vocabulary",
@@ -438,7 +446,7 @@ def _fit_discriminant(
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=contract,
+        derivative_contract=contract,
     )
 
 

@@ -12,9 +12,10 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._differentiation import DerivativeContract, DerivativeRoute, DerivativeSurface
 from .._iteration import IterationEvidence
 from .._strict import StrictModule
-from ._policies import MixedPrecisionPolicy
+from ._policies import DifferentiationMode, DifferentiationPolicy, MixedPrecisionPolicy
 from ._recycling import RecyclingState
 
 
@@ -399,14 +400,58 @@ class LinearSolveProvenance(StrictModule):
             raise ValueError("recycling_update_count must be scalar.")
 
 
+_SOLVE_CONVERGED = "solve-converged"
+_DECISIONS_FROZEN = "decisions-frozen"
+
+
+def _linear_solve_derivative_contract(mode: DifferentiationMode, /) -> DerivativeContract:
+    """Return the canonical derivative contract of one differentiation mode.
+
+    The right-hand side is the `SOLVER_ARGUMENT` surface and the operator arrays
+    are the `PHYSICAL_PARAMETER` surface. Implicit contracts hold at a converged
+    solution; unrolled contracts differentiate the executed iteration with its
+    stopping and pivoting decisions held fixed.
+    """
+    both = (DerivativeSurface.SOLVER_ARGUMENT, DerivativeSurface.PHYSICAL_PARAMETER)
+    match mode:
+        case "mathematical":
+            return DerivativeContract.smooth(
+                both, route=DerivativeRoute.IMPLICIT, conditions=(_SOLVE_CONVERGED,)
+            )
+        case "rhs-only":
+            return DerivativeContract.smooth(
+                (DerivativeSurface.SOLVER_ARGUMENT,),
+                route=DerivativeRoute.IMPLICIT,
+                conditions=(_SOLVE_CONVERGED,),
+            )
+        case "algorithmic":
+            return DerivativeContract.smooth(
+                both, route=DerivativeRoute.UNROLLED, conditions=(_DECISIONS_FROZEN,)
+            )
+        case "none":
+            return DerivativeContract(route=DerivativeRoute.STOPPED)
+        case _:
+            raise ValueError(f"Unknown differentiation mode {mode!r}.")
+
+
 class LinearSolveResult(StrictModule):
-    """Numerical value plus portable status, diagnostics, and provenance."""
+    """Numerical value plus portable status, diagnostics, and provenance.
+
+    `derivative_contract` is the canonical contract of the executed
+    `DifferentiationPolicy`: `"mathematical"` is an implicit derivative in the
+    right-hand side (`SOLVER_ARGUMENT`) and operator (`PHYSICAL_PARAMETER`);
+    `"rhs-only"` is implicit in the right-hand side only, with the operator
+    stopped; `"algorithmic"` unrolls the executed iteration; `"none"` is stopped.
+    `derivative_valid` reports, per right-hand side, whether that contract holds
+    for this solve.
+    """
 
     value: PyTree[Array]
     status: Array
     diagnostics: LinearSolveDiagnostics
     provenance: LinearSolveProvenance
     iteration_evidence: IterationEvidence | None
+    derivative_contract: DerivativeContract
 
     def __init__(
         self,
@@ -416,12 +461,15 @@ class LinearSolveResult(StrictModule):
         provenance: LinearSolveProvenance,
         /,
         *,
+        differentiation: DifferentiationPolicy,
         iteration_evidence: IterationEvidence | None = None,
     ):
         if not isinstance(diagnostics, LinearSolveDiagnostics):
             raise TypeError("diagnostics must be LinearSolveDiagnostics.")
         if not isinstance(provenance, LinearSolveProvenance):
             raise TypeError("provenance must be LinearSolveProvenance.")
+        if not isinstance(differentiation, DifferentiationPolicy):
+            raise TypeError("differentiation must be a DifferentiationPolicy.")
         if iteration_evidence is not None and not isinstance(
             iteration_evidence, IterationEvidence
         ):
@@ -431,10 +479,30 @@ class LinearSolveResult(StrictModule):
         self.diagnostics = diagnostics
         self.provenance = provenance
         self.iteration_evidence = iteration_evidence
+        self.derivative_contract = _linear_solve_derivative_contract(differentiation.mode)
 
     @property
     def successful(self) -> Array:
         return self.status == int(LinearSolveStatus.SUCCESS)
+
+    @property
+    def derivative_valid(self) -> Array:
+        """Whether `derivative_contract` holds for each right-hand side.
+
+        Implicit derivatives require a converged solve, the same evidence that
+        guards the returned value's derivative; unrolled derivatives of the
+        executed iteration require finite arithmetic; a stopped contract claims
+        no derivative.
+        """
+        match self.derivative_contract.route:
+            case DerivativeRoute.IMPLICIT:
+                return self.diagnostics.converged
+            case DerivativeRoute.UNROLLED:
+                return self.diagnostics.finite
+            case DerivativeRoute.STOPPED:
+                return jnp.zeros_like(self.diagnostics.converged)
+            case route:
+                raise ValueError(f"Linear solves do not use the {route.value} route.")
 
 
 MatrixInversionKind: TypeAlias = Literal["inverse", "pseudoinverse"]
@@ -673,6 +741,14 @@ class RecycledLinearSolveResult(StrictModule):
     @property
     def successful(self) -> Array:
         return self.result.successful
+
+    @property
+    def derivative_contract(self) -> DerivativeContract:
+        return self.result.derivative_contract
+
+    @property
+    def derivative_valid(self) -> Array:
+        return self.result.derivative_valid
 
 
 __all__ = [

@@ -1,12 +1,12 @@
 {
   "accepted_update_count": 6,
   "artifact": {
-    "artifact_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
-    "numeric_revision_id": "2833d2f3c07399cfa762ba129cea05fe8825e65f24eeeaa7f2bbcdbc33303bae",
+    "artifact_id": "32f4a1196fed06c72e0ed35f6edf07020a19298c0d00a06db672282467567ac9",
+    "numeric_revision_id": "db95211e856e7911b053dc6f02a593cc0fd7f14de413d04846ab40900b64c89a",
     "path": "benchmarks/learned_energy_stage_two.phxml",
-    "prepared_binding_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02"
+    "prepared_binding_id": "32f4a1196fed06c72e0ed35f6edf07020a19298c0d00a06db672282467567ac9"
   },
-  "artifact_id": "cf70b847f212e4ad687dbbee222c70b661dac87c2a3e34965587f55f29a6fc35",
+  "artifact_id": "2cbbb2d72d823da89733b4ab45201a99e2520c7008398212c5fdcd3a4fbcc7cd",
   "attempt_count": 6,
   "curriculum": [
     1,
@@ -28,19 +28,19 @@
     "trained_no_regression": true
   },
   "identities": {
-    "checkpoint_state_id": "6a3cb52c863a9116d5196e1da620f724e03d84af9ead569e5736c8c76b6eb4cc",
-    "final_model_revision_id": "2833d2f3c07399cfa762ba129cea05fe8825e65f24eeeaa7f2bbcdbc33303bae",
+    "checkpoint_state_id": "9eaace777e31d8c0153af6ec6669370c8cbead913670410d05dc9b994c5d4f5a",
+    "final_model_revision_id": "db95211e856e7911b053dc6f02a593cc0fd7f14de413d04846ab40900b64c89a",
     "normalizer_id": "af380d4ebba3c9e63fe5ad9683ae69147aaeda00f159af8d4b20c49463d39663",
-    "rollout_preparation_id": "dac7c349f52b800e778edaa339d21e3aa27d35331f6ab1f148a238ca44873a85",
-    "runtime_id": "36f879043b007d35181655d92f6b2b7801b23b88082e7fe5fcfced555a629c10",
-    "stage_one_artifact_id": "4bbf067759323e62ef1f48ec91fbcc04d9b43b66d10f4f9b81fd0f7d79f6a1b7",
-    "stage_one_model_revision_id": "55051b97cbde9e8b4945e5a952e62d8673fd30b7060102fcc2d4e8aaa234485d",
-    "stage_two_artifact_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
-    "stage_two_binding_plan_id": "8c740a2231b9cb24c760fab77722d829a1f4d5268c0545fb59d34fd0caf094f3",
-    "stage_two_prepared_binding_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
-    "stage_two_semantic_id": "cee4ba6187b2e57e1202d8361e160ae3bc892770ff5fc26d4dabe25a00348101",
-    "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176",
-    "training_plan_id": "07a98e7b49495e6b3c3d2ce34f53c0fe1091bd3b5745583a0fc200845d58ed17"
+    "rollout_preparation_id": "5e22f4ed7fc57c5724a3be40f4fae2396415b0471e9f92be6de6a54cc0c69b9a",
+    "runtime_id": "d05a22a630ba21eeb9a30fbeabff18c6a079d984e4a825cb10305776ab6507b5",
+    "stage_one_artifact_id": "ab49b6a07cdac9a5fc7ec9fbf8f8feff1cdb48e5dc1b461e3a32c941c013a89f",
+    "stage_one_model_revision_id": "9e06dd790298a996cc0ee12d5e2e98ad62e9860528d4368fe8b656cfb144c8d6",
+    "stage_two_artifact_id": "32f4a1196fed06c72e0ed35f6edf07020a19298c0d00a06db672282467567ac9",
+    "stage_two_binding_plan_id": "67bd06e11f059ee74f3e3aece22bd48a2a308fe0b2c4f9ad10f07904dac80cc6",
+    "stage_two_prepared_binding_id": "32f4a1196fed06c72e0ed35f6edf07020a19298c0d00a06db672282467567ac9",
+    "stage_two_semantic_id": "3e6afd7b99c9b54f2a909f564331f75675e29b212a3e17ca441c8eb04e2d5528",
+    "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d",
+    "training_plan_id": "0b8bee569f079fb86c7b1fb147802b0d0278b4f54cb31ece940a433fbc2ec775"
   },
   "kind": "learned-energy-stage-two-qualification",
   "late_start_anchor": 6,

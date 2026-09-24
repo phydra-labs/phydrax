@@ -13,20 +13,26 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ...linalg._dense_inverse import dense_inverse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_RANK_DEFICIENT,
     ML_SUCCESS,
 )
+from .._schema import AbstractFittedModel
 
 
 def _real_dtype(dtype: jnp.dtype) -> jnp.dtype:
@@ -212,7 +218,7 @@ def _input_sample_ndim(values: Array, case_shape: tuple[int, ...], in_size: int)
     return values.ndim - minimum_rank
 
 
-class CovarianceModel(AbstractArrayModel):
+class CovarianceModel(AbstractFittedModel):
     """Immutable Gaussian covariance geometry; calls return squared Mahalanobis distance."""
 
     mean: Array
@@ -310,7 +316,7 @@ def _result(
     factor_loadings: Array | None = None,
     diagonal: Array | None = None,
     precision_override: Array | None = None,
-    fit_mode: Literal["direct", "unrolled"] = "direct",
+    route: DerivativeRoute = DerivativeRoute.DIRECT,
 ) -> FitResult:
     if precision_override is None:
         covariance_, precision, log_det, rank_condition = _regularize(
@@ -379,12 +385,14 @@ def _result(
         diagonal=diagonal,
         method=method,
     )
-    gradient = GradientContract(
-        prediction_inputs="smooth",
-        prediction_parameters="smooth",
-        fit_features="conditional",
-        fit_weights="conditional",
-        fit_mode=fit_mode,
+    gradient = DerivativeContract(
+        (
+            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+        ),
+        route=route,
         conditions=("fixed active mask", "positive regularized covariance"),
     )
     return FitResult(
@@ -393,7 +401,7 @@ def _result(
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=gradient,
+        derivative_contract=gradient,
     )
 
 
@@ -757,7 +765,7 @@ class RobustCovariance(AbstractRecipe):
             iterations=iterations,
             converged=converged,
             method="robust-covariance",
-            fit_mode="unrolled",
+            route=DerivativeRoute.UNROLLED,
         )
 
 
@@ -852,7 +860,7 @@ class GraphicalLasso(AbstractRecipe):
             converged=converged,
             precision_override=precision,
             method="graphical-lasso",
-            fit_mode="unrolled",
+            route=DerivativeRoute.UNROLLED,
         )
 
 

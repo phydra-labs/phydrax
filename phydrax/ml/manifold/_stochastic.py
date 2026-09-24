@@ -13,10 +13,18 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, GradientContract, ML_NONCONVERGED
+from .._contracts import AbstractRecipe, FitResult, ML_NONCONVERGED
 from .._numerics import pairwise_distances
+from .._schema import AbstractFittedModel
 from ._common import (
     _BLOCKWISE_BINDING,
     _case_count,
@@ -144,7 +152,7 @@ def _optimize_tsne_one(
     return embedding, objective, gradient_norm
 
 
-class TSNEModel(AbstractArrayModel):
+class TSNEModel(AbstractFittedModel):
     """Transductive t-SNE coordinates; no mathematically defined transform is claimed."""
 
     embedding: Array
@@ -275,14 +283,20 @@ class TSNERecipe(AbstractRecipe):
             method="tsne-exact",
         )
         model = TSNEModel(x, embedding, active, case_shape=batch.case_shape)
-        contract = GradientContract(
-            prediction_inputs="none",
-            prediction_parameters="none",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
             nondifferentiable_outputs=("valid", "status"),
             conditions=(
                 "fixed explicit initialization key and iteration count",
@@ -296,7 +310,7 @@ class TSNERecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="tsne-exact",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -403,7 +417,7 @@ def _optimize_umap_one(
     return embedding, objective, jnp.linalg.norm(gradient)
 
 
-class FuzzyGraphEmbeddingModel(AbstractArrayModel):
+class FuzzyGraphEmbeddingModel(AbstractFittedModel):
     """UMAP-like embedding with a conditional fuzzy barycentric transform."""
 
     training_features: Array
@@ -589,14 +603,23 @@ class FuzzyGraphEmbeddingRecipe(AbstractRecipe):
             n_neighbors=self.n_neighbors,
             case_shape=batch.case_shape,
         )
-        contract = GradientContract(
-            prediction_inputs="conditional",
-            prediction_parameters="conditional",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
+        contract = DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
             nondifferentiable_outputs=(
                 "neighbor_indices",
                 "connectivity",
@@ -615,7 +638,7 @@ class FuzzyGraphEmbeddingRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="fuzzy-graph-embedding",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

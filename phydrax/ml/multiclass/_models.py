@@ -11,6 +11,13 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
 from .._batch import MLBatch
@@ -19,12 +26,11 @@ from .._contracts import (
     AbstractRecipe,
     DecisionFunctionModel,
     FitResult,
-    GradientContract,
     LogProbabilityModel,
     ML_INFEASIBLE,
     ML_SUCCESS,
 )
-from .._schema import FeatureSchema, TargetSchema
+from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 from .._sparse_features import SparseFeatures
 from ..discriminant._models import _labels_for
 
@@ -136,7 +142,7 @@ def _composition_result(
     results: tuple[FitResult, ...],
     *,
     method: str,
-    prediction_inputs: str = "smooth",
+    prediction_inputs: GradientLevel = GradientLevel.SMOOTH,
     semantic_valid: Any = None,
 ) -> FitResult:
     component_valid = jnp.stack(tuple(result.valid for result in results), axis=-1)
@@ -149,14 +155,22 @@ def _composition_result(
             (component_status, semantic_status[..., None]), axis=-1
         )
     diagnostics = CompositionDiagnostics(component_valid, component_status, method=method)
-    contract = GradientContract(
-        prediction_inputs=prediction_inputs,
-        prediction_parameters="conditional" if prediction_inputs == "none" else "smooth",
-        fit_features="conditional",
-        fit_targets="none",
-        fit_weights="conditional",
-        fit_hyperparameters="conditional",
-        fit_mode="direct",
+    contract = DerivativeContract(
+        (
+            SurfaceDerivative(DerivativeSurface.INPUT, prediction_inputs),
+            SurfaceDerivative(
+                DerivativeSurface.MODEL_PARAMETER,
+                GradientLevel.CONDITIONAL
+                if prediction_inputs is GradientLevel.NONE
+                else GradientLevel.SMOOTH,
+            ),
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(
+                DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+            ),
+        ),
+        route=DerivativeRoute.DIRECT,
         nondifferentiable_outputs=("predict", "predict_indices"),
         conditions=("all binary component fits valid", "fixed class vocabulary"),
     )
@@ -166,7 +180,7 @@ def _composition_result(
         valid=diagnostics.valid,
         status=diagnostics.status,
         method=method,
-        gradient_contract=contract,
+        derivative_contract=contract,
     )
 
 
@@ -190,7 +204,7 @@ def _flat_input_size(model: AbstractArrayModel, owner: str, /) -> int:
     return size
 
 
-class OneVsRestModel(AbstractArrayModel):
+class OneVsRestModel(AbstractFittedModel):
     models: tuple[AbstractArrayModel, ...]
     labels: Array
     target_schema: TargetSchema
@@ -268,7 +282,7 @@ class OneVsRestRecipe(AbstractRecipe):
         )
 
 
-class OneVsOneModel(AbstractArrayModel):
+class OneVsOneModel(AbstractFittedModel):
     models: tuple[AbstractArrayModel, ...]
     pairs: tuple[tuple[int, int], ...] = eqx.field(static=True)
     labels: Array
@@ -379,7 +393,7 @@ class OneVsOneRecipe(AbstractRecipe):
         )
 
 
-class OutputCodeModel(AbstractArrayModel):
+class OutputCodeModel(AbstractFittedModel):
     models: tuple[AbstractArrayModel, ...]
     codebook: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     labels: Array
@@ -525,7 +539,7 @@ class OutputCodeRecipe(AbstractRecipe):
         )
 
 
-class MultilabelModel(AbstractArrayModel):
+class MultilabelModel(AbstractFittedModel):
     models: tuple[AbstractArrayModel, ...]
     target_schema: TargetSchema
     in_size: int = eqx.field(static=True)
@@ -628,7 +642,7 @@ def _append_chain_batch(batch: MLBatch, appended: Array, appended_mask: Array) -
     )
 
 
-class ClassifierChainModel(AbstractArrayModel):
+class ClassifierChainModel(AbstractFittedModel):
     models: tuple[AbstractArrayModel, ...]
     target_schema: TargetSchema
     in_size: int = eqx.field(static=True)
@@ -681,7 +695,7 @@ class ClassifierChainModel(AbstractArrayModel):
         return self.predict_proba(x)
 
 
-class SmoothClassifierChainModel(AbstractArrayModel):
+class SmoothClassifierChainModel(AbstractFittedModel):
     models: tuple[AbstractArrayModel, ...]
     target_schema: TargetSchema
     in_size: int = eqx.field(static=True)
@@ -781,7 +795,7 @@ def _fit_chain(
         model,
         result_tuple,
         method="smooth-classifier-chain" if smooth else "classifier-chain",
-        prediction_inputs="smooth" if smooth else "none",
+        prediction_inputs=GradientLevel.SMOOTH if smooth else GradientLevel.NONE,
         semantic_valid=_multilabel_domain_valid(batch, targets),
     )
 

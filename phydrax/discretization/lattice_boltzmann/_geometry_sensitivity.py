@@ -13,8 +13,13 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
+from ..._differentiation import (
+    branch_policy_contract,
+    BranchDifferentiationPolicy,
+    DerivativeContract,
+    DerivativeSurface,
+)
 from ..._fingerprint import canonical_fingerprint
-from ..._hybrid_sensitivity import HybridSensitivityMode
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -22,24 +27,37 @@ from ..._trainable import NonTrainableState
 class LatticeBoltzmannGeometrySensitivityPolicy(StrictModule, NonTrainableState):
     """Branchwise, surrogate, or event-aware policy for fixed-shape geometry AD."""
 
-    mode: HybridSensitivityMode = eqx.field(static=True)
+    mode: BranchDifferentiationPolicy = eqx.field(static=True)
     classification_margin: float = eqx.field(static=True)
     link_margin: float = eqx.field(static=True)
     event_time_margin: float = eqx.field(static=True)
     surrogate_width: float = eqx.field(static=True)
+    derivative_contract: DerivativeContract
     policy_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        mode: HybridSensitivityMode = HybridSensitivityMode.SHARP_BRANCHWISE,
+        mode: BranchDifferentiationPolicy = BranchDifferentiationPolicy.BRANCHWISE,
         classification_margin: float = 1.0e-8,
         link_margin: float = 1.0e-8,
         event_time_margin: float = 1.0e-8,
         surrogate_width: float = 1.0e-3,
     ):
-        if not isinstance(mode, HybridSensitivityMode):
-            raise TypeError("mode must be a HybridSensitivityMode.")
+        if not isinstance(mode, BranchDifferentiationPolicy):
+            raise TypeError("mode must be a BranchDifferentiationPolicy.")
+        match mode:
+            case (
+                BranchDifferentiationPolicy.BRANCHWISE
+                | BranchDifferentiationPolicy.SMOOTH_SURROGATE
+                | BranchDifferentiationPolicy.EVENT_AWARE
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "LatticeBoltzmannGeometrySensitivityPolicy supports BRANCHWISE, "
+                    f"SMOOTH_SURROGATE, or EVENT_AWARE; got {mode.name}."
+                )
         values = tuple(
             float(value)
             for value in (
@@ -58,6 +76,9 @@ class LatticeBoltzmannGeometrySensitivityPolicy(StrictModule, NonTrainableState)
             self.surrogate_width,
         ) = values
         self.mode = mode
+        self.derivative_contract = branch_policy_contract(
+            mode, surfaces=(DerivativeSurface.PHYSICAL_PARAMETER,)
+        )
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "lattice-boltzmann-geometry-sensitivity-policy",
@@ -150,7 +171,8 @@ class LatticeBoltzmannGeometrySensitivityResult(StrictModule):
     sensitivity: Any
     certificate: LatticeBoltzmannGeometryValidityCertificate
     usable: Array
-    mode: HybridSensitivityMode = eqx.field(static=True)
+    derivative_contract: DerivativeContract
+    mode: BranchDifferentiationPolicy = eqx.field(static=True)
 
 
 def lattice_boltzmann_geometry_validity_certificate(
@@ -167,25 +189,28 @@ def lattice_boltzmann_geometry_validity_certificate(
     )
     link_valid = margins.minimum_link_margin >= policy.link_margin
     event_valid = margins.event_time_margin >= policy.event_time_margin
-    if policy.mode is HybridSensitivityMode.SHARP_BRANCHWISE:
-        locally_valid = (
-            margins.forward_successful
-            & classification_valid
-            & link_valid
-            & margins.topology_unchanged
-            & ~margins.event_requested
-        )
-    elif policy.mode is HybridSensitivityMode.SMOOTH_SURROGATE:
-        locally_valid = margins.forward_successful & link_valid
-    else:
-        localized_if_requested = ~margins.event_requested | margins.event_localized
-        locally_valid = (
-            margins.forward_successful
-            & classification_valid
-            & link_valid
-            & event_valid
-            & localized_if_requested
-        )
+    match policy.mode:
+        case BranchDifferentiationPolicy.BRANCHWISE:
+            locally_valid = (
+                margins.forward_successful
+                & classification_valid
+                & link_valid
+                & margins.topology_unchanged
+                & ~margins.event_requested
+            )
+        case BranchDifferentiationPolicy.SMOOTH_SURROGATE:
+            locally_valid = margins.forward_successful & link_valid
+        case BranchDifferentiationPolicy.EVENT_AWARE:
+            localized_if_requested = ~margins.event_requested | margins.event_localized
+            locally_valid = (
+                margins.forward_successful
+                & classification_valid
+                & link_valid
+                & event_valid
+                & localized_if_requested
+            )
+        case _:
+            raise ValueError(f"Unsupported geometry sensitivity mode {policy.mode.name}.")
     return LatticeBoltzmannGeometryValidityCertificate(
         margins.minimum_classification_margin,
         margins.minimum_link_margin,
@@ -215,15 +240,19 @@ def _selected_function(
 ) -> Callable[[PyTree[Any]], PyTree[Any]]:
     if not callable(sharp_function):
         raise TypeError("sharp_function must be callable.")
-    if policy.mode is HybridSensitivityMode.SHARP_BRANCHWISE:
-        return sharp_function
-    if policy.mode is HybridSensitivityMode.SMOOTH_SURROGATE:
-        if not callable(smooth_function):
-            raise TypeError("Smooth-surrogate sensitivity requires smooth_function.")
-        return smooth_function
-    if not callable(event_aware_function):
-        raise TypeError("Event-aware sensitivity requires event_aware_function.")
-    return event_aware_function
+    match policy.mode:
+        case BranchDifferentiationPolicy.BRANCHWISE:
+            return sharp_function
+        case BranchDifferentiationPolicy.SMOOTH_SURROGATE:
+            if not callable(smooth_function):
+                raise TypeError("Smooth-surrogate sensitivity requires smooth_function.")
+            return smooth_function
+        case BranchDifferentiationPolicy.EVENT_AWARE:
+            if not callable(event_aware_function):
+                raise TypeError("Event-aware sensitivity requires event_aware_function.")
+            return event_aware_function
+        case _:
+            raise ValueError(f"Unsupported geometry sensitivity mode {policy.mode.name}.")
 
 
 def _invalid_sensitivity(tree: PyTree[Any], /) -> PyTree[Any]:
@@ -265,6 +294,7 @@ def lattice_boltzmann_geometry_jvp(
         sensitivity,
         certificate,
         certificate.locally_valid,
+        policy.derivative_contract,
         policy.mode,
     )
 
@@ -302,12 +332,12 @@ def lattice_boltzmann_geometry_vjp(
         sensitivity,
         certificate,
         certificate.locally_valid,
+        policy.derivative_contract,
         policy.mode,
     )
 
 
 __all__ = [
-    "HybridSensitivityMode",
     "LatticeBoltzmannGeometrySensitivityMargins",
     "LatticeBoltzmannGeometrySensitivityPolicy",
     "LatticeBoltzmannGeometrySensitivityResult",

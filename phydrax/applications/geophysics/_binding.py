@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..._fingerprint import canonical_fingerprint, canonical_json
+from ..._model import ValuePort
 from ._quantities import GeophysicalQuantity
 from ._time import TemporalSupport
 from ._vertical import HybridPressureCoordinate
@@ -137,6 +138,37 @@ class GeophysicalFieldBinding:
 
     def to_dict(self) -> dict[str, Any]:
         return {**self._payload(), "binding_id": self.binding_id}
+
+    def value_port(self) -> ValuePort:
+        """Return the port of the bound quantity's selected state components.
+
+        `semantic_id` is `f"geophysical-quantity:{quantity.quantity_id}"`, so the
+        quantity name, kind, unit and its scale, axes, sign convention, support,
+        and reference configuration all enter the identity. The event is the
+        selected component vector: `event_shape` is `(len(components),)` and
+        `component_ids` are the selected state-layout component names in binding
+        order. Every component carries the quantity's declared dimension
+        `quantity.unit.dimension`. The representation is the fixed literal
+        `"geophysical-field"`; space, frame, normalization, and event axes are
+        undeclared (the quantity `axes` index samples, not event components);
+        variance is neutral.
+
+        Raises `ValueError` for field-space and operator-task bindings, which
+        declare no component layout of their own; their ports come from the
+        native storage owner.
+        """
+        if self.storage_kind != "state-layout":
+            raise ValueError(
+                f"A {self.storage_kind} geophysical binding declares no component "
+                "layout; derive its port from the native storage owner."
+            )
+        return ValuePort(
+            f"geophysical-quantity:{self.quantity.quantity_id}",
+            event_shape=(len(self.components),),
+            component_ids=self.components,
+            representation="geophysical-field",
+            dimensions=(self.quantity.unit.dimension,) * len(self.components),
+        )
 
     @classmethod
     def from_dict(

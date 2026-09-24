@@ -7,10 +7,20 @@ import pytest
 import phydrax as phx
 
 
+NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
+    (
+        phx.DerivativeSurface.INPUT,
+        phx.DerivativeSurface.MODEL_PARAMETER,
+        phx.DerivativeSurface.PHYSICAL_PARAMETER,
+        phx.DerivativeSurface.STORED_VALUES,
+    )
+)
+
+
 cosmology = phx.applications.cosmology
 
 
-def _context(differentiability="native-parameter", matter=0.3):
+def _context(differentiation=NATIVE_DIFFERENTIATION, matter=0.3):
     scale = cosmology.CosmologyScaleContract(
         cosmology.CODE_COSMOLOGY_SCALE.length_unit,
         cosmology.CODE_COSMOLOGY_SCALE.mass_unit,
@@ -25,8 +35,8 @@ def _context(differentiability="native-parameter", matter=0.3):
         numerical_policy_id="test-policy",
         physics_policy_id="test-physics",
         scale_id=scale.scale_id,
-        source_kind="native" if differentiability == "native-parameter" else "external",
-        differentiation=differentiability,
+        source_kind="native" if differentiation is NATIVE_DIFFERENTIATION else "external",
+        differentiation=differentiation,
     )
     return scale, background, provenance
 
@@ -101,7 +111,7 @@ def test_power_descriptor_allows_signed_cross_but_not_negative_auto():
 
 
 def test_differentiability_policies_are_enforced():
-    _, native_background, native_provenance = _context("native-parameter")
+    _, native_background, native_provenance = _context(NATIVE_DIFFERENTIATION)
 
     def native_value(amplitude):
         values = amplitude * jnp.asarray([[1.0, 2.0, 4.0], [2.0, 4.0, 8.0]])
@@ -109,7 +119,9 @@ def test_differentiability_policies_are_enforced():
 
     assert jax.grad(native_value)(jnp.asarray(1.0)) != 0.0
 
-    _, coordinate_background, coordinate_provenance = _context("coordinate-only")
+    _, coordinate_background, coordinate_provenance = _context(
+        phx.DerivativeContract.smooth((phx.DerivativeSurface.INPUT,))
+    )
 
     def stored_value(amplitude):
         values = amplitude * jnp.asarray([[1.0, 2.0, 4.0], [2.0, 4.0, 8.0]])
@@ -125,7 +137,9 @@ def test_differentiability_policies_are_enforced():
     )
     assert jax.grad(lambda k: table.evaluate(k, 0.75))(jnp.asarray(1.5)) != 0.0
 
-    _, constant_background, constant_provenance = _context("constant")
+    _, constant_background, constant_provenance = _context(
+        phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT)
+    )
     constant = _power(
         constant_background,
         constant_provenance,

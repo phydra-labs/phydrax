@@ -11,10 +11,17 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+    weakest_level,
+)
+from ..._model import AbstractArrayModel, ModelBinding, ValuePort
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, GradientContract
-from .._schema import FeatureSchema, TargetSchema
+from .._contracts import AbstractRecipe, FitResult
+from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 from .._sparse_features import SparseFeatures
 from ._common import (
     _canonical_feature_output,
@@ -39,54 +46,51 @@ def _target_feature_schema(batch: MLBatch, width: int, /) -> FeatureSchema:
     return FeatureSchema(names, kinds=("continuous",) * width, layout_id="target")
 
 
+def _inverse_target_view(transform: DerivativeContract, /) -> DerivativeContract:
+    """The fitted target transform as the stage applied after the regressor.
+
+    The transform is fitted on the targets and maps them into the regressor's
+    fitted targets, so its own fit-feature surface and its input passage are
+    target-fit surfaces of the composite; it does not depend on the features.
+    """
+    fit_targets = weakest_level(
+        (
+            transform.level(DerivativeSurface.FIT_FEATURES),
+            transform.level(DerivativeSurface.INPUT),
+        )
+    )
+    surfaces = tuple(
+        entry
+        for entry in transform.surfaces
+        if entry.surface
+        not in (DerivativeSurface.FIT_FEATURES, DerivativeSurface.FIT_TARGETS)
+    )
+    return DerivativeContract(
+        (
+            *surfaces,
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.FIT_TARGETS, fit_targets),
+        ),
+        route=transform.route,
+        regularity=transform.regularity,
+        conditions=(
+            *transform.conditions,
+            "inverse_transform obeys the target transform prediction-gradient contract.",
+        ),
+        nondifferentiable_outputs=transform.nondifferentiable_outputs,
+    )
+
+
 def _combine_target_results(
     transform_result: FitResult,
     regressor_result: FitResult,
     /,
-) -> tuple[jax.Array, jax.Array, GradientContract]:
-    valid, status, base = _combine_results((transform_result, regressor_result))
-    transform = transform_result.gradient_contract
-    regressor = regressor_result.gradient_contract
-    level_order = {
-        "none": 0,
-        "conditional": 1,
-        "almost-everywhere": 2,
-        "smooth": 3,
-    }
-
-    def minimum(*levels: Any) -> Any:
-        return min(levels, key=level_order.__getitem__)
-
-    inverse_condition = (
-        "inverse_transform obeys the target transform prediction-gradient contract."
+) -> tuple[jax.Array, jax.Array, DerivativeContract]:
+    valid, status, _ = _combine_results(
+        (transform_result, regressor_result), sequential=False
     )
-    conditions = (
-        base.conditions
-        if inverse_condition in base.conditions
-        else base.conditions + (inverse_condition,)
-    )
-    contract = GradientContract(
-        prediction_inputs=minimum(
-            regressor.prediction_inputs, transform.prediction_inputs
-        ),
-        prediction_parameters=minimum(
-            regressor.prediction_parameters,
-            transform.prediction_parameters,
-        ),
-        fit_features=regressor.fit_features,
-        fit_targets=minimum(
-            transform.fit_features,
-            transform.prediction_inputs,
-            regressor.fit_targets,
-        ),
-        fit_weights=minimum(transform.fit_weights, regressor.fit_weights),
-        fit_hyperparameters=minimum(
-            transform.fit_hyperparameters,
-            regressor.fit_hyperparameters,
-        ),
-        fit_mode=base.fit_mode,
-        nondifferentiable_outputs=base.nondifferentiable_outputs,
-        conditions=conditions,
+    contract = regressor_result.derivative_contract.compose(
+        _inverse_target_view(transform_result.derivative_contract)
     )
     return valid, status, contract
 
@@ -231,7 +235,7 @@ def _inverse_targets(
     return jnp.asarray(restored).reshape(leading + target_shape)
 
 
-class FittedTransformedTargetRegressor(AbstractArrayModel):
+class FittedTransformedTargetRegressor(AbstractFittedModel):
     """Fitted regressor paired with the exact fitted inverse target transform."""
 
     regressor: AbstractArrayModel
@@ -242,10 +246,13 @@ class FittedTransformedTargetRegressor(AbstractArrayModel):
     transform_output_schema: FeatureSchema
     target_schema: TargetSchema
     target_shape: tuple[int, ...] = eqx.field(static=True)
-    gradient_contract: GradientContract
+    derivative_contract: DerivativeContract
     in_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     _input_binding: ModelBinding = eqx.field(static=True)  # ty: ignore[invalid-attribute-override]
+
+    def output_ports(self) -> tuple[ValuePort, ...]:
+        return self.target_output_ports()
 
     def __init__(
         self,
@@ -259,7 +266,7 @@ class FittedTransformedTargetRegressor(AbstractArrayModel):
         transform_output_schema: FeatureSchema,
         target_schema: TargetSchema,
         target_shape: tuple[int, ...],
-        gradient_contract: GradientContract,
+        derivative_contract: DerivativeContract,
     ):
         if not isinstance(regressor, AbstractArrayModel):
             raise TypeError("regressor must be an AbstractArrayModel.")
@@ -297,7 +304,7 @@ class FittedTransformedTargetRegressor(AbstractArrayModel):
         self.transform_output_schema = transform_output_schema
         self.target_schema = target_schema
         self.target_shape = tuple(target_shape)
-        self.gradient_contract = gradient_contract
+        self.derivative_contract = derivative_contract
         self.in_size = regressor.in_size
         if not target_shape:
             self.out_size = "scalar"
@@ -399,7 +406,7 @@ class TransformedTargetRegressor(AbstractRecipe):
             transform_output_schema=transformed.feature_schema,
             target_schema=batch.target_schema,
             target_shape=target_shape,
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
         diagnostics = CompositionDiagnostics(
             ("transformer", "regressor"),
@@ -413,7 +420,7 @@ class TransformedTargetRegressor(AbstractRecipe):
             valid=valid,
             status=status,
             method="transformed_target_regressor",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

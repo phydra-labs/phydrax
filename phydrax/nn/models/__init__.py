@@ -27,7 +27,11 @@ from ._flow_process import (
     StateTimeProcessConditioner,
 )
 from ._holomorphic import HolomorphicMLP
-from ._input_convex import InputConvexNetwork, PartiallyInputConvexNetwork
+from ._input_convex import (
+    InputConvexCertificate,
+    InputConvexNetwork,
+    PartiallyInputConvexNetwork,
+)
 from ._kan import KAN, KANEdgeBlock
 from ._kan_adaptation import (
     adapt_kan_grids,
@@ -143,6 +147,7 @@ __all__ = [
     "FixedSubspaceOnsagerModel",
     "FixedSubspaceProjectionReport",
     "IdentityCoefficientTransition",
+    "InputConvexCertificate",
     "InputConvexNetwork",
     "KAN",
     "HolomorphicMLP",

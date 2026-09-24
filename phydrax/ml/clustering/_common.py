@@ -11,10 +11,10 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
-from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._numerics import MetricName
+from .._schema import AbstractFittedModel
 
 
 ClusterInitialization: TypeAlias = Literal["random", "first", "k-means++"]
@@ -226,7 +226,7 @@ class ClusterDiagnostics(StrictModule):
         self.method = str(method)
 
 
-class HardClusterModel(AbstractArrayModel):
+class HardClusterModel(AbstractFittedModel):
     """Terminal nondifferentiable nearest-representative assignment."""
 
     centers: Array
@@ -272,7 +272,7 @@ class HardClusterModel(AbstractArrayModel):
         )
 
 
-class SoftClusterModel(AbstractArrayModel):
+class SoftClusterModel(AbstractFittedModel):
     """Differentiable temperature-relaxed nearest-center responsibilities."""
 
     centers: Array

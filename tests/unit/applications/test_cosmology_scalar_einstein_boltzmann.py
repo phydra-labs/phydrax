@@ -9,6 +9,16 @@ from phydrax.applications.cosmology._native_boltzmann import (
 )
 
 
+NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
+    (
+        phx.DerivativeSurface.INPUT,
+        phx.DerivativeSurface.MODEL_PARAMETER,
+        phx.DerivativeSurface.PHYSICAL_PARAMETER,
+        phx.DerivativeSurface.STORED_VALUES,
+    )
+)
+
+
 cosmology = phx.applications.cosmology
 
 
@@ -33,7 +43,7 @@ def _prepared(*, scale_count=40, line_of_sight_quadrature_tolerance=1.0e-2):
         physics_policy_id="synthetic-visibility",
         scale_id=scale_contract.scale_id,
         source_kind="native",
-        differentiation="native-parameter",
+        differentiation=NATIVE_DIFFERENTIATION,
     )
     scale = jnp.geomspace(1.0e-3, 1.0, scale_count)
     visibility = jnp.exp(-0.5 * ((scale - 0.1) / 0.03) ** 2)

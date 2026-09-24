@@ -12,9 +12,9 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._model import ModelBinding, ValuePort
 from ..._strict import StrictModule
-from .._schema import FeatureSchema, TargetSchema
+from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 
 
 ObjectiveTransform: TypeAlias = Literal[
@@ -315,7 +315,7 @@ class TreeStructureDiagnostics(StrictModule):
         self.capacity_exhausted = jnp.asarray(capacity_exhausted, dtype=jnp.bool_)
 
 
-class TreeEnsemble(AbstractArrayModel):
+class TreeEnsemble(AbstractFittedModel):
     """Frozen, fixed-capacity collection of array-native decision trees.
 
     Child indices are local to a tree. Split kind zero is numeric ``<=``, one is
@@ -354,6 +354,9 @@ class TreeEnsemble(AbstractArrayModel):
     capacity_exhausted: Array
 
     _input_binding: ModelBinding = eqx.field(static=True)  # ty: ignore[invalid-attribute-override]
+
+    def output_ports(self) -> tuple[ValuePort, ...]:
+        return self.target_output_ports()
 
     def __init__(
         self,

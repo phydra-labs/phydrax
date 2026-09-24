@@ -105,8 +105,16 @@ finite-epoch time integrals. Native first/second Lagrangian growth remains an ex
 flat, smooth-dark-energy, matter-era Newtonian approximation.
 
 Cosmology products separate canonical physical state, dependency projections,
-content identity, producer lineage, and independent derivative capabilities. Immutable
-artifacts carry build, license, resource, parent, completion, and failure evidence.
+content identity, producer lineage, and independent derivative capabilities. Each
+product provenance carries a `phydrax.DerivativeContract`: upstream physical
+parameters, stored table values, query coordinates, and local model parameters are
+the `PHYSICAL_PARAMETER`, `STORED_VALUES`, `INPUT`, and `MODEL_PARAMETER` surfaces,
+and a contract without supported surfaces is constant. Combined products `meet`
+their parents' contracts, so a local model parameter stays differentiable when a
+constant external parent is combined with it. Smooth regularity records a
+higher-order claim; an undeclared regularity claims first-order derivatives only.
+Immutable artifacts carry build, license, resource, parent, completion, and failure
+evidence.
 `CoordinateLayout`, `LinearObservationPlan`, `PrecisionCovarianceAction`, and
 `CorrelatedGaussianPlan` provide one ordered theory→window→covariance→likelihood path
 for survey and CMB products.

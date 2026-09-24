@@ -5,6 +5,7 @@
 import json
 import zipfile
 
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -17,7 +18,12 @@ from phydrax._model import (
     model_structure_recipe,
     register_artifact_value,
 )
-from phydrax.ml.artifacts import read_ml_artifact, save_ml_artifact
+from phydrax.ml.artifacts import (
+    executable_identity,
+    load_ml_model,
+    read_ml_artifact,
+    save_ml_artifact,
+)
 
 
 def _first_recipe_key():
@@ -28,53 +34,149 @@ def _second_recipe_key():
     return None
 
 
-def test_ml_artifact_round_trip_preserves_model_and_contract(tmp_path):
-    model = phx.nn.layers.Linear(
-        in_size=2,
-        out_size=1,
-        rwf=False,
-        key=jr.key(17),
+def _dimension(axis):
+    return phx.units.DimensionSignature({axis: 1})
+
+
+def _schema_bound_fit():
+    features = jr.normal(jr.key(3), (24, 2))
+    targets = features @ jnp.asarray([[1.5], [-0.5]]) + 0.25
+    feature_schema = phx.ml.FeatureSchema(
+        ("x", "t"),
+        layout_id="probe",
+        dimensions=(_dimension("length"), _dimension("time")),
     )
-    diagnostics = phx.ml.FitDiagnostics(
-        valid=True,
-        status=phx.ml.ML_SUCCESS,
-        objective=0.25,
-        method="test-fit",
+    target_schema = phx.ml.TargetSchema(
+        "continuous", names=("u",), dimensions=(_dimension("length"),)
     )
-    result = phx.ml.FitResult(
-        model,
-        diagnostics,
-        valid=True,
-        status=phx.ml.ML_SUCCESS,
-        method="test-fit",
-        gradient_contract=phx.ml.GradientContract.direct(conditions=("full rank",)),
+    result = phx.ml.fit(
+        phx.ml.linear.OLSRecipe(),
+        features,
+        targets,
+        feature_schema=feature_schema,
+        target_schema=target_schema,
     )
-    feature_schema = phx.ml.FeatureSchema(("x", "t"))
-    target_schema = phx.ml.TargetSchema("continuous", names=("u",))
+    return result, feature_schema, target_schema
+
+
+def test_fitted_executable_retains_schemas_and_ports_through_jit_and_artifacts(
+    tmp_path,
+):
+    result, feature_schema, target_schema = _schema_bound_fit()
+    executable = result.as_trainable()
+    ports = result.model_ports()
+    points = jnp.asarray([[1.0, 2.0], [-3.0, 0.5]])
+
+    (port,) = ports.inputs
+    assert port.component_ids == ("x", "t")
+    assert port.dimensions == feature_schema.dimensions
+    assert [output.component_ids for output in ports.outputs] == [("u",)]
+    assert ports.outputs[0].dimensions == target_schema.dimensions
+
+    passed = eqx.filter_jit(lambda model: model)(executable)
+    dynamic, static = eqx.partition(executable, eqx.is_inexact_array)
+    recombined = eqx.combine(dynamic, static)
+    for model in (passed, recombined):
+        assert model.feature_schema == feature_schema
+        assert model.model_ports().ports_id == ports.ports_id
+
+    destination = tmp_path / "bound.phxml"
+    save_ml_artifact(destination, executable, fit_result=result)
+    loaded = load_ml_model(destination)
+
+    assert loaded.feature_schema == feature_schema
+    assert loaded.target_schema == target_schema
+    assert loaded.model_ports().ports_id == ports.ports_id
+    assert jnp.allclose(loaded(points), executable(points))
+
+
+def test_ml_artifact_round_trip_preserves_contract_and_identity(tmp_path):
+    result, feature_schema, target_schema = _schema_bound_fit()
+    executable = result.as_trainable()
     destination = tmp_path / "linear.phxml"
 
     save_ml_artifact(
         destination,
-        result.model,
+        executable,
         fit_result=result,
-        feature_schema=feature_schema,
-        target_schema=target_schema,
         provenance={"source": "native", "revision": 3},
         licenses=("PNPL-2.2",),
     )
     restored = read_ml_artifact(destination)
-    assert restored.manifest.feature_schema is not None
-    assert restored.manifest.target_schema is not None
-    assert restored.manifest.fit is not None
-    points = jnp.array([[1.0, 2.0], [-3.0, 0.5]])
+    manifest = restored.manifest
+    semantic, numeric, signature = executable_identity(executable)
 
-    assert jnp.allclose(restored.model(points), result.model(points))
-    assert restored.manifest.model_type == "phydrax.ml.core:FrozenModel"
-    assert restored.manifest.feature_schema["names"] == ["x", "t"]
-    assert restored.manifest.target_schema["names"] == ["u"]
-    assert restored.manifest.fit["gradient_contract"]["fit_mode"] == "direct"
-    assert restored.manifest.provenance == {"revision": 3, "source": "native"}
-    assert restored.manifest.licenses == ("PNPL-2.2",)
+    assert manifest.derivative_contract == result.derivative_contract
+    assert manifest.derivative_contract.contract_id == (
+        result.derivative_contract.contract_id
+    )
+    assert manifest.semantic_provenance.semantic_id == semantic.semantic_id
+    assert manifest.numeric_revision.revision_id == numeric.revision_id
+    assert manifest.executable_signature.signature_id == signature.signature_id
+    assert manifest.feature_schema == feature_schema
+    assert manifest.target_schema == target_schema
+    assert manifest.ports.ports_id == result.model_ports().ports_id
+    assert manifest.fit["method"] == result.method
+    assert manifest.provenance == {"revision": 3, "source": "native"}
+    assert manifest.licenses == ("PNPL-2.2",)
+
+
+def test_ml_artifact_identity_distinguishes_numeric_revisions():
+    result, _, _ = _schema_bound_fit()
+    executable = result.as_trainable()
+    shifted = eqx.tree_at(
+        lambda model: model.intercept, executable, executable.intercept + 1.0
+    )
+
+    semantic, numeric, signature = executable_identity(executable)
+    shifted_semantic, shifted_numeric, shifted_signature = executable_identity(shifted)
+
+    assert shifted_semantic.semantic_id == semantic.semantic_id
+    assert shifted_signature.signature_id == signature.signature_id
+    assert shifted_numeric.revision_id != numeric.revision_id
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda manifest: manifest["identity"].__setitem__(
+                "numeric_revision_id", "0" * 64
+            ),
+            "identity",
+        ),
+        (
+            lambda manifest: manifest["feature_schema"].__setitem__("names", ["x", "z"]),
+            "schemas or ports",
+        ),
+    ],
+)
+def test_ml_artifact_rejects_records_inconsistent_with_executable(
+    tmp_path, mutate, message
+):
+    result, _, _ = _schema_bound_fit()
+    destination = tmp_path / "tampered.phxml"
+    save_ml_artifact(destination, result.as_trainable(), fit_result=result)
+    _rewrite_archive_manifest(destination, mutate)
+
+    with pytest.raises(ArrayArchiveCorruptionError, match=message):
+        read_ml_artifact(destination)
+
+
+def test_ml_artifact_refuses_previous_format_record(tmp_path):
+    result, _, _ = _schema_bound_fit()
+    destination = tmp_path / "previous.phxml"
+    save_ml_artifact(destination, result.as_trainable(), fit_result=result)
+
+    def previous_format(manifest):
+        for field in ("ports", "derivative_contract", "identity"):
+            del manifest[field]
+        manifest["fit"]["gradient_contract"] = {"fit_mode": "direct"}
+
+    _rewrite_archive_manifest(destination, previous_format)
+
+    with pytest.raises(ArrayArchiveCorruptionError, match="manifest fields"):
+        read_ml_artifact(destination)
 
 
 def test_ml_artifact_rejects_checksum_corruption(tmp_path):

@@ -18,7 +18,12 @@ from phydrax.ein import contract
 from ..._admissibility import (
     AdmissibilityHeader,
     AdmissibilityReason,
-    DerivativeAvailability,
+)
+from ..._differentiation import (
+    branch_policy_contract,
+    BranchDifferentiationPolicy,
+    DerivativeContract,
+    DerivativeSurface,
 )
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -175,6 +180,13 @@ class WallRegimePolicy(StrictModule, NonTrainableState):
         )
 
 
+# Derivatives of the executed algorithm with model and regime decisions frozen.
+_DERIVATIVE_CONTRACT = branch_policy_contract(
+    BranchDifferentiationPolicy.FROZEN_DECISION,
+    surfaces=(DerivativeSurface.PRIMAL_STATE, DerivativeSurface.PHYSICAL_PARAMETER),
+)
+
+
 class RarefiedWallEvaluation(StrictModule):
     normal_diffusive_flux: Array
     gas_velocity_trace: Array
@@ -187,7 +199,7 @@ class RarefiedWallEvaluation(StrictModule):
     wall_mechanical_power: Array
     outward_thermal_flux: Array
     header: AdmissibilityHeader
-    derivative_availability: DerivativeAvailability = eqx.field(static=True)
+    derivative_contract: DerivativeContract
     plan_id: str = eqx.field(static=True)
 
 
@@ -486,7 +498,7 @@ class MaxwellSmoluchowskiContinuumWallPlan(AbstractConservationBoundary):
             mechanical_power,
             outward_thermal,
             header,
-            DerivativeAvailability.ALGORITHMIC_FIXED_MODEL,
+            _DERIVATIVE_CONTRACT,
             self.boundary_id,
         )
 
