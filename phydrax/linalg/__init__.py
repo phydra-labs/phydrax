@@ -175,12 +175,10 @@ from ._incomplete_factorizations import (
 )
 from ._inertia import factorization_inertia, InertiaEvidence, InertiaPolicy
 from ._initial_guess import (
-    HistoryLinearSolveResult,
-    LinearInitialGuessDiagnostics,
-    LinearInitialGuessStrategy,
-    LinearSolveHistory,
-    LinearSolveHistoryPolicy,
-    solve_with_history,
+    AbstractInitialGuessProvider,
+    HistoryInitialGuess,
+    HistoryInitialGuessStrategy,
+    LearnedInitialGuess,
 )
 from ._lanczos_resolvent import (
     lanczos_resolvent_form,
@@ -498,6 +496,7 @@ from ._resilience import (
     solve_resilient,
 )
 from ._results import (
+    InitialGuessDiagnostics,
     linear_status_message,
     LinearIterationMetrics,
     LinearPrecisionEvidence,
@@ -926,12 +925,11 @@ __all__ = [
     "FactoredMatrixEquationStatus",
     "FactoredMatrixSolution",
     "FactoredMatrixSolutionForm",
-    "HistoryLinearSolveResult",
-    "LinearInitialGuessDiagnostics",
-    "LinearInitialGuessStrategy",
-    "LinearSolveHistory",
-    "LinearSolveHistoryPolicy",
-    "solve_with_history",
+    "AbstractInitialGuessProvider",
+    "HistoryInitialGuess",
+    "HistoryInitialGuessStrategy",
+    "InitialGuessDiagnostics",
+    "LearnedInitialGuess",
     "MatrixEquationCostEstimate",
     "MatrixEquationDiagnostics",
     "MatrixEquationKind",

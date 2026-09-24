@@ -2,25 +2,37 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+"""Untrusted initial-guess providers for linear and nonlinear solves."""
+
 from __future__ import annotations
 
-from typing import Any, Literal
+import abc
+from collections.abc import Callable
+from typing import Any, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, PyTree
 
+from .._differentiation import ComponentAuthority
 from .._fingerprint import canonical_fingerprint
-from .._strict import StrictModule
+from .._model import (
+    AbstractArrayModel,
+    AbstractComponentSlot,
+    ComponentBinding,
+    ComponentContract,
+)
+from .._model._component import slot_component_contracts
 from .._trainable import NonTrainableState
 from ._dense_pseudoinverse import apply_pseudoinverse, factor_pseudoinverse
 from ._operators import AbstractLinearOperator
 from ._policies import RankPolicy
+from ._results import InitialGuessDiagnostics
 from ._spaces import AbstractVectorSpace
 
 
-LinearInitialGuessStrategy = Literal[
+HistoryInitialGuessStrategy: TypeAlias = Literal[
     "zero",
     "last-solution",
     "projection",
@@ -29,71 +41,81 @@ LinearInitialGuessStrategy = Literal[
 ]
 
 
-class LinearSolveHistoryPolicy(StrictModule, NonTrainableState):
-    strategy: LinearInitialGuessStrategy = eqx.field(static=True)
-    capacity: int = eqx.field(static=True)
-    extrapolation_degree: int = eqx.field(static=True)
-    rank_tolerance: float = eqx.field(static=True)
-    reorthogonalizations: int = eqx.field(static=True)
-    policy_id: str = eqx.field(static=True)
+class AbstractInitialGuessProvider(AbstractComponentSlot):
+    """Source of untrusted initial guesses for linear and nonlinear solves.
 
-    def __init__(
-        self,
-        strategy: LinearInitialGuessStrategy = "projection",
-        /,
-        *,
-        capacity: int = 6,
-        extrapolation_degree: int = 2,
-        rank_tolerance: float = 1.0e-10,
-        reorthogonalizations: int = 2,
-    ):
-        strategy_ = str(strategy)
-        capacity_ = int(capacity)
-        degree = int(extrapolation_degree)
-        tolerance = float(rank_tolerance)
-        reorthogonalizations_ = int(reorthogonalizations)
-        if strategy_ not in (
-            "zero",
-            "last-solution",
-            "projection",
-            "rolling-qr",
-            "stabilized-extrapolation",
-        ):
-            raise ValueError("Unknown linear initial-guess strategy.")
-        if (
-            capacity_ < 1
-            or degree < 0
-            or (strategy_ == "stabilized-extrapolation" and degree >= capacity_)
-        ):
-            raise ValueError("History capacity/degree are incompatible.")
-        if tolerance <= 0.0 or reorthogonalizations_ < 1:
-            raise ValueError("History rank controls are invalid.")
-        self.strategy = strategy_
-        self.capacity = capacity_
-        self.extrapolation_degree = degree
-        self.rank_tolerance = tolerance
-        self.reorthogonalizations = reorthogonalizations_
-        self.policy_id = canonical_fingerprint(
-            {
-                "kind": "linear-solve-history-policy",
-                "strategy": strategy_,
-                "capacity": capacity_,
-                "extrapolation_degree": degree,
-                "rank_tolerance": tolerance,
-                "reorthogonalizations": reorthogonalizations_,
-            }
-        )
+    The base is the neutral `ACCELERATOR` slot of solves: a provider may change
+    how much work a solve performs but never the equation it solves.
+    `propose(data, baseline)` maps the solve data (a linear right-hand side or
+    nonlinear `args`) and the native baseline guess to a proposed solution. A
+    production solve evaluates the proposal against that baseline on device and
+    visibly keeps the baseline unless the proposal is valid with a strictly
+    smaller residual (`InitialGuessDiagnostics`); the selected guess carries no
+    derivative. Training differentiates the raw `propose` output through an
+    algorithmic-work objective instead.
+    """
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.ACCELERATOR
+    slot_semantic_id: ClassVar[str] = "phydrax.linalg.initial-guess"
+
+    provider_id: eqx.AbstractVar[str]
+
+    @abc.abstractmethod
+    def propose(self, data: PyTree[Any], baseline: PyTree[Any], /) -> PyTree[Array]:
+        """Return a proposed solution with the baseline's structure."""
+        raise NotImplementedError
 
 
-class LinearInitialGuessDiagnostics(StrictModule):
-    effective_dimension: Array
-    rank: Array
-    projection_residual_norm: Array
-    reused: Array
-    strategy: str = eqx.field(static=True)
+def _select_proposal(
+    proposal: PyTree[Array],
+    baseline: PyTree[Array],
+    proposal_residual_norm: Array,
+    baseline_residual_norm: Array,
+    proposal_valid: Array,
+    /,
+    *,
+    provider_id: str,
+    baseline_valid: Array | bool = True,
+) -> tuple[PyTree[Array], InitialGuessDiagnostics]:
+    """Select a valid, strictly improving proposal over the native baseline.
+
+    The owning solve supplies both residual norms and the proposal validity.
+    Selection is elementwise over leading evidence axes. The selected guess and
+    the evidence are stopped: no derivative flows through the branch or the
+    proposal.
+    """
+    proposal_norm = jax.lax.stop_gradient(jnp.asarray(proposal_residual_norm))
+    baseline_norm = jax.lax.stop_gradient(jnp.asarray(baseline_residual_norm))
+    valid = jnp.asarray(proposal_valid, dtype=jnp.bool_) & jnp.isfinite(proposal_norm)
+    baseline_ok = jnp.asarray(baseline_valid, dtype=jnp.bool_)
+    accepted = valid & (~baseline_ok | (proposal_norm < baseline_norm))
+    selected = jax.tree.map(
+        lambda proposed, native: jax.lax.stop_gradient(
+            jnp.where(accepted, proposed, native)
+        ),
+        proposal,
+        baseline,
+    )
+    return selected, InitialGuessDiagnostics(
+        proposal_residual_norm=proposal_norm,
+        baseline_residual_norm=baseline_norm,
+        proposal_valid=valid,
+        accepted=accepted,
+        provider_id=provider_id,
+    )
 
 
-class LinearSolveHistory(StrictModule):
+class HistoryInitialGuess(AbstractInitialGuessProvider, NonTrainableState):
+    """Accepted-solution history of one linear operator family.
+
+    Strategies are `"zero"`, `"last-solution"`, `"projection"` (paired RHS-image
+    projection minimizing the represented RHS residual), `"rolling-qr"`
+    (fixed-capacity QR of the RHS images), and `"stabilized-extrapolation"`
+    (polynomial extrapolation in accepted times to `at_time(time)`). The history
+    records accepted solutions only through `update` and carries explicit
+    operator-family, constraint, and nullspace identities; it is fixed data.
+    """
+
     source: AbstractVectorSpace
     target: AbstractVectorSpace
     solution_basis: Array
@@ -101,34 +123,51 @@ class LinearSolveHistory(StrictModule):
     times: Array
     effective_dimension: Array
     update_count: Array
+    target_time: Array | None
+    strategy: HistoryInitialGuessStrategy = eqx.field(static=True)
+    capacity: int = eqx.field(static=True)
+    extrapolation_degree: int = eqx.field(static=True)
+    rank_tolerance: float = eqx.field(static=True)
     operator_family_id: str = eqx.field(static=True)
     constraint_id: str = eqx.field(static=True)
     nullspace_policy_id: str = eqx.field(static=True)
-    policy: LinearSolveHistoryPolicy
-    history_id: str = eqx.field(static=True)
+    provider_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        source: AbstractVectorSpace,
-        target: AbstractVectorSpace,
-        policy: LinearSolveHistoryPolicy,
+        operator: AbstractLinearOperator,
         operator_family_id: str,
         /,
         *,
+        strategy: HistoryInitialGuessStrategy = "projection",
+        capacity: int = 6,
+        extrapolation_degree: int = 2,
+        rank_tolerance: float = 1.0e-10,
         constraint_id: str = "unconstrained",
         nullspace_policy_id: str = "none",
-        solution_basis: ArrayLike | None = None,
-        rhs_image_basis: ArrayLike | None = None,
-        times: ArrayLike | None = None,
-        effective_dimension: ArrayLike = 0,
-        update_count: ArrayLike = 0,
     ):
-        if not isinstance(source, AbstractVectorSpace) or not isinstance(
-            target, AbstractVectorSpace
+        if not isinstance(operator, AbstractLinearOperator):
+            raise TypeError("operator must be AbstractLinearOperator.")
+        strategy_ = str(strategy)
+        capacity_ = int(capacity)
+        degree = int(extrapolation_degree)
+        tolerance = float(rank_tolerance)
+        if strategy_ not in (
+            "zero",
+            "last-solution",
+            "projection",
+            "rolling-qr",
+            "stabilized-extrapolation",
         ):
-            raise TypeError("History spaces must be AbstractVectorSpace values.")
-        if not isinstance(policy, LinearSolveHistoryPolicy):
-            raise TypeError("policy must be LinearSolveHistoryPolicy.")
+            raise ValueError("Unknown history initial-guess strategy.")
+        if (
+            capacity_ < 1
+            or degree < 0
+            or (strategy_ == "stabilized-extrapolation" and degree >= capacity_)
+        ):
+            raise ValueError("History capacity/degree are incompatible.")
+        if not tolerance > 0.0:
+            raise ValueError("History rank_tolerance must be positive.")
         identifiers = (
             str(operator_family_id),
             str(constraint_id),
@@ -136,83 +175,40 @@ class LinearSolveHistory(StrictModule):
         )
         if any(not value for value in identifiers):
             raise ValueError("History compatibility identities must be non-empty.")
-        source_dtype = source.flatten(source.zeros()).dtype
-        target_dtype = target.flatten(target.zeros()).dtype
-        solutions = (
-            jnp.zeros((source.size, policy.capacity), dtype=source_dtype)
-            if solution_basis is None
-            else jnp.asarray(solution_basis)
-        )
-        images = (
-            jnp.zeros((target.size, policy.capacity), dtype=target_dtype)
-            if rhs_image_basis is None
-            else jnp.asarray(rhs_image_basis)
-        )
-        times_ = (
-            jnp.full((policy.capacity,), jnp.nan, dtype=jnp.float64)
-            if times is None
-            else jnp.asarray(times)
-        )
-        effective = jnp.asarray(effective_dimension, dtype=jnp.int32)
-        updates = jnp.asarray(update_count, dtype=jnp.int32)
-        if solutions.shape != (source.size, policy.capacity):
-            raise ValueError("Solution history basis has an invalid shape.")
-        if images.shape != (target.size, policy.capacity):
-            raise ValueError("RHS-image history basis has an invalid shape.")
-        if (
-            times_.shape != (policy.capacity,)
-            or effective.shape != ()
-            or updates.shape != ()
-        ):
-            raise ValueError("History time/counter layouts are invalid.")
-        effective = eqx.error_if(
-            effective,
-            (effective < 0) | (effective > policy.capacity),
-            "History effective dimension is out of bounds.",
-        )
+        source = operator.source
+        target = operator.target
         self.source = source
         self.target = target
-        self.solution_basis = solutions
-        self.rhs_image_basis = images
-        self.times = times_
-        self.effective_dimension = effective
-        self.update_count = updates
+        self.solution_basis = jnp.zeros(
+            (source.size, capacity_), dtype=source.flatten(source.zeros()).dtype
+        )
+        self.rhs_image_basis = jnp.zeros(
+            (target.size, capacity_), dtype=target.flatten(target.zeros()).dtype
+        )
+        self.times = jnp.full((capacity_,), jnp.nan, dtype=jnp.float64)
+        self.effective_dimension = jnp.asarray(0, dtype=jnp.int32)
+        self.update_count = jnp.asarray(0, dtype=jnp.int32)
+        self.target_time = None
+        self.strategy = strategy_
+        self.capacity = capacity_
+        self.extrapolation_degree = degree
+        self.rank_tolerance = tolerance
         self.operator_family_id, self.constraint_id, self.nullspace_policy_id = (
             identifiers
         )
-        self.policy = policy
-        self.history_id = canonical_fingerprint(
+        self.provider_id = canonical_fingerprint(
             {
-                "kind": "linear-solve-history",
+                "kind": "history-initial-guess",
                 "source": source.space_id,
                 "target": target.space_id,
-                "policy": policy.policy_id,
+                "strategy": strategy_,
+                "capacity": capacity_,
+                "extrapolation_degree": degree,
+                "rank_tolerance": tolerance,
                 "operator_family": identifiers[0],
                 "constraint": identifiers[1],
                 "nullspace": identifiers[2],
             }
-        )
-
-    @classmethod
-    def empty(
-        cls,
-        operator: AbstractLinearOperator,
-        policy: LinearSolveHistoryPolicy,
-        operator_family_id: str,
-        /,
-        *,
-        constraint_id: str = "unconstrained",
-        nullspace_policy_id: str = "none",
-    ) -> LinearSolveHistory:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be AbstractLinearOperator.")
-        return cls(
-            operator.source,
-            operator.target,
-            policy,
-            operator_family_id,
-            constraint_id=constraint_id,
-            nullspace_policy_id=nullspace_policy_id,
         )
 
     def compatible(
@@ -224,6 +220,7 @@ class LinearSolveHistory(StrictModule):
         constraint_id: str = "unconstrained",
         nullspace_policy_id: str = "none",
     ) -> bool:
+        """Whether `operator` and the declared identities match this history."""
         return (
             isinstance(operator, AbstractLinearOperator)
             and self.source.compatible(operator.source)
@@ -233,130 +230,102 @@ class LinearSolveHistory(StrictModule):
             and self.nullspace_policy_id == str(nullspace_policy_id)
         )
 
-    def _active_mask(self) -> Array:
-        return jnp.arange(self.policy.capacity) < self.effective_dimension
+    def at_time(self, time: ArrayLike, /) -> HistoryInitialGuess:
+        """Return this history targeting `time` for stabilized extrapolation."""
+        value = jnp.asarray(time, dtype=self.times.dtype)
+        if value.shape != ():
+            raise ValueError("History target time must be scalar.")
+        return eqx.tree_at(
+            lambda history: history.target_time,
+            self,
+            value,
+            is_leaf=lambda node: node is None,
+        )
 
-    def initial_guess(
-        self,
-        rhs: PyTree[Any],
-        /,
-        *,
-        time: ArrayLike | None = None,
-    ) -> tuple[PyTree[Array], LinearInitialGuessDiagnostics]:
-        rhs_ = self.target.validate(rhs)
-        rhs_coordinates = self.target.flatten(rhs_)
-        mask = self._active_mask()
+    def propose(self, data: PyTree[Any], baseline: PyTree[Any], /) -> PyTree[Array]:
+        """Propose a solution for right-hand side `data` from accepted history."""
+        rhs_coordinates = self.target.flatten(self.target.validate(data))
+        self.source.validate(baseline)
+        match self.strategy:
+            case "zero":
+                coordinates = jnp.zeros(
+                    (self.source.size,), dtype=self.solution_basis.dtype
+                )
+            case "last-solution":
+                coordinates = self._last_solution()
+            case "stabilized-extrapolation":
+                coordinates = self._extrapolated()
+            case "rolling-qr":
+                coordinates = self._rolling_qr(rhs_coordinates)
+            case "projection":
+                coordinates = self._projection(rhs_coordinates)
+            case strategy:
+                raise ValueError(f"Unknown history initial-guess strategy {strategy!r}.")
+        return self.source.unflatten(jax.lax.stop_gradient(coordinates))
+
+    def _active_mask(self) -> Array:
+        return jnp.arange(self.capacity) < self.effective_dimension
+
+    def _last_solution(self) -> Array:
         effective = self.effective_dimension
-        zero = self.source.zeros()
-        if self.policy.strategy == "zero":
-            return zero, LinearInitialGuessDiagnostics(
-                effective_dimension=effective,
-                rank=jnp.asarray(0, dtype=jnp.int32),
-                projection_residual_norm=self.target.norm(rhs_),
-                reused=jnp.asarray(False),
-                strategy=self.policy.strategy,
+        index = jnp.maximum(effective - 1, 0)
+        return jnp.where(
+            effective > 0,
+            self.solution_basis[:, index],
+            jnp.zeros((self.source.size,), dtype=self.solution_basis.dtype),
+        )
+
+    def _extrapolated(self) -> Array:
+        if self.target_time is None:
+            raise ValueError(
+                "Extrapolation initial guesses require a target time; use at_time."
             )
-        if self.policy.strategy == "last-solution":
-            index = jnp.maximum(effective - 1, 0)
-            coordinates = jnp.where(
-                effective > 0,
-                self.solution_basis[:, index],
-                jnp.zeros((self.source.size,), dtype=self.solution_basis.dtype),
-            )
-            return self.source.unflatten(
-                jax.lax.stop_gradient(coordinates)
-            ), LinearInitialGuessDiagnostics(
-                effective_dimension=effective,
-                rank=jnp.minimum(effective, 1),
-                projection_residual_norm=jnp.asarray(jnp.nan),
-                reused=effective > 0,
-                strategy=self.policy.strategy,
-            )
-        if self.policy.strategy == "stabilized-extrapolation":
-            if time is None:
-                raise ValueError("Extrapolation initial guesses require a target time.")
-            degree_count = min(self.policy.extrapolation_degree + 1, self.policy.capacity)
-            used = jnp.minimum(effective, degree_count)
-            start = jnp.maximum(effective - degree_count, 0)
-            recent_solutions = jnp.roll(self.solution_basis, -start, axis=1)[
-                :, :degree_count
-            ]
-            recent_times = jnp.roll(self.times, -start)[:degree_count]
-            valid = jnp.arange(degree_count) < used
-            scale = jnp.maximum(
-                jnp.max(jnp.where(valid, jnp.abs(recent_times), 0.0)), 1.0
-            )
-            nodes = recent_times / scale
-            target = jnp.asarray(time) / scale
-            powers = jnp.arange(degree_count)
-            vandermonde = nodes[:, None] ** powers[None, :]
-            system = jnp.where(valid[:, None], vandermonde, 0.0)
-            system = system + jnp.diag((~valid).astype(system.dtype))
-            target_values = target**powers
-            coefficients = jnp.linalg.solve(system.T, target_values)
-            coordinates = recent_solutions @ coefficients
-            coordinates = jnp.where(used > 0, coordinates, 0.0)
-            return self.source.unflatten(
-                jax.lax.stop_gradient(coordinates)
-            ), LinearInitialGuessDiagnostics(
-                effective_dimension=effective,
-                rank=used,
-                projection_residual_norm=jnp.asarray(jnp.nan),
-                reused=used > 0,
-                strategy=self.policy.strategy,
-            )
+        effective = self.effective_dimension
+        degree_count = min(self.extrapolation_degree + 1, self.capacity)
+        used = jnp.minimum(effective, degree_count)
+        start = jnp.maximum(effective - degree_count, 0)
+        recent_solutions = jnp.roll(self.solution_basis, -start, axis=1)[:, :degree_count]
+        recent_times = jnp.roll(self.times, -start)[:degree_count]
+        valid = jnp.arange(degree_count) < used
+        scale = jnp.maximum(jnp.max(jnp.where(valid, jnp.abs(recent_times), 0.0)), 1.0)
+        nodes = recent_times / scale
+        target = self.target_time / scale
+        powers = jnp.arange(degree_count)
+        vandermonde = nodes[:, None] ** powers[None, :]
+        system = jnp.where(valid[:, None], vandermonde, 0.0)
+        system = system + jnp.diag((~valid).astype(system.dtype))
+        coefficients = jnp.linalg.solve(system.T, target**powers)
+        coordinates = recent_solutions @ coefficients
+        return jnp.where(used > 0, coordinates, 0.0)
+
+    def _rolling_qr(self, rhs_coordinates: Array) -> Array:
+        mask = self._active_mask()
         active_images = jnp.where(mask[None, :], self.rhs_image_basis, 0.0)
-        if self.policy.strategy == "rolling-qr":
-            q_basis, upper = jnp.linalg.qr(active_images, mode="reduced")
-            factors = factor_pseudoinverse(
-                upper,
-                RankPolicy(relative_cutoff=self.policy.rank_tolerance),
-            )
-            coefficients = apply_pseudoinverse(
-                factors,
-                jnp.conj(q_basis.T) @ rhs_coordinates,
-            )
-            coefficients = jnp.where(mask, coefficients, 0.0)
-            coordinates = self.solution_basis @ coefficients
-            projected = active_images @ coefficients
-            residual = rhs_coordinates - projected
-            rank = factors.rank
-            return self.source.unflatten(
-                jax.lax.stop_gradient(coordinates)
-            ), LinearInitialGuessDiagnostics(
-                effective_dimension=effective,
-                rank=rank,
-                projection_residual_norm=jnp.sqrt(jnp.real(jnp.vdot(residual, residual))),
-                reused=effective > 0,
-                strategy=self.policy.strategy,
-            )
+        q_basis, upper = jnp.linalg.qr(active_images, mode="reduced")
+        factors = factor_pseudoinverse(
+            upper,
+            RankPolicy(relative_cutoff=self.rank_tolerance),
+        )
+        coefficients = apply_pseudoinverse(
+            factors,
+            jnp.conj(q_basis.T) @ rhs_coordinates,
+        )
+        return self.solution_basis @ jnp.where(mask, coefficients, 0.0)
+
+    def _projection(self, rhs_coordinates: Array) -> Array:
+        mask = self._active_mask()
+        active_images = jnp.where(mask[None, :], self.rhs_image_basis, 0.0)
         gram = jnp.conj(active_images.T) @ active_images
-        rhs_projection = jnp.conj(active_images.T) @ rhs_coordinates
-        inactive = (~mask).astype(gram.dtype)
-        gram = gram + jnp.diag(inactive)
+        gram = gram + jnp.diag((~mask).astype(gram.dtype))
         factors = factor_pseudoinverse(
             gram,
-            RankPolicy(relative_cutoff=self.policy.rank_tolerance),
+            RankPolicy(relative_cutoff=self.rank_tolerance),
             hermitian=True,
         )
-        rank = jnp.maximum(
-            factors.rank - jnp.sum(~mask, dtype=jnp.int32),
-            0,
+        coefficients = apply_pseudoinverse(
+            factors, jnp.conj(active_images.T) @ rhs_coordinates
         )
-        coefficients = apply_pseudoinverse(factors, rhs_projection)
-        coefficients = jnp.where(mask, coefficients, 0.0)
-        coordinates = self.solution_basis @ coefficients
-        projected = active_images @ coefficients
-        residual = rhs_coordinates - projected
-        return self.source.unflatten(
-            jax.lax.stop_gradient(coordinates)
-        ), LinearInitialGuessDiagnostics(
-            effective_dimension=effective,
-            rank=rank,
-            projection_residual_norm=jnp.sqrt(jnp.real(jnp.vdot(residual, residual))),
-            reused=effective > 0,
-            strategy=self.policy.strategy,
-        )
+        return self.solution_basis @ jnp.where(mask, coefficients, 0.0)
 
     def update(
         self,
@@ -367,7 +336,8 @@ class LinearSolveHistory(StrictModule):
         rhs: PyTree[Any] | None = None,
         time: ArrayLike | None = None,
         accepted: ArrayLike = True,
-    ) -> LinearSolveHistory:
+    ) -> HistoryInitialGuess:
+        """Record one accepted solution; a rejected update is bitwise inert."""
         if (
             not isinstance(operator, AbstractLinearOperator)
             or not self.source.compatible(operator.source)
@@ -382,130 +352,95 @@ class LinearSolveHistory(StrictModule):
         accepted_ = jnp.asarray(accepted, dtype=jnp.bool_)
         if accepted_.shape != () or time_.shape != ():
             raise ValueError("History acceptance/time must be scalar.")
+        effective = self.effective_dimension
+        full = effective >= self.capacity
 
-        def perform(history):
-            effective = history.effective_dimension
-            full = effective >= history.policy.capacity
-            solutions = jax.lax.cond(
+        def append(values, entry):
+            return jax.lax.cond(
                 full,
-                lambda value: jnp.concatenate(
-                    (value[:, 1:], solution_coordinates[:, None]), axis=1
+                lambda current: jnp.concatenate(
+                    (current[..., 1:], entry[..., None]), axis=-1
                 ),
-                lambda value: value.at[:, effective].set(solution_coordinates),
-                history.solution_basis,
+                lambda current: current.at[..., effective].set(entry),
+                values,
             )
-            images = jax.lax.cond(
-                full,
-                lambda value: jnp.concatenate(
-                    (value[:, 1:], image_coordinates[:, None]), axis=1
+
+        def record(history):
+            return eqx.tree_at(
+                lambda value: (
+                    value.solution_basis,
+                    value.rhs_image_basis,
+                    value.times,
+                    value.effective_dimension,
+                    value.update_count,
                 ),
-                lambda value: value.at[:, effective].set(image_coordinates),
-                history.rhs_image_basis,
-            )
-            times = jax.lax.cond(
-                full,
-                lambda value: jnp.concatenate((value[1:], time_[None])),
-                lambda value: value.at[effective].set(time_),
-                history.times,
-            )
-            return LinearSolveHistory(
-                history.source,
-                history.target,
-                history.policy,
-                history.operator_family_id,
-                constraint_id=history.constraint_id,
-                nullspace_policy_id=history.nullspace_policy_id,
-                solution_basis=solutions,
-                rhs_image_basis=images,
-                times=times,
-                effective_dimension=jnp.minimum(effective + 1, history.policy.capacity),
-                update_count=history.update_count + 1,
+                history,
+                (
+                    append(history.solution_basis, solution_coordinates),
+                    append(history.rhs_image_basis, image_coordinates),
+                    append(history.times, time_),
+                    jnp.minimum(effective + 1, self.capacity).astype(jnp.int32),
+                    history.update_count + 1,
+                ),
             )
 
-        return jax.lax.cond(accepted_, perform, lambda history: history, self)
+        return jax.lax.cond(accepted_, record, lambda history: history, self)
 
 
-class HistoryLinearSolveResult(StrictModule):
-    result: object
-    history: LinearSolveHistory
-    initial_guess_diagnostics: LinearInitialGuessDiagnostics
+def _is_component(node: Any, /) -> bool:
+    return isinstance(node, (AbstractArrayModel, ComponentBinding))
+
+
+class LearnedInitialGuess(AbstractInitialGuessProvider):
+    """Model-backed initial-guess proposal.
+
+    `function(data, baseline)` returns a proposed solution. It is a callable
+    module holding at least one model as a dynamic child, whose arrays keep
+    their roles; every `AbstractArrayModel` inside it is bound to this
+    `ACCELERATOR` slot, and a `ComponentBinding` inside it must carry the same
+    authority and slot. A bare array model maps model inputs, not
+    `(data, baseline)`, so it enters through a callable module that defines the
+    proposal. The proposal is never trusted by a production solve.
+    """
+
+    function: Callable[[PyTree[Any], PyTree[Any]], PyTree[Any]]
+    provider_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        result: object,
-        history: LinearSolveHistory,
-        initial_guess_diagnostics: LinearInitialGuessDiagnostics,
+        function: Callable[[PyTree[Any], PyTree[Any]], PyTree[Any]],
         /,
+        *,
+        provider_id: str = "learned-initial-guess",
     ):
-        if not isinstance(history, LinearSolveHistory):
-            raise TypeError("history must be LinearSolveHistory.")
-        if not isinstance(initial_guess_diagnostics, LinearInitialGuessDiagnostics):
+        if _is_component(function):
             raise TypeError(
-                "initial_guess_diagnostics must be LinearInitialGuessDiagnostics."
+                "function must map (data, baseline) to a proposed solution; hold an "
+                "array model in a callable module that defines the proposal."
             )
-        self.result = result
-        self.history = history
-        self.initial_guess_diagnostics = initial_guess_diagnostics
+        if not callable(function):
+            raise TypeError("function must be callable.")
+        identifier = str(provider_id)
+        if not identifier:
+            raise ValueError("provider_id must be non-empty.")
+        if not slot_component_contracts(type(self), function, scope="function"):
+            raise ValueError(
+                "LearnedInitialGuess requires at least one model component in function."
+            )
+        self.function = function
+        self.provider_id = identifier
 
+    def component_contracts(self) -> tuple[tuple[str, ComponentContract], ...]:
+        """Return `(location, contract)` of every model bound to this slot."""
+        return slot_component_contracts(type(self), self.function, scope="function")
 
-def solve_with_history(
-    problem_or_prepared: object,
-    rhs: PyTree[Any],
-    history: LinearSolveHistory,
-    /,
-    *,
-    operator_family_id: str,
-    constraint_id: str = "unconstrained",
-    nullspace_policy_id: str = "none",
-    time: ArrayLike | None = None,
-    accepted: ArrayLike = True,
-    policy: object = None,
-    rhs_layout: object = None,
-    control: object = None,
-    iteration: object = None,
-) -> HistoryLinearSolveResult:
-    from ._plans import PreparedLinearSolve
-    from ._problems import AbstractLinearProblem
-    from ._runtime import solve
-
-    if isinstance(problem_or_prepared, PreparedLinearSolve):
-        operator = problem_or_prepared.problem.operator
-    elif isinstance(problem_or_prepared, AbstractLinearProblem):
-        operator = problem_or_prepared.operator
-    else:
-        raise TypeError("Expected an AbstractLinearProblem or PreparedLinearSolve.")
-    if not isinstance(history, LinearSolveHistory) or not history.compatible(
-        operator,
-        operator_family_id,
-        constraint_id=constraint_id,
-        nullspace_policy_id=nullspace_policy_id,
-    ):
-        raise ValueError("Linear solve history is incompatible with this problem.")
-    guess, diagnostics = history.initial_guess(rhs, time=time)
-    result = solve(
-        problem_or_prepared,
-        rhs,
-        policy=policy,
-        rhs_layout=rhs_layout,
-        initial_guess=guess,
-        control=control,
-        iteration=iteration,
-    )
-    accepted_ = jnp.asarray(accepted, dtype=jnp.bool_) & result.successful
-    updated = history.update(
-        operator,
-        result.value,
-        time=time,
-        accepted=accepted_,
-    )
-    return HistoryLinearSolveResult(result, updated, diagnostics)
+    def propose(self, data: PyTree[Any], baseline: PyTree[Any], /) -> PyTree[Array]:
+        return self.function(data, baseline)
 
 
 __all__ = [
-    "HistoryLinearSolveResult",
-    "LinearInitialGuessDiagnostics",
-    "LinearInitialGuessStrategy",
-    "LinearSolveHistory",
-    "LinearSolveHistoryPolicy",
-    "solve_with_history",
+    "AbstractInitialGuessProvider",
+    "HistoryInitialGuess",
+    "HistoryInitialGuessStrategy",
+    "LearnedInitialGuess",
 ]

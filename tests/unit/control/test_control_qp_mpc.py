@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -498,3 +500,242 @@ def test_mpc_propagates_infeasible_qp_and_nonfinite_rollout_failures():
     assert not result.valid
     assert not result.trajectory.successful
     assert jnp.isnan(result.states[-1]).any()
+
+
+_TIGHT = phx.optim.ConvexSolvePolicy(
+    termination=phx.optim.ConvexTermination(
+        absolute=1e-12, relative=1e-12, maximum_steps=200
+    )
+)
+
+
+def _shifted(problem, tangent, step):
+    def at(name):
+        return getattr(problem, name) + step * getattr(tangent, name)
+
+    return phx.control.LinearQuadraticControlProblem(
+        at("dynamics_matrices"),
+        at("control_matrices"),
+        at("initial_state"),
+        at("state_costs"),
+        at("control_costs"),
+        at("terminal_state_cost"),
+        dynamics_bias=at("dynamics_bias"),
+        state_linear=at("state_linear"),
+        control_linear=at("control_linear"),
+        control_lower_bounds=at("control_lower_bounds"),
+        control_upper_bounds=at("control_upper_bounds"),
+    )
+
+
+def test_mpc_sensitivity_matches_finite_differences_away_from_active_set_changes():
+    horizon = 4
+    dynamics = jnp.stack(
+        (
+            jnp.broadcast_to(jnp.array([[1.0, 0.1], [0.0, 0.95]]), (horizon, 2, 2)),
+            jnp.broadcast_to(jnp.array([[0.9, 0.2], [-0.1, 1.0]]), (horizon, 2, 2)),
+        )
+    )
+    specification = phx.control.LinearQuadraticControlProblem(
+        dynamics,
+        jnp.broadcast_to(jnp.array([[0.0], [0.1]]), (2, horizon, 2, 1)),
+        jnp.array([[1.0, -0.5], [-0.8, 0.3]]),
+        jnp.broadcast_to(jnp.eye(2), (2, horizon, 2, 2)),
+        0.1 * jnp.ones((2, horizon, 1, 1)),
+        5.0 * jnp.broadcast_to(jnp.eye(2), (2, 2, 2)),
+        dynamics_bias=jnp.broadcast_to(jnp.array([0.01, -0.02]), (2, horizon, 2)),
+        state_linear=jnp.broadcast_to(jnp.array([0.05, 0.0]), (2, horizon, 2)),
+        control_linear=jnp.zeros((2, horizon, 1)),
+        control_lower_bounds=-0.4 * jnp.ones((2, horizon, 1)),
+        control_upper_bounds=0.6 * jnp.ones((2, horizon, 1)),
+    )
+    controller = phx.control.RecedingHorizonMPC(
+        specification,
+        prediction_horizon=2,
+        terminal_policy="global",
+        policy=_TIGHT,
+    )
+    sensitivity = phx.control.prepare_receding_horizon_mpc_sensitivity(controller)
+    audited = controller.solve()
+
+    assert sensitivity.refusal is None
+    assert bool(sensitivity.regular)
+    np.testing.assert_array_equal(sensitivity.states, audited.states)
+    np.testing.assert_array_equal(sensitivity.controls, audited.controls)
+    # Both bound types are strictly active somewhere, so the derivative crosses
+    # active constraints without any active-set change.
+    assert jnp.any(jnp.abs(audited.controls - 0.6) < 1e-8)
+    assert jnp.any(jnp.abs(audited.controls + 0.4) < 1e-8)
+
+    keys = jax.random.split(jax.random.PRNGKey(7), 9)
+
+    def symmetric(key, shape):
+        value = jax.random.normal(key, shape)
+        return 0.5 * (value + jnp.swapaxes(value, -1, -2))
+
+    tangent = eqx.tree_at(
+        lambda problem: (
+            problem.dynamics_matrices,
+            problem.control_matrices,
+            problem.initial_state,
+            problem.state_costs,
+            problem.control_costs,
+            problem.terminal_state_cost,
+            problem.dynamics_bias,
+            problem.state_linear,
+            problem.control_upper_bounds,
+        ),
+        jax.tree.map(jnp.zeros_like, specification),
+        (
+            0.1 * jax.random.normal(keys[0], (2, horizon, 2, 2)),
+            jax.random.normal(keys[1], (2, horizon, 2, 1)),
+            jax.random.normal(keys[2], (2, 2)),
+            0.1 * symmetric(keys[3], (2, horizon, 2, 2)),
+            0.01 * symmetric(keys[4], (2, horizon, 1, 1)),
+            symmetric(keys[5], (2, 2, 2)),
+            jax.random.normal(keys[6], (2, horizon, 2)),
+            jax.random.normal(keys[7], (2, horizon, 2)),
+            jax.random.normal(keys[8], (2, horizon, 1)),
+        ),
+    )
+    state_tangent, control_tangent = sensitivity.jvp(tangent)
+
+    step = 1e-6
+    plus = phx.control.RecedingHorizonMPC(
+        _shifted(specification, tangent, step),
+        prediction_horizon=2,
+        terminal_policy="global",
+        policy=_TIGHT,
+    ).solve()
+    minus = phx.control.RecedingHorizonMPC(
+        _shifted(specification, tangent, -step),
+        prediction_horizon=2,
+        terminal_policy="global",
+        policy=_TIGHT,
+    ).solve()
+    np.testing.assert_allclose(
+        state_tangent, (plus.states - minus.states) / (2 * step), atol=2e-5
+    )
+    np.testing.assert_allclose(
+        control_tangent, (plus.controls - minus.controls) / (2 * step), atol=2e-5
+    )
+
+    state_weights = jax.random.normal(jax.random.PRNGKey(11), state_tangent.shape)
+    control_weights = jax.random.normal(jax.random.PRNGKey(12), control_tangent.shape)
+    cotangent = sensitivity.vjp(state_weights, control_weights)
+    assert isinstance(cotangent, phx.control.LinearQuadraticControlProblem)
+    pairing = sum(
+        jnp.vdot(left, right)
+        for left, right in zip(
+            jax.tree.leaves(cotangent), jax.tree.leaves(tangent), strict=True
+        )
+    )
+    np.testing.assert_allclose(
+        pairing,
+        jnp.vdot(state_weights, state_tangent)
+        + jnp.vdot(control_weights, control_tangent),
+        rtol=1e-10,
+    )
+    np.testing.assert_array_equal(cotangent.time_grid.times, 0.0)
+
+
+def test_mpc_sensitivity_refuses_the_complete_derivative_for_one_weak_window():
+    specification = phx.control.LinearQuadraticControlProblem(
+        jnp.ones((2, 1, 1)),
+        jnp.ones((2, 1, 1)),
+        jnp.array([0.0]),
+        jnp.zeros((2, 1, 1)),
+        jnp.ones((2, 1, 1)),
+        jnp.zeros((1, 1)),
+        # Window 0's unconstrained optimum u = 0.5 lies exactly on its bound
+        # (zero multiplier); window 1's optimum u = 0.2 is strictly interior.
+        control_linear=jnp.array([[-0.5], [-0.2]]),
+        control_upper_bounds=0.5 * jnp.ones((2, 1)),
+    )
+    controller = phx.control.RecedingHorizonMPC(
+        specification,
+        prediction_horizon=1,
+        terminal_policy="none",
+        policy=_TIGHT,
+    )
+    sensitivity = phx.control.prepare_receding_horizon_mpc_sensitivity(controller)
+
+    assert sensitivity.result.valid
+    np.testing.assert_allclose(sensitivity.controls[:, 0], [0.5, 0.2], atol=1e-5)
+    np.testing.assert_array_equal(sensitivity.stage_optimal, [True, True])
+    np.testing.assert_array_equal(sensitivity.stage_regular, [False, True])
+    assert not bool(sensitivity.regular)
+    zero = jax.tree.map(jnp.zeros_like, specification)
+    with pytest.raises(ValueError, match=r"refused: windows \[0\] have nonregular"):
+        sensitivity.jvp(zero)
+    with pytest.raises(ValueError, match="refused"):
+        sensitivity.vjp(
+            jnp.zeros_like(sensitivity.states), jnp.zeros_like(sensitivity.controls)
+        )
+
+    infeasible = phx.control.LinearQuadraticControlProblem(
+        jnp.ones((1, 1, 1)),
+        jnp.zeros((1, 1, 1)),
+        jnp.array([1.0]),
+        jnp.zeros((1, 1, 1)),
+        jnp.ones((1, 1, 1)),
+        jnp.zeros((1, 1)),
+        terminal_equality_matrix=jnp.ones((1, 1)),
+        terminal_equality_rhs=jnp.zeros((1,)),
+    )
+    refused = phx.control.prepare_receding_horizon_mpc_sensitivity(
+        phx.control.RecedingHorizonMPC(
+            infeasible, prediction_horizon=1, terminal_policy="global"
+        )
+    )
+    assert refused.linearization is None
+    assert "windows [0] are not valid and OPTIMAL" in refused.refusal
+
+
+def test_mpc_sensitivity_admits_only_dense_cold_unregularized_qp_sensitivities():
+    specification = phx.control.LinearQuadraticControlProblem(
+        jnp.ones((2, 1, 1)),
+        jnp.ones((2, 1, 1)),
+        jnp.array([1.0]),
+        jnp.ones((2, 1, 1)),
+        jnp.ones((2, 1, 1)),
+        jnp.ones((1, 1)),
+    )
+
+    def refused(match, error=ValueError, differentiation=None, **options):
+        controller = phx.control.RecedingHorizonMPC(
+            specification,
+            prediction_horizon=1,
+            terminal_policy="global",
+            **options,
+        )
+        with pytest.raises(error, match=match):
+            phx.control.prepare_receding_horizon_mpc_sensitivity(
+                controller, differentiation=differentiation
+            )
+
+    refused(
+        "dense-only",
+        compilation_policy=phx.control.LinearControlCompilationPolicy("sparse"),
+    )
+    refused(
+        "no warm-start derivative", warm_start_policy=phx.control.MPCWarmStartPolicy()
+    )
+    refused(
+        "zero solver regularization",
+        policy=phx.optim.ConvexSolvePolicy(regularization=1e-8),
+    )
+    refused(
+        "has no dense QP sensitivity",
+        policy=phx.optim.ConvexSolvePolicy(phx.optim.ClarabelInteriorPoint()),
+    )
+    refused(
+        "requires a dense unrolled plan",
+        policy=phx.optim.ConvexSolvePolicy(phx.optim.MPAXraPDHG(unroll=False)),
+    )
+    refused(
+        "active-set-kkt or barrier-kkt",
+        differentiation=phx.optim.ConvexDifferentiationPolicy("algorithmic"),
+    )
+    with pytest.raises(TypeError, match="RecedingHorizonMPC"):
+        phx.control.prepare_receding_horizon_mpc_sensitivity(specification)

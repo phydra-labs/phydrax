@@ -119,6 +119,53 @@ def _static_bound_values(
     return arrays[0], arrays[1]
 
 
+def _append_bound_rows(
+    equality_matrix: Array,
+    equality_rhs: Array,
+    inequality_matrix: Array,
+    inequality_rhs: Array,
+    lower: Array,
+    upper: Array,
+    /,
+    *,
+    batch_shape: tuple[int, ...],
+    fixed_indices: tuple[int, ...],
+    lower_indices: tuple[int, ...],
+    upper_indices: tuple[int, ...],
+) -> tuple[Array, Array, Array, Array]:
+    """Append fixed-bound equality rows and one-sided bound inequality rows."""
+    variables = lower.shape[-1]
+    identity = jnp.eye(variables, dtype=equality_matrix.dtype)
+    fixed = jnp.asarray(fixed_indices, dtype=jnp.int32)
+    lower_rows = jnp.asarray(lower_indices, dtype=jnp.int32)
+    upper_rows = jnp.asarray(upper_indices, dtype=jnp.int32)
+    fixed_matrix = jnp.broadcast_to(
+        identity[fixed],
+        batch_shape + (len(fixed_indices), variables),
+    )
+    lower_matrix = jnp.broadcast_to(
+        -identity[lower_rows],
+        batch_shape + (len(lower_indices), variables),
+    )
+    upper_matrix = jnp.broadcast_to(
+        identity[upper_rows],
+        batch_shape + (len(upper_indices), variables),
+    )
+    return (
+        jnp.concatenate((equality_matrix, fixed_matrix), axis=-2),
+        jnp.concatenate((equality_rhs, jnp.take(lower, fixed, axis=-1)), axis=-1),
+        jnp.concatenate((inequality_matrix, lower_matrix, upper_matrix), axis=-2),
+        jnp.concatenate(
+            (
+                inequality_rhs,
+                -jnp.take(lower, lower_rows, axis=-1),
+                jnp.take(upper, upper_rows, axis=-1),
+            ),
+            axis=-1,
+        ),
+    )
+
+
 class QuadraticProgram(StrictModule):
     r"""A convex quadratic program in canonical equality/inequality form.
 
@@ -245,36 +292,22 @@ class QuadraticProgram(StrictModule):
         fixed_indices = tuple(np.flatnonzero(fixed[0]))
         lower_indices = tuple(np.flatnonzero(lower_finite[0] & ~fixed[0]))
         upper_indices = tuple(np.flatnonzero(upper_finite[0] & ~fixed[0]))
-        identity = jnp.eye(variables, dtype=dtype)
-        fixed_matrix = jnp.broadcast_to(
-            identity[jnp.asarray(fixed_indices, dtype=jnp.int32)],
-            batch + (len(fixed_indices), variables),
-        )
-        lower_matrix = jnp.broadcast_to(
-            -identity[jnp.asarray(lower_indices, dtype=jnp.int32)],
-            batch + (len(lower_indices), variables),
-        )
-        upper_matrix = jnp.broadcast_to(
-            identity[jnp.asarray(upper_indices, dtype=jnp.int32)],
-            batch + (len(upper_indices), variables),
-        )
-        equality_value = jnp.concatenate((equality_value, fixed_matrix), axis=-2)
-        fixed_values = jnp.take(
-            lower, jnp.asarray(fixed_indices, dtype=jnp.int32), axis=-1
-        )
-        equality_rhs_value = jnp.concatenate((equality_rhs_value, fixed_values), axis=-1)
-        inequality_value = jnp.concatenate(
-            (inequality_value, lower_matrix, upper_matrix), axis=-2
-        )
-        lower_values = jnp.take(
-            lower, jnp.asarray(lower_indices, dtype=jnp.int32), axis=-1
-        )
-        upper_values = jnp.take(
-            upper, jnp.asarray(upper_indices, dtype=jnp.int32), axis=-1
-        )
-        inequality_rhs_value = jnp.concatenate(
-            (inequality_rhs_value, -lower_values, upper_values),
-            axis=-1,
+        (
+            equality_value,
+            equality_rhs_value,
+            inequality_value,
+            inequality_rhs_value,
+        ) = _append_bound_rows(
+            equality_value,
+            equality_rhs_value,
+            inequality_value,
+            inequality_rhs_value,
+            lower,
+            upper,
+            batch_shape=batch,
+            fixed_indices=fixed_indices,
+            lower_indices=lower_indices,
+            upper_indices=upper_indices,
         )
         identifier = str(problem_id)
         evidence = str(convexity_evidence)
@@ -315,6 +348,88 @@ class QuadraticProgram(StrictModule):
                 "dtype": str(dtype),
             }
         )
+
+
+def _rebind_quadratic_program(
+    template: QuadraticProgram,
+    /,
+    *,
+    quadratic: Array,
+    linear: Array,
+    equality_matrix: Array,
+    equality_rhs: Array,
+    inequality_matrix: Array,
+    inequality_rhs: Array,
+    lower_bounds: Array,
+    upper_bounds: Array,
+) -> QuadraticProgram:
+    """Rebind numeric QP data to a template's fixed static structure.
+
+    The user rows and bounds are folded exactly as `QuadraticProgram` folds
+    them, but the finite/fixed bound roles are the template's static roles, so
+    the rebinding is traceable and affine in every input. Callers own the
+    invariant that the new bounds keep the template's role pattern.
+    """
+    batch = template.batch_shape
+    variables = template.num_variables
+    expected = {
+        "quadratic": (quadratic, batch + (variables, variables)),
+        "linear": (linear, batch + (variables,)),
+        "equality_matrix": (
+            equality_matrix,
+            batch + (template.num_user_equalities, variables),
+        ),
+        "equality_rhs": (equality_rhs, batch + (template.num_user_equalities,)),
+        "inequality_matrix": (
+            inequality_matrix,
+            batch + (template.num_user_inequalities, variables),
+        ),
+        "inequality_rhs": (
+            inequality_rhs,
+            batch + (template.num_user_inequalities,),
+        ),
+        "lower_bounds": (lower_bounds, batch + (variables,)),
+        "upper_bounds": (upper_bounds, batch + (variables,)),
+    }
+    for name, (value, shape) in expected.items():
+        if tuple(value.shape) != shape:
+            raise ValueError(f"{name} must have shape {shape}; got {value.shape}.")
+    dtype = template.linear.dtype
+    quadratic = quadratic.astype(dtype)
+    lower = lower_bounds.astype(dtype)
+    upper = upper_bounds.astype(dtype)
+    folded = _append_bound_rows(
+        equality_matrix.astype(dtype),
+        equality_rhs.astype(dtype),
+        inequality_matrix.astype(dtype),
+        inequality_rhs.astype(dtype),
+        lower,
+        upper,
+        batch_shape=batch,
+        fixed_indices=template.fixed_bound_indices,
+        lower_indices=template.lower_bound_indices,
+        upper_indices=template.upper_bound_indices,
+    )
+    return eqx.tree_at(
+        lambda program: (
+            program.quadratic,
+            program.linear,
+            program.equality_matrix,
+            program.equality_rhs,
+            program.inequality_matrix,
+            program.inequality_rhs,
+            program.lower_bounds,
+            program.upper_bounds,
+        ),
+        template,
+        (
+            0.5 * quadratic + 0.5 * jnp.swapaxes(quadratic, -1, -2),
+            linear.astype(dtype),
+            *folded,
+            lower,
+            upper,
+        ),
+    )
 
 
 class PreparedQPSensitivity(StrictModule):
@@ -1023,6 +1138,19 @@ def _warm_start_arrays(
     )
 
 
+# One compiled interior-point kernel per static layout (shapes, dtype, and
+# solver configuration): repeated solves at fixed structure, such as MPC
+# windows of one prediction topology, reuse it instead of recompiling.
+@partial(
+    jax.jit,
+    static_argnames=(
+        "use_warm_start",
+        "tolerance",
+        "max_iterations",
+        "regularization",
+        "step_fraction",
+    ),
+)
 def _solve_dense_arrays(
     quadratic: Array,
     linear: Array,
@@ -1089,6 +1217,9 @@ def _solve_dense_arrays(
     )
 
 
+# The independent audit (including its least-squares infeasibility candidates)
+# is traced and compiled once per static program layout and configuration.
+@eqx.filter_jit
 def _diagnostics(
     problem: QuadraticProgram,
     primal: Array,
@@ -1798,6 +1929,9 @@ def _barrier_kkt(
     )
 
 
+# Traced once per KKT shape: every prepared sensitivity of one layout (for
+# example each MPC window of one topology) reuses the factorization program.
+@jax.jit
 def _regular_kkt_solve(matrix: Array, rhs: Array, /) -> tuple[Array, Array]:
     factorization = factorize(
         DenseLinearOperator(matrix),

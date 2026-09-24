@@ -170,6 +170,17 @@ update = phx.nonlinear.FunctionNonlinearUpdate(
 method = phx.nonlinear.NonlinearRichardson(update)
 ```
 
+Initial states follow the same rule. `select_initial_state(problem, baseline,
+provider, args=args)` asks a `phydrax.linalg.AbstractInitialGuessProvider`
+for `provider.propose(args, baseline)`, evaluates the original residual at the
+proposal and at the native `baseline`, and returns the proposal only when
+`problem.valid` accepts it with a strictly smaller residual norm (or when the
+baseline itself is invalid). The returned state is stopped, and its
+`InitialGuessDiagnostics` record both residual norms, proposal validity, the
+accepted branch, and the provider identity, exactly as a linear solve reports
+`result.initial_guess`. Any nonlinear method, including `implicit_root_result`,
+can start from the selected state.
+
 `CompositeNonlinearUpdate` supports static multiplicative, weighted additive,
 and safeguarded residual-optimal composition. Every child is evaluated from
 the declared base state, its result remains component evidence, and the
@@ -453,6 +464,20 @@ preparation applies the same randomness admission to the certified primal solve.
 An opaque residual closure hides its components and is recorded as undeclared
 determinism and regularity in `NonlinearResult.component_evidence`.
 
+`implicit_fixed_point_result` is the fixed-point form. Its primal is one stopped
+damped Picard or Anderson `FixedPointIteration` solve of `state = mapping(state,
+args)`; it rejects any other method with `TypeError` and never switches to a Newton
+primal. The accepted state is the root of `mapping(state, args) - state`, so tangent
+and adjoint derivatives solve with `I - d mapping/d state` matrix-free. Fixed-point
+iteration owns no linear policy, so `derivative_policy` must declare the tangent
+`LinearSolvePolicy` (the adjoint defaults to it). The model components of a
+structured mapping callable and of `args` pass the same `C¹` or `"branch-margin"`
+regularity and randomness admission, and an opaque mapping closure is recorded as
+`"mapping:determinism-undeclared"` and `"mapping:regularity-undeclared"`. Status,
+diagnostics, provenance, and precision evidence are those of the primal iteration;
+derivatives are meaningful only for a successful result, and differentiating a
+failed iteration or an unresolved `I - d mapping/d state` system raises.
+
 ## Causal nonlinear recurrence
 
 `CausalRecurrenceProblem` represents a fixed-length first-order recurrence as the
@@ -563,6 +588,10 @@ Differentiating a failed solve raises instead of returning an approximate gradie
 ---
 
 ::: phydrax.nonlinear.FunctionNonlinearUpdate
+
+---
+
+::: phydrax.nonlinear.select_initial_state
 
 ---
 
@@ -685,6 +714,10 @@ Differentiating a failed solve raises instead of returning an approximate gradie
 
 
 ::: phydrax.nonlinear.implicit_root
+
+---
+
+::: phydrax.nonlinear.implicit_fixed_point_result
 
 ## Fixed-capacity local roots
 

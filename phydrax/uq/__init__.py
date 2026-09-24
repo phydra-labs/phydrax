@@ -1052,6 +1052,7 @@ from ._sing_transition import (
     SINGTransitionPlan,
 )
 from ._smc import sample_tempered_smc, TemperedSMCResult
+from ._solver_objective_posterior import posterior_problem_from_solver_objective
 from ._sparse_variational_gp import (
     fit_sparse_variational_gaussian_process,
     SparseVariationalGaussianProcessELBO,
@@ -1484,6 +1485,7 @@ __all__ = [
     "EnsembleKalmanDiagnostics",
     "EnsembleKalmanResult",
     "fit_eki",
+    "posterior_problem_from_solver_objective",
     "EnsembleFitError",
     "EnsembleFitResult",
     "EnsembleMemberDiagnostics",

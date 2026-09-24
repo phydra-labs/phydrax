@@ -4,6 +4,7 @@
 
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -156,3 +157,81 @@ def test_eki_reports_collapse_and_rejects_invalid_residuals_and_configuration():
             raise_on_failure=True,
         )
     assert error.value.result.termination_reason == "max_steps"
+
+
+class _ObservedCoefficients(phx.AbstractArrayModel):
+    """Linear coefficients from a provider that declares no derivative route."""
+
+    coefficients: jax.Array
+    in_size: int = eqx.field(static=True)
+    out_size: int = eqx.field(static=True)
+
+    def __init__(self, coefficients):
+        self.coefficients = jnp.asarray(coefficients)
+        self.in_size = 2
+        self.out_size = 3
+
+    def __call__(self, design, /, *, key=None):
+        return design @ self.coefficients
+
+    def model_execution_contract(self):
+        return phx.ModelExecutionContract(
+            derivative=phx.DerivativeContract(route=phx.DerivativeRoute.STOPPED),
+            execution=phx.ExecutionCapabilities("native-jax"),
+            randomness=phx.RandomnessContract("deterministic"),
+        )
+
+
+def _observation_objective(accepted=True, accepted_results="reject-attempt"):
+    design = jnp.asarray([[1.0, 0.3], [-0.2, 1.2], [0.7, -0.4]])
+    observations = jnp.asarray([0.5, -0.8, 0.9])
+
+    def measure(owner, case):
+        del case
+        (design_, observations_), binding = owner
+        return phx.solver.SolverCaseResult(
+            residual=(binding.model(design_) - observations_) / 0.25,
+            accepted=accepted,
+        )
+
+    return phx.solver.SolverObjective(
+        (design, observations),
+        lambda solve, binding: (solve, binding),
+        measure,
+        objective_id="linear-observations",
+        accepted_results=accepted_results,
+    )
+
+
+def test_eki_consumes_a_solver_objective_likelihood_without_derivatives():
+    _, exact_mean, exact_covariance = _linear_problem()
+    tree = phx.bind_component(
+        _ObservedCoefficients(jnp.zeros(2)), phx.ComponentAuthority.MODEL
+    )
+    space = phx.uq.ParameterSpace(jnp.zeros(2), priors=phx.uq.Normal(0.0, 1.0))
+    problem = phx.uq.posterior_problem_from_solver_objective(
+        _observation_objective(), tree, space
+    )
+
+    result = phx.uq.fit_eki(problem, key=jr.key(950), ensemble_size=512)
+    assert result.converged
+    assert jnp.allclose(jnp.mean(result.ensemble, axis=0), exact_mean, atol=0.04)
+    assert jnp.allclose(
+        jnp.cov(result.ensemble, rowvar=False), exact_covariance, atol=0.012
+    )
+    # The provider declares no derivative: gradient consumers are refused, never
+    # handed a derivative, while EKI above ran on residuals alone.
+    with pytest.raises(Exception, match="not differentiable"):
+        jax.block_until_ready(jax.grad(problem.log_density)(jnp.zeros(2)))
+
+    failed = phx.uq.posterior_problem_from_solver_objective(
+        _observation_objective(accepted=False), tree, space
+    )
+    assert problem.log_likelihood(jnp.zeros(2)) > -jnp.inf
+    assert failed.log_likelihood(jnp.zeros(2)) == -jnp.inf
+    with pytest.raises(FloatingPointError, match="residuals must be finite"):
+        phx.uq.fit_eki(failed, key=jr.key(951), ensemble_size=8)
+    with pytest.raises(ValueError, match="cannot drop failed cases"):
+        phx.uq.posterior_problem_from_solver_objective(
+            _observation_objective(accepted_results="reduce-support"), tree, space
+        )

@@ -35,6 +35,24 @@ class MaterializationPolicy(StrictModule):
         self.max_bytes = byte_count
 
 
+def _require_materialization_budget(
+    entries: int,
+    dtype: jnp.dtype,
+    policy: MaterializationPolicy,
+    /,
+) -> None:
+    """Refuse a dense materialization of ``entries`` values beyond the policy."""
+    if entries > policy.max_entries:
+        raise LinearCapabilityError(
+            f"Dense materialization requires {entries} entries, exceeding the policy limit {policy.max_entries}."
+        )
+    required_bytes = entries * jnp.dtype(dtype).itemsize
+    if required_bytes > policy.max_bytes:
+        raise LinearCapabilityError(
+            f"Dense materialization requires {required_bytes} bytes, exceeding the policy limit {policy.max_bytes}."
+        )
+
+
 def materialize(operator, policy: MaterializationPolicy, /) -> Array:
     """Materialize an operator only under an explicit bounded policy."""
     from ._operators import AbstractLinearOperator
@@ -46,18 +64,10 @@ def materialize(operator, policy: MaterializationPolicy, /) -> Array:
     if not operator.capabilities.materialize:
         raise LinearCapabilityError("Operator does not support dense materialization.")
     entries = prod(operator.batch_shape) * operator.source.size * operator.target.size
-    if entries > policy.max_entries:
-        raise LinearCapabilityError(
-            f"Dense materialization requires {entries} entries, exceeding the policy limit {policy.max_entries}."
-        )
     expected = operator.batch_shape + (operator.target.size, operator.source.size)
     target_dtypes = [spec.dtype for spec in jax.tree.leaves(operator.target.structure())]
     expected_dtype = jnp.dtype(jnp.result_type(*target_dtypes))
-    required_bytes = entries * expected_dtype.itemsize
-    if required_bytes > policy.max_bytes:
-        raise LinearCapabilityError(
-            f"Dense materialization requires {required_bytes} bytes, exceeding the policy limit {policy.max_bytes}."
-        )
+    _require_materialization_budget(entries, expected_dtype, policy)
     matrix = jnp.asarray(operator._materialize())
     if matrix.shape != expected or matrix.dtype != expected_dtype:
         raise ValueError(

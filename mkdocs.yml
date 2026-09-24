@@ -852,6 +852,7 @@ nav:
             - Delay and functional differential equations: "api/solver/delay.md"
             - Functional solver: "api/solver/functional_solver.md"
             - Functional domain decomposition: "api/solver/functional_decomposition.md"
+            - Solver objectives and component training: "api/solver/component_training.md"
             - Variational Monte Carlo: "api/solver/variational_monte_carlo.md"
             - Variational TDVP: "api/solver/variational_tdvp.md"
             - Exact enforcement: "api/solver/enforcement.md"

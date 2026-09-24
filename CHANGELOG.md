@@ -3,6 +3,63 @@
 ## Unreleased
 
 ### Added
+- Added solver objectives in `phydrax.solver`: `SolverObjective` (implicit
+  solution maps), `RolloutObjective` (unrolled rollouts), and
+  `AlgorithmicWorkObjective` (fixed-work solver iterations with the
+  `algorithmic_work_loss` residual-reduction loss and a precision-aware stopped
+  floor), all built on `AbstractSolverObjective`. Each holds the trained component
+  as a separate PARAMETER child and binds it into a fixed prepared solve per
+  evaluation, with a frozen realization, declared route and objective kind, an
+  explicit `AcceptedResultPolicy`, and failure reduction into support and
+  rejection counts. `SolverObjectiveEvaluation` reports value, support, primal
+  status, derivative evidence, and binding identity.
+- Added `train_components(tree, objectives, optimizer=..., steps=..., key=...)`,
+  which trains components through solver objectives on the one accepted-update
+  training kernel with the `FunctionalSolver.solve` optimizer union and optional
+  checkpoint resume; mixed-authority trees need one compatible objective per
+  authority group. It returns `ComponentTrainingResult`.
+- Added `phydrax.uq.posterior_problem_from_solver_objective`, a fail-closed
+  residual-valued posterior over a component's parameters for EKI and
+  distribution-evolution consumers; derivative-free and gradient consumers are
+  never switched silently.
+- Added fixed-trip native Krylov: `DifferentiationPolicy("algorithmic")` on native
+  PCG, projected PCG, GMRES, and FGMRES runs the same gated steps in static-length
+  scans. Gram-Schmidt and Givens loops run the static restart length with
+  exact-zero masks, each FGMRES restart cycle and Arnoldi step is a checkpoint
+  unit, and PCG uses square-root block checkpointing, so reverse mode
+  differentiates the executed iteration across restart boundaries. Iterates,
+  iteration counts, and status match the unchanged early-exit route used by every
+  other mode. Benchmark: `benchmarks/linalg_fixed_trip_krylov.py`.
+- Added initial-guess providers: the ACCELERATOR slot
+  `phydrax.linalg.AbstractInitialGuessProvider` with `HistoryInitialGuess`,
+  `LearnedInitialGuess`, and one `InitialGuessDiagnostics` type.
+  `solve(..., initial_guess=provider)` compares the proposal's true residual with
+  the native zero guess on device, keeps the zero guess unless the proposal is
+  finite and strictly better, stops the selected guess, and reports
+  `LinearSolveResult.initial_guess`. `phydrax.nonlinear.select_initial_state`
+  applies the same rule to nonlinear initial states with domain validity.
+- Added `phydrax.nonlinear.implicit_fixed_point_result`: stopped Picard/Anderson
+  primal iterations, a custom root on `g(x, theta) - x`, required tangent and
+  adjoint policies for `I - dg/dx`, C1 and branch-margin admission of mapping
+  components, and no switch to Newton.
+- Added `phydrax.continuation.accepted_point_sensitivity`, the implicit derivative
+  of one accepted branch point with its continuation coordinate fixed.
+- Added differentiable receding-horizon MPC:
+  `phydrax.control.prepare_receding_horizon_mpc_sensitivity` runs the audited
+  `RecedingHorizonMPC.solve` with cold-started dense windows, prepares one
+  `PreparedQPSensitivity` per window, and composes them through the exact affine
+  state handoffs into `PreparedMPCSensitivity` with `jvp`/`vjp` over
+  `LinearQuadraticControlProblem`-shaped tangents. Only dense compilations with
+  zero solver regularization and no warm start are admitted (`DensePrimalDualQP`
+  active-set or barrier KKT, or `MPAXraPDHG(unroll=True)` algorithmic), and the
+  complete derivative is refused unless every window is valid, OPTIMAL, and
+  regular.
+- Added `phydrax.control.prepare_control_linearization`, a matrix-free
+  `PreparedControlLinearization` whose `[A B]` and `[C D]` Jacobians are
+  `JacobianLinearOperator` values, and
+  `phydrax.control.linear_quadratic_problem_from_discrete_dynamics`, which
+  linearizes a Euclidean discrete transition along an operating trajectory into a
+  `LinearQuadraticControlProblem` and refuses failed transitions.
 - Added arbitrary-normal finite-volume face closures: the neutral
   `AbstractFaceClosurePlan` slot, `ArbitraryNormalFaceClosurePlan` evaluated with a
   `FaceFluxContext` (unit normal, positive face measure, grid-normal velocity,
@@ -96,6 +153,21 @@
   and bounded rendering/video adapters.
 
 ### Changed
+- The dense control linearizations `linearize_discrete_dynamics`,
+  `linearize_differential_dynamics`, and `linearize_control_dynamics` are built
+  from `PreparedLinearization` and `JacobianLinearOperator` and require a
+  `materialization: MaterializationPolicy` that bounds each dense Jacobian family
+  over the whole case batch. A failed discrete transition now yields NaN matrices
+  instead of a finite zero Jacobian.
+- The native dense QP interior-point kernel, its independent audit, and the
+  active-set KKT tangent solve are compiled once per static program layout, so
+  repeated solves and sensitivities at fixed structure (such as MPC windows of one
+  topology) no longer retrace and recompile.
+- Removed `LinearSolveHistory`, `LinearSolveHistoryPolicy`, `solve_with_history`,
+  `HistoryLinearSolveResult`, `LinearInitialGuessDiagnostics`, and
+  `LinearInitialGuessStrategy`. Use `HistoryInitialGuess(operator, family_id,
+  strategy=...)` as a solve `initial_guess`; `at_time(t)` sets the extrapolation
+  target, and the unused reorthogonalization control is gone.
 - Every native trainer (functional solvers including KFAC, evolution, windows,
   decomposition, variational Monte Carlo and Calabi-Yau; operator fitting;
   discrete, variational, and neural-CDE identification; kinetic rollout

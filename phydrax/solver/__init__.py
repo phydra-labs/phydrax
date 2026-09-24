@@ -268,6 +268,11 @@ from ._compatible_systems import (
     CompatibleVariableDensityProjection,
     IncompressibleProjectionResult,
 )
+from ._component_training import (
+    ComponentOptimizer,
+    ComponentTrainingResult,
+    train_components,
+)
 from ._compressible_kinetic import CompressibleKineticFixedStepMethod
 from ._compressible_kinetic_output import (
     CompressibleKineticVTKResult,
@@ -2227,6 +2232,18 @@ from ._separated_fokker_planck import (
     solve_separated_fokker_planck,
 )
 from ._smooth_compressible_d2v import OracleSmoothCompressibleD2V17FixedStepMethod
+from ._solver_objective import (
+    AbstractSolverObjective,
+    AcceptedResultPolicy,
+    algorithmic_work_loss,
+    AlgorithmicWorkObjective,
+    AlgorithmicWorkResult,
+    RolloutObjective,
+    SolverCaseResult,
+    SolverObjective,
+    SolverObjectiveAdmission,
+    SolverObjectiveEvaluation,
+)
 from ._sparse_flip import (
     SparseMACFreeSurfaceProjectionPlan,
     SparseMACFreeSurfaceProjectionResult,
@@ -4686,4 +4703,20 @@ __all__ += [
     "finalize_dark_sector_epoch",
     "replace_dark_sector_conservation",
     "replace_dark_sector_pool",
+]
+
+__all__ += [
+    "AbstractSolverObjective",
+    "AcceptedResultPolicy",
+    "AlgorithmicWorkObjective",
+    "AlgorithmicWorkResult",
+    "ComponentOptimizer",
+    "ComponentTrainingResult",
+    "RolloutObjective",
+    "SolverCaseResult",
+    "SolverObjective",
+    "SolverObjectiveAdmission",
+    "SolverObjectiveEvaluation",
+    "algorithmic_work_loss",
+    "train_components",
 ]

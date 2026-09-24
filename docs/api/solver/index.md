@@ -39,6 +39,10 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
 - [Functional domain decomposition](functional_decomposition.md) adds fixed local
   covers, partition-of-unity and broken fields, paired interface conditions,
   joint/block/Schwarz training, restart, and coarse correction.
+- [Solver objectives and component training](component_training.md) trains
+  closures, preconditioners, and other learned components bound into fixed
+  prepared solves through solution-map, rollout, and fixed-work objectives with
+  slot-derived authority.
 - [Variational Monte Carlo](variational_monte_carlo.md) combines persistent Markov
   chains, generalized local quantum operators, centered matrix-free score geometry,
   and the existing linear runtime for discrete or continuum-electron amplitudes.

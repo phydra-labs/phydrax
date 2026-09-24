@@ -1361,3 +1361,675 @@ def test_g24_policy_decides_whether_a_valid_step_survives_a_training_rejection()
         assert int(result.evidence.training.outcome) == 0
         assert float(result.kernel_state.parameters.rate) > 0.0
         assert jnp.array_equal(result.plant_state.payload["x"], jnp.asarray([2.0, 2.0]))
+
+
+# G8 (training) / G20: closures train through rollout objectives -----------------
+
+
+class _PreparedRollout(eqx.Module):
+    """FIXED prepared finite-volume dynamics and the rollout it is scored on."""
+
+    dynamics: Any
+    initial: jax.Array
+    target: jax.Array
+
+
+def _bind_face_closure(solve, closure):
+    """Rebind a trained closure into the FIXED prepared dynamics' closure slot."""
+    if closure.closure_id != solve.dynamics.method.closure.closure_id:
+        raise ValueError("The trained closure must keep the prepared slot identity.")
+    return eqx.tree_at(lambda dynamics: dynamics.method.closure, solve.dynamics, closure)
+
+
+def _euler_rollout(dynamics, state):
+    for _ in range(4):
+        state = state + 2e-3 * dynamics(0.0, state)
+    return state
+
+
+def _rollout_misfit(owner, case):
+    del case
+    dynamics, solve = owner
+    final = _euler_rollout(dynamics, solve.initial)
+    return phx.solver.SolverCaseResult(
+        residual=final - solve.target, accepted=jnp.all(jnp.isfinite(final))
+    )
+
+
+def _closure_rollout_objective(component=None):
+    prepared = _structured_euler((16,), _learned_face_closure(1), periodic=True)
+    reference = _structured_euler(
+        (16,),
+        phx.discretization.ArbitraryNormalFaceClosurePlan(
+            lambda system, left, right, baseline, context, args: 0.03 * (right - left),
+            closure_id="reference-jump-dissipation",
+        ),
+        periodic=True,
+    )
+    x = prepared.discretization.cell_centers[..., 0]
+    initial = prepared.system.primitive_to_conserved(
+        jnp.stack(
+            (
+                1.0 + 0.2 * jnp.sin(2.0 * jnp.pi * x),
+                0.1 * jnp.cos(2.0 * jnp.pi * x),
+                jnp.ones_like(x),
+            ),
+            axis=-1,
+        )
+    )
+    return phx.solver.RolloutObjective(
+        _PreparedRollout(prepared, initial, _euler_rollout(reference, initial)),
+        lambda solve, closure: (_bind_face_closure(solve, closure), solve),
+        _rollout_misfit,
+        objective_id="face-closure-rollout",
+        component=component,
+    )
+
+
+def test_g8_closure_trains_through_a_rollout_objective_bound_into_fixed_dynamics():
+    closure = _learned_face_closure(1)
+    objective = _closure_rollout_objective()
+    before = objective.evaluate(closure)
+    assert before.trained and all(
+        authority == "discretization" for _, authority in before.trained
+    )
+
+    result = phx.solver.train_components(
+        closure, (objective,), optimizer=optax.adam(3e-2), steps=25, key=jr.key(8)
+    )
+    after = objective.evaluate(result.tree)
+    assert float(after.value) < 0.5 * float(before.value)
+    network = result.tree.correction.generator.network
+    assert result.authorities == tuple(
+        (path, "discretization") for path, _ in before.trained
+    )
+    assert len(result.authorities) == len(
+        jax.tree.leaves(phx.partition_parameters(network)[0])
+    )
+
+
+# G3 / G10: learned preconditioners train only through fixed Krylov work ---------
+
+
+_KRYLOV_SIZE = 48
+_KRYLOV_WORK = 8
+
+
+def _scaled_diagonal(contrast, seed):
+    """Badly scaled diagonal `10**u`, `u` uniform on `[-contrast, contrast]`."""
+    exponents = jr.uniform(
+        jr.key(seed), (_KRYLOV_SIZE,), minval=-contrast, maxval=contrast
+    )
+    return 10.0**exponents
+
+
+def _scaled_system(diagonal):
+    """Symmetric `D^{1/2} (I + 0.3 T) D^{1/2}` with `T` the unit tridiagonal coupling."""
+    root = jnp.sqrt(diagonal)
+    coupling = jnp.diag(jnp.ones(_KRYLOV_SIZE - 1), 1)
+    matrix = (
+        root[:, None]
+        * (jnp.eye(_KRYLOV_SIZE) + 0.3 * (coupling + coupling.T))
+        * root[None, :]
+    )
+    space = phx.linalg.ArraySpace((_KRYLOV_SIZE,), dtype=matrix.dtype)
+    return phx.linalg.LinearSystem(
+        phx.linalg.DenseLinearOperator(matrix, source=space, target=space)
+    )
+
+
+class _LearnedScalingPreconditioner(phx.linalg.AbstractPreconditioner):
+    """Learned local scaling from log10-diagonal features, supported on [-2, 2]."""
+
+    network: phx.nn.models.MLP
+    features: jax.Array = phx.fixed_field()
+
+    def __init__(self, network, diagonal):
+        self.network = network
+        self.features = jnp.log10(diagonal)[:, None]
+        self.space = phx.linalg.ArraySpace((_KRYLOV_SIZE,), dtype=jnp.float64)
+        self.properties = phx.linalg.PreconditionerProperties(
+            stationary=True, evidence={"stationary": "construction"}
+        )
+        self.preconditioner_id = "g3-learned-scaling"
+
+    def apply(self, residual, /, *, iteration=None):
+        del iteration
+        scale = jnp.exp(jax.vmap(self.network)(self.features))
+        supported = jnp.all(jnp.abs(self.features) <= 2.0)
+        # Outside its training support the learned action is not a number.
+        return self.space.validate(jnp.where(supported, scale * residual, jnp.nan))
+
+
+def _scaling_network(seed=0):
+    return phx.nn.models.MLP(
+        in_size=1, out_size="scalar", width_size=16, depth=2, key=jr.key(seed)
+    )
+
+
+class _KrylovSolve(eqx.Module):
+    """FIXED prepared problem of a fixed-work preconditioned FGMRES solve."""
+
+    system: Any
+
+
+def _fixed_work_policy(preconditioner):
+    return phx.linalg.LinearSolvePolicy(
+        phx.linalg.FGMRES(restart=_KRYLOV_WORK),
+        preconditioning=phx.linalg.PreconditioningPolicy(preconditioner, side="right"),
+        tolerance=phx.linalg.TolerancePolicy(
+            relative=0.0, absolute=0.0, max_steps=_KRYLOV_WORK
+        ),
+        differentiation=phx.linalg.DifferentiationPolicy("algorithmic"),
+        failure=phx.linalg.FailurePolicy("status"),
+    )
+
+
+def _fixed_work_measure(owner, rhs):
+    system, policy = owner
+    result = phx.linalg.solve(system, rhs, policy=policy)
+    return phx.solver.AlgorithmicWorkResult(
+        initial_residual=rhs,
+        final_residual=rhs - system.operator.mv(result.value),
+        iterations=result.diagnostics.iterations,
+        accepted=jnp.all(jnp.isfinite(result.value)),
+    )
+
+
+def _krylov_work_objective(diagonal, component=None):
+    return phx.solver.AlgorithmicWorkObjective(
+        _KrylovSolve(_scaled_system(diagonal)),
+        lambda solve, preconditioner: (
+            solve.system,
+            _fixed_work_policy(preconditioner),
+        ),
+        _fixed_work_measure,
+        work=_KRYLOV_WORK,
+        objective_id="fgmres-fixed-work",
+        cases=jr.normal(jr.key(21), (6, _KRYLOV_SIZE)),
+        component=component,
+    )
+
+
+def _production_solve(system, preconditioner, rhs):
+    return phx.linalg.solve(
+        system,
+        rhs,
+        policy=phx.linalg.LinearSolvePolicy(
+            phx.linalg.FGMRES(restart=_KRYLOV_SIZE),
+            preconditioning=phx.linalg.PreconditioningPolicy(
+                preconditioner, side="right"
+            ),
+            tolerance=phx.linalg.TolerancePolicy(
+                relative=1e-10, absolute=0.0, max_steps=3 * _KRYLOV_SIZE
+            ),
+            failure=phx.linalg.FailurePolicy("status"),
+        ),
+    )
+
+
+def _never_bound(*_):
+    raise AssertionError("a refused objective must not bind or measure")
+
+
+def test_g10_solution_map_only_accelerator_is_refused_before_tracing():
+    diagonal = _scaled_diagonal(2.0, 3)
+    preconditioner = _LearnedScalingPreconditioner(_scaling_network(), diagonal)
+    refused = phx.solver.SolverObjective(
+        _KrylovSolve(_scaled_system(diagonal)),
+        _never_bound,
+        _never_bound,
+        objective_id="solution-map-only",
+    )
+    with pytest.raises(ValueError, match=r"no admissible training signal.*accelerator"):
+        refused.evaluate(preconditioner)
+    with pytest.raises(ValueError, match=r"no admissible training signal.*accelerator"):
+        phx.solver.train_components(
+            preconditioner,
+            (refused,),
+            optimizer=optax.adam(1e-2),
+            steps=1,
+            key=jr.key(0),
+        )
+
+    work = _krylov_work_objective(diagonal)
+    evaluation = work.evaluate(preconditioner)
+    assert evaluation.work.tolist() == [_KRYLOV_WORK] * 6
+    gradient = eqx.filter_grad(lambda tree: work.evaluate(tree).value)(preconditioner)
+    norms = [float(jnp.linalg.norm(leaf)) for leaf in _array_leaves(gradient.network)]
+    assert max(norms) > 0.0
+    assert all(jnp.isfinite(jnp.asarray(norms)))
+
+
+def test_g3_learned_preconditioner_reduces_fixed_krylov_work_without_changing_answers():
+    diagonal = _scaled_diagonal(2.0, 3)
+    system = _scaled_system(diagonal)
+    untrained = _LearnedScalingPreconditioner(_scaling_network(), diagonal)
+    objective = _krylov_work_objective(diagonal)
+
+    result = phx.solver.train_components(
+        untrained, (objective,), optimizer=optax.adam(3e-2), steps=80, key=jr.key(5)
+    )
+    trained = result.tree
+    before = objective.evaluate(untrained)
+    after = objective.evaluate(trained)
+    assert result.accepted_updates == 80
+    assert float(after.value) < float(before.value) - 0.5
+    assert result.selection == (tuple(path for path, _ in before.trained),)
+
+    rhs = jr.normal(jr.key(99), (_KRYLOV_SIZE,))
+    reference = phx.linalg.solve(
+        system, rhs, policy=phx.linalg.LinearSolvePolicy(phx.linalg.DenseLU())
+    ).value
+    slow = _production_solve(system, untrained, rhs)
+    fast = _production_solve(system, trained, rhs)
+    assert bool(fast.successful)
+    assert int(fast.diagnostics.iterations) < int(slow.diagnostics.iterations)
+    # Same answer up to the conditioning of the badly scaled system.
+    assert float(jnp.linalg.norm(fast.value - reference)) <= 1e-5 * float(
+        jnp.linalg.norm(reference)
+    )
+    for solved in (slow, fast):
+        true_residual = jnp.linalg.norm(rhs - system.operator.mv(solved.value))
+        assert not bool(solved.successful) or float(true_residual) <= 1e-9 * float(
+            jnp.linalg.norm(rhs)
+        )
+
+    # Outside its support the learned action is not a number: the native solve
+    # re-evaluates the original residual and cannot report success.
+    outside = _scaled_diagonal(4.0, 4)
+    shifted = _LearnedScalingPreconditioner(trained.network, outside)
+    rejected = _production_solve(_scaled_system(outside), shifted, rhs)
+    assert not bool(rejected.successful)
+
+
+# G20: mixed authority needs one compatible contribution per group ----------------
+
+
+def test_g20_closure_gets_rollout_signal_and_preconditioner_gets_fixed_work_signal():
+    diagonal = _scaled_diagonal(2.0, 3)
+    tree = {
+        "closure": _learned_face_closure(1),
+        "preconditioner": _LearnedScalingPreconditioner(_scaling_network(), diagonal),
+    }
+    rollout = _closure_rollout_objective(component=lambda value: value["closure"])
+    work = _krylov_work_objective(
+        diagonal, component=lambda value: value["preconditioner"]
+    )
+
+    with pytest.raises(ValueError, match="no admissible training signal for accelerator"):
+        phx.solver.train_components(
+            tree, (rollout,), optimizer=optax.adam(3e-2), steps=1, key=jr.key(6)
+        )
+    result = phx.solver.train_components(
+        tree, (rollout, work), optimizer=optax.adam(3e-2), steps=12, key=jr.key(6)
+    )
+
+    closure_paths, preconditioner_paths = result.selection
+    assert closure_paths and all(path.startswith("['closure']") for path in closure_paths)
+    assert preconditioner_paths and all(
+        path.startswith("['preconditioner']") for path in preconditioner_paths
+    )
+    assert {authority for _, authority in result.authorities} == {
+        "discretization",
+        "accelerator",
+    }
+    first, last = result.objective_values[0], result.objective_values[-1]
+    assert float(last[0]) < float(first[0])
+    assert float(last[1]) < float(first[1])
+
+
+# G5 (rollout): neural operator proposals corrected by a native Newton solve -----
+
+
+class _ImplicitEulerStep(eqx.Module):
+    """Native residual `v - u + dt (v^3 + v)` of one implicit Euler step."""
+
+    step: float = eqx.field(static=True)
+
+    def __call__(self, state, previous):
+        return state - previous + self.step * (state**3 + state)
+
+
+class _CorrectedRollout(eqx.Module):
+    proposal: phx.ComponentBinding
+    step: float = eqx.field(static=True)
+
+
+def _corrected_rollout(owner, initial):
+    problem = phx.nonlinear.NonlinearSystemProblem(_ImplicitEulerStep(owner.step))
+    termination = phx.nonlinear.NonlinearTermination(
+        absolute_residual=1e-10, relative_residual=0.0, maximum_steps=50
+    )
+    state = initial
+    proposals, corrected, residuals, accepted = [], [], [], jnp.asarray(True)
+    for _ in range(6):
+        proposal = state + owner.proposal.model(state)
+        result = phx.nonlinear.NewtonKrylov().solve(
+            problem,
+            jax.lax.stop_gradient(proposal),
+            termination=termination,
+            args=state,
+        )
+        proposals.append(proposal)
+        corrected.append(result.state)
+        residuals.append(_ImplicitEulerStep(owner.step)(result.state, state))
+        accepted = accepted & result.successful
+        state = jax.lax.stop_gradient(result.state)
+    proposals, corrected = jnp.stack(proposals), jnp.stack(corrected)
+    return phx.solver.SolverCaseResult(
+        residual=proposals - jax.lax.stop_gradient(corrected),
+        accepted=accepted,
+        aux={
+            "proposal": proposals,
+            "corrected": corrected,
+            "residual": jnp.stack(residuals),
+        },
+    )
+
+
+def test_g5_operator_proposals_stay_inspectable_beside_native_corrections():
+    objective = phx.solver.RolloutObjective(
+        None,
+        lambda solve, proposal: _CorrectedRollout(proposal, 0.2),
+        _corrected_rollout,
+        objective_id="corrected-rollout",
+        cases=jnp.asarray([[0.8, -0.5], [0.3, 0.9], [-0.6, 0.2]]),
+    )
+    operator = phx.bind_component(
+        phx.nn.models.MLP(in_size=2, out_size=2, width_size=16, depth=1, key=jr.key(2)),
+        phx.ComponentAuthority.SURROGATE,
+    )
+
+    before = objective.evaluate(operator)
+    result = phx.solver.train_components(
+        operator, (objective,), optimizer=optax.adam(2e-2), steps=60, key=jr.key(7)
+    )
+    after = objective.evaluate(result.tree)
+
+    assert bool(jnp.all(before.accepted)) and bool(jnp.all(after.accepted))
+    assert float(after.value) < 0.2 * float(before.value)
+    # The corrector owns the answer: it re-evaluated the native residual, and
+    # the corrected trajectory does not depend on the proposal quality.
+    for evaluation in (before, after):
+        assert float(jnp.max(jnp.abs(evaluation.aux["residual"]))) <= 1e-10
+        assert evaluation.aux["proposal"].shape == evaluation.aux["corrected"].shape
+    assert jnp.allclose(before.aux["corrected"], after.aux["corrected"], atol=1e-9)
+    assert not jnp.allclose(before.aux["proposal"], before.aux["corrected"], atol=1e-3)
+
+
+# G4: neural dynamics -> control (MPC sensitivity through a learned linearization) -
+
+
+class _LearnedDiscreteDynamics(phx.AbstractArrayModel):
+    """Learned step `x + dt * (W x + tanh(V x) + g u)` on the (state, control) port."""
+
+    drift: jax.Array
+    coupling: jax.Array
+    input_gain: jax.Array
+    in_size: int = eqx.field(static=True)
+    out_size: int = eqx.field(static=True)
+
+    def __init__(self, drift, coupling, input_gain):
+        self.drift = jnp.asarray(drift)
+        self.coupling = jnp.asarray(coupling)
+        self.input_gain = jnp.asarray(input_gain)
+        self.in_size = 3
+        self.out_size = 2
+
+    def __call__(self, x, /, *, key=None):
+        state, control = x[:2], x[2:]
+        rate = (
+            self.drift @ state
+            + jnp.tanh(self.coupling @ state)
+            + self.input_gain * control[0]
+        )
+        return state + 0.1 * rate
+
+    def model_execution_contract(self):
+        return phx.ModelExecutionContract(
+            derivative=_smooth_derivative(),
+            execution=phx.ExecutionCapabilities("native-jax"),
+            precision=phx.ComponentPrecisionContract.native("float64"),
+            randomness=phx.RandomnessContract("deterministic"),
+        )
+
+
+_G4_HORIZON = 4
+_G4_TIMES = phx.dynamics.TimeGrid(
+    0.1 * jnp.arange(_G4_HORIZON + 1, dtype=jnp.float64), time_id="g4-mpc-time"
+)
+_G4_DENSE = phx.linalg.MaterializationPolicy(max_entries=256)
+_G4_QP = phx.optim.ConvexSolvePolicy(
+    termination=phx.optim.ConvexTermination(
+        absolute=1e-12, relative=1e-12, maximum_steps=200
+    )
+)
+_G4_INITIAL = jnp.asarray([1.0, -0.5])
+
+
+def _g4_learned_plant():
+    """The learned model is the transition; its parameters travel as ``args``."""
+    return phx.control.DiscreteControlDynamics(
+        phx.dynamics.DiscreteSystem(
+            lambda context, state, control, model: model(
+                jnp.concatenate((state, control))
+            ),
+            state_layout=phx.dynamics.StateLayout((2,)),
+            input_layout=phx.dynamics.InputLayout((1,), roles="control"),
+            system_id="g4-learned-plant",
+        )
+    )
+
+
+def _g4_operating_trajectory(model):
+    """Nominal zero-control rollout of the learned model (stages 0..H-1)."""
+    states = [_G4_INITIAL]
+    for _ in range(_G4_HORIZON - 1):
+        states.append(model(jnp.concatenate((states[-1], jnp.zeros(1)))))
+    return jax.lax.stop_gradient(jnp.stack(states)), jnp.zeros((_G4_HORIZON, 1))
+
+
+def _g4_affine_dynamics(model, operating_states, operating_controls):
+    """Traceable (A, B, c) of the learned model along the operating trajectory."""
+    linearization = phx.control.linearize_discrete_dynamics(
+        _g4_learned_plant(),
+        _G4_TIMES.times[:-1],
+        operating_states,
+        operating_controls,
+        materialization=_G4_DENSE,
+        args=model,
+        target_time=_G4_TIMES.times[1:],
+        step_index=jnp.arange(_G4_HORIZON),
+    )
+    return (
+        linearization.state_matrix,
+        linearization.control_matrix,
+        linearization.affine_offset,
+    )
+
+
+def _g4_controller(model, operating_states, operating_controls):
+    problem = phx.control.linear_quadratic_problem_from_discrete_dynamics(
+        _g4_learned_plant(),
+        _G4_TIMES,
+        operating_states,
+        operating_controls,
+        _G4_INITIAL,
+        jnp.broadcast_to(jnp.eye(2), (_G4_HORIZON, 2, 2)),
+        0.05 * jnp.ones((_G4_HORIZON, 1, 1)),
+        4.0 * jnp.eye(2),
+        materialization=_G4_DENSE,
+        args=model,
+        control_lower_bounds=-2.0 * jnp.ones((_G4_HORIZON, 1)),
+        control_upper_bounds=2.0 * jnp.ones((_G4_HORIZON, 1)),
+        problem_id="g4-learned-lq",
+    )
+    return phx.control.RecedingHorizonMPC(
+        problem, prediction_horizon=2, terminal_policy="global", policy=_G4_QP
+    )
+
+
+def _g4_model(input_gain=(0.0, 1.0)):
+    return _LearnedDiscreteDynamics(
+        [[0.0, 1.0], [-0.5, -0.1]], [[0.3, 0.0], [0.0, 0.2]], input_gain
+    )
+
+
+def test_g4_mpc_sensitivity_through_the_learned_linearization():
+    model = _g4_model()
+    operating_states, operating_controls = _g4_operating_trajectory(model)
+    sensitivity = phx.control.prepare_receding_horizon_mpc_sensitivity(
+        _g4_controller(model, operating_states, operating_controls)
+    )
+    assert sensitivity.refusal is None
+    # Closed-loop regulation loss 0.5 * ||x||^2 over the realized MPC states.
+    cotangent = sensitivity.vjp(sensitivity.states, jnp.zeros_like(sensitivity.controls))
+    _, pullback = jax.vjp(
+        lambda candidate: _g4_affine_dynamics(
+            candidate, operating_states, operating_controls
+        ),
+        model,
+    )
+    (model_gradient,) = pullback(
+        (
+            cotangent.dynamics_matrices,
+            cotangent.control_matrices,
+            cotangent.dynamics_bias,
+        )
+    )
+
+    def closed_loop_loss(input_gain):
+        candidate = _g4_model(input_gain)
+        result = _g4_controller(candidate, operating_states, operating_controls).solve()
+        assert bool(result.successful)
+        return 0.5 * jnp.sum(result.states**2)
+
+    step = 1e-6
+    base = jnp.asarray([0.0, 1.0])
+    finite_difference = jnp.stack(
+        [
+            (
+                closed_loop_loss(base + step * direction)
+                - closed_loop_loss(base - step * direction)
+            )
+            / (2.0 * step)
+            for direction in jnp.eye(2)
+        ]
+    )
+    assert jnp.allclose(
+        model_gradient.input_gain, finite_difference, rtol=1e-5, atol=1e-7
+    )
+    assert bool(jnp.all(jnp.isfinite(model_gradient.drift)))
+    assert bool(jnp.all(jnp.isfinite(model_gradient.coupling)))
+
+
+# G19: differentiable MPC --------------------------------------------------------
+
+
+_G19_HORIZON = 5
+_G19_QP = phx.optim.ConvexSolvePolicy(
+    termination=phx.optim.ConvexTermination(
+        absolute=1e-12, relative=1e-12, maximum_steps=200
+    )
+)
+
+
+def _g19_cost_blocks(weights):
+    """Traceable MPC stage costs from the tuned log weights."""
+    state_weight, control_weight = jnp.exp(weights[0]), jnp.exp(weights[1])
+    return (
+        state_weight * jnp.broadcast_to(jnp.eye(2), (_G19_HORIZON, 2, 2)),
+        control_weight * jnp.ones((_G19_HORIZON, 1, 1)),
+    )
+
+
+def _g19_controller(weights, *, upper=0.3):
+    state_costs, control_costs = _g19_cost_blocks(weights)
+    problem = phx.control.LinearQuadraticControlProblem(
+        jnp.broadcast_to(jnp.array([[1.0, 0.2], [0.0, 1.0]]), (_G19_HORIZON, 2, 2)),
+        jnp.broadcast_to(jnp.array([[0.02], [0.2]]), (_G19_HORIZON, 2, 1)),
+        jnp.array([1.0, 0.0]),
+        state_costs,
+        control_costs,
+        jnp.eye(2),
+        control_lower_bounds=-0.35 * jnp.ones((_G19_HORIZON, 1)),
+        control_upper_bounds=upper * jnp.ones((_G19_HORIZON, 1)),
+        problem_id="g19-tuned-mpc",
+    )
+    return phx.control.RecedingHorizonMPC(
+        problem, prediction_horizon=3, terminal_policy="global", policy=_G19_QP
+    )
+
+
+def _g19_performance(states, controls):
+    """Closed-loop performance judged independently of the MPC's own weights."""
+    return 0.5 * jnp.sum(states**2) + 0.05 * jnp.sum(controls**2)
+
+
+def test_g19_closed_loop_gradient_tunes_mpc_weights_through_active_bounds():
+    weights = jnp.asarray([0.0, jnp.log(0.1)])
+    sensitivity = phx.control.prepare_receding_horizon_mpc_sensitivity(
+        _g19_controller(weights)
+    )
+    assert sensitivity.refusal is None
+    # Some window meets a bound strictly: the derivative crosses active sets.
+    assert bool(jnp.any(jnp.isclose(sensitivity.controls, -0.35, atol=1e-8)))
+    states_cotangent, controls_cotangent = jax.grad(_g19_performance, argnums=(0, 1))(
+        sensitivity.states, sensitivity.controls
+    )
+    cotangent = sensitivity.vjp(states_cotangent, controls_cotangent)
+    _, pullback = jax.vjp(_g19_cost_blocks, weights)
+    (gradient,) = pullback((cotangent.state_costs, cotangent.control_costs))
+
+    def performance(candidate):
+        result = _g19_controller(candidate).solve()
+        assert bool(result.successful)
+        return _g19_performance(result.states, result.controls)
+
+    step = 1e-5
+    finite_difference = jnp.stack(
+        [
+            (performance(weights + step * basis) - performance(weights - step * basis))
+            / (2.0 * step)
+            for basis in jnp.eye(2)
+        ]
+    )
+    assert jnp.allclose(gradient, finite_difference, rtol=1e-5, atol=1e-8)
+
+    # One descent step on the tuned weights improves the audited closed loop.
+    improved = weights - 0.2 * gradient / jnp.linalg.norm(gradient)
+    assert performance(improved) < performance(weights)
+
+
+def test_g19_one_weak_window_refuses_the_complete_closed_loop_derivative():
+    # Window 0's unconstrained optimum lies exactly on the control bound.
+    problem = phx.control.LinearQuadraticControlProblem(
+        jnp.ones((2, 1, 1)),
+        jnp.ones((2, 1, 1)),
+        jnp.zeros((1,)),
+        jnp.zeros((2, 1, 1)),
+        jnp.ones((2, 1, 1)),
+        jnp.zeros((1, 1)),
+        control_linear=jnp.asarray([[-0.5], [-0.2]]),
+        control_upper_bounds=0.5 * jnp.ones((2, 1)),
+    )
+    sensitivity = phx.control.prepare_receding_horizon_mpc_sensitivity(
+        phx.control.RecedingHorizonMPC(
+            problem, prediction_horizon=1, terminal_policy="none", policy=_G19_QP
+        )
+    )
+    assert bool(sensitivity.result.successful)
+    assert not bool(sensitivity.regular)
+    with pytest.raises(ValueError, match="refused"):
+        sensitivity.vjp(
+            jnp.ones_like(sensitivity.states), jnp.zeros_like(sensitivity.controls)
+        )
+    sparse = phx.control.RecedingHorizonMPC(
+        problem,
+        prediction_horizon=1,
+        terminal_policy="none",
+        compilation_policy=phx.control.LinearControlCompilationPolicy("sparse"),
+    )
+    with pytest.raises(ValueError, match="dense-only"):
+        phx.control.prepare_receding_horizon_mpc_sensitivity(sparse)

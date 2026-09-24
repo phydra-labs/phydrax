@@ -19,6 +19,7 @@ from numbers import Real
 from typing import Any, ClassVar, final, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from equinox import AbstractClassVar
@@ -940,6 +941,46 @@ def bind_component(
     )
 
 
+def slot_component_contracts(
+    slot: type[AbstractComponentSlot],
+    tree: Any,
+    /,
+    *,
+    scope: str,
+) -> tuple[tuple[str, ComponentContract], ...]:
+    """Bind every model below `tree` to `slot`; return `(location, contract)` pairs.
+
+    A bare `AbstractArrayModel` is bound to `slot`; a `ComponentBinding` must
+    already carry the slot's authority and its slot identity (or none).
+    Locations are `scope` plus the PyTree path, in flattening order.
+    """
+    from ._array import AbstractArrayModel
+
+    if not (isinstance(slot, type) and issubclass(slot, AbstractComponentSlot)):
+        raise TypeError("slot must be an AbstractComponentSlot subclass.")
+    entries, _ = jax.tree_util.tree_flatten_with_path(
+        tree,
+        is_leaf=lambda node: isinstance(node, (AbstractArrayModel, ComponentBinding)),
+    )
+    contracts = []
+    for path, node in entries:
+        location = scope + jax.tree_util.keystr(path)
+        if isinstance(node, ComponentBinding):
+            if node.authority is not slot.component_authority or (
+                node.slot_semantic_id not in (None, slot.slot_semantic_id)
+            ):
+                raise ValueError(
+                    f"Component {location} is bound with {node.authority.value} "
+                    f"authority to slot {node.slot_semantic_id!r}; a "
+                    f"{slot.__name__} slot confers "
+                    f"{slot.component_authority.value} authority."
+                )
+            contracts.append((location, node.contract()))
+        elif isinstance(node, AbstractArrayModel):
+            contracts.append((location, bind_component(node, slot).contract()))
+    return tuple(contracts)
+
+
 __all__ = [
     "AbstractComponentSlot",
     "CertificateRecord",
@@ -954,5 +995,6 @@ __all__ = [
     "RandomnessMode",
     "admit_randomness",
     "bind_component",
+    "slot_component_contracts",
     "supports_derivative",
 ]

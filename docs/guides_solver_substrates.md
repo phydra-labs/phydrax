@@ -87,6 +87,102 @@ original nonlinear residual of every trial state. Temporal learned defects
 require a separate fixed-step contract. Neither behavior is inferred from the
 linear preconditioner bridge.
 
+## Training learned components through solver objectives
+
+A learned component is trained by what its authority is trusted to decide. The
+prepared solve stays FIXED; the component lives in a separate trained tree and
+each evaluation binds it into the solve through the owner's own binding path:
+
+```text
+trained tree (component slots and ComponentBindings)
+  -> admission: slot-derived authority, frozen realization, derivative contract
+  -> bind the component into the FIXED prepared solve
+  -> run the native owner on every case; the owner's status decides acceptance
+  -> solution map (implicit), rollout (unrolled), or fixed-work (unrolled) loss
+  -> one accepted-update training kernel commits or rolls back
+```
+
+- `SolverObjective` scores an accepted solution and differentiates it
+  implicitly; it admits models and discretization components with classical
+  `C^1` regularity and never an accelerator, whose gradient there would be a
+  silent zero.
+- `RolloutObjective` scores an unrolled trajectory: finite-volume and
+  finite-difference rollouts, DEM replay, learned incompressible transitions,
+  kinetic rollouts, feedback policies, or a neural proposal corrected by a
+  native Newton solve. `checkpointed=True` rematerializes each case.
+- `AlgorithmicWorkObjective` scores a preconditioner, initial guess, or
+  nonlinear update by `log((||r_k|| + floor) / (||r_0|| + floor))` after exactly
+  `work` native iterations of the original problem (for Krylov solves,
+  `DifferentiationPolicy("algorithmic")` with zero tolerances). An early exit
+  fails the case.
+
+`phydrax.solver.train_components(tree, objectives, optimizer=..., steps=...,
+key=...)` resolves every PARAMETER leaf's authority from its slot or binding and
+requires one compatible objective per authority group: a face closure next to a
+preconditioner trains with a `RolloutObjective` and an
+`AlgorithmicWorkObjective`, each holding the other group fixed. Failed cases
+reject the attempt or, with `accepted_results="reduce-support"`, leave the
+support with exact-zero derivatives. Components without a JAX derivative are
+refused by gradient optimizers and trained explicitly with a
+distribution-evolution optimizer or calibrated with
+`phydrax.uq.posterior_problem_from_solver_objective` and `fit_eki`.
+
+```python executable
+from typing import ClassVar
+
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+import jax.random as jr
+import optax
+
+import phydrax as phx
+
+
+class Relaxation(phx.AbstractComponentSlot):
+    """Accelerator slot: the relaxation factor of a Richardson iteration."""
+
+    component_authority: ClassVar = phx.ComponentAuthority.ACCELERATOR
+    slot_semantic_id: ClassVar[str] = "guide.richardson-relaxation"
+    log_omega: jax.Array = phx.parameter_field()
+
+    def __init__(self, omega):
+        self.log_omega = jnp.log(jnp.asarray(omega))
+
+
+class Richardson(eqx.Module):
+    matrix: jax.Array
+    relaxation: Relaxation | None
+
+
+def four_iterations(owner, rhs):
+    omega = jnp.exp(owner.relaxation.log_omega)
+    state = jax.lax.fori_loop(
+        0, 4, lambda _, x: x + omega * (rhs - owner.matrix @ x), jnp.zeros_like(rhs)
+    )
+    return phx.solver.AlgorithmicWorkResult(
+        initial_residual=rhs,
+        final_residual=rhs - owner.matrix @ state,
+        iterations=jnp.asarray(4),
+        accepted=jnp.all(jnp.isfinite(state)),
+    )
+
+
+work = phx.solver.AlgorithmicWorkObjective(
+    Richardson(jnp.diag(jnp.asarray([1.0, 2.0, 3.0, 4.0])), None),
+    lambda solve, relaxation: Richardson(solve.matrix, relaxation),
+    four_iterations,
+    work=4,
+    objective_id="richardson-work",
+    cases=jr.normal(jr.key(0), (8, 4)),
+)
+result = phx.solver.train_components(
+    Relaxation(0.05), (work,), optimizer=optax.adam(5e-2), steps=40, key=jr.key(1)
+)
+assert result.values[-1] < result.values[0]
+assert result.authorities == ((".log_omega", "accelerator"),)
+```
+
 ## Mixed-integer proof and proposal lanes
 
 The shared branch-and-bound engine consumes one

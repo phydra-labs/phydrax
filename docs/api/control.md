@@ -20,6 +20,7 @@ failure, or hide a fallback.
 | Mean-field or finite-state game | Frozen/fixed/common-noise/constrained MFG, finite-$N$, MFC, common-information, and master-equation entry points below | Every layer reports its own law, information, statistical, and provenance ceiling; no layer silently implies another. |
 | Constrained affine discrete control | `compile_linear_quadratic_control`, `solve_linear_quadratic_control` | Canonical, uncondensed QP with exact decision and constraint layouts. |
 | Receding-horizon affine control | `solve_receding_horizon_mpc` | Re-solves canonical QPs and records every subproblem result and exact state handoff. |
+| Differentiable receding-horizon affine control | `prepare_receding_horizon_mpc_sensitivity` | Dense cold-started windows; per-window QP sensitivities composed through the exact handoffs; refused unless every window is valid, OPTIMAL, and regular. |
 | One unconstrained nonlinear case | `solve_ilqr` | iLQR with a fixed requested regularization and explicit line-search or curvature failure. |
 | One constrained nonlinear case | `solve_multiple_shooting` | Dense SQP with independent state nodes, exact defect accounting, and sampled path constraints. |
 | Implicit DAE or all-at-once trajectory optimization | `solve_direct_collocation` | Backward-Euler or midpoint transcription with interval controls, exact sparse derivatives, physical defect audits, and an explicitly selected dense-native or sparse-Ipopt method. |
@@ -172,22 +173,57 @@ cost = problem.evaluate(policy, jnp.asarray(0.0)).sampled_loss.total
 
 ## Local linearization
 
-The linearization functions evaluate a discrete transition or differential vector field
-at explicit operating points using JAX forward JVPs. `AffineControlLinearization` keeps
-operating values in their physical shapes and exposes flattened `A`, `B`, `C`, and `D`
-matrices, affine offsets, per-case `valid`, and `LinearizationProvenance`. An optional
-output callback also has the context-last signature
-`output(time, state, control, args)`.
+Linearization evaluates a discrete transition or differential vector field at
+explicit operating points through `phydrax.linalg.prepare_linearization`. Each
+operating point owns two prepared linearizations acting on one joint coordinate
+vector `concatenate((local_state, control))`: the local dynamics map with Jacobian
+`[A B]` and the output map with Jacobian `[C D]`.
+
+`prepare_control_linearization` returns one `PreparedControlLinearization` with
+those Jacobians as matrix-free `JacobianLinearOperator` values. Use it whenever the
+consumer needs actions, transposes, or solves; nothing is materialized.
+`phydrax.linalg.materialize` turns an operator into its dense matrix only under an
+explicit `MaterializationPolicy`.
+
+The dense `linearize_discrete_dynamics`, `linearize_differential_dynamics`, and
+`linearize_control_dynamics` accept case-batched operating points and require a
+`materialization` policy. The policy bounds each Jacobian family over the whole case
+batch before anything is materialized and raises `LinearCapabilityError` beyond its
+entry or byte limits. `AffineControlLinearization` keeps operating values in their
+physical shapes and exposes flattened `A`, `B`, `C`, and `D` matrices, affine
+offsets, per-case `valid`, and `LinearizationProvenance`. An optional output
+callback has the context-last signature `output(time, state, control, args)`.
+
+A failed discrete transition's accepted state is a rollback, not a local model. Its
+values, matrices, and Jacobian actions are NaN and its case is invalid; no finite
+Jacobian is substituted.
+
+`linear_quadratic_problem_from_discrete_dynamics` builds a
+`LinearQuadraticControlProblem` from a Euclidean `DiscreteControlDynamics`
+linearized along an operating trajectory: stage `t` uses step context
+`(times[t], times[t + 1], t)` and yields
+`x[t+1] = A[t] x[t] + B[t] u[t] + c[t]` in absolute coordinates. Every stage must be
+valid; a failed transition is refused rather than repaired. Costs, bounds,
+constraints, and `problem_id` pass through as `LinearQuadraticControlProblem`
+keywords, while the bridge owns `dynamics_bias`, `dynamics_id`, and `time_grid`.
+Manifold state geometry is refused, because its linearization lives in local
+charts and needs an explicit error-state formulation.
 
 ::: phydrax.control.LinearizationProvenance
 
 ::: phydrax.control.AffineControlLinearization
+
+::: phydrax.control.PreparedControlLinearization
+
+::: phydrax.control.prepare_control_linearization
 
 ::: phydrax.control.linearize_discrete_dynamics
 
 ::: phydrax.control.linearize_differential_dynamics
 
 ::: phydrax.control.linearize_control_dynamics
+
+::: phydrax.control.linear_quadratic_problem_from_discrete_dynamics
 
 ## Lyapunov equations and Gramians
 
@@ -441,8 +477,9 @@ and KKT diagnostics rather than assuming a returned primal is usable.
 ### Receding-horizon warm starts
 
 MPC caches one prepared template per `(prediction horizon, terminal topology)` and
-refreshes numeric data between compatible windows. Exact affine state handoff remains
-independent of predicted local nodes.
+refreshes numeric data between compatible windows. The dense interior-point kernel
+is compiled once per static layout, so windows that share a topology reuse it.
+Exact affine state handoff remains independent of predicted local nodes.
 
 `MPCWarmStartPolicy` explicitly chooses terminal-control filling (`"hold"` or
 `"zero"`) and the strict interior margin. Primal states/controls, dynamics/stage
@@ -453,6 +490,36 @@ warm-start support is rejected before rollout.
 Terminal policy remains explicit: `"global"` applies terminal terms only when the
 window reaches the global final node, `"always"` applies them at every endpoint, and
 `"none"` omits them.
+
+### Differentiable MPC
+
+`RecedingHorizonMPC.solve` stays the audited primal. For a dense controller,
+`prepare_receding_horizon_mpc_sensitivity(controller)` runs that same solve with
+cold-started windows and prepares one `PreparedQPSensitivity` per window. Each
+window QP is rebound through its compiled static layout, so tangents of the initial
+state, dynamics, bias, costs, linear terms, bounds, and constraints all enter the
+window QP; the exact affine handoffs then compose the window derivatives into one
+`PreparedMPCSensitivity`. `jvp(tangent)` takes a
+`LinearQuadraticControlProblem`-shaped tangent and returns state and applied-control
+tangents; `vjp(states_cotangent, controls_cotangent)` returns a
+specification-shaped cotangent whose time grid is zero.
+
+Admission is explicit and fails before solving: the compilation must be dense
+(the sparse conic compilation has no QP sensitivity), the controller has no
+`warm_start_policy` (there is no warm-start derivative), and solver regularization
+is zero. `DensePrimalDualQP` differentiates the window solution implicitly with
+`ConvexDifferentiationPolicy("active-set-kkt")` (default) or `"barrier-kkt"`;
+`MPAXraPDHG(unroll=True)` differentiates its unrolled iterations with
+`"algorithmic"`. `"barrier-kkt"` yields the explicitly smoothed window derivative at
+the audited window solution. Only affine-quadratic problems are supported.
+
+`stage_optimal` records `valid & OPTIMAL` per window and case, and
+`stage_regular` records each window QP's regularity: strict complementarity and a
+nonsingular reduced KKT system. If any window fails either test, `jvp` and `vjp`
+raise with the failing windows named in `refusal`. There is no partial or
+truncated derivative. A weakly active bound (zero multiplier on an active
+constraint) makes its window nonregular, because the solution map is not
+differentiable there.
 
 ### Affine SOCP constraints
 
@@ -525,6 +592,10 @@ numeric binding used to interpret the primal and dual decision rows.
 ::: phydrax.control.RecedingHorizonMPCResult
 
 ::: phydrax.control.solve_receding_horizon_mpc
+
+::: phydrax.control.PreparedMPCSensitivity
+
+::: phydrax.control.prepare_receding_horizon_mpc_sensitivity
 
 ## Iterative LQR
 

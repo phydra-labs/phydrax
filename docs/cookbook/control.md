@@ -2,8 +2,9 @@
 
 This workflow defines one discrete finite-horizon plant, audits a supplied control, solves
 its unconstrained linear-quadratic form with LQR, compiles and solves the canonical QP,
-runs receding-horizon MPC, and uses the QP trajectory to initialize iLQR. Every callback
-uses the public context-last state-space signature.
+runs receding-horizon MPC, linearizes the plant into the QP, differentiates the MPC
+closed loop, and uses the QP trajectory to initialize iLQR. Every callback uses the
+public context-last state-space signature.
 
 ## Define one physical problem
 
@@ -384,6 +385,73 @@ local endpoint or `"none"` to omit them. MPC prepares one template per horizon/t
 topology, refreshes compatible numeric windows, and shifts primal and dual state through
 the declared layouts when `MPCWarmStartPolicy` is supplied. `mpc.subproblem_solutions`,
 `mpc.qp_results`, `mpc.stage_valid`, and the exact affine state handoff remain visible.
+
+## Linearize the plant into an affine QP
+
+A `DiscreteControlDynamics` becomes a `LinearQuadraticControlProblem` by linearizing
+every stage along an operating trajectory. The dense Jacobians are materialized only
+under the explicit policy; a failed transition anywhere is refused, never repaired.
+
+```python
+linearized = phx.control.linear_quadratic_problem_from_discrete_dynamics(
+    dynamics,
+    time_grid,
+    qp_solution.states[:-1],
+    qp_solution.controls,
+    problem.initial_state,
+    Q_steps,
+    R_steps,
+    Q_terminal,
+    materialization=phx.linalg.MaterializationPolicy(max_entries=1_024),
+    args=context,
+    problem_id="scalar-regulation-linearized",
+)
+# This plant is affine, so the local model reproduces it exactly.
+assert bool(jnp.allclose(linearized.dynamics_matrices, A_steps))
+assert bool(jnp.allclose(linearized.dynamics_bias, 0.0))
+```
+
+For actions only, `phx.control.prepare_control_linearization` returns the same
+Jacobians as matrix-free `JacobianLinearOperator` values at one operating point.
+
+## Differentiate the MPC closed loop
+
+`prepare_receding_horizon_mpc_sensitivity` runs the audited MPC with cold-started dense
+windows and composes each window's QP sensitivity through the exact state handoffs.
+
+```python
+import equinox as eqx
+
+controller = phx.control.RecedingHorizonMPC(
+    linear_quadratic,
+    prediction_horizon=3,
+    terminal_policy="global",
+    policy=qp_policy,
+)
+sensitivity = phx.control.prepare_receding_horizon_mpc_sensitivity(controller)
+if sensitivity.refusal is not None:
+    raise RuntimeError(sensitivity.refusal)
+
+# Reverse mode: gradient of 0.5 * ||x||² over the realized states with respect to
+# every coefficient of the specification.
+gradient = sensitivity.vjp(sensitivity.states, jnp.zeros_like(sensitivity.controls))
+initial_state_gradient = gradient.initial_state
+dynamics_gradient = gradient.dynamics_matrices
+
+# Forward mode: the realized trajectory's response to the initial state.
+tangent = eqx.tree_at(
+    lambda item: item.initial_state,
+    jax.tree.map(jnp.zeros_like, linear_quadratic),
+    jnp.ones((1,)),
+)
+state_tangent, control_tangent = sensitivity.jvp(tangent)
+```
+
+The sensitivity admits only dense compilations, zero solver regularization, and no
+`warm_start_policy`; warm starts change the iterate path, not the solution, and have
+no derivative. Every window must be valid, OPTIMAL, and regular. A bound that is
+active with a zero multiplier makes its window nonregular, and then the whole
+derivative is refused with the failing windows named in `sensitivity.refusal`.
 
 ## Initialize iLQR from the QP control
 

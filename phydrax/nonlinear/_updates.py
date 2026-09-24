@@ -24,10 +24,10 @@ from .._fingerprint import canonical_fingerprint
 from .._model import (
     AbstractArrayModel,
     AbstractComponentSlot,
-    bind_component,
     ComponentBinding,
     ComponentContract,
 )
+from .._model._component import slot_component_contracts
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from .._tree_math import tree_allfinite, validate_inexact_tree
@@ -571,30 +571,6 @@ def _is_component(node: Any, /) -> bool:
     return isinstance(node, (AbstractArrayModel, ComponentBinding))
 
 
-def _slot_component_contracts(
-    slot: type[AbstractComponentSlot], function: Any, /
-) -> tuple[tuple[str, ComponentContract], ...]:
-    """Bind every model below `function` to `slot`; return `(location, contract)`."""
-    entries, _ = jax.tree_util.tree_flatten_with_path(function, is_leaf=_is_component)
-    contracts = []
-    for path, node in entries:
-        location = "function" + jax.tree_util.keystr(path)
-        if isinstance(node, ComponentBinding):
-            if node.authority is not slot.component_authority or (
-                node.slot_semantic_id not in (None, slot.slot_semantic_id)
-            ):
-                raise ValueError(
-                    f"Component {location} is bound with {node.authority.value} "
-                    f"authority to slot {node.slot_semantic_id!r}; a "
-                    f"{slot.__name__} slot confers "
-                    f"{slot.component_authority.value} authority."
-                )
-            contracts.append((location, node.contract()))
-        elif isinstance(node, AbstractArrayModel):
-            contracts.append((location, bind_component(node, slot).contract()))
-    return tuple(contracts)
-
-
 def _differentiable_action(contract: ComponentContract, /) -> bool:
     derivative = contract.model_contract.derivative
     return (
@@ -648,7 +624,10 @@ class FunctionNonlinearUpdate(AbstractNonlinearUpdate):
         if not identifier:
             raise ValueError("update_id must be non-empty.")
         contracts = tuple(
-            contract for _, contract in _slot_component_contracts(type(self), function)
+            contract
+            for _, contract in slot_component_contracts(
+                type(self), function, scope="function"
+            )
         )
         self.function = function
         self.update_name = identifier
@@ -670,7 +649,7 @@ class FunctionNonlinearUpdate(AbstractNonlinearUpdate):
         Locations are PyTree paths below `function` in flattening order; a plain
         stateless function has no components.
         """
-        return _slot_component_contracts(type(self), self.function)
+        return slot_component_contracts(type(self), self.function, scope="function")
 
     @property
     def capabilities(self) -> NonlinearUpdateCapabilities:

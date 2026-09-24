@@ -932,6 +932,10 @@ auxiliary randomness.
 
 ::: phydrax.uq.EnsembleKalmanConvergenceError
 
+---
+
+::: phydrax.uq.posterior_problem_from_solver_objective
+
 ## Checkpoints and result interchange
 
 ::: phydrax.uq.export_result

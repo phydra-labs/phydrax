@@ -6,11 +6,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite
 from typing import Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -19,16 +22,24 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..dynamics import TimeGrid
+from ..linalg import prepare_linearization, PreparedLinearization
 from ..optim._programming import (
     ClarabelInteriorPoint,
+    ConvexDifferentiationPolicy,
     ConvexProgramResult,
     ConvexProgramStatus,
     ConvexSolvePolicy,
     ConvexWarmStart,
+    DensePrimalDualQP,
+    MPAXraPDHG,
+    prepare_qp_sensitivity,
+    PreparedQPSensitivity,
+    QuadraticProgram,
 )
 from ._parameterization import PiecewiseConstantControlParameterization
 from ._problem import _identifier
 from ._qp_compiler import (
+    _rebind_dense_control_program,
     LinearControlCompilationPolicy,
     LinearControlQPSolution,
     LinearQuadraticControlProblem,
@@ -220,13 +231,8 @@ class RecedingHorizonMPC(StrictModule):
         prepared_by_topology: dict[tuple[int, bool], PreparedLinearControlQP] = {}
         previous_solution = warm_start
         for stage in range(specification.horizon):
-            local_horizon = min(self.prediction_horizon, specification.horizon - stage)
-            end = stage + local_horizon
-            apply_terminal = self.terminal_policy == "always" or (
-                self.terminal_policy == "global" and end == specification.horizon
-            )
-            topology = (local_horizon, apply_terminal)
-            local_problem = self._subproblem(stage, local_horizon, current_state)
+            topology = self._window(stage)
+            local_problem = self._subproblem(stage, current_state)
             if topology in prepared_by_topology:
                 prepared = refresh_linear_quadratic_control(
                     prepared_by_topology[topology],
@@ -257,19 +263,7 @@ class RecedingHorizonMPC(StrictModule):
             )
             previous_solution = local_solution
             applied_control = local_solution.controls[..., 0, :]
-            next_state = (
-                ein.contract(
-                    "...ij,...j->...i",
-                    specification.dynamics_matrices[..., stage, :, :],
-                    current_state,
-                )
-                + ein.contract(
-                    "...ij,...j->...i",
-                    specification.control_matrices[..., stage, :, :],
-                    applied_control,
-                )
-                + specification.dynamics_bias[..., stage, :]
-            )
+            next_state = _handoff(specification, stage, current_state, applied_control)
             subproblem_solutions.append(local_solution)
             applied_controls.append(applied_control)
             online_states.append(next_state)
@@ -421,19 +415,7 @@ class RecedingHorizonMPC(StrictModule):
         states = [problem.initial_state]
         current = problem.initial_state
         for stage in range(horizon):
-            current = (
-                ein.contract(
-                    "...ij,...j->...i",
-                    problem.dynamics_matrices[..., stage, :, :],
-                    current,
-                )
-                + ein.contract(
-                    "...ij,...j->...i",
-                    problem.control_matrices[..., stage, :, :],
-                    controls[..., stage, :],
-                )
-                + problem.dynamics_bias[..., stage, :]
-            )
+            current = _handoff(problem, stage, current, controls[..., stage, :])
             states.append(current)
         primal = compilation.decision_layout.encode(
             jnp.stack(tuple(states), axis=-2),
@@ -582,128 +564,202 @@ class RecedingHorizonMPC(StrictModule):
             structure_id=qp.structure_id,
         )
 
+    def _window(self, stage: int, /) -> tuple[int, bool]:
+        """Return the local horizon and terminal flag of the window at ``stage``."""
+        horizon = self.specification.horizon
+        local_horizon = min(self.prediction_horizon, horizon - stage)
+        apply_terminal = self.terminal_policy == "always" or (
+            self.terminal_policy == "global" and stage + local_horizon == horizon
+        )
+        return local_horizon, apply_terminal
+
     def _subproblem(
         self,
         stage: int,
-        local_horizon: int,
         initial_state: Array,
         /,
     ) -> LinearQuadraticControlProblem:
         specification = self.specification
+        local_horizon, apply_terminal = self._window(stage)
         end = stage + local_horizon
-        apply_terminal = self.terminal_policy == "always" or (
-            self.terminal_policy == "global" and end == specification.horizon
+        fields = _window_fields(
+            specification, stage, local_horizon, apply_terminal, initial_state
         )
-        batch = specification.case_shape
-        dtype = specification.dynamics_matrices.dtype
-        state_size = specification.state_size
-        terminal_state_cost = (
-            specification.terminal_state_cost
-            if apply_terminal
-            else jnp.zeros(batch + (state_size, state_size), dtype=dtype)
-        )
-        terminal_linear = (
-            specification.terminal_linear
-            if apply_terminal
-            else jnp.zeros(batch + (state_size,), dtype=dtype)
-        )
-        terminal_constant = (
-            specification.terminal_constant
-            if apply_terminal
-            else jnp.zeros(batch, dtype=dtype)
-        )
-        terminal_equality_matrix = (
-            specification.terminal_equality_matrix if apply_terminal else None
-        )
-        terminal_equality_rhs = (
-            specification.terminal_equality_rhs if apply_terminal else None
-        )
-        terminal_inequality_matrix = (
-            specification.terminal_inequality_matrix if apply_terminal else None
-        )
-        terminal_inequality_rhs = (
-            specification.terminal_inequality_rhs if apply_terminal else None
-        )
-        local_time_grid = TimeGrid(
-            specification.time_grid.times[stage : end + 1],
-            time_id=f"{specification.time_grid.time_id}:mpc:{stage}:{end}",
-        )
-        stage_slice = slice(stage, end)
-        state_slice = slice(stage, end + 1)
+        positional = tuple(fields.pop(name) for name in _WINDOW_POSITIONAL_FIELDS)
         return LinearQuadraticControlProblem(
-            specification.dynamics_matrices[..., stage_slice, :, :],
-            specification.control_matrices[..., stage_slice, :, :],
-            initial_state,
-            specification.state_costs[..., stage_slice, :, :],
-            specification.control_costs[..., stage_slice, :, :],
-            terminal_state_cost,
-            dynamics_bias=specification.dynamics_bias[..., stage_slice, :],
-            state_control_cross=specification.state_control_cross[..., stage_slice, :, :],
-            state_linear=specification.state_linear[..., stage_slice, :],
-            control_linear=specification.control_linear[..., stage_slice, :],
-            stage_constants=specification.stage_constants[..., stage_slice],
-            terminal_linear=terminal_linear,
-            terminal_constant=terminal_constant,
-            state_lower_bounds=(
-                None
-                if specification.state_lower_bounds is None
-                else specification.state_lower_bounds[..., state_slice, :]
+            *positional,
+            **fields,
+            time_grid=TimeGrid(
+                specification.time_grid.times[stage : end + 1],
+                time_id=f"{specification.time_grid.time_id}:mpc:{stage}:{end}",
             ),
-            state_upper_bounds=(
-                None
-                if specification.state_upper_bounds is None
-                else specification.state_upper_bounds[..., state_slice, :]
-            ),
-            control_lower_bounds=(
-                None
-                if specification.control_lower_bounds is None
-                else specification.control_lower_bounds[..., stage_slice, :]
-            ),
-            control_upper_bounds=(
-                None
-                if specification.control_upper_bounds is None
-                else specification.control_upper_bounds[..., stage_slice, :]
-            ),
-            stage_equality_state_matrix=(
-                None
-                if specification.stage_equality_state_matrix is None
-                else specification.stage_equality_state_matrix[..., stage_slice, :, :]
-            ),
-            stage_equality_control_matrix=(
-                None
-                if specification.stage_equality_control_matrix is None
-                else specification.stage_equality_control_matrix[..., stage_slice, :, :]
-            ),
-            stage_equality_rhs=(
-                None
-                if specification.stage_equality_rhs is None
-                else specification.stage_equality_rhs[..., stage_slice, :]
-            ),
-            stage_inequality_state_matrix=(
-                None
-                if specification.stage_inequality_state_matrix is None
-                else specification.stage_inequality_state_matrix[..., stage_slice, :, :]
-            ),
-            stage_inequality_control_matrix=(
-                None
-                if specification.stage_inequality_control_matrix is None
-                else specification.stage_inequality_control_matrix[..., stage_slice, :, :]
-            ),
-            stage_inequality_rhs=(
-                None
-                if specification.stage_inequality_rhs is None
-                else specification.stage_inequality_rhs[..., stage_slice, :]
-            ),
-            terminal_equality_matrix=terminal_equality_matrix,
-            terminal_equality_rhs=terminal_equality_rhs,
-            terminal_inequality_matrix=terminal_inequality_matrix,
-            terminal_inequality_rhs=terminal_inequality_rhs,
-            time_grid=local_time_grid,
             problem_id=(
                 f"{specification.problem_id}:mpc-window:{local_horizon}:terminal-{int(apply_terminal)}"
             ),
             dynamics_id=specification.dynamics_id,
         )
+
+
+_WINDOW_POSITIONAL_FIELDS = (
+    "dynamics_matrices",
+    "control_matrices",
+    "initial_state",
+    "state_costs",
+    "control_costs",
+    "terminal_state_cost",
+)
+
+_PROBLEM_FIELDS = _WINDOW_POSITIONAL_FIELDS + (
+    "dynamics_bias",
+    "state_control_cross",
+    "state_linear",
+    "control_linear",
+    "stage_constants",
+    "terminal_linear",
+    "terminal_constant",
+    "state_lower_bounds",
+    "state_upper_bounds",
+    "control_lower_bounds",
+    "control_upper_bounds",
+    "stage_equality_state_matrix",
+    "stage_equality_control_matrix",
+    "stage_equality_rhs",
+    "stage_inequality_state_matrix",
+    "stage_inequality_control_matrix",
+    "stage_inequality_rhs",
+    "terminal_equality_matrix",
+    "terminal_equality_rhs",
+    "terminal_inequality_matrix",
+    "terminal_inequality_rhs",
+)
+
+
+def _numeric_fields(problem: LinearQuadraticControlProblem, /) -> dict[str, Array]:
+    """Present numeric coefficient arrays; the time grid is metadata."""
+    return {
+        name: value
+        for name in _PROBLEM_FIELDS
+        if (value := getattr(problem, name)) is not None
+    }
+
+
+def _with_fields(
+    problem: LinearQuadraticControlProblem,
+    fields: dict[str, Array | None],
+    /,
+) -> LinearQuadraticControlProblem:
+    """Rebind numeric leaves without reconstructing (and re-admitting) a problem.
+
+    Every static field and the None pattern stay those of ``problem``, so the
+    rebinding is traceable; admission already happened for ``problem``.
+    """
+    names = tuple(name for name, value in fields.items() if value is not None)
+    return eqx.tree_at(
+        lambda item: tuple(getattr(item, name) for name in names),
+        problem,
+        tuple(fields[name] for name in names),
+    )
+
+
+def _window_fields(
+    specification: LinearQuadraticControlProblem,
+    stage: int,
+    local_horizon: int,
+    apply_terminal: bool,
+    initial_state: Array,
+    /,
+) -> dict[str, Array | None]:
+    """Slice every numeric field of one prediction window.
+
+    One pure slicing map drives both the audited window problems and the traced
+    closed-loop sensitivity, so both see identical window data.
+    """
+    stages = slice(stage, stage + local_horizon)
+    nodes = slice(stage, stage + local_horizon + 1)
+    batch = specification.case_shape
+    dtype = specification.dynamics_matrices.dtype
+    state_size = specification.state_size
+
+    def stage_matrix(value: Array | None) -> Array | None:
+        return None if value is None else value[..., stages, :, :]
+
+    def stage_vector(value: Array | None) -> Array | None:
+        return None if value is None else value[..., stages, :]
+
+    def node_vector(value: Array | None) -> Array | None:
+        return None if value is None else value[..., nodes, :]
+
+    def terminal(value: Array | None, shape: tuple[int, ...] | None) -> Array | None:
+        if apply_terminal:
+            return value
+        return None if shape is None else jnp.zeros(batch + shape, dtype=dtype)
+
+    return {
+        "dynamics_matrices": stage_matrix(specification.dynamics_matrices),
+        "control_matrices": stage_matrix(specification.control_matrices),
+        "initial_state": initial_state,
+        "state_costs": stage_matrix(specification.state_costs),
+        "control_costs": stage_matrix(specification.control_costs),
+        "terminal_state_cost": terminal(
+            specification.terminal_state_cost, (state_size, state_size)
+        ),
+        "dynamics_bias": stage_vector(specification.dynamics_bias),
+        "state_control_cross": stage_matrix(specification.state_control_cross),
+        "state_linear": stage_vector(specification.state_linear),
+        "control_linear": stage_vector(specification.control_linear),
+        "stage_constants": specification.stage_constants[..., stages],
+        "terminal_linear": terminal(specification.terminal_linear, (state_size,)),
+        "terminal_constant": terminal(specification.terminal_constant, ()),
+        "state_lower_bounds": node_vector(specification.state_lower_bounds),
+        "state_upper_bounds": node_vector(specification.state_upper_bounds),
+        "control_lower_bounds": stage_vector(specification.control_lower_bounds),
+        "control_upper_bounds": stage_vector(specification.control_upper_bounds),
+        "stage_equality_state_matrix": stage_matrix(
+            specification.stage_equality_state_matrix
+        ),
+        "stage_equality_control_matrix": stage_matrix(
+            specification.stage_equality_control_matrix
+        ),
+        "stage_equality_rhs": stage_vector(specification.stage_equality_rhs),
+        "stage_inequality_state_matrix": stage_matrix(
+            specification.stage_inequality_state_matrix
+        ),
+        "stage_inequality_control_matrix": stage_matrix(
+            specification.stage_inequality_control_matrix
+        ),
+        "stage_inequality_rhs": stage_vector(specification.stage_inequality_rhs),
+        "terminal_equality_matrix": terminal(
+            specification.terminal_equality_matrix, None
+        ),
+        "terminal_equality_rhs": terminal(specification.terminal_equality_rhs, None),
+        "terminal_inequality_matrix": terminal(
+            specification.terminal_inequality_matrix, None
+        ),
+        "terminal_inequality_rhs": terminal(specification.terminal_inequality_rhs, None),
+    }
+
+
+def _handoff(
+    specification: LinearQuadraticControlProblem,
+    stage: int,
+    state: Array,
+    control: Array,
+    /,
+) -> Array:
+    """Exact affine state handoff ``A[t] x + B[t] u + c[t]``."""
+    return (
+        ein.contract(
+            "...ij,...j->...i",
+            specification.dynamics_matrices[..., stage, :, :],
+            state,
+        )
+        + ein.contract(
+            "...ij,...j->...i",
+            specification.control_matrices[..., stage, :, :],
+            control,
+        )
+        + specification.dynamics_bias[..., stage, :]
+    )
 
 
 def _realized_objective(
@@ -785,10 +841,291 @@ def solve_receding_horizon_mpc(
     return controller.solve(initial_state=initial_state, warm_start=warm_start)
 
 
+class PreparedMPCSensitivity(StrictModule):
+    """Closed-loop MPC sensitivity composed from per-window dense QP sensitivities.
+
+    The primal is the audited `RecedingHorizonMPC.solve` result with
+    cold-started windows. Each window contributes one `PreparedQPSensitivity`
+    at its own QP; the exact affine state handoffs compose those window maps
+    into one linear map from a `LinearQuadraticControlProblem`-shaped tangent
+    to the handed-off states and applied controls. Window QP data is rebound
+    through the window's compiled static layout, so tangents of the initial
+    state, dynamics, costs, bounds, and constraints all propagate.
+
+    The complete derivative is refused unless every window is valid, OPTIMAL,
+    and regular (strictly complementary with a nonsingular reduced KKT
+    system). No partial or stage-truncated derivative is returned.
+    """
+
+    specification: LinearQuadraticControlProblem
+    result: RecedingHorizonMPCResult
+    window_sensitivities: tuple[PreparedQPSensitivity, ...]
+    linearization: PreparedLinearization | None
+    stage_optimal: Array = fixed_field()
+    stage_regular: Array = fixed_field()
+    regular: Array = fixed_field()
+    differentiation: ConvexDifferentiationPolicy = eqx.field(static=True)
+    refusal: str | None = eqx.field(static=True)
+    sensitivity_id: str = eqx.field(static=True)
+
+    @property
+    def states(self) -> Array:
+        return self.result.states
+
+    @property
+    def controls(self) -> Array:
+        return self.result.controls
+
+    def jvp(self, tangent: LinearQuadraticControlProblem, /) -> tuple[Array, Array]:
+        """Push a specification tangent to state and applied-control tangents.
+
+        ``tangent`` has the structure of the specification; its time grid
+        carries no derivative.
+        """
+        linearization = self._require_linearization()
+        if not isinstance(tangent, LinearQuadraticControlProblem):
+            raise TypeError("tangent must be LinearQuadraticControlProblem-shaped.")
+        return linearization.jvp(_numeric_fields(tangent))
+
+    def vjp(
+        self,
+        states_cotangent: ArrayLike,
+        controls_cotangent: ArrayLike,
+        /,
+    ) -> LinearQuadraticControlProblem:
+        """Pull state and applied-control cotangents back to the specification."""
+        linearization = self._require_linearization()
+        cotangent = linearization.vjp(
+            (
+                jnp.asarray(states_cotangent, dtype=self.states.dtype),
+                jnp.asarray(controls_cotangent, dtype=self.controls.dtype),
+            )
+        )
+        return _with_fields(jax.tree.map(jnp.zeros_like, self.specification), cotangent)
+
+    def _require_linearization(self) -> PreparedLinearization:
+        if self.linearization is None:
+            raise ValueError(self.refusal)
+        return self.linearization
+
+
+def _sensitivity_differentiation(
+    controller: RecedingHorizonMPC,
+    differentiation: ConvexDifferentiationPolicy | None,
+    /,
+) -> ConvexDifferentiationPolicy:
+    if controller.compilation_policy.representation != "dense":
+        raise ValueError(
+            "MPC sensitivity is dense-only; sparse control compilations have no "
+            "QP sensitivity."
+        )
+    if controller.warm_start_policy is not None:
+        raise ValueError(
+            "MPC sensitivity has no warm-start derivative; configure the "
+            "controller without a warm_start_policy."
+        )
+    policy = controller.qp_policy
+    if policy.regularization != 0.0:
+        raise ValueError("MPC sensitivity requires zero solver regularization.")
+    if differentiation is not None and not isinstance(
+        differentiation, ConvexDifferentiationPolicy
+    ):
+        raise TypeError("differentiation must be a ConvexDifferentiationPolicy or None.")
+    method = policy.method
+    match method:
+        case DensePrimalDualQP():
+            selected = (
+                ConvexDifferentiationPolicy()
+                if differentiation is None
+                else differentiation
+            )
+            if selected.mode not in ("active-set-kkt", "barrier-kkt"):
+                raise ValueError(
+                    "DensePrimalDualQP MPC sensitivity requires active-set-kkt or "
+                    "barrier-kkt differentiation."
+                )
+        case MPAXraPDHG():
+            if not method.plan.unroll or method.plan.representation != "dense":
+                raise ValueError(
+                    "MPAXraPDHG MPC sensitivity requires a dense unrolled plan."
+                )
+            selected = (
+                ConvexDifferentiationPolicy("algorithmic")
+                if differentiation is None
+                else differentiation
+            )
+            if selected.mode != "algorithmic":
+                raise ValueError(
+                    "MPAXraPDHG MPC sensitivity requires algorithmic differentiation."
+                )
+        case _:
+            raise ValueError(
+                f"Method {method.method_id!r} has no dense QP sensitivity; use "
+                "DensePrimalDualQP or MPAXraPDHG(unroll=True)."
+            )
+    return selected
+
+
+def _stored_window_solution(
+    primal: Array,
+    sensitivity: PreparedQPSensitivity,
+    /,
+) -> Callable[[QuadraticProgram], Array]:
+    """Window solution map at its audited primal with the prepared QP tangent."""
+
+    @jax.custom_jvp
+    def solution(program: QuadraticProgram) -> Array:
+        del program
+        return primal
+
+    @solution.defjvp
+    def solution_jvp(primals, tangents):
+        del primals
+        (tangent,) = tangents
+        return primal, sensitivity.jvp(tangent)
+
+    return solution
+
+
+def _closed_loop_map(
+    controller: RecedingHorizonMPC,
+    result: RecedingHorizonMPCResult,
+    sensitivities: tuple[PreparedQPSensitivity, ...],
+    /,
+) -> Callable[[dict[str, Array]], tuple[Array, Array]]:
+    """Closed loop as a function of the specification's numeric fields.
+
+    Window QPs are rebound through each window's compiled static layout; the
+    window solve is the audited primal with its prepared QP tangent, and the
+    state handoffs are the same exact affine map as `RecedingHorizonMPC.solve`.
+    """
+    specification = controller.specification
+    windows = tuple(
+        (
+            stage,
+            *controller._window(stage),
+            solution.compilation,
+            _stored_window_solution(solution.qp_result.primal, sensitivity),
+        )
+        for stage, (solution, sensitivity) in enumerate(
+            zip(result.subproblem_solutions, sensitivities, strict=True)
+        )
+    )
+    case_axis = len(specification.case_shape)
+
+    def closed_loop(fields: dict[str, Array]) -> tuple[Array, Array]:
+        problem = _with_fields(specification, fields)
+        state = problem.initial_state
+        states = [state]
+        controls = []
+        for stage, local_horizon, apply_terminal, compilation, solution in windows:
+            window = _with_fields(
+                compilation.specification,
+                _window_fields(problem, stage, local_horizon, apply_terminal, state),
+            )
+            primal = solution(_rebind_dense_control_program(compilation, window))
+            _, window_controls = compilation.decode(primal)
+            control = window_controls[..., 0, :]
+            state = _handoff(problem, stage, state, control)
+            controls.append(control)
+            states.append(state)
+        return (
+            jnp.stack(states, axis=case_axis),
+            jnp.stack(controls, axis=case_axis),
+        )
+
+    return closed_loop
+
+
+def _sensitivity_refusal(stage_optimal: Array, stage_regular: Array, /) -> str | None:
+    # Host evidence boundary: the prepared sensitivity is an eager artifact
+    # whose admission is decided once, after every window has been solved.
+    case_axes = tuple(range(stage_optimal.ndim - 1))
+    optimal = np.asarray(jnp.all(stage_optimal, axis=case_axes))
+    regular = np.asarray(stage_regular)
+    reasons = []
+    if not optimal.all():
+        reasons.append(
+            f"windows {np.flatnonzero(~optimal).tolist()} are not valid and OPTIMAL"
+        )
+    if not regular.all():
+        reasons.append(
+            f"windows {np.flatnonzero(~regular).tolist()} have nonregular QP "
+            "sensitivities (weak complementarity or a singular reduced KKT system)"
+        )
+    if not reasons:
+        return None
+    return "MPC sensitivity is refused: " + "; ".join(reasons) + "."
+
+
+def prepare_receding_horizon_mpc_sensitivity(
+    controller: RecedingHorizonMPC,
+    /,
+    *,
+    differentiation: ConvexDifferentiationPolicy | None = None,
+) -> PreparedMPCSensitivity:
+    """Solve cold-started MPC windows and prepare the composed dense sensitivity.
+
+    Only dense affine-quadratic controllers without warm starts or solver
+    regularization are admitted. ``DensePrimalDualQP`` uses implicit
+    active-set or barrier KKT differentiation; ``MPAXraPDHG(unroll=True)``
+    differentiates its unrolled iterations.
+    """
+    if not isinstance(controller, RecedingHorizonMPC):
+        raise TypeError("controller must be a RecedingHorizonMPC.")
+    derivative = _sensitivity_differentiation(controller, differentiation)
+    result = controller.solve()
+    sensitivities = tuple(
+        prepare_qp_sensitivity(
+            solution.compilation.program,
+            policy=controller.qp_policy,
+            differentiation=derivative,
+        )
+        for solution in result.subproblem_solutions
+    )
+    case_axis = len(controller.specification.case_shape)
+    statuses = jnp.stack(
+        tuple(qp_result.status for qp_result in result.qp_results), axis=case_axis
+    )
+    stage_optimal = result.stage_valid & (statuses == int(ConvexProgramStatus.OPTIMAL))
+    stage_regular = jnp.stack(tuple(item.regular for item in sensitivities))
+    refusal = _sensitivity_refusal(stage_optimal, stage_regular)
+    sensitivity_id = "control-mpc-sensitivity:" + canonical_fingerprint(
+        {
+            "result": result.result_id,
+            "method": controller.qp_policy.method.method_id,
+            "differentiation": derivative.mode,
+        }
+    )
+    linearization = (
+        None
+        if refusal is not None
+        else prepare_linearization(
+            _closed_loop_map(controller, result, sensitivities),
+            _numeric_fields(controller.specification),
+            linearization_id=sensitivity_id,
+        )
+    )
+    return PreparedMPCSensitivity(
+        specification=controller.specification,
+        result=result,
+        window_sensitivities=sensitivities,
+        linearization=linearization,
+        stage_optimal=stage_optimal,
+        stage_regular=stage_regular,
+        regular=jnp.all(stage_optimal) & jnp.all(stage_regular),
+        differentiation=derivative,
+        refusal=refusal,
+        sensitivity_id=sensitivity_id,
+    )
+
+
 __all__ = [
     "MPCTerminalPolicy",
     "MPCWarmStartPolicy",
+    "PreparedMPCSensitivity",
     "RecedingHorizonMPC",
     "RecedingHorizonMPCResult",
+    "prepare_receding_horizon_mpc_sensitivity",
     "solve_receding_horizon_mpc",
 ]

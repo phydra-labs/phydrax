@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+import math
+from typing import Any, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax
@@ -36,6 +37,42 @@ from .._preconditioners import AbstractPreconditioner
 from .._problems import LeastSquaresProblem
 from .._results import LinearIterationMetrics, LinearSolveStatus
 from ..krylov._results import KrylovBreakdownStatus
+
+
+# Loop structure of one native Krylov execution. `"early-exit"` stops at the
+# first converged or broken-down step through data-dependent loops; it is the
+# only route of every non-algorithmic solve. `"fixed-trip"` executes the same
+# gated steps inside static-length scans so the executed algorithm is
+# reverse-differentiable: inactive steps are exact identities, masked
+# orthogonalization/rotation entries contribute exact zeros, and active work
+# keeps the early-exit floating-point order.
+KrylovLoopDriver: TypeAlias = Literal["early-exit", "fixed-trip"]
+
+
+def _loop_driver(plan: LinearSolvePlan, /) -> KrylovLoopDriver:
+    match plan.policy.differentiation.mode:
+        case "algorithmic":
+            return "fixed-trip"
+        case "mathematical" | "rhs-only" | "none":
+            return "early-exit"
+        case mode:
+            raise ValueError(f"Unknown differentiation mode {mode!r}.")
+
+
+def _fixed_trip(driver: KrylovLoopDriver, /) -> bool:
+    match driver:
+        case "fixed-trip":
+            return True
+        case "early-exit":
+            return False
+        case _:
+            raise ValueError(f"Unknown native Krylov loop driver {driver!r}.")
+
+
+def _pcg_checkpoint_block(max_steps: int, /) -> int:
+    # Square-root block checkpointing bounds reverse-mode storage at
+    # O(sqrt(max_steps)) block carries plus one recomputed block.
+    return max(1, math.isqrt(max_steps))
 
 
 class NativeKrylovState(StrictModule):
@@ -463,6 +500,7 @@ def _square_solve(
     inner = lambda left, right: _space_inner(operator.source, left, right)
     precondition = _preconditioner_action(preconditioner, operator.source)
     tolerance = (relative, absolute)
+    driver = _loop_driver(plan)
     projected = method == "projected-pcg"
     if projected:
         nullspace = problem.nullspace_policy
@@ -494,6 +532,7 @@ def _square_solve(
                 tolerance[0],
                 tolerance[1],
                 step_limit=max_steps,
+                driver=driver,
                 iteration=iteration,
                 iteration_state=iteration_state,
             )
@@ -543,6 +582,7 @@ def _square_solve(
                 tolerance[0],
                 tolerance[1],
                 step_limit=max_steps,
+                driver=driver,
                 identity_preconditioner=preconditioner is None,
                 basis_dtype=(
                     None
@@ -584,6 +624,7 @@ def _pcg_raw(
     *,
     finite_all=None,
     step_limit: Array | None = None,
+    driver: KrylovLoopDriver = "early-exit",
     iteration: IterationPlan | None = None,
     iteration_state: IterationRuntimeState | None = None,
 ):
@@ -679,9 +720,21 @@ def _pcg_raw(
             current,
         )
 
-    x, residual, _, _, _, iterations, _, breakdown, iteration_state = jax.lax.fori_loop(
-        0, max_steps, step, state
-    )
+    if _fixed_trip(driver):
+        # Lazy: phydrax._numerics imports sampling, which imports linalg.
+        from ..._numerics._checkpointed_scan import checkpointed_scan
+
+        final, _ = checkpointed_scan(
+            lambda current, index: (step(index, current), None),
+            state,
+            jnp.arange(max_steps, dtype=jnp.int32),
+            length=max_steps,
+            mode="block",
+            block_size=_pcg_checkpoint_block(max_steps),
+        )
+    else:
+        final = jax.lax.fori_loop(0, max_steps, step, state)
+    x, residual, _, _, _, iterations, _, breakdown, iteration_state = final
     residual_norm = _norm(rhs - action(x), inner)
     auxiliary = (
         iterations,
@@ -898,6 +951,7 @@ def _fgmres_raw(
     absolute: Array,
     *,
     step_limit: Array | None = None,
+    driver: KrylovLoopDriver = "early-exit",
     identity_preconditioner: bool = False,
     basis_dtype=None,
     iteration: IterationPlan | None = None,
@@ -905,6 +959,10 @@ def _fgmres_raw(
 ):
     if step_limit is None:
         step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
+    fixed_trip = _fixed_trip(driver)
+    if fixed_trip:
+        # Lazy: phydrax._numerics imports sampling, which imports linalg.
+        from ..._numerics._checkpointed_scan import checkpointed_scan
     rhs_norm = _norm(rhs, inner)
     threshold = absolute + relative * rhs_norm
     residual = rhs - action(initial)
@@ -1052,24 +1110,31 @@ def _fgmres_raw(
                     image = action(transformed)
                     projection = jnp.zeros((restart,), dtype=rhs.dtype)
 
+                    # Early exit bounds the modified Gram-Schmidt passes by the
+                    # dynamic basis size; fixed trip runs the static restart
+                    # length and masks entries beyond `local_index` to exact
+                    # zeros, so active work keeps the same order.
                     def orthogonalize(index, state):
                         remainder, coefficients = state
                         basis_vector = basis_i[index].astype(rhs.dtype)
                         coefficient = inner(basis_vector, remainder)
-                        return (
-                            remainder - coefficient * basis_vector,
-                            coefficients.at[index].add(coefficient),
-                        )
+                        reduced = remainder - coefficient * basis_vector
+                        if fixed_trip:
+                            active = index <= local_index
+                            coefficient = jnp.where(active, coefficient, 0)
+                            reduced = jnp.where(active, reduced, remainder)
+                        return reduced, coefficients.at[index].add(coefficient)
 
+                    basis_bound = restart if fixed_trip else local_index + 1
                     orthogonal, projection = jax.lax.fori_loop(
                         0,
-                        local_index + 1,
+                        basis_bound,
                         orthogonalize,
                         (image, projection),
                     )
                     orthogonal, projection = jax.lax.fori_loop(
                         0,
-                        local_index + 1,
+                        basis_bound,
                         orthogonalize,
                         (orthogonal, projection),
                     )
@@ -1095,21 +1160,24 @@ def _fgmres_raw(
                         lower = value[index + 1]
                         cosine = cosines_i[index]
                         sine = sines_i[index]
-                        value = value.at[index].set(cosine * upper + sine * lower)
-                        return value.at[index + 1].set(
+                        rotated = value.at[index].set(cosine * upper + sine * lower)
+                        rotated = rotated.at[index + 1].set(
                             -jnp.conj(sine) * upper + cosine * lower
                         )
+                        if fixed_trip:
+                            return jnp.where(index < local_index, rotated, value)
+                        return rotated
 
                     column = jax.lax.fori_loop(
                         0,
-                        local_index,
+                        restart if fixed_trip else local_index,
                         apply_previous_rotation,
                         column,
                     )
                     upper = column[local_index]
                     lower = column[local_index + 1]
-                    upper_abs = jnp.abs(upper)
-                    rotation_scale = jnp.hypot(upper_abs, jnp.abs(lower))
+                    upper_abs = _safe_abs(upper)
+                    rotation_scale = jnp.hypot(upper_abs, _safe_abs(lower))
                     safe_scale = jnp.where(rotation_scale > 0.0, rotation_scale, 1.0)
                     safe_upper_abs = jnp.where(upper_abs > 0.0, upper_abs, 1.0)
                     phase = upper / safe_upper_abs
@@ -1141,7 +1209,7 @@ def _fgmres_raw(
                     reduced_rhs_i = reduced_rhs_i.at[local_index + 1].set(
                         -jnp.conj(sine) * reduced_upper + cosine * reduced_lower
                     )
-                    estimated_norm = jnp.abs(reduced_rhs_i[local_index + 1])
+                    estimated_norm = _safe_abs(reduced_rhs_i[local_index + 1])
                     finite_step = (
                         jnp.isfinite(next_norm)
                         & jnp.isfinite(rotation_scale)
@@ -1228,6 +1296,21 @@ def _fgmres_raw(
                     current,
                 )
 
+            if fixed_trip:
+                # Each Arnoldi step is rematerialized in reverse mode: storage is
+                # the step carries of one cycle plus one step's residuals.
+                final_inner, _ = checkpointed_scan(
+                    lambda current, local_index: (
+                        arnoldi_step(local_index, current),
+                        None,
+                    ),
+                    inner_state,
+                    jnp.arange(restart, dtype=jnp.int32),
+                    length=restart,
+                    mode="step",
+                )
+            else:
+                final_inner = jax.lax.while_loop(inner_condition, inner_body, inner_state)
             (
                 basis,
                 preconditioned_basis,
@@ -1241,7 +1324,7 @@ def _fgmres_raw(
                 inner_best,
                 inner_stagnant,
                 inner_iteration_state,
-            ) = jax.lax.while_loop(inner_condition, inner_body, inner_state)
+            ) = final_inner
             update_basis = basis[:-1] if identity_preconditioner else preconditioned_basis
             cycle_steps = final_iterations - starting_iterations
             coefficients = reduced_solve(
@@ -1320,6 +1403,22 @@ def _fgmres_raw(
             & (state[8] < cycles)
         )
 
+    if fixed_trip:
+        # One checkpoint per restart cycle: reverse mode stores cycle carries
+        # and recomputes at most one cycle of Arnoldi work at a time.
+        final_state, _ = checkpointed_scan(
+            lambda state, _: (cycle_step(None, state), None),
+            initial_state,
+            None,
+            length=cycles,
+            mode="step",
+        )
+    else:
+        final_state = jax.lax.while_loop(
+            cycle_condition,
+            lambda state: cycle_step(None, state),
+            initial_state,
+        )
     (
         x,
         _,
@@ -1331,11 +1430,7 @@ def _fgmres_raw(
         _,
         executed_cycles,
         iteration_state,
-    ) = jax.lax.while_loop(
-        cycle_condition,
-        lambda state: cycle_step(None, state),
-        initial_state,
-    )
+    ) = final_state
     return (
         x,
         (
@@ -1702,7 +1797,17 @@ def _space_norm(space, vector):
 
 
 def _norm(vector, inner):
-    return jnp.sqrt(jnp.maximum(jnp.real(inner(vector, vector)), 0.0))
+    # Value-identical to sqrt(max(<v, v>, 0)), including NaN propagation, with a
+    # finite derivative at an exact zero (exact breakdown under fixed trip).
+    squared = jnp.maximum(jnp.real(inner(vector, vector)), 0.0)
+    zero = squared == 0.0
+    return jnp.where(zero, 0.0, jnp.sqrt(jnp.where(zero, 1.0, squared)))
+
+
+def _safe_abs(value):
+    # Value-identical to |z|; complex |z| otherwise has no derivative at zero.
+    nonzero = value != 0
+    return jnp.where(nonzero, jnp.abs(jnp.where(nonzero, value, 1)), 0)
 
 
 def _target_norm(value, inner):

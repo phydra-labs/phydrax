@@ -164,6 +164,41 @@ class LinearIterationMetrics(StrictModule):
         self.breakdown_status = jnp.asarray(breakdown_status, dtype=jnp.int32)
 
 
+class InitialGuessDiagnostics(StrictModule):
+    """Branch evidence of one guarded initial-guess proposal.
+
+    A provider's proposal is untrusted. The owning solve evaluates its residual
+    and the residual of the native baseline guess on device, and `accepted`
+    records whether the proposal (valid, strictly smaller residual) replaced the
+    baseline. The selected guess carries no derivative. Array fields have one
+    entry per right-hand side (linear) or are scalars (nonlinear).
+    """
+
+    proposal_residual_norm: Array
+    baseline_residual_norm: Array
+    proposal_valid: Array
+    accepted: Array
+    provider_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        proposal_residual_norm: Any,
+        baseline_residual_norm: Any,
+        proposal_valid: Any,
+        accepted: Any,
+        provider_id: str,
+    ):
+        identifier = str(provider_id)
+        if not identifier:
+            raise ValueError("provider_id must be non-empty.")
+        self.proposal_residual_norm = jnp.asarray(proposal_residual_norm)
+        self.baseline_residual_norm = jnp.asarray(baseline_residual_norm)
+        self.proposal_valid = jnp.asarray(proposal_valid, dtype=jnp.bool_)
+        self.accepted = jnp.asarray(accepted, dtype=jnp.bool_)
+        self.provider_id = identifier
+
+
 class LinearPrecisionEvidence(StrictModule):
     """Requested-stage resolution for one capability-checked linear execution."""
 
@@ -451,6 +486,7 @@ class LinearSolveResult(StrictModule):
     diagnostics: LinearSolveDiagnostics
     provenance: LinearSolveProvenance
     iteration_evidence: IterationEvidence | None
+    initial_guess: InitialGuessDiagnostics | None
     derivative_contract: DerivativeContract
 
     def __init__(
@@ -463,6 +499,7 @@ class LinearSolveResult(StrictModule):
         *,
         differentiation: DifferentiationPolicy,
         iteration_evidence: IterationEvidence | None = None,
+        initial_guess: InitialGuessDiagnostics | None = None,
     ):
         if not isinstance(diagnostics, LinearSolveDiagnostics):
             raise TypeError("diagnostics must be LinearSolveDiagnostics.")
@@ -474,10 +511,15 @@ class LinearSolveResult(StrictModule):
             iteration_evidence, IterationEvidence
         ):
             raise TypeError("iteration_evidence must be IterationEvidence or None.")
+        if initial_guess is not None and not isinstance(
+            initial_guess, InitialGuessDiagnostics
+        ):
+            raise TypeError("initial_guess must be InitialGuessDiagnostics or None.")
         self.value = value
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.diagnostics = diagnostics
         self.provenance = provenance
+        self.initial_guess = initial_guess
         self.iteration_evidence = iteration_evidence
         self.derivative_contract = _linear_solve_derivative_contract(differentiation.mode)
 
@@ -752,6 +794,7 @@ class RecycledLinearSolveResult(StrictModule):
 
 
 __all__ = [
+    "InitialGuessDiagnostics",
     "LinearIterationMetrics",
     "LinearPrecisionEvidence",
     "LinearSolveCheckEvidence",

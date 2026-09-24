@@ -1768,8 +1768,11 @@ rays; they are not inferred from a provider status.
 
 The native dense method solves with the explicit regularized Hessian
 `Q + regularization * I`; the result audits that equation separately from
-stationarity for the original `Q`. MPAX retains its scaling and first-order
-iteration evidence while Phydrax re-audits the original unscaled program.
+stationarity for the original `Q`. Its interior-point kernel is compiled once per
+static layout (batch shape, dimensions, dtype, termination, regularization, step
+fraction, and warm-start use), so repeated solves at fixed structure reuse it. MPAX
+retains its scaling and first-order iteration evidence while Phydrax re-audits the
+original unscaled program.
 
 ### Prepared lifecycle and warm starts
 
@@ -1815,6 +1818,15 @@ finite-barrier solution and never hides its smoothing scale.
 and VJP actions and reports whether the solution map is regular. MPAX exposes
 only explicitly requested algorithmic differentiation: the selected method
 must use `unroll=True` and the differentiation policy must be `"algorithmic"`.
+
+`PreparedQPSensitivity` carries no solver status; pair it with the audited
+`ConvexProgramResult` of the same program. `phydrax.control.prepare_receding_horizon_mpc_sensitivity`
+does exactly that for every receding-horizon window: it composes one
+`prepare_qp_sensitivity` per window through the exact affine state handoffs and
+refuses the complete derivative unless every window is valid, OPTIMAL, and
+`regular`. It admits only dense programs with zero regularization and no warm
+start, and `"barrier-kkt"` there yields the explicitly smoothed window derivative
+at the audited window solution.
 
 ### Results, audits, and certificates
 
