@@ -74,7 +74,7 @@ class ChemicalComponentCatalog(StrictModule, NonTrainableState):
         if charges_np.shape != (len(names),):
             raise ValueError("charges must have shape (component_count,).")
         if not np.issubdtype(charges_np.dtype, np.integer):
-            raise ValueError("charges must have integer dtype.")
+            raise TypeError("charges must have integer dtype.")
         if not source:
             raise ValueError("provenance must be non-empty.")
 

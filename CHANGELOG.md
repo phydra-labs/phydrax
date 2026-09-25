@@ -414,6 +414,14 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Fixed
+- Canonical identifier validation raises `TypeError` for a value that is not a
+  string and keeps `ValueError` for empty or whitespace-padded strings. This
+  applies to every constructor that validates identifiers through the shared
+  identifier contract, including admissibility headers, discrete field views,
+  finite-volume geometry protocols, facet adjacency, BEM array archives, privacy
+  definitions, and qualification runtime identities.
+- `ChemicalComponentCatalog` raises `TypeError` for non-integer `charges`,
+  matching `element_composition`; the charge shape is still checked first.
 - `VortexFlexibleCouplingPlan.step` no longer passes the unsupported `t0`/`t1`
   keywords to `SecondOrderDifferentialProblem`, which made every flexible
   structural step raise `TypeError`; the two-node `TimeGrid` remains the sole

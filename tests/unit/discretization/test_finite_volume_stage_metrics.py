@@ -980,7 +980,6 @@ def test_active_face_routes_must_own_only_active_cells():
         ("topology_epoch_id", " epoch"),
         ("geometry_family_id", "family "),
         ("geometry_layout_id", "layout "),
-        ("topology_epoch_id", object()),
     ),
 )
 def test_stage_metrics_reject_noncanonical_static_ids(field, value):
@@ -998,6 +997,11 @@ def test_stage_metrics_reject_noncanonical_static_ids(field, value):
             _unstructured(),
             topology_epoch_id=" epoch",
         )
+
+
+def test_stage_metrics_reject_non_string_static_ids_as_wrong_kind():
+    with pytest.raises(TypeError):
+        _stage_metrics(topology_epoch_id=object())
 
 
 @pytest.mark.parametrize(

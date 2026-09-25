@@ -10,7 +10,9 @@ from numbers import Real
 
 
 def canonical_identifier(value: object, name: str, /) -> str:
-    if not isinstance(value, str) or not value or value != value.strip():
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string.")
+    if not value or value != value.strip():
         raise ValueError(f"{name} must be a non-empty canonical identifier.")
     return value
 
