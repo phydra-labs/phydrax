@@ -60,7 +60,7 @@ class LinearMetricModel(AbstractFittedModel):
         component_count: int,
         case_shape: tuple[int, ...],
         method: str,
-    ):
+    ) -> None:
         factor_ = jnp.asarray(factor)
         features = int(feature_count)
         components = int(component_count)
@@ -131,7 +131,7 @@ class NeighborhoodComponentsAnalysisRecipe(AbstractRecipe):
         temperature: ArrayLike = 1.0,
         ridge: ArrayLike = 1e-4,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if component_count is not None and int(component_count) <= 0:
             raise ValueError("component_count must be positive.")
         if int(iterations) <= 0:
@@ -292,7 +292,7 @@ class MahalanobisMetricRecipe(AbstractRecipe):
         ridge: ArrayLike = 1e-6,
         component_count: int | None = None,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         ridge_ = jnp.asarray(ridge, dtype=jnp.float64)
         if ridge_.ndim != 0:
             raise ValueError("ridge must be scalar.")

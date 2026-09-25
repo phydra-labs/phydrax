@@ -63,7 +63,7 @@ class PreparedDistributedCutCellComplex(StrictModule, NonTrainableState):
         /,
         *,
         costs: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(complex_, MultivaluedCutCellComplex) or not isinstance(
             group, ExecutionGroup
         ):
@@ -353,7 +353,7 @@ class DistributedCutCellPartitionPlan(StrictModule, NonTrainableState):
     local_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, group: ExecutionGroup, local_capacity: int, /):
+    def __init__(self, group: ExecutionGroup, local_capacity: int, /) -> None:
         capacity = int(local_capacity)
         if not isinstance(group, ExecutionGroup) or capacity <= 0:
             raise ValueError("Distributed cut-cell partition plan is invalid.")

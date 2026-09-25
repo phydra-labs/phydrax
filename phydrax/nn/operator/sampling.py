@@ -50,7 +50,7 @@ class SampleSelection:
     importance_weights: tuple[float, ...]
     strategy: SamplingStrategy
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         count = len(self.indices)
         if count == 0:
             raise ValueError("A sample selection must not be empty.")
@@ -93,7 +93,7 @@ class OperatorCase:
     case_log_weight: float = 0.0
     case_active: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.batch.case_shape:
             raise ValueError("OperatorCase batches must not contain case axes.")
         if not isinstance(self.targets, OperatorTargetBatch):
@@ -333,7 +333,7 @@ class AnchorQuerySamplingPolicy:
         seed: int = 0,
         fixed_anchor_indices: Mapping[str, Sequence[int]] = {},
         fixed_query_indices: Mapping[str, Sequence[int]] = {},
-    ):
+    ) -> None:
         counts = tuple((str(name), int(count)) for name, count in anchor_counts.items())
         targets = tuple((str(name), int(count)) for name, count in query_counts.items())
         if any(not name or count <= 0 for name, count in counts + targets):
@@ -423,7 +423,7 @@ class InMemoryOperatorCaseSource(OperatorCaseSource):
 
     fingerprint_type_id = "phydrax.operator.case-source:in-memory"
 
-    def __init__(self, dataset: OperatorDataset, /):
+    def __init__(self, dataset: OperatorDataset, /) -> None:
         self.dataset = dataset
 
     @property
@@ -531,7 +531,7 @@ class CallbackOperatorCaseSource(OperatorCaseSource):
         content_fingerprint: str,
         background_read_safe: bool = False,
         configuration: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if int(size) <= 0:
             raise ValueError("Callback source size must be positive.")
         fingerprint = str(content_fingerprint).strip()

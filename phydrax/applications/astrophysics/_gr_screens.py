@@ -118,7 +118,7 @@ class GRObserverScreenPlan(StrictModule):
         temporal_direction: GRTemporalDirection = "past",
         orthonormal_tolerance: float = 1.0e-6,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(metric, LorentzianMetric) or metric.chart.dimension != 4:
             raise TypeError(
                 "GR observer screens require a four-dimensional LorentzianMetric."
@@ -264,7 +264,7 @@ class GRObserverScreenResult(StrictModule, NonTrainableState):
         scale_id: str,
         coordinate_unit_id: str,
         affine_parameter_unit_id: str,
-    ):
+    ) -> None:
         observer = jnp.asarray(observer_coordinates)
         tetrad_ = jnp.asarray(tetrad, dtype=observer.dtype)
         pixels = jnp.asarray(pixel_coordinates, dtype=observer.dtype)

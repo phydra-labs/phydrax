@@ -39,7 +39,7 @@ class TopologyResourcePolicy(StrictModule, NonTrainableState):
         max_representative_entries: int = 5_000_000,
         max_rational_bit_length: int = 16_384,
         max_packed_intervals: int = 1_000_000,
-    ):
+    ) -> None:
         values = {
             "max_cells": int(max_cells),
             "max_boundary_nonzeros": int(max_boundary_nonzeros),
@@ -77,7 +77,7 @@ class TopologyReductionEvidence(StrictModule, NonTrainableState):
         *,
         exact: bool = True,
         verified: bool = True,
-    ):
+    ) -> None:
         algorithm_ = str(algorithm)
         coefficient_id_ = str(coefficient_id)
         if not algorithm_ or not coefficient_id_:

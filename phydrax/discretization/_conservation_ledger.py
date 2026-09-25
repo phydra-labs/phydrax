@@ -272,7 +272,7 @@ class ConservationStageFluxRateBlock(StrictModule):
         block_id: str,
         block_kind: str,
         /,
-    ):
+    ) -> None:
         block_id_ = _flux_identity(block_id, "block_id")
         block_kind_ = _flux_identity(block_kind, "block_kind")
         owner, owner_host = _route_array(owner_cells, "owner_cells")
@@ -367,7 +367,7 @@ class ConservationStageLedger(StrictModule):
         correction_level: ArrayLike | None = None,
         accepted: ArrayLike = True,
         differentiability_policy_id: str = BranchDifferentiationPolicy.SMOOTH.value,
-    ):
+    ) -> None:
         geometry_family = _flux_identity(geometry_family_id, "geometry_family_id")
         geometry_layout = _flux_identity(geometry_layout_id, "geometry_layout_id")
         version = _integer_scalar(geometry_version, "geometry_version")
@@ -581,7 +581,7 @@ class AcceptedConservationFluxIntegralBlock(StrictModule):
         /,
         *,
         _validated_route_id: str | None = None,
-    ):
+    ) -> None:
         block_id_ = _flux_identity(block_id, "block_id")
         block_kind_ = _flux_identity(block_kind, "block_kind")
         owner = jnp.asarray(owner_cells)
@@ -705,7 +705,7 @@ class AcceptedConservationIntegralLedger(StrictModule):
         start_time: ArrayLike,
         end_time: ArrayLike,
         accepted_step: ArrayLike,
-    ):
+    ) -> None:
         start_time_ = _finite_scalar(start_time, "start_time")
         end_time_ = _finite_scalar(end_time, "end_time")
         end_time_ = eqx.error_if(

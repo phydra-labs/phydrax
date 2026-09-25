@@ -44,7 +44,7 @@ class PRISMDensityContinuationPlan(StrictModule, NonTrainableState):
         maximum_step: float = 0.25,
         maximum_steps: int = 64,
         maximum_retries: int = 8,
-    ):
+    ) -> None:
         lower = float(minimum_density_scale)
         upper = float(maximum_density_scale)
         initial = float(initial_step)

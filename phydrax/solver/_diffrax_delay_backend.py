@@ -805,7 +805,7 @@ class _CausalAdaptiveStepSizeController(dfx.AbstractAdaptiveStepSizeController):
         self,
         controller: dfx.AbstractAdaptiveStepSizeController,
         maximum_step: Array,
-    ):
+    ) -> None:
         self.controller = controller
         self.maximum_step = maximum_step
 

@@ -37,7 +37,7 @@ class CircuitElementStateLayout(StrictModule):
         state_scale: ArrayLike | None = None,
         rate_scale: ArrayLike | None = None,
         residual_scale: ArrayLike | None = None,
-    ):
+    ) -> None:
         roles_ = tuple(roles)
         if any(value not in ("differential", "algebraic") for value in roles_):
             raise ValueError("Unknown circuit element state role.")
@@ -73,7 +73,9 @@ class CircuitElementEvaluation(StrictModule):
     terminal_currents: Array
     auxiliary_residual: Array
 
-    def __init__(self, terminal_currents: ArrayLike, auxiliary_residual: ArrayLike, /):
+    def __init__(
+        self, terminal_currents: ArrayLike, auxiliary_residual: ArrayLike, /
+    ) -> None:
         currents = jnp.asarray(terminal_currents)
         residual = jnp.asarray(auxiliary_residual)
         if currents.ndim != 1 or residual.ndim != 1:
@@ -128,7 +130,7 @@ class AbstractCircuitEnergyLaw(StrictModule):
 class TwoTerminalConductanceEnergyLaw(AbstractCircuitEnergyLaw):
     conductance: Array
 
-    def __init__(self, conductance: ArrayLike, /):
+    def __init__(self, conductance: ArrayLike, /) -> None:
         value = jnp.asarray(conductance, dtype=jnp.float64)
         if value.shape != () or bool(~jnp.isfinite(value)) or bool(value < 0.0):
             raise ValueError("conductance must be one finite nonnegative scalar.")
@@ -157,7 +159,7 @@ class TwoTerminalConductanceEnergyLaw(AbstractCircuitEnergyLaw):
 class TwoTerminalCapacitanceEnergyLaw(AbstractCircuitEnergyLaw):
     capacitance: Array
 
-    def __init__(self, capacitance: ArrayLike, /):
+    def __init__(self, capacitance: ArrayLike, /) -> None:
         value = jnp.asarray(capacitance, dtype=jnp.float64)
         if value.shape != () or bool(~jnp.isfinite(value)) or bool(value <= 0.0):
             raise ValueError("capacitance must be one finite positive scalar.")
@@ -186,7 +188,7 @@ class TwoTerminalCapacitanceEnergyLaw(AbstractCircuitEnergyLaw):
 class TwoTerminalInductanceEnergyLaw(AbstractCircuitEnergyLaw):
     inductance: Array
 
-    def __init__(self, inductance: ArrayLike, /):
+    def __init__(self, inductance: ArrayLike, /) -> None:
         value = jnp.asarray(inductance, dtype=jnp.float64)
         if value.shape != () or bool(~jnp.isfinite(value)) or bool(value <= 0.0):
             raise ValueError("inductance must be one finite positive scalar.")
@@ -245,7 +247,7 @@ class CircuitElement(AbstractMNAComponent):
         energy_law: AbstractCircuitEnergyLaw | None = None,
         noise_law: AbstractCircuitNoiseLaw | None = None,
         element_id: str,
-    ):
+    ) -> None:
         if not isinstance(implicit_law, AbstractImplicitCircuitLaw):
             raise TypeError("implicit_law must be AbstractImplicitCircuitLaw.")
         if frequency_law is not None and not isinstance(
@@ -292,7 +294,7 @@ class CircuitElement(AbstractMNAComponent):
 class TwoTerminalConductanceLaw(AbstractImplicitCircuitLaw):
     conductance: Array
 
-    def __init__(self, conductance: ArrayLike, /, *, law_id: str = "conductance"):
+    def __init__(self, conductance: ArrayLike, /, *, law_id: str = "conductance") -> None:
         value = jnp.asarray(conductance, dtype=jnp.float64)
         if value.shape != () or bool(~jnp.isfinite(value)) or bool(value < 0.0):
             raise ValueError("conductance must be one finite nonnegative scalar.")
@@ -323,7 +325,7 @@ class TwoTerminalConductanceLaw(AbstractImplicitCircuitLaw):
 class TwoTerminalCapacitanceLaw(AbstractImplicitCircuitLaw):
     capacitance: Array
 
-    def __init__(self, capacitance: ArrayLike, /, *, law_id: str = "capacitance"):
+    def __init__(self, capacitance: ArrayLike, /, *, law_id: str = "capacitance") -> None:
         value = jnp.asarray(capacitance, dtype=jnp.float64)
         if value.shape != () or bool(~jnp.isfinite(value)) or bool(value <= 0.0):
             raise ValueError("capacitance must be one finite positive scalar.")
@@ -355,7 +357,7 @@ class TwoTerminalCapacitanceLaw(AbstractImplicitCircuitLaw):
 class TwoTerminalInductanceLaw(AbstractImplicitCircuitLaw):
     inductance: Array
 
-    def __init__(self, inductance: ArrayLike, /, *, law_id: str = "inductance"):
+    def __init__(self, inductance: ArrayLike, /, *, law_id: str = "inductance") -> None:
         value = jnp.asarray(inductance, dtype=jnp.float64)
         if value.shape != () or bool(~jnp.isfinite(value)) or bool(value <= 0.0):
             raise ValueError("inductance must be one finite positive scalar.")
@@ -398,7 +400,7 @@ class IndependentCurrentSourceLaw(AbstractImplicitCircuitLaw):
         *,
         input_key: str | None = None,
         law_id: str = "current-source",
-    ):
+    ) -> None:
         value = jnp.asarray(current, dtype=jnp.float64)
         if value.shape != () or bool(~jnp.isfinite(value)):
             raise ValueError("current must be one finite scalar.")
@@ -441,7 +443,7 @@ class IndependentVoltageSourceLaw(AbstractImplicitCircuitLaw):
         *,
         input_key: str | None = None,
         law_id: str = "voltage-source",
-    ):
+    ) -> None:
         value = jnp.asarray(voltage, dtype=jnp.float64)
         if value.shape != () or bool(~jnp.isfinite(value)):
             raise ValueError("voltage must be one finite scalar.")
@@ -488,7 +490,7 @@ class ExponentialDiodeLaw(AbstractImplicitCircuitLaw):
         /,
         *,
         law_id: str = "exponential-diode",
-    ):
+    ) -> None:
         saturation = jnp.asarray(saturation_current, dtype=jnp.float64)
         thermal = jnp.asarray(thermal_voltage, dtype=jnp.float64)
         if (
@@ -539,7 +541,7 @@ class SmoothSwitchLaw(AbstractImplicitCircuitLaw):
         control_key: str,
         sharpness: ArrayLike = 20.0,
         law_id: str = "smooth-switch",
-    ):
+    ) -> None:
         on = jnp.asarray(on_conductance, dtype=jnp.float64)
         off = jnp.asarray(off_conductance, dtype=jnp.float64)
         sharp = jnp.asarray(sharpness, dtype=jnp.float64)
@@ -590,7 +592,7 @@ class VoltageControlledCurrentLaw(AbstractImplicitCircuitLaw):
 
     transconductance: Array
 
-    def __init__(self, transconductance: ArrayLike, /, *, law_id: str = "vccs"):
+    def __init__(self, transconductance: ArrayLike, /, *, law_id: str = "vccs") -> None:
         value = jnp.asarray(transconductance, dtype=jnp.float64)
         if value.shape != () or bool(~jnp.isfinite(value)):
             raise ValueError("transconductance must be one finite scalar.")
@@ -625,7 +627,7 @@ class VoltageControlledVoltageLaw(AbstractImplicitCircuitLaw):
 
     gain: Array
 
-    def __init__(self, gain: ArrayLike, /, *, law_id: str = "vcvs"):
+    def __init__(self, gain: ArrayLike, /, *, law_id: str = "vcvs") -> None:
         value = jnp.asarray(gain, dtype=jnp.float64)
         if value.shape != () or bool(~jnp.isfinite(value)):
             raise ValueError("gain must be one finite scalar.")
@@ -662,7 +664,9 @@ class IdealTransformerLaw(AbstractImplicitCircuitLaw):
 
     turns_ratio: Array
 
-    def __init__(self, turns_ratio: ArrayLike, /, *, law_id: str = "ideal-transformer"):
+    def __init__(
+        self, turns_ratio: ArrayLike, /, *, law_id: str = "ideal-transformer"
+    ) -> None:
         ratio = jnp.asarray(turns_ratio, dtype=jnp.float64)
         if ratio.shape != () or bool(~jnp.isfinite(ratio)) or bool(ratio == 0.0):
             raise ValueError("turns_ratio must be one finite nonzero scalar.")

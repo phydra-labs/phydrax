@@ -127,7 +127,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
         morton_maximum_depth: int = 21,
         morton_maximum_nodes: int | None = None,
         morton_leaf_occupancy: int = 32,
-    ):
+    ) -> None:
         lengths = tuple(float(value) for value in box_size)
         linking = float(linking_length)
         groups = int(maximum_groups)
@@ -565,7 +565,7 @@ class DirectHaloUnbindingPlan(StrictModule, NonTrainableState):
         *,
         softening: float,
         maximum_iterations: int = 32,
-    ):
+    ) -> None:
         gravity = float(gravitational_constant)
         epsilon = float(softening)
         iterations = int(maximum_iterations)
@@ -646,7 +646,7 @@ class HaloPropertyResult(StrictModule):
 class HaloPropertyPlan(StrictModule, NonTrainableState):
     mean_density: float = eqx.field(static=True)
 
-    def __init__(self, mean_density: float, /):
+    def __init__(self, mean_density: float, /) -> None:
         density = float(mean_density)
         if not np.isfinite(density) or density <= 0.0:
             raise ValueError("Halo mean density must be finite and positive.")
@@ -701,7 +701,7 @@ class SubstructureCandidateResult(StrictModule):
 class DensityPeakSubstructurePlan(StrictModule, NonTrainableState):
     neighbor_count: int = eqx.field(static=True)
 
-    def __init__(self, neighbor_count: int = 16):
+    def __init__(self, neighbor_count: int = 16) -> None:
         count = int(neighbor_count)
         if count < 2:
             raise ValueError("Substructure neighbor count must be at least two.")
@@ -752,7 +752,7 @@ class ParticleCoreOverlapTreePlan(StrictModule, NonTrainableState):
     core_size: int = eqx.field(static=True)
     minimum_overlap: int = eqx.field(static=True)
 
-    def __init__(self, core_size: int, minimum_overlap: int, /):
+    def __init__(self, core_size: int, minimum_overlap: int, /) -> None:
         core = int(core_size)
         overlap = int(minimum_overlap)
         if core <= 0 or overlap <= 0 or overlap > core:

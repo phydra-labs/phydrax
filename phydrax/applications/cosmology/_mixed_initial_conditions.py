@@ -627,7 +627,7 @@ class ComponentTransferMatrixProduct(StrictModule):
         normalization: str = "dimensionless-density-contrast",
         component_units: Sequence[UnitDefinition] | None = None,
         spatial_dimension: int = 3,
-    ):
+    ) -> None:
         if not isinstance(scale, CosmologyScaleContract):
             raise TypeError("scale must be CosmologyScaleContract.")
         if not isinstance(provenance, CosmologyProductProvenance):
@@ -976,7 +976,7 @@ class MixedInitialConditionPlan(StrictModule, NonTrainableState):
         gauge: TransferGauge | None = None,
         mode_relative_tolerance: float = 1.0e-9,
         mass_relative_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(transfer, ComponentTransferMatrixProduct):
             raise TypeError("transfer must be ComponentTransferMatrixProduct.")
         if not isinstance(particle_lpt, LagrangianPerturbationInitialConditionPlan):
@@ -1246,7 +1246,7 @@ class WavePhaseSeedPlan(StrictModule, NonTrainableState):
         current_relative_tolerance: float = 1.0e-8,
         phase_gauge_tolerance: float = 1.0e-10,
         mass_relative_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedPeriodicWaveDarkMatter):
             raise TypeError("prepared must be PreparedPeriodicWaveDarkMatter.")
         dimension = len(prepared.discretization.axes)
@@ -1567,7 +1567,7 @@ class SolitonSeedPlan(StrictModule, NonTrainableState):
         shape_coefficient: float = 0.091,
         profile_exponent: float = 8.0,
         mass_relative_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedPeriodicWaveDarkMatter):
             raise TypeError("prepared must be PreparedPeriodicWaveDarkMatter.")
         origins, lengths, _ = _periodic_geometry(prepared.discretization)
@@ -1744,7 +1744,7 @@ class VortexSeedPlan(StrictModule, NonTrainableState):
         mass_relative_tolerance: float = 1.0e-10,
         winding_tolerance: float = 1.0e-10,
         node_relative_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedPeriodicWaveDarkMatter):
             raise TypeError("prepared must be PreparedPeriodicWaveDarkMatter.")
         if isinstance(winding_number, bool) or not isinstance(winding_number, Integral):
@@ -2017,7 +2017,7 @@ class ImportedComplexFieldValidationPlan(StrictModule, NonTrainableState):
         training_use: bool = False,
         export: bool = False,
         mass_relative_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedPeriodicWaveDarkMatter):
             raise TypeError("prepared must be PreparedPeriodicWaveDarkMatter.")
         if not isinstance(artifact, ScientificArtifactEnvelope):

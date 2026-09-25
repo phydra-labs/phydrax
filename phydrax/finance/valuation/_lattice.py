@@ -30,7 +30,9 @@ class LatticePlan(StrictModule):
     steps: int = eqx.field(static=True)
     scheme: LatticeScheme = eqx.field(static=True)
 
-    def __init__(self, steps: int, /, *, scheme: LatticeScheme = "cox-ross-rubinstein"):
+    def __init__(
+        self, steps: int, /, *, scheme: LatticeScheme = "cox-ross-rubinstein"
+    ) -> None:
         if isinstance(steps, bool) or not isinstance(steps, int) or steps < 2:
             raise ValueError("steps must be an integer at least two.")
         if scheme not in ("cox-ross-rubinstein", "jarrow-rudd"):
@@ -65,7 +67,7 @@ class LatticeProblem(StrictModule):
         currency: Currency | None = None,
         evidence_binding: FinanceEvidenceBinding | None = None,
         pricing_law: PricingLaw | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, BlackScholesModel) or not isinstance(
             payoff, VanillaPayoff
         ):

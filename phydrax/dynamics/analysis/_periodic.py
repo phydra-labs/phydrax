@@ -106,7 +106,7 @@ class OrthogonalityPhaseCondition(AbstractPhaseCondition):
         *,
         state_layout: StateLayout,
         phase_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         state = jnp.asarray(reference_state)
@@ -179,7 +179,7 @@ class ComponentPhaseCondition(AbstractPhaseCondition):
         *,
         state_layout: StateLayout,
         phase_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         if isinstance(component, bool):
@@ -238,7 +238,7 @@ class PeriodicOrbitProblem(StrictModule):
         phase_condition: AbstractPhaseCondition | None = None,
         start_coordinate: float = 0.0,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(evolution, AbstractDifferentiableEvolution):
             raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         if kind not in ("flow", "map"):
@@ -481,7 +481,7 @@ class PeriodicOrbitResidual(StrictModule):
     problem: PeriodicOrbitProblem
     residual_id: str = eqx.field(static=True)
 
-    def __init__(self, problem: PeriodicOrbitProblem, /):
+    def __init__(self, problem: PeriodicOrbitProblem, /) -> None:
         if not isinstance(problem, PeriodicOrbitProblem):
             raise TypeError("problem must be a PeriodicOrbitProblem.")
         self.problem = problem
@@ -756,7 +756,7 @@ class _MonodromyLinearOperator(AbstractLinearOperator):
     orbit: PeriodicOrbitResult
     args: Any
 
-    def __init__(self, orbit: PeriodicOrbitResult, args: Any, /):
+    def __init__(self, orbit: PeriodicOrbitResult, args: Any, /) -> None:
         self.source = ArraySpace(
             (orbit.problem.state_layout.size,), dtype=orbit.nodes.dtype
         )

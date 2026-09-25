@@ -85,7 +85,7 @@ class ParticlePopulationPlan(StrictModule, NonTrainableState):
         reuse_policy: ParticleSlotReusePolicy = ParticleSlotReusePolicy.REUSE_WITH_INCARNATION,
         allocation_capacity: int | None = None,
         incarnation_maximum: int = 2**31 - 1,
-    ):
+    ) -> None:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be ParticleDiscretization.")
         reuse = ParticleSlotReusePolicy(reuse_policy)

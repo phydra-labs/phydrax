@@ -126,7 +126,7 @@ class FrequentSmallAngleSIDMPlan(StrictModule, NonTrainableState):
         maximum_drag_fraction_per_step: float = 0.1,
         maximum_transverse_variance_per_step: float = 0.2,
         moment_tolerance: float = 0.05,
-    ):
+    ) -> None:
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
             raise TypeError("neighborhood must be a prepared particle neighborhood.")
         if not isinstance(spatial_kernel, AbstractSPHSmoothingKernel):

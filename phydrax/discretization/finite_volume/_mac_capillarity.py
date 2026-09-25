@@ -29,7 +29,7 @@ class MACGhostFluidCapillaryPlan(StrictModule, NonTrainableState):
     interface_width: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, surface_tension: float, /, *, interface_width: float):
+    def __init__(self, surface_tension: float, /, *, interface_width: float) -> None:
         tension = float(surface_tension)
         width = float(interface_width)
         if (

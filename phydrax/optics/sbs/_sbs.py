@@ -73,7 +73,7 @@ class SBSSharedDomainMap(StrictModule, NonTrainableState):
         jump_convention: str,
         normal_tolerance: float = 1e-8,
         map_id: str | None = None,
-    ):
+    ) -> None:
         volume = np.asarray(volume_weights)
         pump_volume = np.asarray(pump_to_volume)
         stokes_volume = np.asarray(stokes_to_volume)
@@ -223,7 +223,7 @@ class SBSInteractionCoefficients(StrictModule, NonTrainableState):
         acoustic_group_velocity: float,
         interaction_length: float,
         coefficient_id: str | None = None,
-    ):
+    ) -> None:
         frequencies = tuple(
             float(value)
             for value in (
@@ -332,7 +332,7 @@ class SBSOverlapPlan(StrictModule):
         pump_power: ArrayLike,
         stokes_power: ArrayLike,
         acoustic_energy_per_length: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(domain_map, SBSSharedDomainMap):
             raise TypeError("domain_map must be an SBSSharedDomainMap.")
         dimension = domain_map.spatial_dimension
@@ -739,7 +739,7 @@ def solve_sbs(
     )
 
 
-def _validate_interpolation_map(value, target_count, name):
+def _validate_interpolation_map(value, target_count, name) -> None:
     if value.ndim != 2 or value.shape[0] != target_count or value.shape[1] < 1:
         raise ValueError(f"{name} must have shape (shared point, native sample).")
     if np.iscomplexobj(value) or np.any(~np.isfinite(value)):

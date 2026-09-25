@@ -38,7 +38,7 @@ class _EuclideanKernelCallable(StrictModule):
         position_var: str,
         time_var: str,
         /,
-    ):
+    ) -> None:
         self.potential = potential
         self.slicing = slicing
         self.mass = mass

@@ -62,7 +62,7 @@ class BatteryIdentifiabilityPlan(StrictModule):
         /,
         *,
         rank_policy: RankPolicy | None = None,
-    ):
+    ) -> None:
         if isinstance(calibration, BatteryCalibrationPlan):
             prepared = calibration.prepare()
         elif isinstance(calibration, PreparedBatteryCalibration):
@@ -149,7 +149,7 @@ class BatteryIdentifiabilityReport(StrictModule):
         position_fingerprint: str,
         evidence_fingerprint: str,
         report_id: str,
-    ):
+    ) -> None:
         jacobian = jnp.asarray(whitened_jacobian)
         fisher = jnp.asarray(fisher_information)
         values = jnp.asarray(singular_values)

@@ -37,7 +37,7 @@ class LocalMHDPositivityPlan(StrictModule, NonTrainableState):
     iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, spatial, /, *, iterations: int = 24):
+    def __init__(self, spatial, /, *, iterations: int = 24) -> None:
         from ..discretization.finite_volume import UpwindConstrainedTransportPlan
 
         count = int(iterations)
@@ -207,7 +207,7 @@ class DualEnergyMHDPlan(StrictModule, NonTrainableState):
     switch_fraction: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, gamma: float, /, *, switch_fraction: float = 1e-3):
+    def __init__(self, gamma: float, /, *, switch_fraction: float = 1e-3) -> None:
         gamma_ = float(gamma)
         fraction = float(switch_fraction)
         if gamma_ <= 1.0 or not 0.0 < fraction < 1.0:
@@ -253,7 +253,7 @@ class MHDCTUPredictorPlan(StrictModule, NonTrainableState):
     spatial: object
     predictor_id: str = eqx.field(static=True)
 
-    def __init__(self, spatial, /):
+    def __init__(self, spatial, /) -> None:
         self.spatial = spatial
         self.predictor_id = canonical_fingerprint(
             {"kind": "mhd-ctu-half-step-predictor", "spatial": spatial.plan_id}
@@ -281,7 +281,7 @@ class MHDCharacteristicReconstructionPlan(StrictModule, NonTrainableState):
     declared_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, eigensystem: Callable, /, *, declared_id: str):
+    def __init__(self, eigensystem: Callable, /, *, declared_id: str) -> None:
         if not callable(eigensystem) or not declared_id:
             raise ValueError("MHD characteristic reconstruction metadata is invalid.")
         self.eigensystem = eigensystem

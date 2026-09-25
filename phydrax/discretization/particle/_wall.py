@@ -60,7 +60,7 @@ class WallParticleGenerationPlan(StrictModule, NonTrainableState):
         /,
         *,
         layers: int = 2,
-    ):
+    ) -> None:
         spacing_ = float(spacing)
         smoothing = float(smoothing_length)
         layers_ = int(layers)
@@ -211,7 +211,7 @@ class AdamiWallBoundaryPlan(StrictModule, NonTrainableState):
         slip: WallSlipPolicy = "no-slip",
         atmospheric_pressure: float = 0.0,
         kinematic_viscosity: float = 0.0,
-    ):
+    ) -> None:
         if slip not in ("no-slip", "free-slip"):
             raise ValueError("Wall slip policy must be 'no-slip' or 'free-slip'.")
         if (

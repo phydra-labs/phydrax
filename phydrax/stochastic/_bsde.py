@@ -83,7 +83,7 @@ class BSDEPathBatch(StrictModule):
         realization: StochasticRealization | None = None,
         jump_events: Mapping[str, JumpEventBatch] | None = None,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         samples = _shape(sample_shape, owner="sample_shape") if sample_shape else ()
         state_event = _shape(state_shape, owner="state_shape")
         noise_event = _shape(noise_shape, owner="noise_shape")
@@ -193,7 +193,7 @@ class BSDEProblem(StrictModule):
         args: Any = None,
         time_label: str = "t",
         state_label: str = "x",
-    ):
+    ) -> None:
         for owner, value in (
             ("forward_sampler", forward_sampler),
             ("drift", drift),

@@ -91,7 +91,7 @@ class BatteryCalibrationParameterBranches(StrictModule):
         initial_conditions: Sequence[PyTree[Any]],
         nuisance: Sequence[PyTree[Any]],
         /,
-    ):
+    ) -> None:
         self.shared_physical = shared_physical
         self.initial_conditions = tuple(initial_conditions)
         self.nuisance = tuple(nuisance)
@@ -127,7 +127,7 @@ class BatteryCalibrationProjection(StrictModule, NonTrainableState):
         /,
         *,
         projection_id: str,
-    ):
+    ) -> None:
         if not callable(unpack) or not callable(pack):
             raise TypeError(
                 "Calibration projection pack and unpack values must be callable."
@@ -163,7 +163,7 @@ class BatteryCalibrationFailurePolicy(StrictModule, NonTrainableState):
     require_ledger_success: bool = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, *, require_ledger_success: bool = True):
+    def __init__(self, *, require_ledger_success: bool = True) -> None:
         if not isinstance(require_ledger_success, bool):
             raise TypeError("require_ledger_success must be boolean.")
         self.require_ledger_success = require_ledger_success
@@ -366,7 +366,7 @@ class BatteryCalibrationExperiment(StrictModule, NonTrainableState):
         nuisance_model_id: str | None = None,
         ledger_success: Callable[[Any], ArrayLike] | None = None,
         ledger_success_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedBatteryExperiment):
             raise TypeError("prepared must be a PreparedBatteryExperiment.")
         if not isinstance(observation, BatteryTimeSeriesRecord):
@@ -644,7 +644,7 @@ class BatteryCalibrationPlan(StrictModule):
         failure_policy: BatteryCalibrationFailurePolicy | None = None,
         parameter_space_id: str | None = None,
         problem_id: str = "battery-calibration",
-    ):
+    ) -> None:
         experiments_ = tuple(experiments)
         if not experiments_ or any(
             not isinstance(value, BatteryCalibrationExperiment) for value in experiments_
@@ -805,7 +805,7 @@ class PreparedBatteryCalibration(StrictModule):
     preparation_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: BatteryCalibrationPlan, /):
+    def __init__(self, plan: BatteryCalibrationPlan, /) -> None:
         if not isinstance(plan, BatteryCalibrationPlan):
             raise TypeError("plan must be a BatteryCalibrationPlan.")
         residual_size = sum(value.residual_size for value in plan.experiments)

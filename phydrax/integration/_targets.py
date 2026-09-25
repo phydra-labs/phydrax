@@ -101,7 +101,7 @@ class ComponentTarget(StrictModule):
         *,
         axes: str | tuple[str, ...] | None = None,
         normalized: bool = False,
-    ):
+    ) -> None:
         if not isinstance(component, (DomainComponent, ComponentSum)):
             raise TypeError("component must be a DomainComponent or ComponentSum.")
         self.component = component
@@ -122,7 +122,7 @@ class ProbabilityTarget(StrictModule):
         /,
         *,
         target_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(probability, ProbabilityDomain):
             raise TypeError("probability must be a ProbabilityDomain.")
         identifier = probability.label if target_id is None else str(target_id)
@@ -147,7 +147,7 @@ class DensityTarget(StrictModule):
         /,
         *,
         normalized: bool,
-    ):
+    ) -> None:
         self.base = base
         self.log_density = log_density
         self.normalized = bool(normalized)
@@ -175,7 +175,7 @@ class DiscreteMeasureTarget(StrictModule):
         normalized: bool = False,
         target_mass: Array | None = None,
         provenance: str = "external-discrete",
-    ):
+    ) -> None:
         reduced_axes = (axes,) if isinstance(axes, str) else tuple(axes)
         if not reduced_axes or any(not axis for axis in reduced_axes):
             raise ValueError("axes must contain at least one non-empty name.")
@@ -262,7 +262,7 @@ class WeightedSampleTarget(StrictModule):
         mask: Array | cx.AxisArray | None = None,
         sample_axes: int | str | tuple[int, ...] | tuple[str, ...] = 0,
         provenance: str = "external-weighted-samples",
-    ):
+    ) -> None:
         axes = _axes(sample_axes)
         if isinstance(log_weights, cx.AxisArray):
             if not all(isinstance(axis, str) for axis in axes):
@@ -370,7 +370,7 @@ class MappedTarget(StrictModule):
         *,
         mask: Callable | Array | None = None,
         target_mass: Array | None = None,
-    ):
+    ) -> None:
         mass = _target_mass(target_mass)
         if mass is not None and mass.shape != ():
             raise ValueError("Mapped target_mass must be one scalar.")
@@ -405,7 +405,7 @@ class MultilevelTarget(StrictModule):
         /,
         *,
         sampler_id: str,
-    ):
+    ) -> None:
         from ..fidelity import FidelityPath
         from ..stochastic._hierarchy import StochasticCouplingPlan
 

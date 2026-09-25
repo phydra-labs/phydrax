@@ -67,7 +67,7 @@ class RiemannianConjugateGradient(AbstractRiemannianLineSearchOptimizer):
         *,
         line_search: ArmijoLineSearch | None = None,
         descent_tolerance: float = 1e-12,
-    ):
+    ) -> None:
         if not isinstance(parameter_geometry, ParameterGeometry):
             raise TypeError("parameter_geometry must be a ParameterGeometry.")
         tolerance = float(descent_tolerance)
@@ -280,7 +280,7 @@ class RiemannianLBFGS(AbstractRiemannianLineSearchOptimizer):
         line_search: ArmijoLineSearch | None = None,
         curvature_tolerance: float = 1e-10,
         descent_tolerance: float = 1e-12,
-    ):
+    ) -> None:
         if not isinstance(parameter_geometry, ParameterGeometry):
             raise TypeError("parameter_geometry must be a ParameterGeometry.")
         size = int(history_size)

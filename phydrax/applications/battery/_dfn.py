@@ -133,7 +133,7 @@ class IsothermalDFNPlan(StrictModule):
         *,
         maximum_newton_steps: int = 12,
         residual_tolerance: float = 1.0e-4,
-    ):
+    ) -> None:
         counts = tuple((negative_cells, separator_cells, positive_cells, radial_cells))
         if any(value < 2 for value in counts):
             raise ValueError(
@@ -492,7 +492,7 @@ class SeriesBatteryPackPlan:
         cell_plans: Sequence[IsothermalDFNPlan],
         cell_parameters: Sequence[DFNParameters],
         /,
-    ):
+    ) -> None:
         plans = tuple(cell_plans)
         parameters = tuple(cell_parameters)
         if not plans or len(plans) != len(parameters):

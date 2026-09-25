@@ -67,7 +67,7 @@ class TravelingWaveSemiconductorLaserState(StrictModule):
         forward_field: ArrayLike,
         backward_field: ArrayLike,
         /,
-    ):
+    ) -> None:
         density = jnp.asarray(carrier_pair_density)
         forward = jnp.asarray(forward_field)
         backward = jnp.asarray(backward_field)
@@ -104,7 +104,7 @@ class TravelingWaveLaserInput(StrictModule):
         injection_current: ArrayLike,
         lattice_temperature: ArrayLike,
         /,
-    ):
+    ) -> None:
         current = jnp.asarray(injection_current)
         temperature = jnp.asarray(lattice_temperature)
         if jnp.iscomplexobj(current) or jnp.iscomplexobj(temperature):
@@ -129,7 +129,7 @@ class TravelingWaveLaserNoisePlan(StrictModule, NonTrainableState):
         *,
         provenance: str,
         noise_id: str | None = None,
-    ):
+    ) -> None:
         field = np.asarray(field_amplitude_standard_deviation)
         carrier = np.asarray(carrier_density_standard_deviation)
         if (
@@ -255,7 +255,7 @@ class TravelingWaveSemiconductorLaserPlan(StrictModule, NonTrainableState):
         maximum_threshold_map_applications: int = 1_000_000,
         ledger_tolerance: float = 1.0e-9,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             optical_response,
             (LinearizedCarrierOpticalResponsePlan, TabulatedCarrierOpticalResponsePlan),

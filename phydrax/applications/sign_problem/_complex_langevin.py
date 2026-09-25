@@ -53,7 +53,7 @@ class GaugeCoolingPlan(StrictModule, NonTrainableState):
         step_size: float,
         monotonicity_tolerance: float = 1e-10,
         maximum_state_size: int = 1_000_000,
-    ):
+    ) -> None:
         iterations_ = int(iterations)
         step = float(step_size)
         tolerance = float(monotonicity_tolerance)
@@ -171,7 +171,7 @@ class ComplexLangevinPlan(StrictModule, NonTrainableState):
         maximum_tail_probability: float = 0.01,
         maximum_state_norm: float = 1e6,
         maximum_state_size: int = 1_000_000,
-    ):
+    ) -> None:
         steps = int(num_steps)
         step = float(step_size)
         burn = int(burn_in)

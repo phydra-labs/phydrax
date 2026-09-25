@@ -77,7 +77,7 @@ class SCIPPlan(StrictModule):
         threads: int = 1,
         random_seed: int = 0,
         verbose: bool = False,
-    ):
+    ) -> None:
         nodes = int(maximum_nodes)
         threads_ = int(threads)
         seed = int(random_seed)

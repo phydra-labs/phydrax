@@ -44,7 +44,7 @@ class FXConversionPath(StrictModule, NonTrainableState):
         factor_keys: Sequence[RiskFactorKey],
         directions: Sequence[int],
         /,
-    ):
+    ) -> None:
         if not isinstance(source_currency, Currency) or not isinstance(
             target_currency, Currency
         ):
@@ -171,7 +171,7 @@ class FXConversionGraph(StrictModule, NonTrainableState):
     factor_keys: tuple[RiskFactorKey, ...]
     graph_id: str = eqx.field(static=True)
 
-    def __init__(self, factor_keys: Sequence[RiskFactorKey], /):
+    def __init__(self, factor_keys: Sequence[RiskFactorKey], /) -> None:
         factors = tuple(factor_keys)
         if not factors or not all(isinstance(value, RiskFactorKey) for value in factors):
             raise TypeError("factor_keys must contain at least one RiskFactorKey.")

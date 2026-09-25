@@ -95,7 +95,7 @@ class SpectralClustering(AbstractRecipe):
         kmeans_iterations: int = 32,
         eigenvalue_tolerance: float = 1e-7,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if cluster_count <= 0 or kmeans_iterations <= 0:
             raise ValueError("cluster_count and kmeans_iterations must be positive.")
         self.cluster_count = int(cluster_count)
@@ -308,7 +308,7 @@ class AgglomerativeClustering(AbstractRecipe):
         *,
         linkage: AgglomerativeLinkage = "ward",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if cluster_count <= 0 or linkage not in ("ward", "centroid"):
             raise ValueError("invalid agglomerative clustering configuration.")
         self.cluster_count = int(cluster_count)

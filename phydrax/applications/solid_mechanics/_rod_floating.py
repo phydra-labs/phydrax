@@ -140,7 +140,7 @@ class FloatingReducedRodPlan(StrictModule, NonTrainableState):
         convention: FloatingRodTwistConvention = "body",
         pose_tolerance: float = 1.0e-9,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(reduction, ReducedRodPlan):
             raise TypeError("reduction must be a ReducedRodPlan.")
         if reduction.dimension != 3:
@@ -183,7 +183,7 @@ class FloatingReducedRodState(StrictModule):
         base_twist: ArrayLike,
         coefficient_velocities: ArrayLike,
         /,
-    ):
+    ) -> None:
         pose = jnp.asarray(base_pose)
         values = jnp.asarray(coefficients)
         twist = jnp.asarray(base_twist)
@@ -237,7 +237,9 @@ class FloatingReducedRodDirectLoad(StrictModule):
     source_id: str = eqx.field(static=True)
     power_channel: str = eqx.field(static=True)
 
-    def __init__(self, effort: ArrayLike, /, *, source_id: str, power_channel: str):
+    def __init__(
+        self, effort: ArrayLike, /, *, source_id: str, power_channel: str
+    ) -> None:
         value = jnp.asarray(effort)
         if (
             value.ndim != 1
@@ -420,7 +422,7 @@ class PreparedFloatingReducedRod(StrictModule, NonTrainableState):
         stretch_shear_material: ReducedRodMaterial | None = None,
         bend_twist_material: ReducedRodMaterial | None = None,
         gravity: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(rod, PreparedRod):
             raise TypeError("rod must be a PreparedRod.")
         if not isinstance(plan, FloatingReducedRodPlan):
@@ -1301,7 +1303,7 @@ class FloatingReducedRodPlantControl(StrictModule):
 
     effort: Array
 
-    def __init__(self, effort: ArrayLike, /):
+    def __init__(self, effort: ArrayLike, /) -> None:
         value = jnp.asarray(effort)
         if (
             value.ndim != 1
@@ -1317,7 +1319,7 @@ class FloatingReducedRodPlantParameterValues(StrictModule):
 
     values: Array
 
-    def __init__(self, values: ArrayLike, /):
+    def __init__(self, values: ArrayLike, /) -> None:
         array = jnp.asarray(values)
         if array.shape != (0,):
             raise ValueError(
@@ -1370,7 +1372,7 @@ class FloatingReducedRodPlant(AbstractDiscretePlant):
         /,
         *,
         initial_state: FloatingReducedRodState | None = None,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedFloatingReducedRod):
             raise TypeError("prepared must be a PreparedFloatingReducedRod.")
         state = prepared.initialize_state() if initial_state is None else initial_state

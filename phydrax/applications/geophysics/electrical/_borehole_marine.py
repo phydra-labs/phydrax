@@ -24,7 +24,9 @@ class BoreholeElectrodeArray(StrictModule, NonTrainableState):
     positions_m: Array
     array_id: str = eqx.field(static=True)
 
-    def __init__(self, trajectory: BoreholeTrajectory, measured_depth_m: ArrayLike, /):
+    def __init__(
+        self, trajectory: BoreholeTrajectory, measured_depth_m: ArrayLike, /
+    ) -> None:
         if not isinstance(trajectory, BoreholeTrajectory):
             raise TypeError("Borehole electrodes require BoreholeTrajectory.")
         depths = np.asarray(measured_depth_m, dtype=np.float64)
@@ -128,7 +130,7 @@ class MixedDimensionalCasingPlan(StrictModule, NonTrainableState):
         axial_conductance_S: ArrayLike,
         leakage_conductance_S: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             formation_operator, la.AbstractLinearOperator
         ) or not formation_operator.source.compatible(formation_operator.target):

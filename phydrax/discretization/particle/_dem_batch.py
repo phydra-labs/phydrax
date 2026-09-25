@@ -32,7 +32,7 @@ class DEMBatchExecutionPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, mode: DEMBatchExecutionMode = DEMBatchExecutionMode.REFERENCE_VMAP, /
-    ):
+    ) -> None:
         if not isinstance(mode, DEMBatchExecutionMode):
             raise TypeError("mode must be a DEMBatchExecutionMode.")
         self.mode = mode

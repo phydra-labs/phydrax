@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import replace
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 from uuid import uuid4
 
 import equinox as eqx
@@ -73,7 +73,7 @@ class RigidFrame(StrictModule):
     rotation: Array
     translation: Array
 
-    def __init__(self, rotation: Any, translation: Any):
+    def __init__(self, rotation: Any, translation: Any) -> None:
         rotation_host = np.asarray(rotation, dtype=np.float64)
         translation_host = np.asarray(translation, dtype=np.float64)
         if rotation_host.ndim != 2 or rotation_host.shape[0] != rotation_host.shape[1]:
@@ -145,7 +145,7 @@ class _AffineBoundaryMap(AbstractBoundaryMap):
     linear: Array
     offset: Array
 
-    def __init__(self, base: AbstractBoundaryMap, linear: Array, offset: Array):
+    def __init__(self, base: AbstractBoundaryMap, linear: Array, offset: Array) -> None:
         self.base = base
         self.linear = jnp.asarray(linear, dtype=jnp.float64)
         self.offset = jnp.asarray(offset, dtype=jnp.float64)
@@ -192,7 +192,7 @@ class _AffineCubatureMap(AbstractCubatureMap):
         base: AbstractCubatureMap,
         linear: Array,
         offset: Array,
-    ):
+    ) -> None:
         self.base = base
         self.linear = jnp.asarray(linear, dtype=jnp.float64)
         self.offset = jnp.asarray(offset, dtype=jnp.float64)
@@ -292,7 +292,7 @@ class RigidTransform(GeometrySource):
 
     def __init__(
         self, child: GeometrySource, frame: RigidFrame, *, feature_id: str | None = None
-    ):
+    ) -> None:
         if not isinstance(child, GeometrySource):
             raise TypeError("child must be a GeometrySource.")
         if not isinstance(frame, RigidFrame):
@@ -331,7 +331,7 @@ class _RigidTransformKernel(GeometryKernel):
     translation: ParameterBinding = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, child, rotation, translation, *, source_id):
+    def __init__(self, child, rotation, translation, *, source_id) -> None:
         self.child = child
         self.rotation = rotation
         self.translation = translation
@@ -545,7 +545,7 @@ class Scaling(GeometrySource):
         *,
         center: Any | None = None,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(child, GeometrySource):
             raise TypeError("child must be a GeometrySource.")
         scale_host = np.asarray(scale, dtype=np.float64)
@@ -619,7 +619,7 @@ class _ScalingKernel(GeometryKernel):
     uniform: bool = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, child, scale, center, *, uniform, source_id):
+    def __init__(self, child, scale, center, *, uniform, source_id) -> None:
         self.child = child
         self.scale = scale
         self.center = center
@@ -939,7 +939,9 @@ class SharpCSG(GeometrySource):
     children: tuple[GeometrySource, ...]
     operation: _CSGOperation = eqx.field(static=True)
 
-    def __init__(self, children: tuple[GeometrySource, ...], operation: _CSGOperation):
+    def __init__(
+        self, children: tuple[GeometrySource, ...], operation: _CSGOperation
+    ) -> None:
         children_ = tuple(children)
         minimum = 2
         if len(children_) < minimum or not all(
@@ -966,7 +968,7 @@ class _SharpCSGKernel(GeometryKernel):
     children: tuple[GeometryKernel, ...]
     operation: _CSGOperation = eqx.field(static=True)
 
-    def __init__(self, children, *, operation):
+    def __init__(self, children, *, operation) -> None:
         self.children, self.operation = children, operation
 
     @property
@@ -1077,11 +1079,11 @@ class _SharpCSGKernel(GeometryKernel):
             )
         return bounds[0]
 
-    def measure(self, state, /):
+    def measure(self, state, /) -> NoReturn:
         del state
         raise NotImplementedError("Sharp CSG measure requires a realization.")
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state, /) -> NoReturn:
         del state
         raise NotImplementedError("Sharp CSG boundary measure requires a realization.")
 
@@ -1104,11 +1106,11 @@ class _SharpCSGKernel(GeometryKernel):
             dtype=bounds.dtype,
         )
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(self, state, num_points, /, *, key) -> NoReturn:
         del state, num_points, key
         raise NotImplementedError("Sharp CSG boundary sampling requires realization.")
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state, /) -> NoReturn:
         del state
         raise NotImplementedError("Sharp CSG boundary atlas requires realization.")
 
@@ -1121,7 +1123,7 @@ class BlendCSG(GeometrySource):
     operation: Literal["union", "intersection", "difference"] = eqx.field(static=True)
     feature_id: str = eqx.field(static=True)
 
-    def __init__(self, children, width, operation="union", *, feature_id=None):
+    def __init__(self, children, width, operation="union", *, feature_id=None) -> None:
         children_ = tuple(children)
         if len(children_) < 2 or not all(
             isinstance(child, GeometrySource) for child in children_
@@ -1159,7 +1161,7 @@ class _BlendCSGKernel(GeometryKernel):
     width: ParameterBinding = eqx.field(static=True)
     operation: Literal["union", "intersection", "difference"] = eqx.field(static=True)
 
-    def __init__(self, children, width, *, operation):
+    def __init__(self, children, width, *, operation) -> None:
         self.children, self.width, self.operation = children, width, operation
 
     @property
@@ -1245,11 +1247,11 @@ class _BlendCSGKernel(GeometryKernel):
             )
         return bounds[0]
 
-    def measure(self, state, /):
+    def measure(self, state, /) -> NoReturn:
         del state
         raise NotImplementedError("Blend measure is estimator-only.")
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state, /) -> NoReturn:
         del state
         raise NotImplementedError("Blend boundary measure is estimator-only.")
 
@@ -1272,11 +1274,11 @@ class _BlendCSGKernel(GeometryKernel):
             dtype=bounds.dtype,
         )
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(self, state, num_points, /, *, key) -> NoReturn:
         del state, num_points, key
         raise NotImplementedError("Blend boundary sampling requires realization.")
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state, /) -> NoReturn:
         del state
         raise NotImplementedError("Blend boundary atlas requires realization.")
 

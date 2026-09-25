@@ -42,7 +42,7 @@ class LinearDescriptorSystem(StrictModule):
         *,
         regularity_probe: ArrayLike = 1.0,
         system_id: str | None = None,
-    ):
+    ) -> None:
         mass, state, inputs, outputs, feedthrough = (
             jnp.asarray(value)
             for value in (

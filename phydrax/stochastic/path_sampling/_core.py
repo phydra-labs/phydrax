@@ -50,7 +50,7 @@ class StateRegionPlan(StrictModule, NonTrainableState):
         children: tuple[StateRegionPlan, ...] = (),
         predicate: Callable[[Array], Array] | None = None,
         region_id: str,
-    ):
+    ) -> None:
         if kind not in ("half-open", "predicate", "and", "or", "xor", "not"):
             raise ValueError("Unknown state-region kind.")
         if any(not isinstance(child, StateRegionPlan) for child in children):
@@ -198,7 +198,7 @@ class PathBuffer(StrictModule, NonTrainableState):
         direction: ArrayLike,
         lineage: ArrayLike,
         /,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions)
         times_ = jnp.asarray(times)
         if not jnp.issubdtype(times_.dtype, jnp.floating):
@@ -376,7 +376,7 @@ class PathLineageLog(StrictModule, NonTrainableState):
         count: ArrayLike,
         overflowed: ArrayLike,
         /,
-    ):
+    ) -> None:
         parent_ = jnp.asarray(parent, dtype=jnp.uint32)
         candidate_ = jnp.asarray(candidate, dtype=jnp.uint32)
         committed_ = jnp.asarray(committed, dtype=jnp.uint32)
@@ -502,7 +502,7 @@ class DynamicsKernelCapabilities(StrictModule, NonTrainableState):
         supports_backward: bool,
         normalized_transition_density: bool,
         fixed_step: bool = True,
-    ):
+    ) -> None:
         values = (
             stochastic,
             reversible,
@@ -556,7 +556,7 @@ class FunctionalDynamicsKernel(StrictModule):
         *,
         time_step: float,
         kernel_id: str,
-    ):
+    ) -> None:
         if not callable(step) or not callable(transition_log_density):
             raise TypeError("step and transition_log_density must be callable.")
         if not isinstance(capabilities, DynamicsKernelCapabilities):

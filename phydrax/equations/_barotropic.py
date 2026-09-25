@@ -62,7 +62,7 @@ class TaitBarotropicMaterial(AbstractBarotropicMaterial):
         exponent: float = 7.0,
         background_pressure: float = 0.0,
         density_floor: float = 1.0e-12,
-    ):
+    ) -> None:
         density = float(reference_density)
         sound_speed = float(reference_sound_speed)
         exponent_ = float(exponent)
@@ -205,7 +205,7 @@ class HomogeneousEquilibriumCavitationMaterial(AbstractBarotropicMaterial):
         mixture_sound_speed: float | None = None,
         pressure_floor: float = 0.0,
         density_floor: float = 1.0e-12,
-    ):
+    ) -> None:
         p_sat = float(saturation_pressure)
         rho_v = float(vapor_density)
         rho_l = float(liquid_density)

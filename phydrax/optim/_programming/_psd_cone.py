@@ -89,7 +89,7 @@ class PositiveSemidefiniteCone(AbstractConvexCone):
     _column_indices: tuple[int, ...] = eqx.field(static=True)
     _scales: tuple[float, ...] = eqx.field(static=True)
 
-    def __init__(self, matrix_size: int, /):
+    def __init__(self, matrix_size: int, /) -> None:
         if isinstance(matrix_size, bool):
             raise TypeError("PositiveSemidefiniteCone matrix_size must be an integer.")
         size = index(matrix_size)

@@ -31,7 +31,7 @@ class LPDOCompressionPlan(StrictModule):
         maximum_purification_dimension: int,
         tolerance: float = 1e-10,
         maximum_dense_amplitude_elements: int = 1_000_000,
-    ):
+    ) -> None:
         if any(
             not isinstance(value, Integral) or isinstance(value, bool)
             for value in (

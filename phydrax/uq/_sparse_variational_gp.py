@@ -56,7 +56,7 @@ class SparseVariationalGaussianState(StrictModule, ParameterOwner):
         mean: ArrayLike,
         unconstrained_lower: ArrayLike,
         /,
-    ):
+    ) -> None:
         inducing = jnp.asarray(inducing_points)
         mean_array = jnp.asarray(mean)
         lower = jnp.asarray(unconstrained_lower)
@@ -135,7 +135,7 @@ class SparseVariationalGaussianProcessELBO(StrictModule):
         *,
         regularization: ArrayLike = 0.0,
         likelihood_samples: int = 8,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be an AbstractPositiveDefiniteKernel.")
         if not isinstance(observation_factor, AbstractObservationFactor):
@@ -247,7 +247,7 @@ class SparseVariationalGaussianProcessResult(StrictModule):
         final_step: int,
         source_fingerprint: str,
         training_checkpoint_id: str,
-    ):
+    ) -> None:
         trace = jnp.asarray(objective_trace, dtype=jnp.float64)
         if trace.ndim != 1 or trace.size == 0:
             raise ValueError("objective_trace must be a nonempty vector.")

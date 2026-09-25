@@ -39,7 +39,7 @@ class SuperquadricSetPlan(StrictModule, NonTrainableState):
         *,
         fixed_mask: ArrayLike | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         axes = np.asarray(semi_axes, dtype=np.float64)
         first = np.asarray(first_blockiness, dtype=np.float64)
         second = np.asarray(second_blockiness, dtype=np.float64)
@@ -130,7 +130,9 @@ class PreparedSuperquadricSet(StrictModule, NonTrainableState):
     material_ids: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: SuperquadricSetPlan, particles: ParticleDiscretization, /):
+    def __init__(
+        self, plan: SuperquadricSetPlan, particles: ParticleDiscretization, /
+    ) -> None:
         if not isinstance(plan, SuperquadricSetPlan):
             raise TypeError("plan must be a SuperquadricSetPlan.")
         if not isinstance(particles, ParticleDiscretization):
@@ -172,7 +174,7 @@ class SuperquadricContactPlan(StrictModule, NonTrainableState):
         relaxation: float = 0.5,
         residual_tolerance: float = 1.0e-6,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         count = int(iterations)
         relax = float(relaxation)
         tolerance = float(residual_tolerance)

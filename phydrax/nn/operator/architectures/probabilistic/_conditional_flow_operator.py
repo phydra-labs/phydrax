@@ -46,7 +46,7 @@ class _FixedReferenceQuery(StrictModule, NonTrainableState):
 
     value: FunctionSamples
 
-    def __init__(self, value: FunctionSamples, /):
+    def __init__(self, value: FunctionSamples, /) -> None:
         self.value = value
 
 
@@ -56,7 +56,7 @@ class OperatorBatchConditioner(StrictModule):
     encoders: frozendict[str, AbstractBranchEncoder]
     condition_size: int
 
-    def __init__(self, encoders: Mapping[str, AbstractBranchEncoder], /):
+    def __init__(self, encoders: Mapping[str, AbstractBranchEncoder], /) -> None:
         resolved: dict[str, AbstractBranchEncoder] = {}
         for name, encoder in encoders.items():
             resolved_name = str(name)
@@ -172,7 +172,7 @@ class ConditionalFlowOperatorDistribution(AbstractOperatorDistribution):
         case_axes: tuple[str, ...],
         case_shape: tuple[int, ...],
         uncertainty_source: UncertaintySource,
-    ):
+    ) -> None:
         if not isinstance(flow, AbstractFlowDistribution):
             raise TypeError("flow must be an AbstractFlowDistribution.")
         cases = tuple(case_shape)
@@ -331,7 +331,7 @@ class ConditionalFlowFunctionOperator(AbstractProbabilisticOperatorModel):
         /,
         *,
         uncertainty_source: UncertaintySource,
-    ):
+    ) -> None:
         if not isinstance(location_model, AbstractOperatorModel):
             raise TypeError("location_model must be a neural operator.")
         if not isinstance(conditioner, OperatorBatchConditioner):

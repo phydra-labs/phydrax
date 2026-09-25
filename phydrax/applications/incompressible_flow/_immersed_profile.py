@@ -63,7 +63,7 @@ class ImmersedDNSQualificationProfile(StrictModule, NonTrainableState):
         conservation_tolerance: float = 1.0e-8,
         sharp_measure_tolerance: float = 1.0e-8,
         marker_condition_limit: float = 1.0e10,
-    ):
+    ) -> None:
         tolerances = np.asarray(
             (
                 load_tolerance,

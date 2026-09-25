@@ -27,7 +27,7 @@ class BRepEntityId:
     kind: str
     index: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.source_revision, str):
             raise TypeError("source_revision must be a string.")
         if not self.source_revision:
@@ -62,7 +62,7 @@ class BRepImportReport:
     converted_surface_count: int
     source_revision: str = field(init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.source_id, str) or not self.source_id:
             raise ValueError("source_id must be a non-empty string.")
         if (
@@ -150,7 +150,7 @@ class BRepTopology(StrictModule):
         solid_faces: tuple[tuple[int, ...], ...],
         solid_face_orientations: tuple[tuple[int, ...], ...],
         num_vertices: int,
-    ):
+    ) -> None:
         face_count = len(face_edges)
         if len(face_wires) != face_count:
             raise ValueError("face_wires must contain one entry per face.")
@@ -205,7 +205,7 @@ class BRepBoundaryMap(AbstractBoundaryMap):
         self,
         patches: tuple[AbstractSurfacePatch, ...],
         parameter_bounds: Array,
-    ):
+    ) -> None:
         bounds = jnp.asarray(parameter_bounds, dtype=jnp.float64)
         if not patches:
             raise ValueError("A BRepBoundaryMap requires at least one patch.")
@@ -297,7 +297,7 @@ class BRepModel(StrictModule):
         triangle_parameters: Array,
         physical_tags: tuple[str, ...],
         report: BRepImportReport,
-    ):
+    ) -> None:
         if not isinstance(topology, BRepTopology):
             raise TypeError("topology must be a BRepTopology.")
         if not isinstance(report, BRepImportReport):

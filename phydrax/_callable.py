@@ -27,7 +27,7 @@ class _KeyIterAdapter(StrictModule):
         has_var_kwargs: bool,
         has_key: bool,
         has_iter: bool,
-    ):
+    ) -> None:
         self.func = func
         self.has_var_kwargs = bool(has_var_kwargs)
         self.has_key = bool(has_key)

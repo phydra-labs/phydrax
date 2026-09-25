@@ -72,7 +72,7 @@ class SCFState(StrictModule, NonTrainableState):
         converged: ArrayLike,
         owner_id: str,
         /,
-    ):
+    ) -> None:
         density_ = jnp.asarray(density)
         coefficients_ = jnp.asarray(coefficients, dtype=density_.dtype)
         orbital_energies_ = jnp.asarray(orbital_energies, dtype=density_.dtype)
@@ -160,7 +160,7 @@ class NativeRHFPlan(StrictModule, NonTrainableState):
         damping: float = 0.25,
         linear_dependence_tolerance: float = 1.0e-9,
         force_displacement: float = 1.0e-4,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         if not isinstance(basis, PreparedGaussianBasis):
@@ -529,7 +529,7 @@ class PreparedNativeRHFCalculation(AbstractPreparedElectronicCalculation):
         capabilities: ElectronicProviderCapabilities,
         provider_id: str,
         /,
-    ):
+    ) -> None:
         self.calculation = calculation
         self.plan = plan
         self.capabilities = capabilities
@@ -614,7 +614,7 @@ class NativeRHFProvider(AbstractElectronicProvider):
     provider_id: str = eqx.field(static=True)
     capabilities: ElectronicProviderCapabilities
 
-    def __init__(self, plan: NativeRHFPlan, model_chemistry_id: str, /):
+    def __init__(self, plan: NativeRHFPlan, model_chemistry_id: str, /) -> None:
         if not isinstance(plan, NativeRHFPlan):
             raise TypeError("plan must be NativeRHFPlan.")
         model_id = str(model_chemistry_id).strip()

@@ -58,7 +58,7 @@ class ASPIN(AbstractNonlinearMethod):
         *,
         outer: NewtonKrylov | None = None,
         local_linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(schwarz, NonlinearAdditiveSchwarz):
             raise TypeError("schwarz must be NonlinearAdditiveSchwarz.")
         outer_ = NewtonKrylov() if outer is None else outer

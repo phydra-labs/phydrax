@@ -38,7 +38,7 @@ class HybridDiffusionBoundary(StrictModule):
         dirichlet: Mapping[int, float] | None = None,
         neumann: Mapping[int, float] | None = None,
         robin: Mapping[int, tuple[float, float]] | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError("Boundary geometry must be native prepared unstructured FV.")
         exterior = np.asarray(discretization.neighbor_cells) < 0

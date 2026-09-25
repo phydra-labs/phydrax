@@ -75,7 +75,7 @@ class KWayMPMContactPlan(StrictModule, NonTrainableState):
         maximum_steps: int = 25,
         tolerance: float = 1.0e-10,
         smoothing: float = 0.0,
-    ):
+    ) -> None:
         fields = int(field_count)
         maximum = fields * (fields - 1) // 2
         steps = int(maximum_steps)

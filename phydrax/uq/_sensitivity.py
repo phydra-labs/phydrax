@@ -51,7 +51,7 @@ class SobolResult(StrictModule):
         output_variance: cx.AxisArray,
         num_samples: int,
         parameter_dim: str,
-    ):
+    ) -> None:
         expected = len(parameter_names)
         if (
             first_order.dims != total_order.dims
@@ -328,7 +328,7 @@ class SensitivityGradientResult(StrictModule):
         resampling_id: str | None,
         approximation: str,
         num_samples: int,
-    ):
+    ) -> None:
         if not estimator_id or not method_id or not approximation:
             raise ValueError("Sensitivity provenance IDs must be non-empty.")
         if noise_id is not None and not noise_id:
@@ -381,7 +381,7 @@ class ResamplingScoreResult(StrictModule):
         status: ArrayLike,
         noise_id: str | None,
         resampling_id: str,
-    ):
+    ) -> None:
         weights = jnp.asarray(normalized_weights)
         ancestors = jnp.asarray(ancestor_indices, dtype=jnp.int32)
         if weights.ndim != 1:
@@ -431,7 +431,7 @@ class SensitivityActionResult(StrictModule):
         approximation: str,
         regularization: float,
         num_samples: int | None,
-    ):
+    ) -> None:
         if not operator_id or not method_id or not approximation:
             raise ValueError("Sensitivity action provenance IDs must be non-empty.")
         self.action = action
@@ -469,7 +469,7 @@ class EmpiricalDirectionsResult(StrictModule):
         quantity: str,
         regularization: float,
         ambient_shape: tuple[int, ...],
-    ):
+    ) -> None:
         vectors = jnp.asarray(directions)
         values = jnp.asarray(strengths)
         if vectors.ndim != 2 or values.shape != (vectors.shape[1],):
@@ -513,7 +513,7 @@ class ExperimentDesignResult(StrictModule):
         method_id: str,
         approximation: str,
         regularization: float,
-    ):
+    ) -> None:
         spectrum = jnp.asarray(eigenvalues)
         if spectrum.ndim != 1 or spectrum.size == 0:
             raise ValueError("eigenvalues must be a non-empty rank-1 array.")

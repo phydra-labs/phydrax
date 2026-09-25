@@ -61,7 +61,7 @@ class ADMDecomposition(StrictModule):
         *,
         chart: CoordinateChart,
         convention: LorentzianConvention = "mostly_plus",
-    ):
+    ) -> None:
         if not isinstance(chart, CoordinateChart):
             raise TypeError("chart must be a CoordinateChart.")
         if chart.dimension < 2:
@@ -203,7 +203,7 @@ class ADMValidationReport(StrictModule):
         maximum_spatial_asymmetry: Array,
         maximum_inverse_residual: Array,
         maximum_reconstruction_residual: Array,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.lapse_positive = jnp.asarray(lapse_positive, dtype=jnp.bool_)
@@ -371,7 +371,7 @@ class ADMParameterization(StrictModule):
         minimum_lapse: float = 1e-6,
         minimum_spatial_diagonal: float = 1e-6,
         convention: LorentzianConvention = "mostly_plus",
-    ):
+    ) -> None:
         if not callable(raw_lapse):
             raise TypeError("raw_lapse must be callable.")
         if not callable(shift):
@@ -490,7 +490,7 @@ class ADMParameterization(StrictModule):
 class _ParameterizedADMMetricMap(StrictModule):
     parameterization: ADMParameterization
 
-    def __init__(self, parameterization: ADMParameterization, /):
+    def __init__(self, parameterization: ADMParameterization, /) -> None:
         self.parameterization = parameterization
 
     def __call__(self, coordinates: Array, /) -> Array:

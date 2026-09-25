@@ -34,7 +34,7 @@ class QuantumLatticeAbelianMPOPolicy(StrictModule):
         maximum_bond_dimension: int,
         maximum_tensor_elements: int,
         matrix_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         bond = int(maximum_bond_dimension)
         elements = int(maximum_tensor_elements)
         tolerance = float(matrix_tolerance)

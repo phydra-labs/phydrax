@@ -69,7 +69,7 @@ class CartesianCoordinateDecoder(AbstractCoordinateDecoder):
     _representation_id: str = eqx.field(static=True)
     _coordinate_size: int = eqx.field(static=True)
 
-    def __init__(self, support: PreparedCoordinateSupport):
+    def __init__(self, support: PreparedCoordinateSupport) -> None:
         if not isinstance(support, PreparedCoordinateSupport):
             raise TypeError("Cartesian decoding requires PreparedCoordinateSupport.")
         self.support = support

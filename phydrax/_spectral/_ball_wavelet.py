@@ -169,7 +169,7 @@ class BallWaveletCoefficients(StrictModule):
         *,
         scale_pairs: Sequence[tuple[int, int]],
         transform_id: str,
-    ):
+    ) -> None:
         scaling_array = jnp.asarray(scaling)
         detail_arrays = tuple(jnp.asarray(detail) for detail in details)
         pairs = tuple((int(radial), int(angular)) for radial, angular in scale_pairs)
@@ -239,7 +239,7 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
         max_scale_pairs: int = 128,
         max_precompute_bytes: int = _DEFAULT_RESOURCE_BYTES,
         max_runtime_bytes: int = _DEFAULT_RESOURCE_BYTES,
-    ):
+    ) -> None:
         if not isinstance(fourier_laguerre, FourierLaguerrePlan):
             raise TypeError("fourier_laguerre must be a FourierLaguerrePlan.")
         angular = fourier_laguerre.angular

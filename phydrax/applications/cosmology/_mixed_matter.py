@@ -84,7 +84,7 @@ class MixedDensityAssembler(StrictModule):
         /,
         *,
         include_gas: bool,
-    ):
+    ) -> None:
         if not isinstance(wave, PreparedPeriodicWaveDarkMatter):
             raise TypeError("wave must be PreparedPeriodicWaveDarkMatter.")
         if not isinstance(particle_gravity, ParticleMeshGravityPlan):
@@ -251,7 +251,7 @@ class SharedPeriodicGravityPlan(StrictModule):
         assembler: MixedDensityAssembler,
         particle_gravity: ParticleMeshGravityPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(assembler, MixedDensityAssembler):
             raise TypeError("assembler must be MixedDensityAssembler.")
         if not isinstance(particle_gravity, ParticleMeshGravityPlan):
@@ -525,7 +525,7 @@ class WaveParticleCosmologyPlan(StrictModule):
         particles: CosmologicalKDKPlan,
         gravity: ParticleMeshGravityPlan,
         /,
-    ):
+    ) -> None:
         _validate_owner_bindings(wave, particles, gravity, None)
         self.wave = wave
         self.particles = particles
@@ -564,7 +564,7 @@ class WaveParticleGasCosmologyPlan(StrictModule):
         gas: ComovingEulerPlan,
         gravity: ParticleMeshGravityPlan,
         /,
-    ):
+    ) -> None:
         _validate_owner_bindings(wave, particles, gravity, gas)
         self.wave = wave
         self.particles = particles
@@ -824,7 +824,7 @@ class PreparedWaveParticleCosmology(StrictModule):
     gravity: SharedPeriodicGravityPlan
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: WaveParticleCosmologyPlan, /):
+    def __init__(self, plan: WaveParticleCosmologyPlan, /) -> None:
         if not isinstance(plan, WaveParticleCosmologyPlan):
             raise TypeError("plan must be WaveParticleCosmologyPlan.")
         density = MixedDensityAssembler(plan.wave, plan.gravity, include_gas=False)
@@ -1119,7 +1119,7 @@ class PreparedWaveParticleGasCosmology(StrictModule):
     gravity: SharedPeriodicGravityPlan
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: WaveParticleGasCosmologyPlan, /):
+    def __init__(self, plan: WaveParticleGasCosmologyPlan, /) -> None:
         if not isinstance(plan, WaveParticleGasCosmologyPlan):
             raise TypeError("plan must be WaveParticleGasCosmologyPlan.")
         density = MixedDensityAssembler(plan.wave, plan.gravity, include_gas=True)

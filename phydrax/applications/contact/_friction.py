@@ -53,7 +53,7 @@ class LaggedCoulombFrictionPlan(StrictModule, NonTrainableState):
         *,
         maximum_lag_iterations: int = 4,
         lag_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         coefficient_ = jnp.asarray(coefficient)
         threshold = float(velocity_threshold)
         iterations = int(maximum_lag_iterations)
@@ -132,7 +132,7 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
         scene: PreparedCollisionScene,
         contact: PreparedConvergentContactPotential,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, LaggedCoulombFrictionPlan):
             raise TypeError("plan must be LaggedCoulombFrictionPlan.")
         if not isinstance(scene, PreparedCollisionScene):

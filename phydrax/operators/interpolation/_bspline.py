@@ -65,7 +65,7 @@ class BSplineInterpolationPlan(StrictModule, NonTrainableState):
         bounds: BoundsMode = "error",
         boundary: BSplineBoundaryMode = "open",
         rcond: float | None = None,
-    ):
+    ) -> None:
         if isinstance(degree, bool) or not isinstance(degree, Integral):
             raise TypeError("B-spline interpolation degree must be an integer.")
         degree_ = int(degree)
@@ -134,7 +134,7 @@ class BSplineBoundaryConstraint(StrictModule, NonTrainableState):
         derivative_order: int,
         value: ArrayLike,
         /,
-    ):
+    ) -> None:
         if isinstance(location, str):
             if location not in ("lower", "upper"):
                 raise ValueError(
@@ -184,7 +184,7 @@ class BSplineFitDiagnostics(StrictModule, NonTrainableState):
         weighted_residual_norm: float,
         constraint_residual_norm: float,
         regularization_energy: float,
-    ):
+    ) -> None:
         self.mode = mode
         self.num_observations = num_observations
         self.coefficient_count = coefficient_count
@@ -212,7 +212,7 @@ class BSplineInterpolant(StrictModule, NonTrainableState):
         coefficients: ArrayLike,
         diagnostics: BSplineFitDiagnostics,
         bounds: BoundsMode,
-    ):
+    ) -> None:
         coefficients_ = jnp.asarray(coefficients)
         if coefficients_.ndim < 1 or coefficients_.shape[0] != grid.coefficient_count:
             raise ValueError(

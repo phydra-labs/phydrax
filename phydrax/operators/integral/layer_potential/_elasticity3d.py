@@ -70,7 +70,7 @@ class ElasticityLayerKernel3D(StrictModule):
     contract: ElasticityBoundaryContract3D = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, shear_modulus: ArrayLike, poisson_ratio: ArrayLike, /):
+    def __init__(self, shear_modulus: ArrayLike, poisson_ratio: ArrayLike, /) -> None:
         mu = jnp.asarray(shear_modulus, dtype=jnp.float64)
         nu = jnp.asarray(poisson_ratio, dtype=jnp.float64)
         if mu.shape != () or not bool(jnp.isfinite(mu) & (mu > 0.0)):
@@ -201,7 +201,7 @@ class ElasticityLayerPotential3D(_AbstractTrialSpaceField):
         poisson_ratio: ArrayLike,
         kind: Literal["single", "double"] = "single",
         density: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(panelization, SurfacePanelization3D):
             raise TypeError("panelization must be SurfacePanelization3D.")
         if kind not in ("single", "double"):
@@ -367,7 +367,7 @@ class ElasticitySingleLayerDP0Policy3D(StrictModule, NonTrainableState):
         max_matrix_bytes: int = 64 * 1024 * 1024,
         max_preparation_workspace_bytes: int = 64 * 1024 * 1024,
         precision: IntegrationPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         regular, singular = int(regular_order), int(singular_order)
         if regular < 2 or singular < 2:
             raise ValueError(

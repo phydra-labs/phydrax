@@ -153,7 +153,7 @@ class FactorAnalysisModel(AbstractFittedModel):
 
     _input_binding = ModelBinding.blockwise("flat", pass_key=False)
 
-    def __init__(self, mean, loadings, noise_variance):
+    def __init__(self, mean, loadings, noise_variance) -> None:
         self.mean = jnp.asarray(mean)
         self.loadings = jnp.asarray(loadings)
         self.noise_variance = jnp.asarray(noise_variance)
@@ -213,7 +213,7 @@ class FactorAnalysis(AbstractRecipe):
         tolerance: float = 1e-6,
         min_noise: float = 1e-8,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.n_components = int(n_components)
         self.max_iterations = int(max_iterations)
         self.tolerance = float(tolerance)
@@ -370,7 +370,7 @@ class ICAModel(AbstractFittedModel):
 
     _input_binding = ModelBinding.blockwise("flat", pass_key=False)
 
-    def __init__(self, mean, unmixing):
+    def __init__(self, mean, unmixing) -> None:
         self.mean = jnp.asarray(mean)
         self.unmixing = jnp.asarray(unmixing)
         relative_cutoff = (
@@ -442,7 +442,7 @@ class ICA(AbstractRecipe):
         max_iterations: int = 200,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.n_components = int(n_components)
         self.max_iterations = int(max_iterations)
         self.tolerance = float(tolerance)

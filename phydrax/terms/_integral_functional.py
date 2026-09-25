@@ -50,7 +50,7 @@ class IntegralFunctional(AbstractSamplingTerm):
         weight: ArrayLike = 1.0,
         label: str | None = None,
         nonfinite_integrand: Literal["raise", "propagate"] = "raise",
-    ):
+    ) -> None:
         if not isinstance(integrand, DomainFunction) and not callable(integrand):
             raise TypeError("integrand must be a DomainFunction or callable.")
         if not isinstance(

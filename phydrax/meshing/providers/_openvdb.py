@@ -91,7 +91,7 @@ class OpenVDBMeshingSpec(StrictModule, NonTrainableState):
     adaptivity: float = eqx.field(static=True)
     specification_id: str = eqx.field(static=True)
 
-    def __init__(self, *, isovalue: float = 0.0, adaptivity: float = 0.0):
+    def __init__(self, *, isovalue: float = 0.0, adaptivity: float = 0.0) -> None:
         level = float(isovalue)
         adaptive = float(adaptivity)
         if not np.isfinite(level) or abs(level) > np.finfo(np.float32).max:

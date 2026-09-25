@@ -41,7 +41,7 @@ class FiniteElementRunConfiguration(StrictModule, NonTrainableState):
         accumulation: str = "fast",
         nonlinear_method: str = "newton-krylov",
         linear_method: str = "auto",
-    ):
+    ) -> None:
         policy = FiniteElementExecutionPolicy(
             realization=realization,
             local_kernel=local_kernel,
@@ -95,7 +95,7 @@ class FiniteElementSolveDiagnostics(StrictModule):
         conservation_defect: ArrayLike = 0.0,
         energy_defect: ArrayLike = 0.0,
         status: str = "completed",
-    ):
+    ) -> None:
         successful_ = jnp.asarray(successful, dtype=jnp.bool_)
         residual = jnp.asarray(residual_norm)
         nonlinear = jnp.asarray(nonlinear_iterations, dtype=jnp.int32)
@@ -147,7 +147,7 @@ class FiniteElementResult(StrictModule, NonTrainableState):
         compilation_id: str,
         diagnostics: FiniteElementSolveDiagnostics,
         /,
-    ):
+    ) -> None:
         names = tuple(str(value) for value in field_names)
         values = tuple(jnp.asarray(value) for value in fields)
         time_ = jnp.asarray(time)

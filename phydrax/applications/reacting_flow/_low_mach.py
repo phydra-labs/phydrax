@@ -75,7 +75,7 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
         *,
         mechanism: PreparedChemicalMechanism | None = None,
         constraint_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(thermodynamics, HomogeneousHelmholtzPlan):
             raise TypeError("thermodynamics must be HomogeneousHelmholtzPlan.")
         if not isinstance(thermodynamics.residual, ZeroResidualHelmholtzTerm):

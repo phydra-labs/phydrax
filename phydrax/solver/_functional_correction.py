@@ -35,7 +35,7 @@ class _FrozenFieldEvaluator(
 ):
     field: DomainFunction
 
-    def __init__(self, field: DomainFunction, /):
+    def __init__(self, field: DomainFunction, /) -> None:
         if not isinstance(field, DomainFunction):
             raise TypeError("field must be a DomainFunction.")
         self.field = field

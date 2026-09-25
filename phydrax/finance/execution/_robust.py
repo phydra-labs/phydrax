@@ -57,7 +57,7 @@ class RobustExecutionDefinition(StrictModule):
         /,
         *,
         definition_id: str,
-    ):
+    ) -> None:
         if not isinstance(instrument, InstrumentReference):
             raise TypeError("instrument must be an InstrumentReference.")
         if not isinstance(physical_law, PhysicalLaw):
@@ -100,7 +100,7 @@ class RobustExecutionPlan(StrictModule):
         isaacs_relative_tolerance: float,
         definition_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         self.residual_tolerance = _nonnegative(residual_tolerance, "residual_tolerance")
         self.refinement_absolute_tolerance = _nonnegative(
             refinement_absolute_tolerance, "refinement_absolute_tolerance"
@@ -178,7 +178,7 @@ class MeanFieldExecutionDefinition(StrictModule):
         *,
         crowding_statistic_id: str,
         definition_id: str,
-    ):
+    ) -> None:
         if not isinstance(instrument, InstrumentReference):
             raise TypeError("instrument must be an InstrumentReference.")
         if not isinstance(physical_law, PhysicalLaw):
@@ -208,7 +208,7 @@ class MeanFieldExecutionPlan(StrictModule):
         *,
         definition_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(fixed_point_plan, MeanFieldGameFixedPointPlan):
             raise TypeError("fixed_point_plan must be a MeanFieldGameFixedPointPlan.")
         self.fixed_point_plan = fixed_point_plan

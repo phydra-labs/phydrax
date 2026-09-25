@@ -59,7 +59,7 @@ class MeshPatch(StrictModule, NonTrainableState):
         *,
         connected: bool = True,
         adjacent_zone_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         value = str(name).strip()
         if not value:
             raise ValueError("Mesh patch name must be non-empty.")
@@ -110,7 +110,7 @@ class MeshZone(StrictModule, NonTrainableState):
         *,
         material_id: str | None = None,
         region_role: RegionRole | None = None,
-    ):
+    ) -> None:
         value = str(name).strip()
         if not value:
             raise ValueError("Mesh zone name must be non-empty.")
@@ -155,7 +155,7 @@ class MeshLabel(StrictModule, NonTrainableState):
     scope: MeshingScope
     label_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, scope: MeshingScope, /):
+    def __init__(self, name: str, scope: MeshingScope, /) -> None:
         value = str(name).strip()
         if not value:
             raise ValueError("Mesh label name must be non-empty.")
@@ -188,7 +188,7 @@ class MeshAttribute(StrictModule, NonTrainableState):
         /,
         *,
         unit: UnitDefinition | None = None,
-    ):
+    ) -> None:
         value = str(name).strip()
         if not value:
             raise ValueError("Mesh attribute name must be non-empty.")

@@ -50,7 +50,7 @@ class MacroscopicDielectricResult(StrictModule, NonTrainableState):
         source_hashes: tuple[str, ...],
         successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         q = jnp.asarray(q_magnitudes, dtype=jnp.float64)
         energy = jnp.asarray(positive_energy, dtype=jnp.float64)
         epsilon = jnp.asarray(dielectric)
@@ -133,7 +133,7 @@ class ElectronEnergyLossResult(StrictModule, NonTrainableState):
         evidence: ElectronEnergyLossEvidence,
         dielectric_result_id: str,
         /,
-    ):
+    ) -> None:
         self.loss_response = loss_response
         self.dynamic_structure_response = dynamic_structure_response
         self.evidence = evidence
@@ -164,7 +164,7 @@ class ElectronEnergyLossPlan(StrictModule, NonTrainableState):
         q_capacity: int,
         energy_capacity: int,
         residual_tolerance: float = 1.0e-2,
-    ):
+    ) -> None:
         thermal = float(temperature)
         tolerance = float(residual_tolerance)
         if (

@@ -248,7 +248,7 @@ class IsolationForestModel(AbstractFittedModel):
         max_depth: int,
         feature_count: int,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.feature_indices = jnp.asarray(feature_indices, dtype=jnp.int32)
         self.thresholds = jnp.asarray(thresholds)
         self.splittable = jnp.asarray(splittable, dtype=jnp.bool_)
@@ -343,7 +343,7 @@ class SmoothIsolationForestModel(AbstractFittedModel):
         feature_count: int,
         temperature: float,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         if float(temperature) <= 0.0:
             raise ValueError("temperature must be positive.")
         self.feature_indices = jnp.asarray(feature_indices, dtype=jnp.int32)
@@ -411,7 +411,7 @@ class IsolationForestRecipe(AbstractRecipe):
         n_estimators: int = 100,
         max_depth: int = 8,
         contamination: float = 0.1,
-    ):
+    ) -> None:
         if int(n_estimators) <= 0:
             raise ValueError("n_estimators must be positive.")
         if int(max_depth) <= 0 or int(max_depth) > 12:

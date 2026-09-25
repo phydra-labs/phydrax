@@ -46,7 +46,7 @@ class ExponentLatticeScalingEvidence(StrictModule, NonTrainableState):
         free_generators: Sequence[Sequence[int]],
         torsion_orders: Sequence[int],
         torsion_generators: Sequence[Sequence[int]],
-    ):
+    ) -> None:
         support_id_ = str(support_id)
         relations = tuple(tuple(row) for row in relation_matrix)
         free = tuple(tuple(row) for row in free_generators)

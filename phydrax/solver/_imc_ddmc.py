@@ -80,7 +80,7 @@ class HybridIMCDDMCPlan(StrictModule, NonTrainableState):
         ddmc_optical_depth: float = 3.0,
         transport_light_speed: float = _LIGHT_SPEED,
         maximum_packet_energy: float,
-    ):
+    ) -> None:
         widths = np.asarray(cell_widths, dtype=np.float64)
         absorption_ = np.asarray(absorption, dtype=np.float64)
         scattering_ = np.asarray(scattering, dtype=np.float64)

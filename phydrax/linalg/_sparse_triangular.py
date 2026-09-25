@@ -87,7 +87,7 @@ class SparseTriangularFactor(StrictModule):
         *,
         pivot_tolerance: float = 0.0,
         factor_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(analysis, SparseTriangularAnalysis):
             raise TypeError("analysis must be SparseTriangularAnalysis.")
         values_ = jnp.asarray(values)

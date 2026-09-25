@@ -92,7 +92,7 @@ class SignFreeCTINTPlan(StrictModule, NonTrainableState):
         steps: int,
         maximum_order: int = 3,
         symmetry_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         beta_ = float(beta)
         coupling = float(interaction)
         signs = np.asarray(sublattice_signs, dtype=np.int64)
@@ -164,7 +164,7 @@ class PreparedSignFreeCTINT(StrictModule, NonTrainableState):
     determinant_plan: SmallLinearSolvePlan
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, up_kernel, down_kernel, kernel_id, /):
+    def __init__(self, plan, up_kernel, down_kernel, kernel_id, /) -> None:
         self.plan = plan
         self.up_kernel = up_kernel
         self.down_kernel = down_kernel
@@ -344,7 +344,7 @@ class LowOrderFermionDiagramMonteCarloPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, /, *, steps: int, maximum_order: int = 6, maximum_diagrams: int = 256
-    ):
+    ) -> None:
         draws, order, count = int(steps), int(maximum_order), int(maximum_diagrams)
         if draws < 8 or order < 1 or count < 2:
             raise ValueError("Low-order diagram Monte Carlo bounds are invalid.")
@@ -452,7 +452,9 @@ class PreparedLowOrderFermionDiagramMonteCarlo(StrictModule, NonTrainableState):
     detailed_balance_residual: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, orders, weights, proposal_matrix, residual, prepared_id, /):
+    def __init__(
+        self, plan, orders, weights, proposal_matrix, residual, prepared_id, /
+    ) -> None:
         self.plan, self.orders, self.weights, self.proposal_matrix = (
             plan,
             orders,

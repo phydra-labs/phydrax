@@ -178,7 +178,7 @@ class TSNEModel(AbstractFittedModel):
         active: ArrayLike,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         train = jnp.asarray(training_features)
         coordinates = jnp.asarray(embedding)
         self.embedding = coordinates
@@ -219,7 +219,7 @@ class TSNERecipe(AbstractRecipe):
         momentum: float = 0.8,
         tolerance: float = 1e-4,
         max_samples: int = 4096,
-    ):
+    ) -> None:
         if int(n_components) <= 0 or float(perplexity) <= 1.0:
             raise ValueError(
                 "n_components must be positive and perplexity must exceed one."
@@ -448,7 +448,7 @@ class FuzzyGraphEmbeddingModel(AbstractFittedModel):
         *,
         n_neighbors: int,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         train = jnp.asarray(training_features)
         coordinates = jnp.asarray(embedding)
         self.training_features = train
@@ -526,7 +526,7 @@ class FuzzyGraphEmbeddingRecipe(AbstractRecipe):
         repulsion: float = 1.0,
         tolerance: float = 1e-4,
         max_samples: int = 4096,
-    ):
+    ) -> None:
         values = (n_components, n_neighbors, iterations, max_samples)
         if any(int(value) <= 0 for value in values):
             raise ValueError(

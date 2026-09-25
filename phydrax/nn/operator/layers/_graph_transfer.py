@@ -145,7 +145,7 @@ class GraphKernelTransfer(StrictModule):
         coordinate_scale: float = 1.0,
         target_chunk_size: int | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if int(in_channels) <= 0 or int(out_channels) <= 0 or int(coord_dim) <= 0:
             raise ValueError("Transfer channel counts and coord_dim must be positive.")
         if int(target_channels) < 0:
@@ -335,7 +335,7 @@ class GraphAttentionTransfer(StrictModule):
         require_measure: bool = True,
         target_chunk_size: int | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if (
             min(
                 int(in_channels),
@@ -499,7 +499,7 @@ class GeometryMomentEmbedding(StrictModule):
         /,
         *,
         reference_measure: float = 1.0,
-    ):
+    ) -> None:
         if int(coord_dim) <= 0 or float(radius) <= 0.0:
             raise ValueError("coord_dim and radius must be positive.")
         if float(reference_measure) <= 0.0:
@@ -583,7 +583,7 @@ class MultiscaleGraphTransfer(StrictModule):
         width: int = 64,
         depth: int = 2,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         transfers_ = tuple(transfers)
         if not transfers_:
             raise ValueError("MultiscaleGraphTransfer requires at least one scale.")

@@ -63,7 +63,7 @@ class NumeraireOptionMarginal(StrictModule):
         currency_code: str,
         market_snapshot_id: str,
         option_evidence_id: str,
-    ):
+    ) -> None:
         if not isinstance(pricing_law, PricingLaw):
             raise TypeError(
                 "pricing_law must be a PricingLaw, not a physical/stress law."

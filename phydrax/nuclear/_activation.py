@@ -195,7 +195,7 @@ class NuclideInventory(StrictModule):
         nuclide_ids: tuple[str, ...],
         network_id: str,
         /,
-    ):
+    ) -> None:
         amounts = jnp.asarray(amounts_mol, dtype=jnp.float64)
         time = jnp.asarray(time_s, dtype=amounts.dtype)
         identifiers = tuple(_text(value, "nuclide_id") for value in nuclide_ids)

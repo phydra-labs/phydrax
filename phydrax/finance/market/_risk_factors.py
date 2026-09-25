@@ -26,7 +26,7 @@ class RiskFactorKey(StrictModule, NonTrainableState):
     quote_key: QuoteKey
     factor_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, quote_key: QuoteKey, /):
+    def __init__(self, name: str, quote_key: QuoteKey, /) -> None:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("A risk-factor name must be a non-empty string.")
         if not isinstance(quote_key, QuoteKey):
@@ -59,7 +59,7 @@ class RiskFactorLayout(StrictModule, NonTrainableState):
     names: tuple[str, ...] = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, keys: Sequence[RiskFactorKey], /):
+    def __init__(self, keys: Sequence[RiskFactorKey], /) -> None:
         values = tuple(keys)
         if not values:
             raise ValueError("A risk-factor layout requires at least one key.")
@@ -131,7 +131,7 @@ class MarketState(StrictModule, NonTrainableState):
         *,
         decision_time_ns: int,
         observation_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(layout, RiskFactorLayout):
             raise TypeError("layout must be a RiskFactorLayout.")
         count = layout.factor_count

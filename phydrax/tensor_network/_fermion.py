@@ -25,7 +25,9 @@ class FermionTopologySignPlan(StrictModule):
     parity_masks: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, mode_order: FermionModeOrder, edges: Sequence[tuple[str, str]], /):
+    def __init__(
+        self, mode_order: FermionModeOrder, edges: Sequence[tuple[str, str]], /
+    ) -> None:
         if not isinstance(mode_order, FermionModeOrder):
             raise TypeError("mode_order must be FermionModeOrder.")
         values = tuple((str(left), str(right)) for left, right in edges)
@@ -149,7 +151,9 @@ class FermionChainState(StrictModule):
     mode_order: FermionModeOrder = eqx.field(static=True)
     chain_id: str = eqx.field(static=True)
 
-    def __init__(self, state: MatrixProductState, mode_order: FermionModeOrder, /):
+    def __init__(
+        self, state: MatrixProductState, mode_order: FermionModeOrder, /
+    ) -> None:
         if not isinstance(state, MatrixProductState) or not isinstance(
             mode_order, FermionModeOrder
         ):

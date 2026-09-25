@@ -50,7 +50,7 @@ class SpectralResponseEvidence(StrictModule, NonTrainableState):
         selection_rule_residual: ArrayLike,
         successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         residuals = jnp.asarray(
             [
                 passivity_residual,
@@ -114,7 +114,7 @@ class SpectralResponseProduct(StrictModule, NonTrainableState):
         /,
         *,
         convention: SpectralResponseConvention = SpectralResponseConvention.RETARDED_EXP_MINUS_IWT_POSITIVE_LOSS,
-    ):
+    ) -> None:
         coordinate = jnp.asarray(coordinates)
         response = jnp.asarray(values)
         mask = jnp.asarray(active, dtype=jnp.bool_)

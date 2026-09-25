@@ -46,7 +46,7 @@ class MatrixGaugeLinkSpace(StrictModule, NonTrainableState):
     local_shape: tuple[int, ...] = eqx.field(static=True)
     link_space_id: str = eqx.field(static=True)
 
-    def __init__(self, topology: CellComplexTopology, group: AbstractLieGroup, /):
+    def __init__(self, topology: CellComplexTopology, group: AbstractLieGroup, /) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("topology must be CellComplexTopology.")
         if not isinstance(group, AbstractLieGroup):

@@ -59,7 +59,7 @@ class CorrelationMatrix(StrictModule):
     matrix: Array
     dimension: int = eqx.field(static=True)
 
-    def __init__(self, matrix: ArrayLike, /):
+    def __init__(self, matrix: ArrayLike, /) -> None:
         matrix_ = _correlation_matrix(matrix)
         self.matrix = matrix_
         self.dimension = matrix_.shape[0]
@@ -79,7 +79,7 @@ class MultiAssetLognormalModel(StrictModule):
     dependence: CorrelationMatrix
     asset_count: int = eqx.field(static=True)
 
-    def __init__(self, volatilities: ArrayLike, dependence: CorrelationMatrix, /):
+    def __init__(self, volatilities: ArrayLike, dependence: CorrelationMatrix, /) -> None:
         if not isinstance(dependence, CorrelationMatrix):
             raise TypeError("dependence must be a CorrelationMatrix.")
         volatility = jnp.asarray(volatilities, dtype=jnp.float64)
@@ -115,7 +115,9 @@ class FactorDependenceModel(StrictModule):
     asset_count: int = eqx.field(static=True)
     factor_count: int = eqx.field(static=True)
 
-    def __init__(self, loadings: ArrayLike, idiosyncratic_variances: ArrayLike, /):
+    def __init__(
+        self, loadings: ArrayLike, idiosyncratic_variances: ArrayLike, /
+    ) -> None:
         loadings_ = jnp.asarray(loadings, dtype=jnp.float64)
         residual = jnp.asarray(idiosyncratic_variances, dtype=jnp.float64)
         if loadings_.ndim != 2 or loadings_.shape[0] < 1 or loadings_.shape[1] < 1:
@@ -148,7 +150,7 @@ class FactorDependenceModel(StrictModule):
 class GaussianCopulaModel(StrictModule):
     dependence: CorrelationMatrix
 
-    def __init__(self, dependence: CorrelationMatrix, /):
+    def __init__(self, dependence: CorrelationMatrix, /) -> None:
         if not isinstance(dependence, CorrelationMatrix):
             raise TypeError("dependence must be a CorrelationMatrix.")
         self.dependence = dependence
@@ -158,7 +160,9 @@ class StudentTCopulaModel(StrictModule):
     dependence: CorrelationMatrix
     degrees_of_freedom: Array
 
-    def __init__(self, dependence: CorrelationMatrix, degrees_of_freedom: ArrayLike, /):
+    def __init__(
+        self, dependence: CorrelationMatrix, degrees_of_freedom: ArrayLike, /
+    ) -> None:
         if not isinstance(dependence, CorrelationMatrix):
             raise TypeError("dependence must be a CorrelationMatrix.")
         degrees = jnp.asarray(degrees_of_freedom, dtype=jnp.float64)

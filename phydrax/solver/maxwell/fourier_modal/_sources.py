@@ -48,7 +48,7 @@ class FourierModalExcitation(StrictModule):
         electric_currents: Sequence[ArrayLike] = (),
         magnetic_currents: Sequence[ArrayLike] = (),
         channel_weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         left = jnp.asarray(left_incident)
         right = jnp.asarray(right_incident, dtype=left.dtype)
         if left.ndim < 2 or right.shape != left.shape:

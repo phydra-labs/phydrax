@@ -423,7 +423,7 @@ class AbelianNearestNeighborHamiltonian(StrictModule):
         *,
         hamiltonian_id: str,
         conservation_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         legs = tuple(physical_legs)
         values = tuple(jnp.asarray(term) for term in terms)
         if len(values) != len(legs) - 1 or not legs:

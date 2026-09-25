@@ -48,7 +48,7 @@ class HomotopyEndpointCertificate(StrictModule):
         tolerance: Any,
         finite: Any,
         status: Any,
-    ):
+    ) -> None:
         self.start_residual_norm = jnp.asarray(start_residual_norm)
         self.target_residual_norm = jnp.asarray(target_residual_norm)
         self.tolerance = jnp.asarray(tolerance)
@@ -78,7 +78,7 @@ class HomotopyProblem(StrictModule):
         state_space: AbstractVectorSpace | None = None,
         residual_space: AbstractVectorSpace | None = None,
         representation: ContinuationRepresentationPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         if physical_parameter is not None and not callable(physical_parameter):

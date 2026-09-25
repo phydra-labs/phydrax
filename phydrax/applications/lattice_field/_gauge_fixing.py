@@ -80,7 +80,7 @@ class GaugeFixingPlan(StrictModule, NonTrainableState):
         step_size: float = 0.2,
         residual_tolerance: float = 1.0e-8,
         gribov_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(link_space, MatrixGaugeLinkSpace):
             raise TypeError("link_space must be MatrixGaugeLinkSpace.")
         if not isinstance(link_space.group, (UnitaryGroup, SpecialUnitaryGroup)):
@@ -166,7 +166,7 @@ class LandauGaugeFixingPlan(StrictModule, NonTrainableState):
     plan: GaugeFixingPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, link_space: MatrixGaugeLinkSpace, /, **kwargs):
+    def __init__(self, link_space: MatrixGaugeLinkSpace, /, **kwargs) -> None:
         plan = GaugeFixingPlan(link_space, condition="landau", **kwargs)
         self.plan = plan
         self.plan_id = plan.plan_id
@@ -197,7 +197,7 @@ class CoulombGaugeFixingPlan(StrictModule, NonTrainableState):
         spatial_edges: ArrayLike,
         /,
         **kwargs,
-    ):
+    ) -> None:
         plan = GaugeFixingPlan(
             link_space,
             condition="coulomb",
@@ -289,7 +289,7 @@ class PreparedGaugeFixing(StrictModule, NonTrainableState):
         plan: GaugeFixingPlan,
         initial_transformations: ArrayLike | None,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, GaugeFixingPlan):
             raise TypeError("plan must be GaugeFixingPlan.")
         identity = plan.link_space.group.identity()
@@ -584,7 +584,7 @@ class FaddeevPopovOperator(AbstractLinearOperator):
     fixing: PreparedGaugeFixing
     links: Array
 
-    def __init__(self, fixing: PreparedGaugeFixing, links: ArrayLike, /):
+    def __init__(self, fixing: PreparedGaugeFixing, links: ArrayLike, /) -> None:
         if not isinstance(fixing, PreparedGaugeFixing):
             raise TypeError("fixing must be PreparedGaugeFixing.")
         values = _links(fixing.plan.link_space, links)

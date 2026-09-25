@@ -81,7 +81,7 @@ class Z2GaugeModel(StrictModule, NonTrainableState):
         electric_coupling: float,
         magnetic_coupling: float,
         external_charges: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("topology must be CellComplexTopology.")
         if topology.dimension < 1:

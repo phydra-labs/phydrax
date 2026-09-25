@@ -42,7 +42,7 @@ class GeneralizedWaveGaugePlan(StrictModule):
         damping: float,
         scalar_curvature_gauge: float,
         source_sign: int = 1,
-    ):
+    ) -> None:
         initial = np.asarray(initial_source, dtype=np.float64)
         boundary = np.asarray(boundary_source, dtype=np.float64)
         values = tuple(

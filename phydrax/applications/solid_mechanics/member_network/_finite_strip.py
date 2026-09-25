@@ -39,7 +39,7 @@ class FiniteStripBucklingProblem(StrictModule):
         /,
         *,
         problem_id: str = "finite-strip-buckling",
-    ):
+    ) -> None:
         young = jnp.asarray(young_modulus)
         poisson = jnp.asarray(poisson_ratio, dtype=young.dtype)
         stress = jnp.asarray(segment_stress, dtype=young.dtype)

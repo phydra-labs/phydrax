@@ -31,7 +31,7 @@ class ThrusterEffector(StrictModule, NonTrainableState):
         mass_flow_per_force,
         tank_assignment,
         /,
-    ):
+    ) -> None:
         directions = jnp.asarray(directions_body)
         locations = jnp.asarray(locations_body)
         thrust = jnp.asarray(maximum_thrust)
@@ -81,7 +81,7 @@ class ReactionWheelEffector(StrictModule, NonTrainableState):
 
     def __init__(
         self, axes_body: ArrayLike, maximum_torque: ArrayLike, /, *, command_offset=0
-    ):
+    ) -> None:
         if isinstance(command_offset, bool) or not isinstance(command_offset, int):
             raise TypeError("command_offset must be an integer.")
         if command_offset < 0:
@@ -123,7 +123,7 @@ class LinearSensorPlan(StrictModule, NonTrainableState):
     lower: Array
     upper: Array
 
-    def __init__(self, matrix, bias, lower, upper, /):
+    def __init__(self, matrix, bias, lower, upper, /) -> None:
         matrix_ = jnp.asarray(matrix)
         bias_ = jnp.asarray(bias)
         if matrix_.ndim != 2 or bias_.shape != (matrix_.shape[0],):

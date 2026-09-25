@@ -48,7 +48,7 @@ class SurveyReleaseManifest(StrictModule, NonTrainableState):
         scale_cut_id: str,
         covariance_corrections: str,
         artifact: ScientificArtifactEnvelope,
-    ):
+    ) -> None:
         values = tuple(
             str(value).strip()
             for value in (
@@ -102,7 +102,7 @@ class SurveyReleaseProduct(StrictModule, NonTrainableState):
         logdet_covariance: ArrayLike,
         manifest: SurveyReleaseManifest,
         /,
-    ):
+    ) -> None:
         data_ = jax.lax.stop_gradient(jnp.asarray(data))
         window_ = jax.lax.stop_gradient(jnp.asarray(window, dtype=data_.dtype))
         precision_ = jax.lax.stop_gradient(jnp.asarray(precision, dtype=data_.dtype))
@@ -186,7 +186,7 @@ class DesiFullShapeLikelihoodPlan(StrictModule, NonTrainableState):
     gaussian: CorrelatedGaussianPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, release: SurveyReleaseProduct, /):
+    def __init__(self, release: SurveyReleaseProduct, /) -> None:
         if not isinstance(release, SurveyReleaseProduct):
             raise TypeError("release must be SurveyReleaseProduct.")
         if (

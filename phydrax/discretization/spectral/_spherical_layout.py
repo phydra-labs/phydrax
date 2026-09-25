@@ -44,7 +44,7 @@ class SphericalModeLayout(StrictModule, NonTrainableState):
         *,
         spin: int = 0,
         reality: bool = True,
-    ):
+    ) -> None:
         limit = int(bandlimit)
         spin_ = int(spin)
         reality_ = bool(reality)

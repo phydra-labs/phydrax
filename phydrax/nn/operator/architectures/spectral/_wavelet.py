@@ -54,7 +54,7 @@ class WaveletResourcePolicy(StrictModule):
         *,
         maximum_detail_bands: int = 4096,
         maximum_parameter_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         if maximum_detail_bands <= 0 or maximum_parameter_bytes <= 0:
             raise ValueError("Wavelet resource limits must be positive.")
         self.maximum_detail_bands = maximum_detail_bands
@@ -78,7 +78,7 @@ class _WaveletSubbandMixerND(StrictModule):
         in_channels: int,
         out_channels: int,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         in_size = int(in_channels)
         out_size = int(out_channels)
         if min(in_size, out_size) <= 0:
@@ -141,7 +141,7 @@ class _MultiwaveletSubbandMixer1D(StrictModule):
         in_channels: int,
         out_channels: int,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         in_size = int(in_channels)
         out_size = int(out_channels)
         if min(in_size, out_size) <= 0:
@@ -197,7 +197,7 @@ class WaveletDecodePolicy(StrictModule):
         interpolation_order: int = 1,
         out_of_support: Literal["error"] = "error",
         multiwavelet_evaluation: Literal["cell_polynomial"] = "cell_polynomial",
-    ):
+    ) -> None:
         if interpolation != "linear" or int(interpolation_order) != 1:
             raise ValueError(
                 "The finite WNO decoder currently supports linear order one."
@@ -433,7 +433,7 @@ class WaveletNeuralOperator(AbstractOperatorModel):
         key: Key[Array, ""] = DOC_KEY0,
         decode_policy: WaveletDecodePolicy | None = None,
         resources: WaveletResourcePolicy | None = None,
-    ):
+    ) -> None:
         dimension = int(spatial_ndim)
         if dimension <= 0:
             raise ValueError("WaveletNeuralOperator spatial_ndim must be positive.")
@@ -619,7 +619,7 @@ class MultiwaveletOperator(AbstractOperatorModel):
         activation: Callable[[Array], Array] = jnn.gelu,
         key: Key[Array, ""] = DOC_KEY0,
         decode_policy: WaveletDecodePolicy | None = None,
-    ):
+    ) -> None:
         self.transform = AlpertMultiwaveletTransform(
             order=order, levels=levels, boundary=boundary
         )

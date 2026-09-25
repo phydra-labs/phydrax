@@ -40,7 +40,7 @@ class UnstructuredConstrainedTransportPlan(StrictModule, NonTrainableState):
         cochain: CochainDiscretization,
         spatial_dimension: int,
         /,
-    ):
+    ) -> None:
         dimension = int(spatial_dimension)
         if (
             not isinstance(cochain, CochainDiscretization)

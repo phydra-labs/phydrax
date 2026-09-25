@@ -176,7 +176,7 @@ class EuclideanManifold(AbstractGeodesicManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, point_shape: Sequence[int] = (), /):
+    def __init__(self, point_shape: Sequence[int] = (), /) -> None:
         self.point_shape = _point_shape(point_shape)
         shape_id = (
             "scalar" if not self.point_shape else "x".join(map(str, self.point_shape))
@@ -291,7 +291,7 @@ class SphereManifold(AbstractGeodesicManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, ambient_dimension: int, /, *, tolerance: float = 1e-6):
+    def __init__(self, ambient_dimension: int, /, *, tolerance: float = 1e-6) -> None:
         dimension = int(ambient_dimension)
         if dimension < 2:
             raise ValueError("Sphere ambient_dimension must be at least two.")

@@ -55,7 +55,7 @@ class MappedMetricIdentityReport(StrictModule, NonTrainableState):
         free_stream_residual: float,
         tolerance: float,
         mapped_id: str,
-    ):
+    ) -> None:
         minimum = float(minimum_jacobian)
         metric = float(metric_identity_residual)
         map_residual = float(map_derivative_residual)
@@ -107,7 +107,7 @@ class MappedTensorGridPlan(StrictModule):
         *,
         sbp_order: SBPInteriorOrder = 4,
         metric_mode: MappedMetricMode = "discrete_curl",
-    ):
+    ) -> None:
         if not isinstance(reference_grid, PreparedTensorGrid) or not callable(
             coordinate_map
         ):
@@ -318,7 +318,7 @@ class PreparedMappedTensorGrid(StrictModule, NonTrainableState):
     metric_report: MappedMetricIdentityReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MappedTensorGridPlan, /):
+    def __init__(self, plan: MappedTensorGridPlan, /) -> None:
         if not isinstance(plan, MappedTensorGridPlan):
             raise TypeError("plan must be a MappedTensorGridPlan.")
         grid = plan.reference_grid
@@ -491,7 +491,7 @@ class MappedDiffusionOperator(AbstractLinearOperator):
         mapped_grid: PreparedMappedTensorGrid,
         coefficient: ArrayLike = 1.0,
         /,
-    ):
+    ) -> None:
         if not isinstance(mapped_grid, PreparedMappedTensorGrid):
             raise TypeError("mapped_grid must be PreparedMappedTensorGrid.")
         dimension = len(mapped_grid.shape)

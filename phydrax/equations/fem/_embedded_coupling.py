@@ -29,7 +29,7 @@ class SlidingMortarPlan(StrictModule, NonTrainableState):
         routes: Sequence[MovingTraceRoute],
         overlap_fractions: ArrayLike,
         /,
-    ):
+    ) -> None:
         routes_ = tuple(routes)
         overlap = jnp.asarray(overlap_fractions)
         if (
@@ -101,7 +101,7 @@ class CutCellConservationPlan(StrictModule, NonTrainableState):
         /,
         *,
         minimum_volume_fraction: float = 0.05,
-    ):
+    ) -> None:
         volumes = jnp.asarray(volume_fractions)
         apertures = jnp.asarray(face_apertures)
         targets = jnp.asarray(merge_targets, dtype=jnp.int32)
@@ -163,7 +163,7 @@ class OversetConnectivity(StrictModule, NonTrainableState):
         receptor_content_weights: ArrayLike,
         active: ArrayLike,
         /,
-    ):
+    ) -> None:
         donors = np.asarray(donor_cells, dtype=np.int32)
         receptors = np.asarray(receptor_cells, dtype=np.int32)
         interpolation = np.asarray(interpolation_weights, dtype=np.float64)
@@ -216,7 +216,7 @@ class ConservativeOversetPlan(StrictModule, NonTrainableState):
     connectivity: OversetConnectivity
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, connectivity: OversetConnectivity, /):
+    def __init__(self, connectivity: OversetConnectivity, /) -> None:
         if not isinstance(connectivity, OversetConnectivity):
             raise TypeError("connectivity must be OversetConnectivity.")
         self.connectivity = connectivity

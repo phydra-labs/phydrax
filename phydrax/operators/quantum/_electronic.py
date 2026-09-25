@@ -66,7 +66,7 @@ class ElectronicKineticPolicy(StrictModule, NonTrainableState):
         trace_method: ElectronicTraceMethod = "exact",
         coordinate_chunk_size: int | None = None,
         compute_dtype: object = "float64",
-    ):
+    ) -> None:
         if trace_method not in ("exact", "chunked-exact"):
             raise ValueError("trace_method must be 'exact' or 'chunked-exact'.")
         if trace_method == "exact":
@@ -175,7 +175,7 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
         kinetic: ElectronicKineticPolicy | None = None,
         resource_plan: ElectronicVMCResourcePlan | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(nuclei, AtomicStructure):
             raise TypeError("nuclei must be an AtomicStructure.")
         if nuclei.has_periodic_metadata:
@@ -378,7 +378,7 @@ class _HarmonicMeanElectronProposal(AbstractProposal):
         electron_count: int,
         step_size: float,
         /,
-    ):
+    ) -> None:
         self.nuclei = nuclei
         self.electron_count = int(electron_count)
         self.step_size = float(step_size)

@@ -79,7 +79,7 @@ class NeuralContactAdapter(StrictModule, NonTrainableState):
         rate_trace: NeuralContactRateTrace | None = None,
         step_size: float = 1.0,
         activation_distance: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(scene, ContactParticipantScene):
             raise TypeError("scene must be ContactParticipantScene.")
         if not isinstance(

@@ -29,7 +29,7 @@ class PreconditionerProperties(StrictModule):
         self_adjoint: bool = False,
         positive_definite: bool = False,
         evidence: Mapping[str, PropertyEvidence] | None = None,
-    ):
+    ) -> None:
         claims = {
             "linear": bool(linear),
             "stationary": bool(stationary),

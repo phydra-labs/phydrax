@@ -53,7 +53,7 @@ class AsynchronousSchwarzPlan(StrictModule, NonTrainableState):
         *,
         maximum_staleness: int = 1,
         patch_order: Sequence[str] | None = None,
-    ):
+    ) -> None:
         updates_ = int(updates)
         inner_ = int(inner_iterations)
         staleness = int(maximum_staleness)
@@ -91,7 +91,7 @@ class AsynchronousSchwarzState(StrictModule):
         trace_history: tuple[SchwarzTraceState, ...],
         completed_updates: int,
         maximum_observed_staleness: int,
-    ):
+    ) -> None:
         states, identities = _patch_kernel_states(kernel_states, kernel_checkpoint_ids)
         self.functions = frozendict(functions)
         self.kernel_states = states
@@ -120,7 +120,7 @@ class AsynchronousSchwarzResult(StrictModule):
         state: AsynchronousSchwarzState,
         iteration_session_state: IterationSessionState | None = None,
         /,
-    ):
+    ) -> None:
         self.solver = solver
         self.family = family
         self.state = state

@@ -41,7 +41,7 @@ class ContactAngleCondition(StrictModule, NonTrainableState):
         tolerance: float,
         condition_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(body_tag, (int, np.integer)) or isinstance(
             body_tag, (bool, np.bool_)
         ):
@@ -112,7 +112,7 @@ class EmbeddedBoundaryContactAngleSet(StrictModule, NonTrainableState):
         *,
         geometry_id: str,
         plic_id: str,
-    ):
+    ) -> None:
         geometry = str(geometry_id)
         plic = str(plic_id)
         if not geometry:

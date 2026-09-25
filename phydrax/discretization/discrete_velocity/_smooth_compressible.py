@@ -42,7 +42,7 @@ class SmoothCompressibleKineticState(StrictModule):
         particle_populations: ArrayLike,
         total_energy_populations: ArrayLike,
         /,
-    ):
+    ) -> None:
         particles = jnp.asarray(particle_populations)
         energy = jnp.asarray(total_energy_populations)
         if particles.ndim == 0 or particles.shape != energy.shape:
@@ -172,7 +172,7 @@ class SmoothCompressibleD2VKineticMethod(StrictModule):
         material: IdealGasMaterial,
         transport: AbstractTransportClosure,
         /,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if quadrature.dimension != 2 or quadrature.population_count not in (17, 37):

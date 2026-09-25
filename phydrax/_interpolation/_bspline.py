@@ -205,7 +205,7 @@ class BSplineJetStencil(StrictModule):
         degree: int,
         maximum_order: int,
         case_shape: tuple[int, ...] = (),
-    ):
+    ) -> None:
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
         jets_ = jnp.asarray(jets)
         support_ = jnp.asarray(support, dtype=jnp.bool_)

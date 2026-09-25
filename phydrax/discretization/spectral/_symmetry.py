@@ -44,7 +44,7 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
         component_matrix: ArrayLike | None = None,
         component_count: int | None = None,
         symmetry_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         rank = len(discretization.axes)

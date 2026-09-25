@@ -93,7 +93,7 @@ class PreparedMACOceanForcing(StrictModule, NonTrainableState):
         reference_density: float,
         surface_stress: Sequence[float] | Any | None = None,
         surface_stress_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         dimension = len(operators.discretization.cell_shape)

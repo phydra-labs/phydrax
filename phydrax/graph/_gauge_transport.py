@@ -59,7 +59,7 @@ class GaugeCovariantShiftPlan(StrictModule, NonTrainableState):
         forward_orientations: ArrayLike,
         boundary_phases: LatticeBoundaryPhasePlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(link_space, MatrixGaugeLinkSpace):
             raise TypeError("link_space must be MatrixGaugeLinkSpace.")
         if not isinstance(representation, AbstractGaugeRepresentation):
@@ -250,7 +250,7 @@ class GaugeStaplePlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_staples_per_link: int = 64,
-    ):
+    ) -> None:
         if not isinstance(link_space, MatrixGaugeLinkSpace):
             raise TypeError("link_space must be MatrixGaugeLinkSpace.")
         if not isinstance(link_space.group, (UnitaryGroup, SpecialUnitaryGroup)):

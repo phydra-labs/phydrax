@@ -87,7 +87,7 @@ class CompiledMACBinaryAlloyDynamics(StrictModule, NonTrainableState):
         phase_diagram: BinaryAlloyPhaseDiagramPlan,
         solute_transport: PreparedMACScalarTransport,
         /,
-    ):
+    ) -> None:
         if not isinstance(base, CompiledMACEnthalpyPorosityDynamics):
             raise TypeError("base must be CompiledMACEnthalpyPorosityDynamics.")
         if not isinstance(phase_diagram, BinaryAlloyPhaseDiagramPlan):

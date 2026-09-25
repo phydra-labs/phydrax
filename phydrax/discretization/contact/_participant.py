@@ -151,7 +151,7 @@ class LinearContactParticipant(AbstractContactParticipant):
     _capabilities: ContactCapability = eqx.field(static=True)
     _participant_id: str = eqx.field(static=True)
 
-    def __init__(self, surface: PreparedCollisionSurface, /):
+    def __init__(self, surface: PreparedCollisionSurface, /) -> None:
         if not isinstance(surface, PreparedCollisionSurface):
             raise TypeError("surface must be PreparedCollisionSurface.")
         self.surface = surface
@@ -264,7 +264,7 @@ class FunctionContactParticipant(AbstractContactParticipant):
             Callable[[PyTree[Any], PyTree[Any]], tuple[Array, Array]] | None
         ) = None,
         participant_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, CollisionSurfacePlan):
             raise TypeError("plan must be CollisionSurfacePlan.")
         if not isinstance(source_space, AbstractVectorSpace):
@@ -434,7 +434,7 @@ class ContactParticipantScene(StrictModule, NonTrainableState):
     face_offsets: tuple[int, ...] = eqx.field(static=True)
     scene_id: str = eqx.field(static=True)
 
-    def __init__(self, participants: Sequence[AbstractContactParticipant], /):
+    def __init__(self, participants: Sequence[AbstractContactParticipant], /) -> None:
         values = tuple(participants)
         if not values or not all(
             isinstance(value, AbstractContactParticipant) for value in values

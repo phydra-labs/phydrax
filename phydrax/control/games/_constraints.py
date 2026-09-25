@@ -127,7 +127,7 @@ class GameConstraintBlock(StrictModule):
         time_dependent: bool,
         state_dependent: bool,
         control_dependencies: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(scope, GameConstraintScope):
             raise TypeError("scope must be a GameConstraintScope.")
         if not isinstance(site, GameConstraintSite):
@@ -217,7 +217,7 @@ class OpenLoopGameConstraints(StrictModule):
         partition: PlayerControlPartition,
         blocks: Sequence[GameConstraintBlock] = (),
         /,
-    ):
+    ) -> None:
         if not isinstance(partition, PlayerControlPartition):
             raise TypeError("partition must be a PlayerControlPartition.")
         if isinstance(blocks, (str, bytes)):
@@ -301,7 +301,7 @@ class GameConstraintLayout(StrictModule):
         /,
         *,
         num_path_sites: int,
-    ):
+    ) -> None:
         if not isinstance(constraints, OpenLoopGameConstraints):
             raise TypeError("constraints must be OpenLoopGameConstraints.")
         if isinstance(num_path_sites, bool):
@@ -392,7 +392,7 @@ class GameMultiplierLayout(StrictModule):
         /,
         *,
         variational: bool,
-    ):
+    ) -> None:
         if not isinstance(constraint_layout, GameConstraintLayout):
             raise TypeError("constraint_layout must be a GameConstraintLayout.")
         if not isinstance(variational, bool):
@@ -504,7 +504,7 @@ class GameFeasibilityEvidence(StrictModule):
         status: ArrayLike,
         case_shape: Sequence[int],
         tolerance: float,
-    ):
+    ) -> None:
         if not isinstance(layout, GameConstraintLayout):
             raise TypeError("layout must be a GameConstraintLayout.")
         cases = tuple(index(size) for size in case_shape)

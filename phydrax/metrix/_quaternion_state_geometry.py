@@ -221,7 +221,7 @@ class ScalarFirstQuaternionStateGeometry(AbstractStateGeometry):
         *,
         convention: QuaternionConvention = "body",
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         convention_ = _convention(convention)
         tolerance_ = _tolerance(tolerance)
         self.convention = convention_
@@ -378,7 +378,7 @@ class QuaternionPoseStateGeometry(AbstractStateGeometry):
         *,
         convention: QuaternionConvention = "body",
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         convention_ = _convention(convention)
         tolerance_ = _tolerance(tolerance)
         self.convention = convention_

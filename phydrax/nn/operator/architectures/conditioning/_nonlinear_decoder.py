@@ -51,7 +51,7 @@ class CoordinateDecoderState(StrictModule):
         *,
         case_shape: Sequence[int],
         source_names: Sequence[str],
-    ):
+    ) -> None:
         value = jnp.asarray(latent)
         cases = tuple(case_shape)
         if value.ndim != len(cases) + 1 or value.shape[: len(cases)] != cases:
@@ -86,7 +86,7 @@ class FiLMCoordinateDecoder(StrictModule):
         width: int = 128,
         depth: int = 4,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.latent_size = int(latent_size)
         self.coord_dim = int(coord_dim)
         self.width = int(width)
@@ -195,7 +195,7 @@ class CoordinateConditionedOperator(AbstractEncodedOperatorModel):
         fusion: BranchFusion = "sum",
         branch_mixer: Any | None = None,
         source_key: str | None = None,
-    ):
+    ) -> None:
         self.latent_size = int(latent_size)
         self.coord_dim = int(coord_dim)
         self.in_size = in_size

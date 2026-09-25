@@ -112,7 +112,7 @@ class NILSASPlan(AbstractShadowingSolvePlan):
         memory_mode: ShadowingMemoryMode = "store",
         maximum_retained_bytes: int = 2 * 1024 * 1024 * 1024,
         maximum_workspace_bytes: int = 4 * 1024 * 1024 * 1024,
-    ):
+    ) -> None:
         values = validate_shadowing_plan(
             "nilsas",
             state_dimension,
@@ -282,7 +282,7 @@ class PreparedNILSAS(StrictModule, NonTrainableState):
         args: PyTree[Array],
         terminal_basis: Array,
         terminal_basis_defect: ArrayLike,
-    ):
+    ) -> None:
         self.plan = plan
         self.cost = cost
         self.problem = problem

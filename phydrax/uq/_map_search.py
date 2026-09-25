@@ -31,7 +31,9 @@ class _PosteriorObjective(StrictModule):
     problem: PosteriorProblem
     vectorizer: _PyTreeVectorizer
 
-    def __init__(self, problem: PosteriorProblem, vectorizer: _PyTreeVectorizer, /):
+    def __init__(
+        self, problem: PosteriorProblem, vectorizer: _PyTreeVectorizer, /
+    ) -> None:
         self.problem = problem
         self.vectorizer = vectorizer
 
@@ -80,7 +82,7 @@ class MAPSearchResult(StrictModule):
         objective_evaluations,
         invalid_evaluations,
         design_signature,
-    ):
+    ) -> None:
         position_ = jax.tree_util.tree_map(jnp.asarray, position)
         objective_ = jnp.asarray(objective, dtype=jnp.float64).reshape(())
         self.problem = problem

@@ -190,7 +190,7 @@ class WetSurfaceModalGeneralizedForceMap3D(StrictModule):
         reference_point_id: str,
         provider_id: str = "caller-supplied-checked-wet-force-map",
         precision_id: str = "complex128",
-    ):
+    ) -> None:
         source_names = tuple(str(value) for value in source_mode_names)
         target_names = tuple(str(value) for value in modal_names)
         if not source_names or any(not value for value in source_names):

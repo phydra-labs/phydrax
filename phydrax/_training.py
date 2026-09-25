@@ -45,7 +45,7 @@ class DelayedTargetPolicy:
 
     delay: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if isinstance(self.delay, bool) or int(self.delay) < 0:
             raise ValueError("Delayed target delay must be a nonnegative integer.")
         object.__setattr__(self, "delay", int(self.delay))
@@ -64,7 +64,7 @@ class ExponentialMovingAverageTargetPolicy:
     update_every: int = 1
     source: TargetParameterSource = "raw"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not 0.0 <= float(self.decay) < 1.0:
             raise ValueError("EMA decay must lie in [0, 1).")
         if int(self.start_step) < 0 or int(self.update_every) <= 0:
@@ -249,7 +249,7 @@ class TrainingProgress:
     iteration_session_cursor: int = 0
     iteration_stop_requested: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         indices = (
             ("epoch", self.epoch),
             ("next_batch_index", self.next_batch_index),
@@ -378,7 +378,7 @@ class TrainingIterationMetrics(StrictModule, NonTrainableState):
         progress: TrainingProgress,
         metrics: Mapping[str, Any] | None,
         /,
-    ):
+    ) -> None:
         if not isinstance(kind, TrainingIterationKind):
             raise TypeError("kind must be TrainingIterationKind.")
         names = () if metrics is None else tuple(str(name) for name in metrics)
@@ -551,7 +551,7 @@ class TrainingController:
         algorithm_id: str,
         progress: TrainingProgress | None = None,
         session: IterationSession | None = None,
-    ):
+    ) -> None:
         if int(total_steps) < 0:
             raise ValueError("total_steps must be non-negative.")
         algorithm_id_ = str(algorithm_id)
@@ -666,7 +666,7 @@ class TrainingController:
 class TrainingSignalGuard:
     """Convert process interrupts into a graceful training-loop stop request."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._previous_handlers: dict[int, Any] = {}
         self._signum: int | None = None
         self._reason: str | None = None
@@ -713,7 +713,7 @@ class TrainingSignalGuard:
 class TensorBoardLogger:
     """Small context-managed scalar writer shared by training frontends."""
 
-    def __init__(self, log_dir: str | Path):
+    def __init__(self, log_dir: str | Path) -> None:
         self._writer = ScalarEventWriter(log_dir)
 
     def __enter__(self) -> "TensorBoardLogger":

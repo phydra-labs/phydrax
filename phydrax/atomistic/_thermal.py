@@ -32,7 +32,7 @@ class BAOABLangevinPlan(StrictModule, NonTrainableState):
         /,
         *,
         realization_id: int = 0,
-    ):
+    ) -> None:
         step = float(step_size)
         damping = float(friction)
         realization = int(realization_id)

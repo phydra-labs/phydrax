@@ -54,7 +54,7 @@ class FixedBodyRoutePlan(StrictModule):
         *,
         route_mask: Sequence[bool] | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         names = tuple(_identifier(name, "route name") for name in route_names)
         if not names or len(set(names)) != len(names):
             raise ValueError("route_names must be non-empty and unique.")
@@ -193,7 +193,7 @@ class PreparedFixedBodyRoute(StrictModule):
         /,
         *,
         minimum_segment_length_m: float,
-    ):
+    ) -> None:
         if not isinstance(plan, FixedBodyRoutePlan):
             raise TypeError("plan must be FixedBodyRoutePlan.")
         if not isinstance(articulation, PreparedReducedArticulation):

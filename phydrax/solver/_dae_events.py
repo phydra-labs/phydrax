@@ -65,7 +65,7 @@ class DAEConsistencyPolicy(StrictModule, NonTrainableState):
         /,
         *,
         failure: int = -1,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -210,7 +210,7 @@ class DAEResetMap(StrictModule, NonTrainableState):
         /,
         *,
         reset_id: str,
-    ):
+    ) -> None:
         if not callable(reset):
             raise TypeError("DAEResetMap reset must be callable.")
         if not isinstance(initialization, DAEInitializationSpec):
@@ -259,7 +259,7 @@ class DAEEventPlan(StrictModule, NonTrainableState):
         grazing_tolerance: float = 1.0e-8,
         event_tolerance: float = 1.0e-10,
         localization_iterations: int = 32,
-    ):
+    ) -> None:
         resets = tuple(reset_maps)
         if not isinstance(schedule, HybridSchedulePlan):
             raise TypeError("schedule must be a HybridSchedulePlan.")
@@ -1311,7 +1311,7 @@ class DAERegularityDomain(StrictModule, NonTrainableState):
     upper: Array
     domain_id: str = eqx.field(static=True)
 
-    def __init__(self, lower: ArrayLike, upper: ArrayLike, /, *, domain_id: str):
+    def __init__(self, lower: ArrayLike, upper: ArrayLike, /, *, domain_id: str) -> None:
         lower_ = jnp.asarray(lower)
         upper_ = jnp.asarray(upper, dtype=lower_.dtype)
         if lower_.ndim != 2 or lower_.shape != upper_.shape or lower_.shape[0] == 0:
@@ -1356,7 +1356,7 @@ class DAERegularityCertificatePlan(StrictModule, NonTrainableState):
         /,
         *,
         operator_id: str,
-    ):
+    ) -> None:
         if not isinstance(domain, DAERegularityDomain):
             raise TypeError("domain must be a DAERegularityDomain.")
         if not callable(enclosure):
@@ -1446,7 +1446,7 @@ class ManifoldBDFMethod(StrictModule, NonTrainableState):
     coefficients: tuple[float, ...] = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, order: int = 1, /):
+    def __init__(self, order: int = 1, /) -> None:
         if order not in (1, 2):
             raise ValueError("Manifold BDF currently supports only orders one and two.")
         coefficients = (1.0, -1.0) if order == 1 else (1.5, -2.0, 0.5)

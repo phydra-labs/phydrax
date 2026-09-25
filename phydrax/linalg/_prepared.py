@@ -38,7 +38,7 @@ class PreparedLinearSolve(StrictModule):
         *,
         preconditioning_state: PreparedPreconditioner | None = None,
         numeric_version: Any = 0,
-    ):
+    ) -> None:
         if not isinstance(problem, AbstractLinearProblem):
             raise TypeError("problem must be an AbstractLinearProblem.")
         if not isinstance(template, LinearSolveTemplate):

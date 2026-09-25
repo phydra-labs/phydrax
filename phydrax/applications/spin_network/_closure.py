@@ -47,7 +47,7 @@ class SpinNetworkCouplingTree(StrictModule):
         edge_order: Sequence[str],
         tree_label: str,
         /,
-    ):
+    ) -> None:
         vertex_ = str(vertex).strip()
         order = tuple(str(value).strip() for value in edge_order)
         label = str(tree_label).strip()
@@ -490,7 +490,7 @@ class RegulatedHamiltonianConstraintPlan(StrictModule):
         *,
         regularization_id: str,
         ordering_id: str,
-    ):
+    ) -> None:
         moves = np.asarray(move_matrices, dtype=np.complex128)
         lapse = np.asarray(lapse_values, dtype=np.float64)
         changes = tuple(str(value).strip() for value in graph_change_ids)

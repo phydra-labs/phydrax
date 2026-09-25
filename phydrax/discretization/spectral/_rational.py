@@ -40,7 +40,7 @@ class RationalChebyshevLineBasisPlan(AbstractSpectralBasisPlan):
         /,
         *,
         maximum_construction_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         count, scale_, maximum = _plan_values(
             mode_count,
             scale,
@@ -103,7 +103,7 @@ class RationalChebyshevHalfLineBasisPlan(AbstractSpectralBasisPlan):
         /,
         *,
         maximum_construction_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         count, scale_, maximum = _plan_values(
             mode_count,
             scale,

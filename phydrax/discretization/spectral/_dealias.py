@@ -61,7 +61,7 @@ class DealiasingReport(StrictModule, NonTrainableState):
         evaluation_bandlimit: int | None = None,
         output_bandlimit: int | None = None,
         spin: int | None = None,
-    ):
+    ) -> None:
         retained = tuple(retained_shape)
         evaluation = tuple(evaluation_shape)
         if (
@@ -140,7 +140,7 @@ class AbstractDealiasingPlan(StrictModule, NonTrainableState):
 class NoDealiasingPlan(AbstractDealiasingPlan):
     """Explicitly accept unresolved nonlinear aliases."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.kind = "none"
         self.plan_id = canonical_fingerprint({"kind": "no-spectral-dealiasing"})
 
@@ -171,7 +171,7 @@ class PaddingDealiasingPlan(AbstractDealiasingPlan):
 
     maximum_polynomial_degree: int = eqx.field(static=True)
 
-    def __init__(self, maximum_polynomial_degree: int = 2):
+    def __init__(self, maximum_polynomial_degree: int = 2) -> None:
         degree = int(maximum_polynomial_degree)
         if degree < 2:
             raise ValueError(
@@ -293,7 +293,7 @@ class PolynomialClosureDealiasingPlan(AbstractDealiasingPlan):
         /,
         *,
         maximum_evaluation_modes: int = 16_777_216,
-    ):
+    ) -> None:
         degree = int(maximum_polynomial_degree)
         maximum = int(maximum_evaluation_modes)
         if degree < 2:
@@ -389,7 +389,7 @@ class OversamplingDealiasingPlan(AbstractDealiasingPlan):
         /,
         *,
         maximum_evaluation_modes: int = 16_777_216,
-    ):
+    ) -> None:
         if isinstance(factor, bool) or not isinstance(factor, Real):
             raise TypeError("factor must be a real number.")
         factor_ = float(factor)
@@ -474,7 +474,7 @@ class ModalFilterPlan(AbstractDealiasingPlan):
 
     cutoff_fraction: float = eqx.field(static=True)
 
-    def __init__(self, cutoff_fraction: float = 2.0 / 3.0):
+    def __init__(self, cutoff_fraction: float = 2.0 / 3.0) -> None:
         fraction = float(cutoff_fraction)
         if not 0.0 < fraction <= 1.0:
             raise ValueError("cutoff_fraction must lie in (0, 1].")
@@ -560,7 +560,7 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
         *,
         modal_masks: tuple[Array, ...] = (),
         report: DealiasingReport,
-    ):
+    ) -> None:
         if not isinstance(plan, AbstractDealiasingPlan):
             raise TypeError("plan must be an AbstractDealiasingPlan.")
         tensor_pair = isinstance(retained, TensorSpectralDiscretization) and isinstance(

@@ -55,7 +55,7 @@ class ColorGradientLBMRuntimeParameters(StrictModule):
         wall_normal: ArrayLike | None = None,
         wetting_mask: ArrayLike | None = None,
         contact_angle: ArrayLike = 0.5 * jnp.pi,
-    ):
+    ) -> None:
         viscosity = jnp.asarray(kinematic_viscosity)
         if viscosity.shape != () or not jnp.issubdtype(viscosity.dtype, jnp.inexact):
             raise ValueError("kinematic_viscosity must be one inexact scalar array.")
@@ -111,7 +111,7 @@ class ColorGradientLBMMethod(StrictModule, NonTrainableState):
         maximum_mach: float = 0.3,
         maximum_capillary_number: float = 1.0,
         conservation_tolerance: float = 1.0e-11,
-    ):
+    ) -> None:
         if not isinstance(hydrodynamic_method, LatticeBoltzmannMethodPlan):
             raise TypeError("hydrodynamic_method must be LatticeBoltzmannMethodPlan.")
         if hydrodynamic_method.forcing is None:
@@ -283,7 +283,7 @@ class PreparedColorGradientLBMDynamics(StrictModule, NonTrainableState):
         method: ColorGradientLBMMethod,
         boundary: PreparedLatticeBoltzmannBoundary,
         /,
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("discretization must be an LBM discretization.")
         if not isinstance(scaling, LatticeBoltzmannScaling):

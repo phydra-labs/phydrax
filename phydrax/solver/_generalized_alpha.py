@@ -55,7 +55,7 @@ class GeneralizedAlphaMethod(StrictModule, NonTrainableState):
         alpha_f: float | None = None,
         beta: float | None = None,
         gamma: float | None = None,
-    ):
+    ) -> None:
         explicit = (alpha_m, alpha_f, beta, gamma)
         if any(value is not None for value in explicit):
             if spectral_radius is not None or any(value is None for value in explicit):
@@ -250,7 +250,7 @@ class GeneralizedAlphaSolution(StrictModule):
         method_id: str,
         problem_id: str,
         time_id: str,
-    ):
+    ) -> None:
         count = jnp.asarray(times).size
         prefix = (count,)
         if (

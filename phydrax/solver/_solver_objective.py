@@ -147,7 +147,7 @@ class SolverCaseResult(StrictModule):
         value: Any = None,
         residual: PyTree[Any] | None = None,
         aux: PyTree[Any] = (),
-    ):
+    ) -> None:
         if (value is None) == (residual is None):
             raise ValueError("Give exactly one of value and residual.")
         value_ = None if value is None else _scalar(value, "value", kind="real")
@@ -192,7 +192,7 @@ class AlgorithmicWorkResult(StrictModule):
         iterations: Any,
         accepted: Any,
         aux: PyTree[Any] = (),
-    ):
+    ) -> None:
         initial = _inexact_tree(initial_residual, "initial_residual")
         final = _inexact_tree(final_residual, "final_residual")
         iterations_ = _scalar(iterations, "iterations", kind="integer")
@@ -845,7 +845,7 @@ class SolverObjective(AbstractSolverObjective):
         weight: float = 1.0,
         case_batch_size: int | None = None,
         regularity_policy: RegularityPolicy | None = None,
-    ):
+    ) -> None:
         _objective_fields(
             self,
             solve,
@@ -892,7 +892,7 @@ class RolloutObjective(AbstractSolverObjective):
         case_batch_size: int | None = None,
         regularity_policy: RegularityPolicy | None = None,
         checkpointed: bool = False,
-    ):
+    ) -> None:
         if not isinstance(checkpointed, bool):
             raise TypeError("checkpointed must be a bool.")
         _objective_fields(
@@ -950,7 +950,7 @@ class AlgorithmicWorkObjective(AbstractSolverObjective):
         weight: float = 1.0,
         case_batch_size: int | None = None,
         regularity_policy: RegularityPolicy | None = None,
-    ):
+    ) -> None:
         if isinstance(work, bool) or not isinstance(work, int) or work <= 0:
             raise ValueError("work must be a positive integer.")
         _objective_fields(

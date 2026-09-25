@@ -61,7 +61,7 @@ class VortexTrajectoryControlPlan(StrictModule, NonTrainableState):
         continuity_weight: float = 1.0e3,
         termination: OptimizationTermination | None = None,
         control_id: str,
-    ):
+    ) -> None:
         if (
             not callable(transition)
             or not callable(running_cost)
@@ -176,7 +176,9 @@ class VortexMPCPlan(StrictModule, NonTrainableState):
     apply_steps: int = eqx.field(static=True)
     mpc_id: str = eqx.field(static=True)
 
-    def __init__(self, trajectory: VortexTrajectoryControlPlan, apply_steps: int = 1, /):
+    def __init__(
+        self, trajectory: VortexTrajectoryControlPlan, apply_steps: int = 1, /
+    ) -> None:
         if (
             not isinstance(trajectory, VortexTrajectoryControlPlan)
             or int(apply_steps) <= 0

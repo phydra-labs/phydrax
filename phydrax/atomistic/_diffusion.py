@@ -44,7 +44,7 @@ class AtomisticCoordinateDiffusion(StrictModule):
     active_count: Array
     process_id: str = eqx.field(static=True)
 
-    def __init__(self, template, process, /, *, process_id: str | None = None):
+    def __init__(self, template, process, /, *, process_id: str | None = None) -> None:
         if not isinstance(template, AtomisticBatch):
             raise TypeError("template must be an AtomisticBatch.")
         if not isinstance(process, AbstractGaussianDiffusion):
@@ -144,7 +144,7 @@ class AtomisticHybridDiffusion(StrictModule):
         species_schedule: CategoricalDiffusionSchedule,
         species: Sequence[int],
         /,
-    ):
+    ) -> None:
         if not isinstance(coordinate, AtomisticCoordinateDiffusion):
             raise TypeError("coordinate must be an AtomisticCoordinateDiffusion.")
         if not isinstance(species_schedule, CategoricalDiffusionSchedule):

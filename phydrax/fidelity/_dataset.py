@@ -52,7 +52,7 @@ class FidelityCaseSpec(StrictModule, NonTrainableState):
         input_id: str | None = None,
         log_weight: float | Array = 0.0,
         metadata: Mapping[str, str] | None = None,
-    ):
+    ) -> None:
         leaves = tuple(jax.tree_util.tree_leaves(inputs))
         if not leaves:
             raise ValueError("inputs must contain at least one array leaf.")
@@ -116,7 +116,7 @@ class FidelityDataset(StrictModule, NonTrainableState):
         /,
         *,
         dataset_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(hierarchy, FidelityHierarchy):
             raise TypeError("hierarchy must be a FidelityHierarchy.")
         cases_ = tuple(cases)
@@ -312,7 +312,7 @@ class FidelitySplitRequirements(StrictModule, NonTrainableState):
         test: Mapping[str, int] | None = None,
         active_only: bool = True,
         max_attempts: int = 256,
-    ):
+    ) -> None:
         self.train = _split_minima("train", train)
         self.validation = _split_minima("validation", validation)
         self.test = _split_minima("test", test)
@@ -393,7 +393,7 @@ class FidelityDatasetSplit(StrictModule, NonTrainableState):
         validation_indices: Sequence[int],
         test_indices: Sequence[int],
         seed: int,
-    ):
+    ) -> None:
         if not isinstance(partition, CasePartitionManifest):
             raise TypeError("partition must be a CasePartitionManifest.")
         expected = (

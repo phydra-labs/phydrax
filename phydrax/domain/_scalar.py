@@ -106,7 +106,7 @@ class ScalarInterval(AbstractScalarDomain):
         end: float,
         *,
         label: str = "t",
-    ):
+    ) -> None:
         start_arr = jnp.asarray(start, dtype=jnp.float64).reshape(())
         end_arr = jnp.asarray(end, dtype=jnp.float64).reshape(())
         if bool(start_arr >= end_arr):

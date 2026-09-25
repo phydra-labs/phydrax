@@ -24,7 +24,7 @@ class AbelianGroup(StrictModule):
     components: tuple[int | None, ...] = eqx.field(static=True)
     group_id: str = eqx.field(static=True)
 
-    def __init__(self, components: Sequence[int | None], /):
+    def __init__(self, components: Sequence[int | None], /) -> None:
         values = tuple(components)
         if not values:
             raise ValueError("An Abelian group requires at least one component.")

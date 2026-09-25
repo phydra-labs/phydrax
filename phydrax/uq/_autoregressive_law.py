@@ -35,7 +35,7 @@ class AutoregressiveLaw(AbstractProbabilityLaw):
         dtype=jnp.float64,
         order_id: str,
         law_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(conditional):
             raise TypeError("conditional must be callable.")
         size = int(length)

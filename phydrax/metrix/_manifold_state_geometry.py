@@ -26,7 +26,7 @@ class GeodesicManifoldStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
-    def __init__(self, manifold: AbstractGeodesicManifold, /):
+    def __init__(self, manifold: AbstractGeodesicManifold, /) -> None:
         if not isinstance(manifold, AbstractGeodesicManifold):
             raise TypeError("manifold must be an AbstractGeodesicManifold.")
         self.manifold = manifold

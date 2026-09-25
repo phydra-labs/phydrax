@@ -40,7 +40,7 @@ class ComplexLinear(_AbstractBaseModel):
         out_size: SizeLike,
         use_bias: bool = True,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         in_size_ = _canonical_size(in_size)
         out_size_ = _canonical_size(out_size)
         in_shape = _get_value_shape(in_size_)

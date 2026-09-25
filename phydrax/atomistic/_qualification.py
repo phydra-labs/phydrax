@@ -49,7 +49,7 @@ class AtomisticDynamicsClaimEvidence(StrictModule, NonTrainableState):
         /,
         *,
         residual: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not isinstance(claim, AtomisticDynamicsQualificationClaim):
             raise TypeError("claim must be AtomisticDynamicsQualificationClaim.")
         identifier = str(evidence_id)
@@ -88,7 +88,7 @@ class AtomisticDynamicsQualificationProfile(StrictModule, NonTrainableState):
         ensemble_tolerance: float = 5.0e-2,
         stress_tolerance: float = 1.0e-5,
         required_claims: tuple[AtomisticDynamicsQualificationClaim, ...] | None = None,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -150,7 +150,7 @@ class AtomisticDynamicsQualificationResult(StrictModule, NonTrainableState):
         evidence: tuple[AtomisticDynamicsClaimEvidence, ...],
         execution_successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(maturity, ParticleMethodMaturity):
             raise TypeError("maturity must be ParticleMethodMaturity.")
         if not isinstance(profile, AtomisticDynamicsQualificationProfile):

@@ -23,7 +23,7 @@ class NURBSGeometryState(StrictModule):
     control_points: Array
     weights: Array
 
-    def __init__(self, control_points: ArrayLike, weights: ArrayLike, /):
+    def __init__(self, control_points: ArrayLike, weights: ArrayLike, /) -> None:
         points = jnp.asarray(control_points)
         weights_ = jnp.asarray(weights)
         if points.ndim < 2:
@@ -82,7 +82,7 @@ class IsogeometricRuntimeData(StrictModule):
         *,
         topology_id: str,
         numeric_version: str,
-    ):
+    ) -> None:
         if not isinstance(basis, TensorSplineBasisSpec):
             raise TypeError("basis must be a TensorSplineBasisSpec.")
         if not isinstance(geometry, NURBSGeometryState):
@@ -144,7 +144,7 @@ class IsogeometricGeometryEvidence(StrictModule, NonTrainableState):
         ambient_dimension: int,
         parametric_dimension: int,
         evidence_id: str,
-    ):
+    ) -> None:
         ambient = int(ambient_dimension)
         parametric = int(parametric_dimension)
         identifier = str(evidence_id)
@@ -203,7 +203,7 @@ class IsogeometricH1QualificationPolicy(StrictModule, NonTrainableState):
         taylor_step_count: int = 6,
         quadrature_error_fraction: float = 0.1,
         quadrature_reference_increment: int = 2,
-    ):
+    ) -> None:
         def optional_tolerance(name: str, value: float | None) -> float | None:
             if value is None:
                 return None

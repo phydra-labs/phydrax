@@ -38,7 +38,7 @@ class PointInTimePanelDefinition(StrictModule):
         *,
         capacity: int,
         clock: PanelClock = "event",
-    ):
+    ) -> None:
         keys = tuple(quote_keys)
         if not keys or not all(isinstance(key, QuoteKey) for key in keys):
             raise TypeError("quote_keys must be a nonempty sequence of QuoteKey values.")
@@ -138,7 +138,7 @@ class MarketEventStreamDefinition(StrictModule):
         *,
         capacity: int,
         ordering_clock: PanelClock = "available",
-    ):
+    ) -> None:
         panel = PointInTimePanelDefinition(
             quote_keys,
             analysis_time,

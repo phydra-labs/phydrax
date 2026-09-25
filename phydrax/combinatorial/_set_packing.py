@@ -64,7 +64,7 @@ class SetPackingSpace(AbstractBoundableCombinatorialSpace):
         valid: Any | None = None,
         minimum_selected: int = 0,
         maximum_selected: int | None = None,
-    ):
+    ) -> None:
         incidence_ = jnp.asarray(incidence, dtype=jnp.bool_)
         if incidence_.ndim != 2:
             raise ValueError("incidence must be a rank-2 candidate-by-resource array.")
@@ -503,7 +503,9 @@ class BranchAndBoundSetPacking(AbstractBoundableLinearCombinatorialMethod):
     maximum_nodes: int = eqx.field(static=True)
     maximum_candidates: int = eqx.field(static=True)
 
-    def __init__(self, *, maximum_nodes: int = 1_000_000, maximum_candidates: int = 1024):
+    def __init__(
+        self, *, maximum_nodes: int = 1_000_000, maximum_candidates: int = 1024
+    ) -> None:
         if any(
             isinstance(value, bool) or not isinstance(value, Integral)
             for value in (maximum_nodes, maximum_candidates)
@@ -724,7 +726,7 @@ class GreedySetPacking(AbstractLinearCombinatorialMethod):
 
     maximum_candidates: int = eqx.field(static=True)
 
-    def __init__(self, *, maximum_candidates: int = 1_000_000):
+    def __init__(self, *, maximum_candidates: int = 1_000_000) -> None:
         if isinstance(maximum_candidates, bool) or not isinstance(
             maximum_candidates, Integral
         ):

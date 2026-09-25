@@ -51,7 +51,7 @@ class SphericalHarmonicGravityField(StrictModule):
         maximum_degree: int | None = None,
         maximum_order: int | None = None,
         tide_system: str = "tide-free",
-    ):
+    ) -> None:
         cosine_host = np.asarray(cosine, dtype=np.float64)
         sine_host = np.asarray(sine, dtype=np.float64)
         if cosine_host.ndim != 2 or cosine_host.shape != sine_host.shape:
@@ -143,7 +143,7 @@ class SphericalHarmonicGravity(AbstractAstrodynamicsForce):
     context: AstrodynamicsContext
     force_id: str = eqx.field(static=True)
 
-    def __init__(self, field: SphericalHarmonicGravityField, /):
+    def __init__(self, field: SphericalHarmonicGravityField, /) -> None:
         self.field = field
         self.context = field.context
         self.force_id = field.field_id

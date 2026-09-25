@@ -67,7 +67,7 @@ class ReactiveParticleTemplatePlan(StrictModule, NonTrainableState):
         outer_scale: float | None = None,
         reaction_front: ArrayLike = (),
         template_id: str | None = None,
-    ):
+    ) -> None:
         radius_ = float(radius)
         mass_ = float(mass)
         material = int(material_id)
@@ -151,7 +151,7 @@ class ReactiveParticleTemplateDistributionPlan(StrictModule, NonTrainableState):
     probabilities: Array
     distribution_id: str = eqx.field(static=True)
 
-    def __init__(self, templates, probabilities: ArrayLike, /):
+    def __init__(self, templates, probabilities: ArrayLike, /) -> None:
         values = tuple(templates)
         probability = np.asarray(probabilities, dtype=np.float64)
         if not values or any(
@@ -210,7 +210,7 @@ class ParticleInsertionPlan(StrictModule, NonTrainableState):
         *,
         maximum_attempts: int = 32,
         all_inside: bool = True,
-    ):
+    ) -> None:
         lower_ = np.asarray(lower, dtype=np.float64)
         upper_ = np.asarray(upper, dtype=np.float64)
         count = int(requested_count)
@@ -869,7 +869,7 @@ class ParticleRegionPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, lower: ArrayLike, upper: ArrayLike, /, *, region_id: str | None = None
-    ):
+    ) -> None:
         lower_ = np.asarray(lower, dtype=np.float64)
         upper_ = np.asarray(upper, dtype=np.float64)
         if lower_.shape != upper_.shape or lower_.ndim != 1 or np.any(upper_ <= lower_):
@@ -921,7 +921,7 @@ class MassFlowSurfacePlan(StrictModule, NonTrainableState):
     normal: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, point: ArrayLike, normal: ArrayLike, /):
+    def __init__(self, point: ArrayLike, normal: ArrayLike, /) -> None:
         point_ = np.asarray(point, dtype=np.float64)
         normal_ = np.asarray(normal, dtype=np.float64)
         norm = np.linalg.norm(normal_)

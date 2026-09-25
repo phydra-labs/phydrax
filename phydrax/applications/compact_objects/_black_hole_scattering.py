@@ -73,7 +73,7 @@ class ScatteringQualificationEvidence(StrictModule, NonTrainableState):
         *,
         radial_source_id: str,
         source_id: str,
-    ):
+    ) -> None:
         if not isinstance(mode, SeparatedMode):
             raise TypeError("mode must be a SeparatedMode.")
         radial = str(radial_source_id)
@@ -122,7 +122,7 @@ class BlackHoleScatteringPlan(StrictModule, NonTrainableState):
         /,
         *,
         flux_normalization: str = "scalar-killing-energy-unit-incoming-at-infinity",
-    ):
+    ) -> None:
         if not isinstance(mode, SeparatedMode):
             raise TypeError("mode must be a SeparatedMode.")
         if mode.family != "scattering":
@@ -469,7 +469,7 @@ class SchwarzschildScatteringSolvePlan(StrictModule, NonTrainableState):
         incident_amplitude_tolerance: float,
         low_frequency_maximum: float,
         low_frequency_relative_tolerance: float,
-    ):
+    ) -> None:
         if not isinstance(radial_plan, SchwarzschildRadialPlan):
             raise TypeError("radial_plan must be a SchwarzschildRadialPlan.")
         if not isinstance(flux_plan, BlackHoleScatteringPlan):

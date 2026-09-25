@@ -61,7 +61,7 @@ class VariableProjectionProblem(StrictModule):
         problem_id: str = "variable-projection",
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(design_matrix):
             raise TypeError("design_matrix must be callable.")
         if offset is not None and not callable(offset):

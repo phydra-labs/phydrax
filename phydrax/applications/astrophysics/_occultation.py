@@ -23,7 +23,7 @@ class PolynomialLimbDarkenedDisk(StrictModule, NonTrainableState):
     normalization: Array
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, coefficients: ArrayLike, /):
+    def __init__(self, coefficients: ArrayLike, /) -> None:
         host = np.asarray(coefficients, dtype=np.float64)
         if host.ndim != 1 or np.any(~np.isfinite(host)):
             raise ValueError(
@@ -94,7 +94,7 @@ class CircularOccultationPlan(StrictModule, NonTrainableState):
         /,
         *,
         quadrature_order: int = 192,
-    ):
+    ) -> None:
         if not isinstance(disk, PolynomialLimbDarkenedDisk):
             raise TypeError("disk must be a PolynomialLimbDarkenedDisk.")
         order = int(quadrature_order)

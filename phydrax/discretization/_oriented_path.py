@@ -80,7 +80,7 @@ class OrientedEdgePathPlan(StrictModule, NonTrainableState):
         valid: ArrayLike | None = None,
         path_names: Sequence[str] | None = None,
         require_closed: bool = False,
-    ):
+    ) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("topology must be CellComplexTopology.")
         tails, heads = _edge_endpoints(topology)
@@ -172,7 +172,7 @@ class CellBoundaryPathPlan(StrictModule, NonTrainableState):
         paths: OrientedEdgePathPlan,
         cell_indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(paths, OrientedEdgePathPlan):
             raise TypeError("paths must be OrientedEdgePathPlan.")
         if not paths.require_closed:

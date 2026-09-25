@@ -39,7 +39,7 @@ class ChromatinAtomisticCouplingPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_spring_energy: float,
-    ):
+    ) -> None:
         identifiers = np.asarray(site_particle_ids)
         maximum = float(maximum_spring_energy)
         if (
@@ -112,7 +112,7 @@ class PreparedChromatinAtomisticCoupling(StrictModule, NonTrainableState):
         atomistic: PreparedAtomisticDynamics,
         chromatin: PreparedChromatinDynamics,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ChromatinAtomisticCouplingPlan):
             raise TypeError("plan must be ChromatinAtomisticCouplingPlan.")
         if not isinstance(atomistic, PreparedAtomisticDynamics):

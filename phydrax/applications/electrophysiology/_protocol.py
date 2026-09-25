@@ -78,7 +78,7 @@ class CurrentClamp(StrictModule, NonTrainableState):
         start_ms: float,
         stop_ms: float,
         /,
-    ):
+    ) -> None:
         identifier = _identifier(clamp_id, "clamp_id")
         compartment = _identifier(compartment_id, "compartment_id")
         amplitude = _finite(amplitude_nA, "amplitude_nA")
@@ -119,7 +119,7 @@ class VoltageClamp(StrictModule, NonTrainableState):
         start_ms: float,
         stop_ms: float,
         /,
-    ):
+    ) -> None:
         identifier = _identifier(clamp_id, "clamp_id")
         compartment = _identifier(compartment_id, "compartment_id")
         target = _finite(target_mV, "target_mV")
@@ -149,7 +149,7 @@ class RecordingPlan(StrictModule, NonTrainableState):
     sample_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, compartment_ids: Sequence[str], sample_capacity: int, /):
+    def __init__(self, compartment_ids: Sequence[str], sample_capacity: int, /) -> None:
         identifiers = tuple(compartment_ids)
         if not identifiers:
             raise ValueError("Recording requires at least one compartment identifier.")
@@ -190,7 +190,7 @@ class ElectrophysiologyProtocol(StrictModule, NonTrainableState):
         *,
         current_clamps: Sequence[CurrentClamp] = (),
         voltage_clamps: Sequence[VoltageClamp] = (),
-    ):
+    ) -> None:
         if not isinstance(recording, RecordingPlan):
             raise TypeError("recording must be a RecordingPlan.")
         currents = tuple(current_clamps)
@@ -255,7 +255,7 @@ class PreparedElectrophysiologyProtocol(StrictModule, NonTrainableState):
         voltage_stop_ms: Array,
         recording_indices: Array,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.cable = cable
         self.current_indices = current_indices
@@ -317,7 +317,9 @@ class ExperimentCheckpoint(StrictModule, NonTrainableState):
     protocol_id: str = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
-    def __init__(self, state: ExperimentState, protocol_id: str, checkpoint_id: str, /):
+    def __init__(
+        self, state: ExperimentState, protocol_id: str, checkpoint_id: str, /
+    ) -> None:
         self.state = state
         self.protocol_id = protocol_id
         self.checkpoint_id = checkpoint_id

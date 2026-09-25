@@ -61,7 +61,7 @@ class DarkHadronPairChannel(StrictModule, NonTrainableState):
         /,
         *,
         spectrum_label: str,
-    ):
+    ) -> None:
         raw_identifiers = tuple(pdg_ids)
         if len(raw_identifiers) != 2:
             raise ValueError("A hadron-pair channel requires exactly two species.")
@@ -97,7 +97,7 @@ class DarkClusterFissionChannel(StrictModule, NonTrainableState):
         daughter_charges: tuple[float, float],
         relative_weight: float,
         /,
-    ):
+    ) -> None:
         masses = tuple(float(value) for value in daughter_rest_energies)
         charges = tuple(float(value) for value in daughter_charges)
         weight = float(relative_weight)
@@ -219,7 +219,7 @@ class DarkStringFragmentationPlan(StrictModule, NonTrainableState):
         string_tension: float,
         longitudinal_shape: tuple[float, float],
         production_evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         channels_, labels, evidence = _validate_common(
             runtime_plan,
             species,
@@ -317,7 +317,7 @@ class DarkClusterHadronizationPlan(StrictModule, NonTrainableState):
         tune_id: str,
         fission_threshold: float,
         production_evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         decays, labels, evidence = _validate_common(
             runtime_plan,
             species,

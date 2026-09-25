@@ -43,7 +43,7 @@ class ProductionChemistryArchivePlan(StrictModule, NonTrainableState):
         field_units: Mapping[str, UnitDefinition | str],
         scientific_plan_id: str,
         /,
-    ):
+    ) -> None:
         kind = str(result_kind).strip()
         scientific_plan = str(scientific_plan_id).strip()
         if not kind or not scientific_plan:

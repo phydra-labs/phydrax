@@ -63,7 +63,7 @@ class VectorSpaceDeflationMetric(AbstractDeflationMetric):
         /,
         *,
         metric_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(space, AbstractVectorSpace):
             raise TypeError("space must be an AbstractVectorSpace.")
         identifier = (
@@ -99,7 +99,7 @@ class CallableDeflationMetric(AbstractDeflationMetric):
         /,
         *,
         metric_id: str = "callable-deflation-metric",
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         identifier = str(metric_id)
@@ -137,7 +137,7 @@ class DeflationPolicy(StrictModule):
         distance_floor: float = 1e-6,
         known_root_tolerance: float = 1e-5,
         original_residual_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         power_ = float(power)
         shift_ = float(shift)
         floor_ = float(distance_floor)
@@ -177,7 +177,7 @@ class DeflationProvenance(StrictModule):
         deflated_problem_id: str,
         method_id: str,
         metric_id: str,
-    ):
+    ) -> None:
         values = tuple(
             str(value)
             for value in (problem_id, deflated_problem_id, method_id, metric_id)
@@ -215,7 +215,7 @@ class DeflatedRootResult(StrictModule):
         deflation_factor: Any,
         nearest_known_root: Any,
         provenance: DeflationProvenance,
-    ):
+    ) -> None:
         if not isinstance(nonlinear_result, NonlinearResult):
             raise TypeError("nonlinear_result must be a NonlinearResult.")
         if not isinstance(provenance, DeflationProvenance):
@@ -252,7 +252,7 @@ class RootDeflation(StrictModule):
         metric: AbstractDeflationMetric,
         policy: DeflationPolicy | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be a NonlinearSystemProblem.")
         roots = tuple(

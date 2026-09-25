@@ -40,7 +40,7 @@ class ReferencedDensityField(StrictModule):
         state_var: str,
         metric: RiemannianMetric | None = None,
         measure: WeightedRiemannianMeasure | None = None,
-    ):
+    ) -> None:
         if not isinstance(field, DomainFunction):
             raise TypeError("field must be a DomainFunction.")
         if reference not in (

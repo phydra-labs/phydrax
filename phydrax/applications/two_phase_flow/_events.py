@@ -55,7 +55,7 @@ class TwoPhaseCapabilityEventPlan(StrictModule, NonTrainableState):
         contact_angle_tolerance: float = 5.0e-3,
         minimum_overturning_normal: float = 0.1,
         maximum_topology_changes: int = 0,
-    ):
+    ) -> None:
         threshold = float(phase_threshold)
         angle = float(contact_angle_tolerance)
         normal = float(minimum_overturning_normal)
@@ -279,7 +279,7 @@ class ConservativeTwoPhaseRemeshPlan(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(source, PreparedIncompressibleTwoPhaseVOF) or not isinstance(
             target, PreparedIncompressibleTwoPhaseVOF
         ):

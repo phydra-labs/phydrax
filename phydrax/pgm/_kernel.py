@@ -52,7 +52,7 @@ class FactorKernelCapabilities(StrictModule):
         prepared_refresh: bool = True,
         batched: bool = True,
         shardable: bool = True,
-    ):
+    ) -> None:
         self.sum_product = bool(sum_product)
         self.max_product = bool(max_product)
         self.factor_beliefs = bool(factor_beliefs)
@@ -108,7 +108,7 @@ class CallableFactorKernel(AbstractDiscreteFactorKernel):
         *,
         kernel_id: str,
         capabilities: FactorKernelCapabilities | None = None,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         if not isinstance(kernel_id, str) or not kernel_id:
@@ -147,7 +147,7 @@ class FactorGraphPrecisionPolicy(StrictModule):
         accumulation_dtype: Literal["float32", "float64"] | None = None,
         decision_dtype: Literal["float32", "float64"] | None = None,
         output_dtype: Literal["float32", "float64"] | None = None,
-    ):
+    ) -> None:
         evaluation = real_precision_dtype_name(evaluation_dtype)
         if evaluation not in ("float32", "float64"):
             raise ValueError("Factor-graph evaluation supports float32 or float64.")
@@ -225,7 +225,7 @@ class FactorGraphResourcePolicy(StrictModule):
         maximum_treewidth: int = 24,
         maximum_colors: int = 1024,
         maximum_retained_elements: int = 100_000_000,
-    ):
+    ) -> None:
         values = {
             "maximum_configurations": int(maximum_configurations),
             "maximum_dense_elements": int(maximum_dense_elements),
@@ -272,7 +272,7 @@ class FactorExecutionEvidence(StrictModule):
         work_estimate: int,
         workspace_elements: int,
         kernel_id: str,
-    ):
+    ) -> None:
         if not isinstance(capabilities, FactorKernelCapabilities):
             raise TypeError("capabilities must be FactorKernelCapabilities.")
         counts = tuple(

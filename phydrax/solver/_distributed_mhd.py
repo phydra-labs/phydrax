@@ -25,7 +25,7 @@ class DegreeAwareEntityOwnership(StrictModule, NonTrainableState):
         cochain: CochainDiscretization,
         shard_count: int,
         /,
-    ):
+    ) -> None:
         shards = int(shard_count)
         if not isinstance(cochain, CochainDiscretization) or shards <= 0:
             raise ValueError("Distributed cochain ownership is invalid.")
@@ -79,7 +79,7 @@ class DistributedGravitySolvePlan(StrictModule, NonTrainableState):
     shard_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, global_solve, shard_count: int, /, *, solve_id: str):
+    def __init__(self, global_solve, shard_count: int, /, *, solve_id: str) -> None:
         count = int(shard_count)
         if not callable(global_solve) or count <= 0 or not solve_id:
             raise ValueError("Distributed gravity solve plan is invalid.")
@@ -126,7 +126,7 @@ class DistributedMultiphysicsSynchronizationPlan(StrictModule, NonTrainableState
     shard_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, shard_count: int, /):
+    def __init__(self, shard_count: int, /) -> None:
         count = int(shard_count)
         if count <= 0:
             raise ValueError("Distributed synchronization requires positive shard count.")

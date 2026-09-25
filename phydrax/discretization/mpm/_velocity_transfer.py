@@ -32,7 +32,7 @@ class APICTransferPlan(AbstractMPMVelocityTransferPlan):
     maximum_condition: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, *, maximum_condition: float = 1.0e8):
+    def __init__(self, *, maximum_condition: float = 1.0e8) -> None:
         condition = float(maximum_condition)
         if not np.isfinite(condition) or condition <= 1.0:
             raise ValueError("maximum_condition must be finite and greater than one.")
@@ -56,7 +56,7 @@ class PICTransferPlan(AbstractMPMVelocityTransferPlan):
     maximum_condition: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.transfer_name = "pic"
         self.requires_affine_state = False
         self.uses_grid_delta = False
@@ -73,7 +73,7 @@ class FLIPTransferPlan(AbstractMPMVelocityTransferPlan):
     maximum_condition: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.transfer_name = "flip"
         self.requires_affine_state = False
         self.uses_grid_delta = True
@@ -91,7 +91,7 @@ class PICFLIPTransferPlan(AbstractMPMVelocityTransferPlan):
     pic_fraction: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, pic_fraction: float, /):
+    def __init__(self, pic_fraction: float, /) -> None:
         fraction = float(pic_fraction)
         if not np.isfinite(fraction) or not 0.0 <= fraction <= 1.0:
             raise ValueError("pic_fraction must lie in [0, 1].")
@@ -129,7 +129,7 @@ class PICAdvectionPlan(AbstractMPMAdvectionPlan):
     advection_name: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.advection_name = "pic"
         self.plan_id = canonical_fingerprint({"kind": "mpm-advection", "name": "pic"})
 
@@ -142,7 +142,7 @@ class TransferredVelocityAdvectionPlan(AbstractMPMAdvectionPlan):
     advection_name: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.advection_name = "transferred-velocity"
         self.plan_id = canonical_fingerprint(
             {"kind": "mpm-advection", "name": "transferred-velocity"}
@@ -157,7 +157,7 @@ class MidpointAdvectionPlan(AbstractMPMAdvectionPlan):
     advection_name: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.advection_name = "midpoint"
         self.plan_id = canonical_fingerprint(
             {"kind": "mpm-advection", "name": "midpoint"}

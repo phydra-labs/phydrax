@@ -33,7 +33,7 @@ class RandomSampleBatch(StrictModule):
         *,
         sample_dim: str,
         distributions: Mapping[str, AbstractDistribution],
-    ):
+    ) -> None:
         names = tuple(values)
         if not names:
             raise ValueError("RandomSampleBatch values must be non-empty.")

@@ -37,7 +37,7 @@ class FactorizedERITensor(StrictModule, NonTrainableState):
         source_id: str,
         representation: str,
         /,
-    ):
+    ) -> None:
         values = jnp.asarray(factors)
         residual = jnp.asarray(residual_bound, dtype=values.real.dtype).reshape(())
         source = str(source_id).strip()
@@ -99,7 +99,7 @@ class PivotedCholeskyERIPlan(StrictModule, NonTrainableState):
     maximum_rank: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, tolerance: float = 1.0e-10, maximum_rank: int = 4096, /):
+    def __init__(self, tolerance: float = 1.0e-10, maximum_rank: int = 4096, /) -> None:
         tolerance_ = float(tolerance)
         rank = int(maximum_rank)
         if not isfinite(tolerance_) or tolerance_ <= 0.0 or rank <= 0:
@@ -162,7 +162,9 @@ class DensityFittingPlan(StrictModule, NonTrainableState):
     maximum_rank: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, metric_tolerance: float = 1.0e-10, maximum_rank: int = 4096, /):
+    def __init__(
+        self, metric_tolerance: float = 1.0e-10, maximum_rank: int = 4096, /
+    ) -> None:
         tolerance = float(metric_tolerance)
         rank = int(maximum_rank)
         if not isfinite(tolerance) or tolerance <= 0.0 or rank <= 0:

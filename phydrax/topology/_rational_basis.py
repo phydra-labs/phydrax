@@ -36,7 +36,7 @@ class RationalClassBasis(StrictModule, NonTrainableState):
         vectors: tuple[tuple[Fraction, ...], ...],
         complex: CellSubcomplex,
         /,
-    ):
+    ) -> None:
         cells = []
         generators = []
         numerators = []
@@ -88,7 +88,9 @@ class RationalHomologyBasisResult(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, bases: tuple[RationalClassBasis, ...], /, *, source_id: str):
+    def __init__(
+        self, bases: tuple[RationalClassBasis, ...], /, *, source_id: str
+    ) -> None:
         self.bases = bases
         self.source_id = str(source_id)
         self.result_id = canonical_fingerprint(

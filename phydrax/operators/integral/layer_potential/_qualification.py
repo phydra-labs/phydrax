@@ -119,7 +119,7 @@ class BoundarySupportEnvelope(StrictModule, NonTrainableState):
         claims: Sequence[str],
         unsupported_claims: Mapping[str, str] | Sequence[tuple[str, str]] = (),
         stop_ship_conditions: Sequence[str] = (),
-    ):
+    ) -> None:
         dimensions = tuple(
             _required_text(value, name)
             for value, name in (
@@ -228,7 +228,7 @@ class BoundaryQualificationEvidence(StrictModule, NonTrainableState):
         error_bound: float | None = None,
         error_metric: str | None = None,
         unsupported_reason: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(support, BoundarySupportEnvelope):
             raise TypeError("support must be BoundarySupportEnvelope.")
         claim_ = _required_text(claim, "claim")
@@ -346,7 +346,7 @@ class BoundaryProductProvenance(StrictModule, NonTrainableState):
         parent_product_ids: Sequence[str] = (),
         parent_plan_ids: Sequence[str] = (),
         parent_result_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         values = tuple(
             _required_text(value, name)
             for value, name in (
@@ -438,7 +438,7 @@ class BoundaryOperationalEvidence(StrictModule, NonTrainableState):
         forecast_bytes: int,
         observed_bytes: int | None,
         stop_ship_reasons: Sequence[str] = (),
-    ):
+    ) -> None:
         plan = _required_text(plan_id, "plan_id")
         result = _optional_text(result_id, "result_id")
         plan_parents = _parent_ids(parent_plan_ids, "parent_plan_ids")

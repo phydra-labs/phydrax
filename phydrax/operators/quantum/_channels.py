@@ -86,7 +86,7 @@ class FiniteChannelFactorizationPolicy(StrictModule):
         cleanup: Literal["reject", "bounded-numerical"] = "reject",
         tolerance: float = 1e-8,
         maximum_cleanup_norm: float = 1e-8,
-    ):
+    ) -> None:
         if cleanup not in ("reject", "bounded-numerical"):
             raise ValueError("cleanup must be 'reject' or 'bounded-numerical'.")
         tolerance_ = float(tolerance)

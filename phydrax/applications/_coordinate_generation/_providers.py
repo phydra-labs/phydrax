@@ -79,7 +79,7 @@ class CoordinateProviderProvenance:
         # Retain every parent restriction even when several refer to the same file.
         return inherited
 
-    def require_sources(self, sources):
+    def require_sources(self, sources) -> None:
         """Bind raw output envelopes to admitted bytes, not unrelated license labels."""
         admitted = {(item.checksum, item.license_id) for item in self.output_rights}
         for source in sources:

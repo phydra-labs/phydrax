@@ -66,7 +66,7 @@ class MolecularConstraintSetPlan(StrictModule, NonTrainableState):
         /,
         *,
         physical: bool,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("constraint evaluator must be callable.")
         count = int(constraint_count)
@@ -320,7 +320,7 @@ class ConstrainedVibrationalAnalysisResult(StrictModule, NonTrainableState):
         rigid_mode_rank: int,
         successful: ArrayLike,
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(vibration, VibrationalAnalysisResult):
             raise TypeError("vibration must be VibrationalAnalysisResult.")
         dtype = vibration.eigenvalues.dtype
@@ -382,7 +382,7 @@ class ConstrainedVibrationalAnalysisPlan(StrictModule, NonTrainableState):
         stationarity_tolerance: float = 1.0e-7,
         constraint_tolerance: float = 1.0e-8,
         imaginary_wavenumber_threshold: float = 10.0,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         if not isinstance(constraints, MolecularConstraintSetPlan):

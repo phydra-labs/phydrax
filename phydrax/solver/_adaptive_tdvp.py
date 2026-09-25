@@ -51,7 +51,7 @@ class AdaptiveTDVPPlan(StrictModule):
         maximum_accepted_steps: int,
         scheme: Literal["adaptive-heun", "symmetric-midpoint"] = "adaptive-heun",
         midpoint_iterations: int = 4,
-    ):
+    ) -> None:
         start, stop = map(float, time_span)
         initial = float(initial_step_size)
         lower, upper = map(float, step_size_bounds)

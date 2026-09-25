@@ -64,7 +64,7 @@ class ExponentialFamilySignature(StrictModule):
         density_measure_kind: MeasureKind,
         support_id: str,
         coordinate_chart_id: str,
-    ):
+    ) -> None:
         dimensions = int(dimension)
         events = tuple(event_shape)
         if not family_id or not support_id or not coordinate_chart_id:
@@ -135,7 +135,7 @@ class NaturalCoordinates(StrictModule):
     values: Array
     signature: ExponentialFamilySignature = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, signature: ExponentialFamilySignature):
+    def __init__(self, values: ArrayLike, signature: ExponentialFamilySignature) -> None:
         if not isinstance(signature, ExponentialFamilySignature):
             raise TypeError("signature must be an ExponentialFamilySignature.")
         self.values = _coordinate_array(values, signature)
@@ -152,7 +152,7 @@ class MeanCoordinates(StrictModule):
     values: Array
     signature: ExponentialFamilySignature = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, signature: ExponentialFamilySignature):
+    def __init__(self, values: ArrayLike, signature: ExponentialFamilySignature) -> None:
         if not isinstance(signature, ExponentialFamilySignature):
             raise TypeError("signature must be an ExponentialFamilySignature.")
         self.values = _coordinate_array(values, signature)
@@ -175,7 +175,7 @@ class StatisticBatch(StrictModule):
         values: ArrayLike,
         valid: ArrayLike,
         signature: ExponentialFamilySignature,
-    ):
+    ) -> None:
         if not isinstance(signature, ExponentialFamilySignature):
             raise TypeError("signature must be an ExponentialFamilySignature.")
         statistics = _coordinate_array(values, signature)
@@ -206,7 +206,7 @@ class ExponentialFamilyDomainResult(StrictModule):
         status: ArrayLike,
         signature: ExponentialFamilySignature,
         domain_id: str,
-    ):
+    ) -> None:
         interior_array = jnp.asarray(interior, dtype=jnp.bool_)
         shape = interior_array.shape
         if not domain_id:
@@ -240,7 +240,7 @@ class ExponentialFamilyConversionResult(StrictModule):
         residual: ArrayLike,
         iterations: ArrayLike,
         method_id: str,
-    ):
+    ) -> None:
         _require_signature(natural.signature, mean.signature)
         if natural.batch_shape != mean.batch_shape:
             raise ValueError("Mean and natural coordinate batch shapes must match.")
@@ -560,7 +560,7 @@ class ExponentialFamilyLaw(AbstractProbabilityLaw):
         self,
         family: AbstractExponentialFamily,
         natural: NaturalCoordinates,
-    ):
+    ) -> None:
         if not isinstance(family, AbstractExponentialFamily):
             raise TypeError("family must implement AbstractExponentialFamily.")
         _require_signature(natural.signature, family.signature)

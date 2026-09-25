@@ -105,7 +105,7 @@ class J2PlasticityParameters(StrictModule, NonTrainableState):
         yield_stress: ArrayLike,
         hardening_modulus: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -136,7 +136,7 @@ class J2PlasticityState(StrictModule):
         plastic_strain: ArrayLike,
         equivalent_plastic_strain: ArrayLike,
         /,
-    ):
+    ) -> None:
         plastic = jnp.asarray(plastic_strain)
         equivalent = jnp.asarray(equivalent_plastic_strain)
         if plastic.shape[-2:] != (3, 3) or equivalent.shape != plastic.shape[:-2]:

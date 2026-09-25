@@ -26,7 +26,7 @@ class HighOrderGeometryEpoch(StrictModule, NonTrainableState):
     geometry: Array
     reference: Array
 
-    def __init__(self, geometry: int | ArrayLike, reference: int | ArrayLike, /):
+    def __init__(self, geometry: int | ArrayLike, reference: int | ArrayLike, /) -> None:
         geometry_host = np.asarray(geometry)
         reference_host = np.asarray(reference)
         if geometry_host.shape != () or reference_host.shape != ():
@@ -92,7 +92,7 @@ class HighOrderCardiacGeometryPlan(StrictModule, NonTrainableState):
         minimum_jacobian_determinant: float = 1.0e-10,
         minimum_cell_measure_mm3: float = 1.0e-10,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         if not isinstance(coordinate_spec, CellGeometrySpec):
@@ -241,7 +241,7 @@ class PreparedHighOrderCardiacGeometry(StrictModule, NonTrainableState):
         qualification_gradients: tuple[Array, ...],
         quadrature_orders: tuple[int, ...],
         prepared_id: str,
-    ):
+    ) -> None:
         if not isinstance(plan, HighOrderCardiacGeometryPlan):
             raise TypeError("plan must be a HighOrderCardiacGeometryPlan.")
         block_count = len(plan.mesh.blocks)

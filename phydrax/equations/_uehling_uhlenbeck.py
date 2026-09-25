@@ -123,7 +123,7 @@ class UehlingUhlenbeckPlan(StrictModule, NonTrainableState):
         substep_safety: float = 0.8,
         invariant_tolerance: float = 1.0e-10,
         entropy_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         statistics_ = np.asarray(statistics)
         weights = np.asarray(phase_space_weights, dtype=np.float64)
         species = np.asarray(event_species)

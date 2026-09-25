@@ -502,7 +502,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         *,
         step_size: float,
         environment_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(plant, AbstractDiscretePlant):
             raise TypeError("plant must be an AbstractDiscretePlant.")
         if plant.control_schema is None:

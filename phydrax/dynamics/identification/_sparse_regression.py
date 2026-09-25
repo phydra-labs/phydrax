@@ -163,7 +163,7 @@ class SequentialThresholdedLeastSquares(AbstractSparseRegression):
         threshold_space: ThresholdSpace = "normalized",
         unbiased_refit: bool = True,
         zero_tolerance: float | None = None,
-    ):
+    ) -> None:
         ridge_value = float(ridge)
         iterations = int(max_iterations)
         if not np.isfinite(ridge_value) or ridge_value < 0.0:
@@ -391,7 +391,7 @@ class DenseBlockRidgeRegression(AbstractSparseRegression):
         scale_features: bool = True,
         scale_targets: bool = False,
         rcond: float | None = None,
-    ):
+    ) -> None:
         sizes = tuple(block_sizes)
         penalties = tuple(float(value) for value in regularization)
         if not sizes or any(size <= 0 for size in sizes):

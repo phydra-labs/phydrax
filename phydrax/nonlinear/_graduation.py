@@ -43,7 +43,7 @@ class SolverGraduationPolicy(StrictModule):
         maximum_peer_gap: float = 0.01,
         minimum_profile_fraction_tau2: float = 0.8,
         maximum_derivative_error: float = 1e-6,
-    ):
+    ) -> None:
         self.minimum_certified_fraction = float(minimum_certified_fraction)
         self.maximum_peer_gap = float(maximum_peer_gap)
         self.minimum_profile_fraction_tau2 = float(minimum_profile_fraction_tau2)

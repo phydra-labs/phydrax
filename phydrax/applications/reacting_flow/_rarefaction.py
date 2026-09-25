@@ -88,7 +88,7 @@ class GradientLengthKnudsenPlan(StrictModule, NonTrainableState):
         temperature_floor: float = 1.0,
         velocity_floor: float = 1.0,
         species_floor: float = 1.0e-8,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

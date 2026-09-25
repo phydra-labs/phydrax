@@ -39,7 +39,7 @@ class PeriodicFourierConvention(StrictModule, NonTrainableState):
     phase_scale: float = eqx.field(static=True)
     convention_id: str = eqx.field(static=True)
 
-    def __init__(self, sign: int = 1, phase_scale: float = 2.0 * np.pi, /):
+    def __init__(self, sign: int = 1, phase_scale: float = 2.0 * np.pi, /) -> None:
         sign_ = int(sign)
         scale = float(phase_scale)
         if sign_ not in (-1, 1) or not isfinite(scale) or scale <= 0.0:
@@ -75,7 +75,7 @@ class PeriodicTranslationFamilyPlan(StrictModule, NonTrainableState):
         hermitian: bool = True,
         maximum_dense_entries: int = 4_000_000,
         maximum_finite_entries: int = 8_000_000,
-    ):
+    ) -> None:
         if not isinstance(relation, EdgeRelation):
             raise TypeError("relation must be phydrax.sparse.EdgeRelation.")
         translations_ = np.asarray(translations)
@@ -174,7 +174,7 @@ class PeriodicTranslationFamilyState(StrictModule, NonTrainableState):
         /,
         *,
         hermiticity_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(plan, PeriodicTranslationFamilyPlan):
             raise TypeError("plan must be PeriodicTranslationFamilyPlan.")
         value = np.asarray(values)
@@ -246,7 +246,7 @@ class PreparedPeriodicTranslationFamily(StrictModule, NonTrainableState):
         plan: PeriodicTranslationFamilyPlan,
         state: PeriodicTranslationFamilyState,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, PeriodicTranslationFamilyPlan) or not isinstance(
             state, PeriodicTranslationFamilyState
         ):
@@ -316,7 +316,7 @@ class PeriodicFiniteRealization(StrictModule, NonTrainableState):
         input_size: int,
         maximum_dense_entries: int,
         source_prepared_id: str,
-    ):
+    ) -> None:
         row = np.asarray(row_indices, dtype=np.int64)
         column = np.asarray(column_indices, dtype=np.int64)
         value = np.asarray(values)

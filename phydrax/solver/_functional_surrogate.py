@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, NoReturn
 
 import equinox as eqx
 import jax
@@ -50,7 +50,7 @@ class _BlockScaledEvaluator(StrictModule, BatchEvaluator):
     weights: Array
     blocks: Any
 
-    def __init__(self, source: DomainFunction, weights: Any, blocks: Any, /):
+    def __init__(self, source: DomainFunction, weights: Any, blocks: Any, /) -> None:
         self.source = source
         self.weights = jnp.asarray(weights)
         self.blocks = blocks
@@ -127,7 +127,7 @@ class PseudoTransientResidualTransform(StrictModule):
         inverse_steps: Sequence[Any],
         enforcement: Any,
         /,
-    ):
+    ) -> None:
         policies_ = tuple(policies)
         steps = tuple(jnp.asarray(value) for value in inverse_steps)
         if len(policies_) != len(steps):
@@ -199,7 +199,7 @@ class _CausalScaledEvaluator(StrictModule, BatchEvaluator):
         gates: Sequence[cx.AxisArray],
         blocks: Any,
         /,
-    ):
+    ) -> None:
         gates_ = tuple(gates)
         if not gates_ or any(not isinstance(gate, cx.AxisArray) for gate in gates_):
             raise TypeError("Causal gates must be phydrax.axes.AxisArray values.")
@@ -240,7 +240,7 @@ class _CausalScaledEvaluator(StrictModule, BatchEvaluator):
             dims=value.dims,
         )
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key=None, **kwargs: Any) -> NoReturn:
         raise TypeError("Causal residual transforms require a prepared batch.")
 
 
@@ -263,7 +263,7 @@ class CausalResidualTransform(StrictModule):
     policies: tuple[Any, ...]
     gates: tuple[tuple[int, tuple[cx.AxisArray, ...]], ...]
 
-    def __init__(self, inner: Any, policies: Sequence[Any], gates, /):
+    def __init__(self, inner: Any, policies: Sequence[Any], gates, /) -> None:
         self.inner = inner
         self.policies = tuple(policies)
         self.gates = tuple(gates)
@@ -431,7 +431,9 @@ class BalancedResidualTransform(StrictModule):
     references: tuple[Any, ...]
     multipliers: Array
 
-    def __init__(self, inner: Any, references: Sequence[Any], multipliers: Any, /):
+    def __init__(
+        self, inner: Any, references: Sequence[Any], multipliers: Any, /
+    ) -> None:
         references_ = tuple(references)
         values = jnp.asarray(multipliers, dtype=jnp.float64).reshape((-1,))
         if len(references_) != values.size:
@@ -710,7 +712,7 @@ class PreparedFunctionalUpdate(StrictModule):
         inter_gradient_alignment: Any = jnp.nan,
         diagnostic_gradient: Any = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(physical, _PreparedObjective):
             raise TypeError("physical must be a _PreparedObjective.")
         if residual is not None and not isinstance(residual, PreparedFunctionalResidual):

@@ -116,7 +116,7 @@ class OperatorContextModel(_AbstractBaseModel):
         port_mapping: PortMapping | None = None,
         owner_ports: ModelPorts | None = None,
         coord_dim: int | None = None,
-    ):
+    ) -> None:
         from ..training._trained_operator import TrainedOperator
 
         if not isinstance(batch, OperatorBatch):

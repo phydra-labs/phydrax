@@ -68,7 +68,7 @@ class PolynomialSpeciesThermodynamicsPlan(AbstractSpeciesThermodynamicsPlan):
         minimum_temperature: float = 1.0,
         maximum_temperature: float = 5000.0,
         thermodynamics_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(schema, ChemicalSpeciesSchema):
             raise TypeError("schema must be a ChemicalSpeciesSchema.")
         coefficients = np.asarray(heat_capacity_volume, dtype=np.float64)
@@ -215,7 +215,7 @@ class NASASpeciesThermodynamicsPlan(AbstractSpeciesThermodynamicsPlan):
         /,
         *,
         thermodynamics_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(schema, ChemicalSpeciesSchema):
             raise TypeError("schema must be a ChemicalSpeciesSchema.")
         if not isinstance(polynomial_kind, NASAPolynomialKind):

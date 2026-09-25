@@ -87,7 +87,7 @@ class SpectralEmbeddingModel(AbstractFittedModel):
         bandwidth: float,
         n_neighbors: int,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         train = jnp.asarray(training_features)
         vectors = jnp.asarray(eigenvectors)
         self.training_features = train
@@ -194,7 +194,7 @@ class SpectralEmbeddingRecipe(AbstractRecipe):
         *,
         n_neighbors: int = 10,
         bandwidth: float = 1.0,
-    ):
+    ) -> None:
         if int(n_components) <= 0 or int(n_neighbors) <= 0:
             raise ValueError("n_components and n_neighbors must be positive.")
         if float(bandwidth) <= 0.0:
@@ -316,7 +316,7 @@ class MultidimensionalScalingModel(AbstractFittedModel):
         *,
         method: MDSMethod,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         train = jnp.asarray(training_features)
         embedding = jnp.asarray(training_embedding)
         self.training_features = train
@@ -432,7 +432,7 @@ class MultidimensionalScalingRecipe(AbstractRecipe):
         method: MDSMethod = "classical",
         iterations: int = 100,
         tolerance: float = 1e-5,
-    ):
+    ) -> None:
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
         if method not in ("classical", "smacof"):
@@ -572,7 +572,7 @@ class IsomapModel(AbstractFittedModel):
         *,
         n_neighbors: int,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         train = jnp.asarray(training_features)
         embedding = jnp.asarray(training_embedding)
         self.training_features = train
@@ -683,7 +683,7 @@ class IsomapRecipe(AbstractRecipe):
         *,
         n_neighbors: int = 8,
         max_samples: int = 2048,
-    ):
+    ) -> None:
         if int(n_components) <= 0 or int(n_neighbors) <= 0 or int(max_samples) <= 0:
             raise ValueError(
                 "n_components, n_neighbors, and max_samples must be positive."

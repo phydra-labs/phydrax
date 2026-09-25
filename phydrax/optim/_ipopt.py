@@ -191,7 +191,7 @@ class StructuredIpoptEvidence(StrictModule):
 
 
 class _MutableCallbackCounts:
-    def __init__(self):
+    def __init__(self) -> None:
         self.objective = 0
         self.gradient = 0
         self.constraints = 0
@@ -215,7 +215,7 @@ class _MutableCallbackCounts:
 
 
 class _StructuredIpoptCallbacks:
-    def __init__(self, program: StructuredNonlinearProgram, args: Any, /):
+    def __init__(self, program: StructuredNonlinearProgram, args: Any, /) -> None:
         self.program = program
         self.args = args
         self.counts = _MutableCallbackCounts()
@@ -355,7 +355,7 @@ class IpoptMinimize(AbstractStructuredNonlinearMethod):
 
     options: dict[str, Any] = eqx.field(static=True)
 
-    def __init__(self, *, options: dict[str, Any] | None = None):
+    def __init__(self, *, options: dict[str, Any] | None = None) -> None:
         self.options = {} if options is None else dict(options)
 
     @property

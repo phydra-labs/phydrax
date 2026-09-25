@@ -36,7 +36,7 @@ class LubricationContactPlan(StrictModule, NonTrainableState):
         minimum_film_thickness: float,
         cavitation_pressure: float = 0.0,
         asperity_transition: float,
-    ):
+    ) -> None:
         viscosity_ = float(viscosity)
         minimum = float(minimum_film_thickness)
         cavitation = float(cavitation_pressure)
@@ -146,7 +146,7 @@ class ReynoldsPressureBoundaryConditions(StrictModule, NonTrainableState):
     pressure: Array
     boundary_id: str = eqx.field(static=True)
 
-    def __init__(self, node_indices: ArrayLike, pressure: ArrayLike, /):
+    def __init__(self, node_indices: ArrayLike, pressure: ArrayLike, /) -> None:
         indices = np.asarray(node_indices)
         values = np.asarray(pressure, dtype=np.float64)
         if (
@@ -225,7 +225,7 @@ class ReynoldsFilmPlan(StrictModule, NonTrainableState):
         minimum_film_thickness: float = 1.0e-9,
         active_set_iterations: int = 32,
         convergence_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(film_mesh, CellMesh):
             raise TypeError("film_mesh must be CellMesh.")
         if not isinstance(interface, ContactInterfacePlan):

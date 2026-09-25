@@ -29,7 +29,7 @@ class GatherStencil(StrictModule):
         valid: ArrayLike | None = None,
         support: ArrayLike | None = None,
         case_shape: tuple[int, ...] = (),
-    ):
+    ) -> None:
         relation = RowRelation(
             indices,
             source_size=source_size,

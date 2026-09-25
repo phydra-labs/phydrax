@@ -64,7 +64,7 @@ class IncompressibleFlowProblem(StrictModule):
         forcing: Any = None,
         forcing_id: str | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if isinstance(spatial_dimension, bool):
             raise TypeError("spatial_dimension must be an integer.")
         dimension = index(spatial_dimension)
@@ -129,7 +129,7 @@ class _PeriodicRotationalDrift(StrictModule):
         algebraic_les: PreparedPeriodicAlgebraicLES | None,
         dynamic_les: PreparedPeriodicDynamicLES | None,
         /,
-    ):
+    ) -> None:
         self.problem = problem
         self.discretization = discretization
         self.method = method
@@ -361,7 +361,7 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
         /,
         *,
         compilation_id: str,
-    ):
+    ) -> None:
         residual_key = DiscretizationKey(
             "periodic_incompressible_form",
             DiscretizationRole.RESIDUAL,

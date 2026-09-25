@@ -74,7 +74,7 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
         constraint_labels: tuple[str, ...] = (),
         softening_length: float | None = None,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(mesh, TriangleMesh):
             raise TypeError("mesh must be TriangleMesh.")
         pearl = float(pearl_length)

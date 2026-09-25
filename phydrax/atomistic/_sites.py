@@ -53,7 +53,7 @@ class VirtualSiteRule(StrictModule, NonTrainableState):
         parent_ids: ArrayLike,
         coefficients: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(kind, VirtualSiteKind):
             raise TypeError("kind must be VirtualSiteKind.")
         parents = np.asarray(parent_ids)
@@ -119,7 +119,7 @@ class AtomisticInteractionSitePlan(StrictModule, NonTrainableState):
         element_mask: ArrayLike | None = None,
         physical_mask: ArrayLike | None = None,
         output_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         ids = np.asarray(site_ids)
         numbers = np.asarray(atomic_numbers)
         types = np.asarray(site_type_ids)
@@ -234,7 +234,7 @@ class AtomisticCoordinateMapPlan(AbstractAtomisticCoordinateMapPlan):
         /,
         *,
         virtual_rules: tuple[VirtualSiteRule, ...] = (),
-    ):
+    ) -> None:
         dof_ids = np.asarray(dof_particle_ids)
         physical = np.asarray(physical_dof_indices)
         if dof_ids.ndim != 1 or not np.issubdtype(dof_ids.dtype, np.integer):
@@ -337,7 +337,7 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: AtomisticCoordinateMapPlan, particles: ParticleDiscretization, /
-    ):
+    ) -> None:
         if not isinstance(plan, AtomisticCoordinateMapPlan):
             raise TypeError("plan must be AtomisticCoordinateMapPlan.")
         if not isinstance(particles, ParticleDiscretization):

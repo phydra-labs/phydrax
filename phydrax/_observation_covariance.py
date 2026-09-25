@@ -61,7 +61,7 @@ class DiagonalCovarianceAction(StrictModule, NonTrainableState):
     layout: CoordinateLayout
     action_id: str = eqx.field(static=True)
 
-    def __init__(self, variance: ArrayLike, layout: CoordinateLayout, /):
+    def __init__(self, variance: ArrayLike, layout: CoordinateLayout, /) -> None:
         values = jax.lax.stop_gradient(jnp.asarray(variance))
         if values.shape != (layout.size,) or jnp.issubdtype(
             values.dtype, jnp.complexfloating
@@ -117,7 +117,7 @@ class LowRankDiagonalCovarianceAction(StrictModule, NonTrainableState):
         factors: ArrayLike,
         layout: CoordinateLayout,
         /,
-    ):
+    ) -> None:
         diagonal = np.asarray(variance)
         low_rank = np.asarray(factors)
         if (
@@ -217,7 +217,7 @@ class PrecisionOperatorCovarianceAction(StrictModule, NonTrainableState):
         logdet_covariance: ArrayLike,
         layout: CoordinateLayout,
         /,
-    ):
+    ) -> None:
         if not isinstance(precision, AbstractLinearOperator):
             raise TypeError("Precision action must be a native AbstractLinearOperator.")
         if (
@@ -274,7 +274,7 @@ class KroneckerCholeskyCovarianceAction(StrictModule, NonTrainableState):
         factors: Sequence[ArrayLike],
         layout: CoordinateLayout,
         /,
-    ):
+    ) -> None:
         arrays = tuple(np.asarray(value) for value in factors)
         if not arrays or any(
             value.ndim != 2
@@ -348,7 +348,7 @@ class CirculantCovarianceAction(StrictModule, NonTrainableState):
     layout: CoordinateLayout
     action_id: str = eqx.field(static=True)
 
-    def __init__(self, spectrum: ArrayLike, layout: CoordinateLayout, /):
+    def __init__(self, spectrum: ArrayLike, layout: CoordinateLayout, /) -> None:
         values = np.asarray(spectrum, dtype=np.float64)
         expected = layout.size // 2 + 1
         if (

@@ -58,7 +58,7 @@ class ThermodynamicsRateTable(StrictModule, NonTrainableState):
         photon_temperature: ArrayLike,
         artifact: ScientificArtifactEnvelope,
         /,
-    ):
+    ) -> None:
         scale = jax.lax.stop_gradient(jnp.asarray(scale_factors))
         values = tuple(
             jax.lax.stop_gradient(jnp.asarray(value, dtype=scale.dtype))
@@ -129,7 +129,7 @@ class NativeThermodynamicsPlan(StrictModule, NonTrainableState):
         hydrogen_number_density_today: float,
         thomson_cross_section: float,
         speed_of_light: float,
-    ):
+    ) -> None:
         density = float(hydrogen_number_density_today)
         sigma = float(thomson_cross_section)
         speed = float(speed_of_light)
@@ -256,7 +256,7 @@ class ScalarHierarchyLayout(StrictModule, NonTrainableState):
         photon_order: int = 16,
         polarization_order: int = 16,
         relic_order: int = 16,
-    ):
+    ) -> None:
         orders = tuple((photon_order, polarization_order, relic_order))
         if any(value < 2 for value in orders):
             raise ValueError("Scalar hierarchy orders must be at least two.")
@@ -294,7 +294,7 @@ class ApproximationTransitionPolicy(StrictModule, NonTrainableState):
         tight_coupling_exit: float,
         radiation_streaming_entry: float,
         overlap_tolerance: float,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -346,7 +346,7 @@ class ScalarEvolutionOperatorTable(StrictModule, NonTrainableState):
         layout: ScalarHierarchyLayout,
         artifact: ScientificArtifactEnvelope,
         /,
-    ):
+    ) -> None:
         scale = jax.lax.stop_gradient(jnp.asarray(scale_factors))
         k = jax.lax.stop_gradient(jnp.asarray(wavenumbers, dtype=scale.dtype))
         matrix = jax.lax.stop_gradient(jnp.asarray(matrices, dtype=scale.dtype))
@@ -409,7 +409,7 @@ class RestrictedScalarTransferPlan(StrictModule, NonTrainableState):
         transitions: ApproximationTransitionPolicy,
         profile: ParityProfile,
         /,
-    ):
+    ) -> None:
         if (
             profile.geometry != "flat-FLRW"
             or "scalar-adiabatic" not in profile.approximations
@@ -545,7 +545,7 @@ class ScalarEinsteinBoltzmannPlan(StrictModule, NonTrainableState):
         overlap_tolerance: float | None = None,
         tail_tolerance: float = 1.0,
         line_of_sight_quadrature_tolerance: float = 1.0e-2,
-    ):
+    ) -> None:
         if not isinstance(background, FLRWBackground):
             raise TypeError("background must be an FLRWBackground.")
         if not isinstance(thermodynamics, ThermodynamicsHistory):
@@ -632,7 +632,7 @@ class PreparedScalarEinsteinBoltzmann(StrictModule):
     provenance: CosmologyProductProvenance
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ScalarEinsteinBoltzmannPlan, /):
+    def __init__(self, plan: ScalarEinsteinBoltzmannPlan, /) -> None:
         scale = plan.thermodynamics.scale_factors
         inverse_conformal_rate = 1.0 / (scale**2 * plan.background.hubble(scale))
         increments = (
@@ -1092,7 +1092,7 @@ class FlatRadialKernelPlan(StrictModule, NonTrainableState):
     maximum_multipole: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_multipole: int, /):
+    def __init__(self, maximum_multipole: int, /) -> None:
         maximum = int(maximum_multipole)
         if maximum < 2:
             raise ValueError("Maximum radial multipole must be at least two.")
@@ -1118,7 +1118,7 @@ class LineOfSightSpectraPlan(StrictModule, NonTrainableState):
     multipoles: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, radial: FlatRadialKernelPlan, multipoles: ArrayLike, /):
+    def __init__(self, radial: FlatRadialKernelPlan, multipoles: ArrayLike, /) -> None:
         ell = np.asarray(multipoles, dtype=np.int64).reshape((-1,))
         if ell.size < 1 or np.any(ell < 2) or np.any(ell > radial.maximum_multipole):
             raise ValueError("Line-of-sight multipoles are invalid.")

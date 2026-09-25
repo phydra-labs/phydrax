@@ -89,7 +89,7 @@ class RoughBergomiModel(StrictModule):
         forward_variance_times: ArrayLike,
         forward_variance_values: ArrayLike,
         /,
-    ):
+    ) -> None:
         hurst_ = _scalar(hurst, "hurst")
         hurst_ = eqx.error_if(
             hurst_,
@@ -140,7 +140,7 @@ class RoughHestonModel(StrictModule):
         correlation: ArrayLike,
         initial_variance: ArrayLike,
         /,
-    ):
+    ) -> None:
         order = _scalar(fractional_order, "fractional_order")
         order = eqx.error_if(
             order,

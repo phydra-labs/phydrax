@@ -74,7 +74,7 @@ class ElectronicTransportConvention(StrictModule, NonTrainableState):
     current_orientation: str = eqx.field(static=True)
     convention_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.electron_charge_coulomb = _ELECTRON_CHARGE_SI
         self.bloch_phase_sign = 1
         self.retarded_time_sign = -1
@@ -458,7 +458,9 @@ class ElasticDisorderEnsemblePlan(StrictModule, NonTrainableState):
     probabilities: Array
     ensemble_id: str = eqx.field(static=True)
 
-    def __init__(self, realization_ids: Sequence[str], probabilities: ArrayLike, /):
+    def __init__(
+        self, realization_ids: Sequence[str], probabilities: ArrayLike, /
+    ) -> None:
         identifiers = tuple(str(value).strip() for value in realization_ids)
         weights = np.asarray(probabilities, dtype=np.float64)
         if (
@@ -567,7 +569,7 @@ class FermionicKeldyshTransportState(StrictModule, NonTrainableState):
         source_id: str,
         particle_continuity_residual: ArrayLike,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         tolerance_ = _positive_tolerance(tolerance)
         lesser_ = jnp.asarray(lesser)
         greater_ = jnp.asarray(greater, dtype=lesser_.dtype)

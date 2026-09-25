@@ -131,7 +131,7 @@ def _scalar_from_tensor(tensor_samples: Array) -> Array:
 class DirectFourierFactorizationPlan(AbstractFourierFactorizationPlan):
     """Direct Laurent multiplication for every constitutive component."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.plan_id = canonical_fingerprint({"kind": "direct-fourier-factorization"})
 
     @property
@@ -142,7 +142,7 @@ class DirectFourierFactorizationPlan(AbstractFourierFactorizationPlan):
 class InverseFourierFactorizationPlan(AbstractFourierFactorizationPlan):
     """Inverse-rule transverse factorization for scalar isotropic media."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.plan_id = canonical_fingerprint({"kind": "inverse-fourier-factorization"})
 
     @property
@@ -157,7 +157,7 @@ class AnalyticInterfaceFramePlan(StrictModule):
     frame_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, tangent_field: ArrayLike, /, *, frame_id: str):
+    def __init__(self, tangent_field: ArrayLike, /, *, frame_id: str) -> None:
         field = jnp.asarray(tangent_field)
         if field.shape[-1:] != (2,):
             raise ValueError("tangent_field must have trailing shape (2,).")
@@ -188,7 +188,7 @@ class JonesDirectFramePlan(StrictModule, NonTrainableState):
         gradient_regularization: float = 1e-8,
         differentiation: FrameDifferentiation = "mathematical",
         complex_jones: bool = True,
-    ):
+    ) -> None:
         regularization_ = float(regularization)
         gradient_regularization_ = float(gradient_regularization)
         if regularization_ <= 0.0 or gradient_regularization_ <= 0.0:
@@ -222,7 +222,7 @@ class VectorFourierFactorizationPlan(AbstractFourierFactorizationPlan):
         self,
         frame: AnalyticInterfaceFramePlan | JonesDirectFramePlan | None = None,
         /,
-    ):
+    ) -> None:
         frame_ = JonesDirectFramePlan() if frame is None else frame
         if not isinstance(frame_, AnalyticInterfaceFramePlan | JonesDirectFramePlan):
             raise TypeError("frame must be an analytic or Jones-direct frame plan.")

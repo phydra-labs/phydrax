@@ -91,7 +91,7 @@ class PTVScenarioPlan(StrictModule, NonTrainableState):
         read_noise_std: float = 0.0,
         shot_noise: bool = False,
         seed: int = 0,
-    ):
+    ) -> None:
         kind_ = PTVScenarioKind(kind)
         family = kind_.value if family_id is None else str(family_id)
         shape = tuple(image_shape)
@@ -275,7 +275,7 @@ class PTVSyntheticCase(StrictModule, NonTrainableState):
         family_id: str,
         plan_id: str,
         scenario_id: str,
-    ):
+    ) -> None:
         if not isinstance(geometry, ImagePlaneSupport):
             raise TypeError("geometry must be ImagePlaneSupport.")
         if not isinstance(true_rig, CameraRig) or not isinstance(nominal_rig, CameraRig):

@@ -71,7 +71,7 @@ class SplitFieldPMLPlan(StrictModule):
         *,
         maximum_attenuation: float,
         polynomial_order: int = 2,
-    ):
+    ) -> None:
         values = (int(widths),) if isinstance(widths, int) else tuple(widths)
         attenuation = float(maximum_attenuation)
         order = int(polynomial_order)
@@ -108,7 +108,7 @@ class PreparedSplitFieldPML(StrictModule):
         plan: SplitFieldPMLPlan,
         grid: PreparedTensorGrid,
         /,
-    ):
+    ) -> None:
         widths = plan.widths * len(grid.shape) if len(plan.widths) == 1 else plan.widths
         if len(widths) != len(grid.shape):
             raise ValueError("PML requires one width per tensor axis.")
@@ -172,7 +172,7 @@ class StaggeredAcousticState(StrictModule):
         pressure_components: Sequence[ArrayLike],
         velocity: Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         components = tuple(jnp.asarray(value) for value in pressure_components)
         if not components:
             raise ValueError("Acoustic state requires at least one pressure component.")
@@ -211,7 +211,7 @@ class StaggeredAcousticPlan(StrictModule):
         source: Callable[[Array, Array, Any], ArrayLike] | None = None,
         sensor_indices: ArrayLike | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("grid must be a PreparedTensorGrid.")
         if grid.primary_entity_layout.layout_id != grid.cells().layout_id:
@@ -358,7 +358,7 @@ class PreparedStaggeredAcoustics(StrictModule):
         plan: StaggeredAcousticPlan,
         discretization: PreparedFiniteDifferenceDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, StaggeredAcousticPlan) or not isinstance(
             discretization, PreparedFiniteDifferenceDiscretization
         ):

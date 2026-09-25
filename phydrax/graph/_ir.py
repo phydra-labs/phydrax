@@ -118,7 +118,7 @@ class GraphIR(StrictModule, NonTrainableState):
         edge_mask: Any | None = None,
         graph_mask: Any | None = None,
         validate: bool = True,
-    ):
+    ) -> None:
         self.nodes = nodes
         self.edges = edges
         self.senders = None if senders is None else _ensure_int_vector("senders", senders)

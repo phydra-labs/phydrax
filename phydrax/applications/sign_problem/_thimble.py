@@ -60,7 +60,7 @@ class HolomorphicFlowQuadraturePlan(StrictModule, NonTrainableState):
         maximum_jacobian_entries: int = 4_194_304,
         maximum_imaginary_action_drift: float = 1e-5,
         minimum_average_residual_phase: float = 1e-3,
-    ):
+    ) -> None:
         time = float(flow_time)
         steps = int(flow_steps)
         nodes = int(maximum_nodes)

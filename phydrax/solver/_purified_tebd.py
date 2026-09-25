@@ -84,7 +84,7 @@ class PurifiedStrangProblem(StrictModule):
         /,
         *,
         problem_id: str = "purified-strang",
-    ):
+    ) -> None:
         if tuple(initial_state.physical_dimensions) != hamiltonian.physical_dimensions:
             raise ValueError("LPDO and Hamiltonian dimensions differ.")
         channels = tuple(half_step_channels)
@@ -115,7 +115,7 @@ class PurifiedStrangResult(StrictModule):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         self.final_state = final_state
         self.raw_trace_history = jnp.asarray(raw_trace_history)
         self.bond_discarded_history = jnp.asarray(bond_discarded_history)
@@ -239,7 +239,7 @@ class PurifiedStationarityDiagnostic(StrictModule):
         window: int,
         tolerance: float,
         truncation_tolerance: float,
-    ):
+    ) -> None:
         observables = jnp.asarray(observable_history)
         window_ = int(window)
         tolerance_ = float(tolerance)

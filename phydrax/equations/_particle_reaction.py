@@ -63,7 +63,7 @@ class ParticleReactionProcessPlan(StrictModule, NonTrainableState):
         *,
         locations=None,
         network_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         count = mechanism.reaction_count
@@ -232,7 +232,7 @@ class EvaporationPhaseChangePlan(StrictModule, NonTrainableState):
         /,
         *,
         allow_condensation=False,
-    ):
+    ) -> None:
         if not isinstance(schema, ChemicalSpeciesSchema):
             raise TypeError("schema must be a ChemicalSpeciesSchema.")
         liquid = int(liquid_species)
@@ -376,7 +376,7 @@ class ShrinkingCoreConversionPlan(StrictModule, NonTrainableState):
         ash_diffusivity,
         surface_rate_coefficient,
         /,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

@@ -73,7 +73,7 @@ class ASEElectronicStateBinding(StrictModule, NonTrainableState):
         spin_key: str | None,
         spin_semantics: ASESpinSemantics = "multiplicity",
         state_invariant: bool = False,
-    ):
+    ) -> None:
         charge = None if charge_key is None else str(charge_key).strip()
         spin = None if spin_key is None else str(spin_key).strip()
         if charge_key is not None and not charge:
@@ -153,7 +153,7 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
         state_binding: ASEElectronicStateBinding,
         provider_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(capabilities, ElectronicProviderCapabilities):
             raise TypeError("capabilities must be ElectronicProviderCapabilities.")
         self.calculation = calculation
@@ -330,7 +330,7 @@ class ASECalculatorProvider(AbstractElectronicProvider):
         *,
         model_chemistry_id: str,
         capabilities: ElectronicProviderCapabilities | None = None,
-    ):
+    ) -> None:
         if not callable(calculator_factory):
             raise TypeError("calculator_factory must be callable.")
         name = str(provider_name).strip()

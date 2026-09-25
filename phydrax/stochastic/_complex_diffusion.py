@@ -29,7 +29,9 @@ class ComplexNormalLaw(AbstractProbabilityLaw):
     layout: ComplexEventLayout
     real_law: DiagonalNormalLaw
 
-    def __init__(self, location: ArrayLike, variance: ArrayLike, /, *, event_shape):
+    def __init__(
+        self, location: ArrayLike, variance: ArrayLike, /, *, event_shape
+    ) -> None:
         mean = jnp.asarray(location)
         if not jnp.iscomplexobj(mean):
             raise TypeError("ComplexNormalLaw location must be complex-valued.")
@@ -104,7 +106,7 @@ class ComplexVariancePreservingDiffusion(StrictModule):
         beta_maximum: float = 20.0,
         terminal_time: float = 1.0,
         process_id: str | None = None,
-    ):
+    ) -> None:
         layout = ComplexEventLayout(event_shape)
         real = VariancePreservingDiffusion(
             layout.coordinate_size,

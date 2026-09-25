@@ -75,7 +75,7 @@ class ThermalModeSpec(StrictModule, NonTrainableState):
         translational_work: bool = False,
         minimum_temperature: float = 50.0,
         maximum_temperature: float = 50000.0,
-    ):
+    ) -> None:
         name_ = str(name)
         theta = np.asarray(characteristic_temperatures, dtype=np.float64)
         minimum = float(minimum_temperature)
@@ -225,7 +225,7 @@ class ThermalModeSchema(StrictModule, NonTrainableState):
         species: ChemicalSpeciesSchema,
         modes: Sequence[ThermalModeSpec],
         /,
-    ):
+    ) -> None:
         mode_tuple = tuple(modes)
         if (
             not isinstance(species, ChemicalSpeciesSchema)

@@ -49,7 +49,7 @@ class DiscreteMeasure(StrictModule, NonTrainableState):
         normalization: MeasureNormalization = "physical",
         probability_tolerance: float = 1e-10,
         measure_id: str | None = None,
-    ):
+    ) -> None:
         name_ = nonempty_identifier("name", name)
         support_id_ = nonempty_identifier("support_id", support_id)
         entity_set_id_ = nonempty_identifier("entity_set_id", entity_set_id)

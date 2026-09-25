@@ -73,7 +73,7 @@ class SurfaceWaterHeatPlan(StrictModule):
         gravity_m_s2: float = 9.80665,
         active_tolerance: float = 1.0e-8,
         termination: NonlinearTermination | None = None,
-    ):
+    ) -> None:
         if not isinstance(coupled, CoupledWaterHeatPlan) or not isinstance(
             surface, OrthogonalDiffusiveWaveSurfacePlan
         ):

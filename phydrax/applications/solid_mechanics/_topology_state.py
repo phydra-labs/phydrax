@@ -69,7 +69,7 @@ class MechanicsStateCandidate(StrictModule):
         *,
         status: Any = OptimizationStatus.SUCCESS,
         diagnostics: OptimizationDiagnostics | None = None,
-    ):
+    ) -> None:
         leaves = jax.tree.leaves(state)
         if not leaves:
             raise ValueError("state must contain at least one array leaf.")
@@ -96,7 +96,9 @@ class FiniteElementStateSolver(AbstractStateSolver):
     solve_function: Callable = eqx.field(static=True)
     solver_id: str = eqx.field(static=True)
 
-    def __init__(self, solve: Callable, /, *, solver_id: str = "finite-element-state"):
+    def __init__(
+        self, solve: Callable, /, *, solver_id: str = "finite-element-state"
+    ) -> None:
         if not callable(solve):
             raise TypeError("solve must be callable.")
         identifier = str(solver_id)
@@ -194,7 +196,7 @@ class NeuralVariationalStateSolver(AbstractStateSolver):
         relative_residual_limit: float = 10.0,
         absolute_residual_limit: float = 1.0e-8,
         solver_id: str = "neural-variational-state",
-    ):
+    ) -> None:
         if not callable(proposal):
             raise TypeError("proposal must be callable.")
         if not isinstance(finite_element_solver, FiniteElementStateSolver):
@@ -414,7 +416,7 @@ class MechanicsBranchGate(StrictModule, NonTrainableState):
         ),
         reject_contact_events: bool = True,
         reject_fracture_events: bool = True,
-    ):
+    ) -> None:
         branches = tuple(str(value) for value in accepted_branch_ids)
         events = tuple(str(value) for value in forbidden_event_kinds)
         if not branches or any(not value for value in branches):

@@ -78,7 +78,7 @@ class FeatureNormPotential(_AbstractBaseModel):
         *,
         initial_quadratic: float = 1e-2,
         minimum_quadratic: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(features, AbstractArrayModel):
             raise TypeError("features must be a Phydrax array model.")
         input_shape = _get_value_shape(features.in_size)
@@ -180,7 +180,7 @@ class PortHamiltonianVectorField(_AbstractStructuredInputModel):
         minimum_dissipation_factor: float = 1e-6,
         interconnection_scale: float = 0.1,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         dimension = int(state_size)
         if dimension <= 0:
             raise ValueError("state_size must be positive.")

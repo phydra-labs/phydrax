@@ -258,7 +258,7 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
         geometry_family_id: str = "mapped-patch",
         geometry_layout_id: str = "reference-bucket-layout",
         gcl_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(topology, VariablePatchHierarchyTopology):
             raise TypeError("Patch geometry requires VariablePatchHierarchyTopology.")
         if not callable(coordinate_map):

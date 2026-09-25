@@ -35,7 +35,7 @@ class _PirateBranch(StrictModule):
         use_bias: bool,
         initializer: str,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         keys = jr.split(key, 3)
         self.layers = tuple(
             Linear(
@@ -119,7 +119,7 @@ class PirateNet(_AbstractBaseModel):
         use_final_bias: bool = True,
         initializer: str = "glorot_normal",
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         in_size_c = _canonical_size(in_size)
         out_size_c = _canonical_size(out_size)
         width = int(width_size)

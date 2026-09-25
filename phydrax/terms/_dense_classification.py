@@ -75,7 +75,7 @@ class DenseSiteClassificationBatch(StrictModule):
         sample_weight: ArrayLike | None = None,
         case_axis: str,
         site_axes: tuple[str, ...],
-    ):
+    ) -> None:
         if not isinstance(points, GridBatch):
             raise TypeError("points must be a GridBatch.")
         index_array = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
@@ -375,7 +375,7 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
         indices: ArrayLike | None = None,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(component, DomainComponent):
             raise TypeError("component must be a DomainComponent.")
         if not isinstance(target_schema, TargetSchema) or target_schema.kind not in (
@@ -644,7 +644,7 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         indices: ArrayLike | None = None,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         objective_ = ClassificationObjective.nll() if objective is None else objective
         if not isinstance(objective_, ClassificationObjective):
             raise TypeError("objective must be a ClassificationObjective.")
@@ -895,7 +895,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
         indices: ArrayLike | None = None,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(score, OverlapScoreConfig):
             raise TypeError("score must be an OverlapScoreConfig.")
         if support_measure not in ("statistical", "physical"):

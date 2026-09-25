@@ -44,7 +44,7 @@ class MultiOutputDesign(StrictModule):
         *,
         output_names: tuple[str, ...],
         source_index: ArrayLike | None = None,
-    ):
+    ) -> None:
         point_array = _as_points(points)
         output_array = jnp.asarray(output_index, dtype=jnp.int32)
         names = _output_names(output_names)
@@ -160,7 +160,7 @@ class Coregionalization(StrictModule):
         /,
         *,
         output_names: tuple[str, ...],
-    ):
+    ) -> None:
         names = _output_names(output_names)
         weight_array = jnp.asarray(weights, dtype=jnp.float64)
         diagonal_array = jnp.asarray(diagonal_scale, dtype=jnp.float64)
@@ -240,7 +240,7 @@ class IntrinsicCoregionalizationKernel(AbstractMultiOutputKernel):
         spatial_kernel: AbstractPositiveDefiniteKernel,
         coregionalization: Coregionalization,
         /,
-    ):
+    ) -> None:
         if not isinstance(spatial_kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("spatial_kernel must be a positive-definite kernel.")
         if not isinstance(coregionalization, Coregionalization):
@@ -291,7 +291,7 @@ class LinearModelCoregionalizationKernel(AbstractMultiOutputKernel):
         self,
         components: tuple[tuple[AbstractPositiveDefiniteKernel, Coregionalization], ...],
         /,
-    ):
+    ) -> None:
         if not components:
             raise ValueError("LinearModelCoregionalizationKernel needs one component.")
         spatial_kernels: list[AbstractPositiveDefiniteKernel] = []
@@ -391,7 +391,7 @@ class MultiOutputGaussianProcessLikelihoodState(StrictModule):
         noise_scale: ArrayLike,
         noise_layout: Literal["output", "observation"] = "output",
         jitter: ArrayLike = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractMultiOutputKernel):
             raise TypeError("kernel must be an AbstractMultiOutputKernel.")
         noise = jnp.asarray(noise_scale, dtype=jnp.float64)
@@ -447,7 +447,7 @@ class MultiOutputGaussianProcessCondition(StrictModule):
         mean: ArrayLike,
         covariance: ArrayLike,
         variance: ArrayLike,
-    ):
+    ) -> None:
         _validate_design(design, output_names=design.output_names)
         mean_array = design.flatten(mean, name="conditioned GP mean")
         variance_array = design.flatten(variance, name="conditioned GP variance")
@@ -525,7 +525,7 @@ class MultiOutputGaussianProcessDiscrepancy(StrictModule):
         design: MultiOutputDesign,
         observations: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(design, MultiOutputDesign):
             raise TypeError("design must be a MultiOutputDesign.")
         values = design.flatten(observations, name="multi-output GP observations")

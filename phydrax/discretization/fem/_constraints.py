@@ -45,7 +45,7 @@ class FiniteElementLinearConstraint(StrictModule, NonTrainableState):
         field_name: str,
         constraint_map: ConstraintMap,
         /,
-    ):
+    ) -> None:
         name = str(field_name)
         if not name or not isinstance(constraint_map, ConstraintMap):
             raise ValueError(

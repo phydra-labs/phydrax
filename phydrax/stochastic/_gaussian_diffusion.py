@@ -62,7 +62,7 @@ class DiffusionTerminalReference(StrictModule):
         residual_signal_scale: ArrayLike,
         reference_id: str,
         process_id: str,
-    ):
+    ) -> None:
         if not isinstance(law, AbstractProbabilityLaw):
             raise TypeError("law must implement AbstractProbabilityLaw.")
         if tuple(law.batch_shape):
@@ -89,7 +89,7 @@ class AbstractGaussianDiffusion(AbstractMarginalTransitionLaw):
     terminal_time: float = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, terminal_time: float, process_id: str):
+    def __init__(self, dimension: int, terminal_time: float, process_id: str) -> None:
         size = int(dimension)
         horizon = float(terminal_time)
         if size <= 0:
@@ -196,7 +196,7 @@ class VariancePreservingDiffusion(AbstractGaussianDiffusion):
         beta_maximum: float = 20.0,
         terminal_time: float = 1.0,
         process_id: str | None = None,
-    ):
+    ) -> None:
         minimum = float(beta_minimum)
         maximum = float(beta_maximum)
         if not isfinite(minimum) or not isfinite(maximum) or minimum <= 0.0:
@@ -279,7 +279,7 @@ class VarianceExplodingDiffusion(AbstractGaussianDiffusion):
         terminal_scale: float = 50.0,
         terminal_time: float = 1.0,
         process_id: str | None = None,
-    ):
+    ) -> None:
         initial = float(initial_scale)
         terminal = float(terminal_scale)
         if not isfinite(initial) or not isfinite(terminal) or initial <= 0.0:

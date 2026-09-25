@@ -54,7 +54,7 @@ class BRepParameterLink:
     field: str
     parameter_id: ParameterId
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.face_index < 0:
             raise ValueError("face_index must be non-negative.")
         if not self.field:
@@ -65,7 +65,7 @@ class _PatchBinding(StrictModule):
     bindings: tuple[ParameterBinding, ...] = eqx.field(static=True)
     tree_definition: Any = eqx.field(static=True)
 
-    def __init__(self, bindings, tree_definition):
+    def __init__(self, bindings, tree_definition) -> None:
         self.bindings = tuple(bindings)
         self.tree_definition = tree_definition
 
@@ -85,7 +85,7 @@ class FixedTopologyBRepRealization(StrictModule):
     atlas: BoundaryAtlas
     seam_residual: Array
 
-    def __init__(self, *, patches, vertices, faces, atlas, seam_residual):
+    def __init__(self, *, patches, vertices, faces, atlas, seam_residual) -> None:
         self.patches = tuple(patches)
         self.vertices = jnp.asarray(vertices, dtype=jnp.float64)
         self.faces = jnp.asarray(faces, dtype=jnp.int32)
@@ -194,7 +194,7 @@ class FixedTopologyBRepSource(GeometrySource):
             "control_points",
             "weights",
         ),
-    ):
+    ) -> None:
         if not isinstance(model, BRepModel):
             raise TypeError("model must be a BRepModel.")
         _require_watertight_query_mesh(model)
@@ -257,7 +257,7 @@ class _FixedTopologyBRepKernel(GeometryKernel):
     patch_bindings: tuple[_PatchBinding, ...] = eqx.field(static=True)
     corner_weights: Array
 
-    def __init__(self, model, patch_bindings, corner_weights):
+    def __init__(self, model, patch_bindings, corner_weights) -> None:
         self.model = model
         self.patch_bindings = tuple(patch_bindings)
         self.corner_weights = jnp.asarray(corner_weights, dtype=jnp.float64)

@@ -119,7 +119,7 @@ class OneClassSVMModel(AbstractFittedModel):
         kernel: AbstractPositiveDefiniteKernel,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a native AbstractPositiveDefiniteKernel.")
         train = jnp.asarray(training_features)
@@ -191,7 +191,7 @@ class OneClassSVMRecipe(AbstractRecipe):
         iterations: int = 250,
         learning_rate: float = 0.1,
         tolerance: float = 1e-5,
-    ):
+    ) -> None:
         kernel_ = SquaredExponentialKernel() if kernel is None else kernel
         if not isinstance(kernel_, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a native AbstractPositiveDefiniteKernel.")

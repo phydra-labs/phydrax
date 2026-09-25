@@ -53,7 +53,7 @@ class MechanicsCaseReduction(StrictModule, NonTrainableState):
         /,
         *,
         alpha: float = 0.95,
-    ):
+    ) -> None:
         if kind not in ("weighted_mean", "mean", "cvar", "max"):
             raise ValueError(
                 "Mechanics case reduction must be 'weighted_mean', 'mean', 'cvar', or 'max'."

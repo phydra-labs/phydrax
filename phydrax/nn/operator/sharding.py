@@ -41,7 +41,7 @@ class OperatorShardingPolicy(StrictModule):
         case_axis: int = 0,
         execution_group_id: str | None = None,
         coordinator_process: int = 0,
-    ):
+    ) -> None:
         axis = str(mesh_axis)
         if mesh is None:
             mesh = Mesh(np.asarray(jax.devices()), (axis,))

@@ -173,7 +173,7 @@ class MonogenicPolynomialBasis(AbstractTrefftzBasis):
         *,
         normalization: SimilarityNormalization | None = None,
         resources: TrefftzResourceBudget | None = None,
-    ):
+    ) -> None:
         if not isinstance(algebra, CliffordAlgebraSpec):
             raise TypeError("algebra must be a CliffordAlgebraSpec.")
         if not algebra.nondegenerate:
@@ -362,7 +362,7 @@ class LinearMonogenicField(_AbstractTrialSpaceField, StructuredDerivativeProvide
         channels: int = 1,
         initial_scale: float = 0.0,
         key: Array = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(basis, MonogenicPolynomialBasis):
             raise TypeError("basis must be MonogenicPolynomialBasis.")
         channels_ = int(channels)

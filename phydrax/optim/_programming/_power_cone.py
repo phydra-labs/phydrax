@@ -440,7 +440,7 @@ class PowerCone(AbstractConvexCone):
 
     exponent: float = eqx.field(static=True)
 
-    def __init__(self, exponent: float, /):
+    def __init__(self, exponent: float, /) -> None:
         if isinstance(exponent, bool) or not isinstance(exponent, Real):
             raise TypeError("PowerCone exponent must be a real scalar.")
         value = float(exponent)

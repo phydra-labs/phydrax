@@ -42,7 +42,7 @@ class AstrodynamicsDataProvenance(StrictModule, NonTrainableState):
         epoch_id: str,
         scale_id: str,
         differentiability: AstrodynamicsDataDifferentiability,
-    ):
+    ) -> None:
         values = tuple(
             str(value).strip()
             for value in (

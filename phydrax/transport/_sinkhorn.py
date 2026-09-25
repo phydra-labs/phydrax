@@ -44,7 +44,7 @@ class Sinkhorn(AbstractBalancedTransportSolver):
         block_size: int | None = None,
         early_stop: bool = False,
         store_history: bool = False,
-    ):
+    ) -> None:
         maximum = int(max_iterations)
         minimum = int(min_iterations)
         interval = int(check_every)

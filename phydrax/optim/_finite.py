@@ -87,7 +87,7 @@ class FiniteAxis(StrictModule):
     payload_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     dtypes: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, values: PyTree[Any], /):
+    def __init__(self, values: PyTree[Any], /) -> None:
         path_leaves, tree_definition = jax.tree_util.tree_flatten_with_path(values)
         if not path_leaves:
             raise ValueError("FiniteAxis requires at least one array leaf.")
@@ -156,7 +156,7 @@ class FiniteProductSpace(StrictModule):
     point_tree_definition: Any = eqx.field(static=True)
     space_id: str = eqx.field(static=True)
 
-    def __init__(self, axes: PyTree[FiniteAxis], /):
+    def __init__(self, axes: PyTree[FiniteAxis], /) -> None:
         path_axes, axis_tree_definition = jax.tree_util.tree_flatten_with_path(
             axes,
             is_leaf=_is_finite_axis,
@@ -306,7 +306,7 @@ class FiniteExhaustiveSearch(StrictModule):
 
     batch_size: int | None = eqx.field(static=True)
 
-    def __init__(self, batch_size: int | None = None):
+    def __init__(self, batch_size: int | None = None) -> None:
         if batch_size is None:
             self.batch_size = None
             return
@@ -347,7 +347,7 @@ class FiniteTopK(StrictModule):
 
     k: int = eqx.field(static=True)
 
-    def __init__(self, k: int, /):
+    def __init__(self, k: int, /) -> None:
         if isinstance(k, bool) or not isinstance(k, Integral):
             raise TypeError("k must be a positive integer.")
         resolved = int(k)
@@ -362,7 +362,7 @@ class FinitePareto(StrictModule):
     objective_count: int = eqx.field(static=True)
     capacity: int = eqx.field(static=True)
 
-    def __init__(self, objective_count: int, capacity: int, /):
+    def __init__(self, objective_count: int, capacity: int, /) -> None:
         if any(
             isinstance(value, bool) or not isinstance(value, Integral)
             for value in (objective_count, capacity)
@@ -392,7 +392,7 @@ class FiniteLandscapePolicy(StrictModule):
         retain: bool = False,
         maximum_entries: int = 1_000_000,
         maximum_bytes: int = 64 * 1024 * 1024,
-    ):
+    ) -> None:
         if not isinstance(retain, bool):
             raise TypeError("retain must be a bool.")
         entries = int(maximum_entries)
@@ -421,7 +421,7 @@ class FiniteSearchIterationMetrics(StrictModule):
         total_candidates,
         complete,
         /,
-    ):
+    ) -> None:
         self.attempted_evaluations = jnp.asarray(attempted_evaluations, dtype=jnp.int64)
         self.invalid_evaluations = jnp.asarray(invalid_evaluations, dtype=jnp.int64)
         self.retained_candidates = jnp.asarray(retained_candidates, dtype=jnp.int32)
@@ -491,7 +491,7 @@ class FiniteLocalRefinement(StrictModule):
         /,
         *,
         refinement_id: str = "finite-local-refinement",
-    ):
+    ) -> None:
         if not all(callable(value) for value in (encode, decode, solve)):
             raise TypeError("encode, decode, and solve must be callable.")
         identifier = str(refinement_id)
@@ -661,7 +661,7 @@ class FiniteAdaptiveSearch(StrictModule):
         /,
         *,
         policy: BranchAndBoundPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(bound, FiniteCertifiedLowerBound):
             raise TypeError("bound must be a FiniteCertifiedLowerBound.")
         identifier = str(bound.certificate_id)
@@ -685,7 +685,7 @@ class _FiniteAdaptiveProblem(AbstractBranchAndBoundProblem):
         space: FiniteProductSpace,
         bound: FiniteCertifiedLowerBound,
         /,
-    ):
+    ) -> None:
         self.evaluator = evaluator
         self.space = space
         self.bound = bound

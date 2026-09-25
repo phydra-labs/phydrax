@@ -97,7 +97,7 @@ class CircuitEcmImplicitLaw(AbstractImplicitCircuitLaw):
 
     branch_count: int = eqx.field(static=True)
 
-    def __init__(self, branch_count: int, /):
+    def __init__(self, branch_count: int, /) -> None:
         topology = ThermalEquivalentCircuitPlan(branch_count)
         self.branch_count = topology.branch_count
         self.terminal_count = 2
@@ -168,7 +168,7 @@ class CircuitConnectedEcmPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, branch_count: int, /, *, boundary: AbstractMNAComponent | None = None
-    ):
+    ) -> None:
         topology = ThermalEquivalentCircuitPlan(branch_count)
         prescribed = boundary is None
         if prescribed:
@@ -224,7 +224,7 @@ class CircuitConnectedEcmInitialCondition(StrictModule):
         /,
         *,
         relaxed: bool = False,
-    ):
+    ) -> None:
         physical = ThermalEquivalentCircuitInitialCondition(
             charge_c, temperature_k, polarization_voltages_v, relaxed=relaxed
         )
@@ -331,7 +331,7 @@ class PreparedCircuitConnectedEcm(StrictModule, NonTrainableState):
     cell_stop: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: CircuitConnectedEcmPlan, /):
+    def __init__(self, plan: CircuitConnectedEcmPlan, /) -> None:
         if not isinstance(plan, CircuitConnectedEcmPlan):
             raise TypeError("plan must be CircuitConnectedEcmPlan.")
         cell = CircuitElement(
@@ -611,7 +611,7 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
     observable_names: tuple[str, ...] = eqx.field(static=True)
     observable_units: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, plan: CircuitConnectedEcmPlan, /):
+    def __init__(self, plan: CircuitConnectedEcmPlan, /) -> None:
         if not isinstance(plan, CircuitConnectedEcmPlan):
             raise TypeError("plan must be CircuitConnectedEcmPlan.")
         self.plan = plan
@@ -622,7 +622,7 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
             _OBSERVABLE_UNITS,
         )
 
-    def _check(self, prepared, parameters=None, /):
+    def _check(self, prepared, parameters=None, /) -> None:
         if (
             not isinstance(prepared, PreparedCircuitConnectedEcm)
             or prepared.plan.plan_id != self.plan.plan_id

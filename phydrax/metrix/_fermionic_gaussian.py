@@ -26,7 +26,7 @@ class FermionicGaussianState(StrictModule):
         /,
         *,
         tolerance: float = 1e-9,
-    ):
+    ) -> None:
         raw = jnp.asarray(covariance)
         if jnp.iscomplexobj(raw):
             raise TypeError("Majorana covariance must be real-valued.")

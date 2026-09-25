@@ -91,7 +91,7 @@ class FiniteElementPTransfer(StrictModule, NonTrainableState):
         coarse_element_id: str,
         fine_element_id: str,
         /,
-    ):
+    ) -> None:
         prolongation = jnp.asarray(primal_prolongation)
         adjoint = jnp.asarray(pairing_adjoint)
         projection = None if mass_projection is None else jnp.asarray(mass_projection)

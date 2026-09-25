@@ -81,7 +81,7 @@ class NoiseCouplingWitness(StrictModule):
         covariance_residual: float,
         increment_residual: float,
         tolerance: float,
-    ):
+    ) -> None:
         identifier = _identifier(basis_map_id, "basis_map_id", required=True)
         assert identifier is not None
         covariance = float(covariance_residual)
@@ -149,7 +149,7 @@ class StochasticLevelSpec(StrictModule):
         noise_witness: NoiseCouplingWitness | None = None,
         discretization_bundle: DiscretizationBundle | None = None,
         metadata: Mapping[str, str] | None = None,
-    ):
+    ) -> None:
         identifier = _identifier(level_id, "level_id", required=True)
         assert identifier is not None
         index = int(refinement_index)
@@ -331,7 +331,7 @@ class StochasticCouplingPlan(StrictModule):
         *,
         hierarchy_id: str,
         allow_multi_axis: bool = False,
-    ):
+    ) -> None:
         values = tuple(levels)
         if not values or any(
             not isinstance(level, StochasticLevelSpec) for level in values

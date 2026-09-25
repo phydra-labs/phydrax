@@ -68,7 +68,7 @@ class BayesianOptimizationDomain(StrictModule):
         lower_bounds: PyTree[Any] | None = None,
         upper_bounds: PyTree[Any] | None = None,
         categorical: FiniteProductSpace | None = None,
-    ):
+    ) -> None:
         if continuous_template is None:
             if lower_bounds is not None or upper_bounds is not None:
                 raise ValueError("Continuous bounds require a continuous_template.")
@@ -203,7 +203,7 @@ class BayesianOptimizationProblem(StrictModule):
         *,
         constraints: Sequence[Callable[[BayesianOptimizationPoint], ArrayLike]] = (),
         pending: Sequence[BayesianOptimizationPoint] = (),
-    ):
+    ) -> None:
         if not callable(objective):
             raise TypeError("objective must be callable.")
         if not isinstance(domain, BayesianOptimizationDomain):
@@ -254,7 +254,7 @@ class GaussianProcessBayesianOptimization(StrictModule):
         candidate_tuple_count: int = 256,
         fantasy_count: int = 128,
         minimum_separation: float = 1e-6,
-    ):
+    ) -> None:
         maximum = _positive_integer(max_evaluations, name="max_evaluations")
         initial = _positive_integer(initial_evaluations, name="initial_evaluations")
         batch = _positive_integer(batch_size, name="batch_size")

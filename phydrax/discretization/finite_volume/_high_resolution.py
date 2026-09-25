@@ -161,7 +161,7 @@ class HighResolutionReconstructionPlan(StrictModule, NonTrainableState):
         epsilon: float = 1e-12,
         power: int = 2,
         cutoff: float = 1e-6,
-    ):
+    ) -> None:
         epsilon_ = float(epsilon)
         cutoff_ = float(cutoff)
         power_ = int(power)
@@ -259,7 +259,7 @@ class CharacteristicSystem(StrictModule):
         /,
         *,
         system_id: str,
-    ):
+    ) -> None:
         if not callable(eigensystem):
             raise TypeError("Characteristic eigensystem must be callable.")
         identifier = str(system_id)
@@ -281,7 +281,7 @@ class CharacteristicReconstructionPlan(StrictModule):
         reconstruction: HighResolutionReconstructionPlan,
         system: CharacteristicSystem,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             reconstruction, HighResolutionReconstructionPlan
         ) or not isinstance(system, CharacteristicSystem):
@@ -373,7 +373,7 @@ class NonuniformWENOReconstructionPlan(StrictModule, NonTrainableState):
         epsilon: float = 1e-12,
         power: int = 2,
         cutoff: float = 1e-6,
-    ):
+    ) -> None:
         edges = np.asarray(cell_edges, dtype=np.float64).reshape((-1,))
         if (
             edges.size < 7

@@ -250,7 +250,7 @@ class FpMLImportResult(StrictModule, NonTrainableState):
         contract_record: Mapping[str, Any] | None,
         unsupported_terms: tuple[str, ...],
         source_id: str,
-    ):
+    ) -> None:
         if not isinstance(accepted, bool):
             raise TypeError("accepted must be boolean.")
         if (

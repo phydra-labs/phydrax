@@ -36,7 +36,7 @@ class EinfeldtHLLFluxPlan(
 ):
     """Monotone HLL fallback with Roe-enlarged Einfeldt signal bounds."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.flux_id = canonical_fingerprint(
             {"kind": "einfeldt-hll-flux", "normal_ale_contract": _NORMAL_ALE_CONTRACT}
@@ -254,7 +254,7 @@ class FluxPositivityPlan(StrictModule):
         /,
         *,
         fallback_flux: AbstractNumericalFluxPlan | None = None,
-    ):
+    ) -> None:
         iterations_ = int(iterations)
         if iterations_ <= 0:
             raise ValueError("Positivity blending iterations must be positive.")

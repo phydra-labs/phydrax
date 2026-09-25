@@ -236,7 +236,7 @@ class RectangularFiniteAperture(StrictModule, NonTrainableState):
     widths: Array
     aperture_id: str = eqx.field(static=True)
 
-    def __init__(self, widths: ArrayLike, /, *, aperture_id: str | None = None):
+    def __init__(self, widths: ArrayLike, /, *, aperture_id: str | None = None) -> None:
         value = np.asarray(widths, dtype=np.float64)
         if value.shape != (2,) or np.any(~np.isfinite(value)) or np.any(value <= 0.0):
             raise ValueError("Rectangular aperture widths must be positive shape (2,).")
@@ -265,7 +265,7 @@ class SampledFiniteAperture(StrictModule, NonTrainableState):
         /,
         *,
         aperture_id: str | None = None,
-    ):
+    ) -> None:
         points_ = np.asarray(points, dtype=np.float64)
         weights_ = np.asarray(weights, dtype=np.float64)
         if (
@@ -313,7 +313,7 @@ class FiniteApertureFarFieldPlan(StrictModule, NonTrainableState):
         query_capacity: int,
         normalization: FiniteApertureNormalization = "aperture-area",
         /,
-    ):
+    ) -> None:
         values = np.asarray(directions, dtype=np.float64)
         capacity = int(query_capacity)
         if (

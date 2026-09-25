@@ -64,7 +64,7 @@ class ImplicitFeatureLibrary(AbstractImplicitFeatureLibrary):
         /,
         *,
         state_layout: StateLayout,
-    ):
+    ) -> None:
         if not isinstance(base, AbstractFeatureLibrary):
             raise TypeError("base must be an AbstractFeatureLibrary.")
         if not isinstance(state_layout, StateLayout):
@@ -144,7 +144,7 @@ class PolynomialImplicitFeatureLibrary(AbstractImplicitFeatureLibrary):
         include_bias: bool = True,
         interaction_only: bool = False,
         max_features: int = 4096,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         augmented_names = state_layout.component_names + tuple(
@@ -191,7 +191,7 @@ class ImplicitSINDyProblem(StrictModule):
         *,
         data: TrajectoryData,
         library: AbstractImplicitFeatureLibrary,
-    ):
+    ) -> None:
         if not isinstance(data, TrajectoryData):
             raise TypeError("data must be TrajectoryData.")
         if not isinstance(library, AbstractImplicitFeatureLibrary):

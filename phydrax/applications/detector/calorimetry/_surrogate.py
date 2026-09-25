@@ -44,7 +44,7 @@ class ConditionalCalorimeterVelocity(StrictModule):
         width: int,
         depth: int,
         key,
-    ):
+    ) -> None:
         if not isinstance(geometry, CalorimeterGeometry):
             raise TypeError("geometry must be CalorimeterGeometry.")
         names = tuple(str(value).strip() for value in condition_names)

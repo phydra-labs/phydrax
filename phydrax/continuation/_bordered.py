@@ -98,7 +98,7 @@ class BorderedLinearSystem(StrictModule):
         /,
         *,
         system_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
@@ -174,7 +174,7 @@ class BorderedSolvePlan(StrictModule):
         source_space_id: str,
         target_space_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(principal_plan, LinearSolvePlan):
             raise TypeError("principal_plan must be a LinearSolvePlan.")
         tolerance = float(schur_tolerance)
@@ -277,7 +277,7 @@ class PreparedBorderedSolve(StrictModule):
         /,
         *,
         prepared_id: str,
-    ):
+    ) -> None:
         if not isinstance(system, BorderedLinearSystem):
             raise TypeError("system must be a BorderedLinearSystem.")
         if not isinstance(plan, BorderedSolvePlan):
@@ -436,7 +436,7 @@ class BorderedSolution(StrictModule):
     primal: PyTree[Array]
     scalar: Array
 
-    def __init__(self, primal: PyTree[Any], scalar: Any, /):
+    def __init__(self, primal: PyTree[Any], scalar: Any, /) -> None:
         self.primal = primal
         self.scalar = jnp.asarray(scalar)
 
@@ -462,7 +462,7 @@ class BorderedSolveDiagnostics(StrictModule):
         residual_norm: Any,
         principal_solve_count: Any,
         cached_column_solve_reused: Any,
-    ):
+    ) -> None:
         self.column_solve_status = jnp.asarray(column_solve_status, dtype=jnp.int32)
         self.principal_solve_status = jnp.asarray(
             principal_solve_status,
@@ -500,7 +500,7 @@ class BorderedSolveProvenance(StrictModule):
         prepared_id: str,
         principal_plan_id: str,
         operator_id: str,
-    ):
+    ) -> None:
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
         if version.shape != ():
             raise ValueError("numeric_version must be scalar.")
@@ -546,7 +546,7 @@ class BorderedSolveResult(StrictModule):
         diagnostics: BorderedSolveDiagnostics,
         provenance: BorderedSolveProvenance,
         /,
-    ):
+    ) -> None:
         if not isinstance(value, BorderedSolution):
             raise TypeError("value must be a BorderedSolution.")
         if not isinstance(diagnostics, BorderedSolveDiagnostics):

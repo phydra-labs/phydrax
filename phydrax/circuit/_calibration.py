@@ -52,7 +52,7 @@ class ScatteringDataset(StrictModule):
         output_ports: Sequence[str] | None = None,
         whitening: ArrayLike | None = None,
         dataset_id: str = "scattering-dataset",
-    ):
+    ) -> None:
         omega = jnp.asarray(angular_frequency)
         values = jnp.asarray(observed).astype(jnp.result_type(observed, jnp.complex128))
         ports = tuple(str(value) for value in port_ids)
@@ -202,7 +202,7 @@ class CalibrationResidualPlan(StrictModule):
         /,
         *,
         problem_id: str = "scattering-calibration",
-    ):
+    ) -> None:
         values = tuple(datasets)
         if not callable(parameterize):
             raise TypeError("parameterize must be callable.")

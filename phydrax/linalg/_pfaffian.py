@@ -60,7 +60,7 @@ class PfaffianPolicy(StrictModule):
         max_batch_size: int = 65536,
         max_storage_bytes: int = 512 * 1024 * 1024,
         max_workspace_bytes: int = 512 * 1024 * 1024,
-    ):
+    ) -> None:
         if skew_mode not in ("require", "project"):
             raise ValueError("skew_mode must be 'require' or 'project'.")
         antisymmetry = float(antisymmetry_tolerance)
@@ -131,7 +131,7 @@ class PfaffianPlan(StrictModule):
         dtype: Any,
         storage_bytes: int,
         workspace_bytes: int,
-    ):
+    ) -> None:
         dtype_ = np.dtype(dtype)
         batch = tuple(batch_shape)
         dimension_ = int(dimension)
@@ -193,7 +193,7 @@ class PreparedPfaffian(StrictModule):
         antisymmetry_residual: Array,
         antisymmetric: Array,
         numeric_version: Any,
-    ):
+    ) -> None:
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
         if version.shape != ():
             raise ValueError("numeric_version must be scalar.")
@@ -262,7 +262,7 @@ class PfaffianResult(StrictModule):
         numeric_version: Array,
         plan_id: str,
         prepared_id: str,
-    ):
+    ) -> None:
         self.value = jnp.asarray(value)
         self.value_finite = jnp.asarray(value_finite, dtype=jnp.bool_)
         self.sign = jnp.asarray(sign)

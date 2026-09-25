@@ -77,7 +77,7 @@ class ReverseDiffusionRealization(StrictModule):
         score_id: str,
         terminal_reference_id: str,
         realization_id: str,
-    ):
+    ) -> None:
         if not isinstance(wiener, WienerRealization):
             raise TypeError("wiener must be a WienerRealization.")
         samples = tuple(wiener.sample_shape)
@@ -205,7 +205,7 @@ class ReverseDiffusion(StrictModule):
         max_steps: int = 4096,
         precision: Any = None,
         transport_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(process, AbstractGaussianDiffusion):
             raise TypeError("process must implement AbstractGaussianDiffusion.")
         if not isinstance(terminal_reference, DiffusionTerminalReference):

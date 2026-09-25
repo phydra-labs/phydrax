@@ -49,7 +49,7 @@ class BladeElementRotorPlan(StrictModule, NonTrainableState):
         /,
         *,
         density: float = 1.0,
-    ):
+    ) -> None:
         radius_, chord_, twist_ = (
             jnp.asarray(radius, dtype=jnp.float64),
             jnp.asarray(chord, dtype=jnp.float64),

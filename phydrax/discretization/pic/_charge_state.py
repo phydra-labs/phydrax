@@ -60,7 +60,7 @@ class PICChargeModelPlan(StrictModule, NonTrainableState):
         minimum_charge_number: int,
         maximum_charge_number: int,
         initial_charge_number: int,
-    ):
+    ) -> None:
         base = float(base_specific_charge)
         minimum = int(minimum_charge_number)
         maximum = int(maximum_charge_number)

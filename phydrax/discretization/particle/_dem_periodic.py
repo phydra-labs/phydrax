@@ -55,7 +55,7 @@ class PeriodicNeighborhoodEnvelope(StrictModule, NonTrainableState):
         minimum_singular_value: float,
         minimum_lattice_height: float,
         maximum_deformation_norm: float,
-    ):
+    ) -> None:
         vectors = np.asarray(reference_vectors, dtype=np.float64)
         if (
             vectors.ndim != 2
@@ -161,7 +161,7 @@ class DEMBulkStressPlan(StrictModule, NonTrainableState):
         include_barrier_virial: bool = False,
         include_body_force_moment: bool = False,
         frame: DEMBulkStressFrame = "cell_comoving",
-    ):
+    ) -> None:
         origin_ = np.asarray(origin, dtype=np.float64)
         if origin_.ndim != 1 or origin_.size not in (2, 3):
             raise ValueError("DEMBulkStressPlan origin must be a 2-D or 3-D vector.")
@@ -340,7 +340,7 @@ class DEMPeriodicCellControlPlan(StrictModule, NonTrainableState):
         maximum_strain_increment: float = 0.02,
         maximum_condition_number: float = 1.5,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         rate = np.asarray(prescribed_strain_rate, dtype=np.float64)
         if (
             rate.ndim != 2

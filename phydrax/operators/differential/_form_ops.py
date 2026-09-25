@@ -85,7 +85,7 @@ class DomainDifferentialForm(StrictModule):
         chart: CoordinateChart,
         degree: int,
         var: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(coefficients, DomainFunction):
             raise TypeError("coefficients must be a DomainFunction.")
         if not isinstance(chart, CoordinateChart):
@@ -127,7 +127,7 @@ class DomainMaxwellResiduals(StrictModule):
         homogeneous: DomainDifferentialForm,
         inhomogeneous: DomainDifferentialForm,
         /,
-    ):
+    ) -> None:
         self.field_strength = field_strength
         self.homogeneous = homogeneous
         self.inhomogeneous = inhomogeneous
@@ -150,7 +150,7 @@ class _DomainWedgeCallable(StrictModule):
         right: DomainDifferentialForm,
         deps: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         output = exterior_indices(left.chart.dimension, left.degree + right.degree)
         lookup = {index: position for position, index in enumerate(output)}
         left_terms: list[int] = []
@@ -219,7 +219,7 @@ class _DomainExteriorCallable(StrictModule):
         derivative: DomainFunction,
         deps: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         output = exterior_indices(form.chart.dimension, form.degree + 1)
         lookup = {index: position for position, index in enumerate(form.indices)}
         source_terms: list[int] = []
@@ -288,7 +288,7 @@ class _DomainInteriorCallable(StrictModule):
         form: DomainDifferentialForm,
         deps: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         output = exterior_indices(form.chart.dimension, form.degree - 1)
         lookup = {index: position for position, index in enumerate(form.indices)}
         vector_terms: list[int] = []
@@ -364,7 +364,7 @@ class _DomainHodgeCallable(StrictModule):
         deps: tuple[str, ...],
         orientation: int,
         /,
-    ):
+    ) -> None:
         output = exterior_indices(
             form.chart.dimension, form.chart.dimension - form.degree
         )
@@ -431,7 +431,7 @@ class _ScaleCallable(StrictModule):
     function: DomainFunction
     scale: float
 
-    def __init__(self, function: DomainFunction, scale: float, /):
+    def __init__(self, function: DomainFunction, scale: float, /) -> None:
         self.function = function
         self.scale = float(scale)
 

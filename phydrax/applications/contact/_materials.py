@@ -65,7 +65,7 @@ class ContactMaterialPairTable(StrictModule, NonTrainableState):
         mechanical_available: ArrayLike | None = None,
         transport_available: ArrayLike | None = None,
         symmetric: bool = True,
-    ):
+    ) -> None:
         arrays = tuple(
             np.asarray(value, dtype=np.float64)
             for value in (

@@ -46,7 +46,7 @@ class PEPS(StrictModule):
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
         numeric_version: ArrayLike = 0,
-    ):
+    ) -> None:
         arrays = tuple(jnp.asarray(tensor) for tensor in tensors)
         rows_ = int(rows)
         columns_ = int(columns)
@@ -124,7 +124,7 @@ class PEPO(StrictModule):
         /,
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         arrays = tuple(jnp.asarray(tensor) for tensor in tensors)
         rows_ = int(rows)
         columns_ = int(columns)

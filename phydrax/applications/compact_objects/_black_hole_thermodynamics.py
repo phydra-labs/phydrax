@@ -49,7 +49,7 @@ class KerrInput(StrictModule, NonTrainableState):
     angular_momentum: Array
     input_id: str = eqx.field(static=True)
 
-    def __init__(self, mass: ArrayLike, angular_momentum: ArrayLike, /):
+    def __init__(self, mass: ArrayLike, angular_momentum: ArrayLike, /) -> None:
         dtype = jnp.result_type(mass, angular_momentum, 0.0)
         mass_ = jnp.asarray(mass, dtype=dtype)
         angular_momentum_ = jnp.asarray(angular_momentum, dtype=dtype)

@@ -70,7 +70,7 @@ class VehicleConfiguration(StrictModule, NonTrainableState):
         wheel_inertias,
         context,
         /,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         mass = np.asarray(dry_mass, dtype=np.float64)
@@ -162,7 +162,7 @@ class CoupledVehiclePlan(StrictModule, NonTrainableState):
     times: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, configuration, effectors, times, /, *, effector_ids):
+    def __init__(self, configuration, effectors, times, /, *, effector_ids) -> None:
         if not isinstance(configuration, VehicleConfiguration):
             raise TypeError("configuration must be a VehicleConfiguration.")
         items = tuple(effectors)
@@ -356,7 +356,7 @@ class FswSchedule(StrictModule, NonTrainableState):
     commands: Array
     modes: Array
 
-    def __init__(self, breakpoints, commands, modes, /):
+    def __init__(self, breakpoints, commands, modes, /) -> None:
         points = np.asarray(breakpoints, dtype=np.float64)
         command_values = np.asarray(commands, dtype=np.float64)
         mode_values = np.asarray(modes, dtype=np.int32)

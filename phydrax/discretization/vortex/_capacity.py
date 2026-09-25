@@ -40,7 +40,7 @@ class VortexCapacityGrowthPlan(StrictModule, NonTrainableState):
     maximum_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, /, *, growth_factor: float = 2.0, maximum_capacity: int):
+    def __init__(self, /, *, growth_factor: float = 2.0, maximum_capacity: int) -> None:
         if (
             not math.isfinite(float(growth_factor))
             or float(growth_factor) <= 1.0

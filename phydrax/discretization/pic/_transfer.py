@@ -47,7 +47,7 @@ class PICParticleCochainTransferPlan(StrictModule, NonTrainableState):
         execution: SplatExecutionPolicy | None = None,
         precision: ParticlePrecisionPolicy | None = None,
         budget: ParticleGridSplatBudget | None = None,
-    ):
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be StructuredCochainBridge.")
         assignment_ = MultilinearSplatAssignment() if assignment is None else assignment
@@ -90,7 +90,7 @@ class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: PICParticleCochainTransferPlan, species: PreparedChargedParticles, /
-    ):
+    ) -> None:
         if not isinstance(plan, PICParticleCochainTransferPlan):
             raise TypeError("plan must be PICParticleCochainTransferPlan.")
         if not isinstance(species, PreparedChargedParticles):

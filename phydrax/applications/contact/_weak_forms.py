@@ -50,7 +50,7 @@ class ContactMortarSpace(StrictModule, NonTrainableState):
         /,
         *,
         mortar_id: str,
-    ):
+    ) -> None:
         plus = np.asarray(plus_interpolation)
         minus = np.asarray(minus_interpolation)
         weights = np.asarray(quadrature_weights)
@@ -213,7 +213,7 @@ class NitscheContactPolicy(StrictModule, NonTrainableState):
         stabilization: ArrayLike,
         minimum_stabilization: ArrayLike,
         /,
-    ):
+    ) -> None:
         stabilization_ = jnp.asarray(stabilization)
         minimum = jnp.asarray(minimum_stabilization)
         if (

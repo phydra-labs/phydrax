@@ -24,7 +24,7 @@ class NumericalControlEvidence:
     relative_tolerance: float
     independent_reference: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         values = (
             self.observed,
             self.reference,
@@ -79,7 +79,7 @@ class RefinementCampaignEvidence:
     minimum_order: float
     reference: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identifier(self.campaign, "refinement campaign")
         _identifier(self.reference, "refinement reference")
         if not self.family_ids or len(set(self.family_ids)) != len(self.family_ids):
@@ -147,7 +147,7 @@ class HardwareProviderEvidence:
     precision: str
     executed: bool
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for value, label in (
             (self.provider_id, "provider ID"),
             (self.platform, "provider platform"),
@@ -197,7 +197,7 @@ class ApplicationValidationEvidence:
     metrics: tuple[tuple[str, float, float, float], ...]
     independent_source: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identifier(self.application, "validated application")
         _identifier(self.reference_case, "validation reference case")
         _identifier(self.independent_source, "validation source")

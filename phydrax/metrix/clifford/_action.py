@@ -34,7 +34,7 @@ class CliffordOutermorphismPlan(StrictModule, NonTrainableState):
         action: MetricIsometryAction,
         layout: CliffordBladeLayout,
         /,
-    ):
+    ) -> None:
         if not isinstance(action, MetricIsometryAction):
             raise TypeError("action must be a MetricIsometryAction.")
         if not isinstance(layout, CliffordBladeLayout):
@@ -108,7 +108,7 @@ class CliffordActionAuditReport(StrictModule, NonTrainableState):
         tolerance: ArrayLike,
         action_id: str,
         layout_id: str,
-    ):
+    ) -> None:
         finite_ = jnp.asarray(finite, dtype=jnp.bool_)
         metric = jnp.asarray(metric_defect)
         automorphism = jnp.asarray(automorphism_defect)

@@ -35,7 +35,7 @@ class RingPolymerPlan(StrictModule, NonTrainableState):
         /,
         *,
         centroid_friction: float = 1.0,
-    ):
+    ) -> None:
         beads = int(bead_count)
         thermal = float(temperature)
         step = float(step_size)
@@ -105,7 +105,7 @@ class PreparedRingPolymerDynamics(StrictModule):
         potential: PreparedAtomisticPotentialProgram,
         neighborhood: AbstractPreparedParticleNeighborhood,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, RingPolymerPlan):
             raise TypeError("plan must be RingPolymerPlan.")
         if not isinstance(potential, PreparedAtomisticPotentialProgram):

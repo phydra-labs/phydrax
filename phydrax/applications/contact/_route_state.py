@@ -35,7 +35,7 @@ class ContactRouteStateDefaults(StrictModule, NonTrainableState):
         mode: ContactRouteMode = ContactRouteMode.OPEN,
         rate_state: float = 1.0,
         film_thickness: float = 0.0,
-    ):
+    ) -> None:
         rate = float(rate_state)
         film = float(film_thickness)
         if rate <= 0.0 or film < 0.0:

@@ -135,7 +135,7 @@ class DCOPFResult(StrictModule):
     approximation: str = eqx.field(static=True, default="lossless-unit-voltage-dc")
 
 
-def _require_dispatchable_islands(compiled):
+def _require_dispatchable_islands(compiled) -> None:
     for island in compiled.islands:
         if not any(compiled.generators_at_bus[i] for i in island):
             raise ValueError(

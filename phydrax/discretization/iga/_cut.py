@@ -111,7 +111,7 @@ class UVTrimLoop(StrictModule, NonTrainableState):
     orientation: int = eqx.field(static=True)
     loop_id: str = eqx.field(static=True)
 
-    def __init__(self, vertices: ArrayLike, /):
+    def __init__(self, vertices: ArrayLike, /) -> None:
         vertices_ = _finite_array(vertices, (2,), "UV loop vertices")
         if vertices_.ndim != 2 or vertices_.shape[0] < 3:
             raise ValueError("A UV trim loop requires at least three rank-2 vertices.")
@@ -175,7 +175,7 @@ class UVTrimCertificate(StrictModule, NonTrainableState):
         loop_ids: tuple[str, ...],
         predicate_tolerance: float,
         /,
-    ):
+    ) -> None:
         area = float(parametric_area)
         length = float(boundary_length)
         tolerance = float(predicate_tolerance)
@@ -217,7 +217,7 @@ class UVTrimmedSurface(StrictModule, NonTrainableState):
         /,
         *,
         predicate_tolerance: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(outer, UVTrimLoop) or any(
             not isinstance(loop, UVTrimLoop) for loop in holes
         ):
@@ -334,7 +334,7 @@ class ConvexBRepCertificate(StrictModule, NonTrainableState):
         predicate_tolerance: float,
         topology_fingerprint: dict[str, object],
         /,
-    ):
+    ) -> None:
         volume = float(signed_volume)
         area = float(minimum_face_area)
         residual = float(maximum_halfspace_residual)
@@ -374,7 +374,7 @@ class ConvexTriangleBRepClassifier(AbstractImmersedBRepClassifier):
         /,
         *,
         predicate_tolerance: float | None = None,
-    ):
+    ) -> None:
         vertices_ = _finite_array(vertices, (3,), "BRep vertices")
         triangles_ = np.asarray(triangles, dtype=np.int64)
         if vertices_.ndim != 2 or vertices_.shape[0] < 4:
@@ -686,7 +686,7 @@ class CutQuadratureCertificate(StrictModule, NonTrainableState):
         tolerance_satisfied: bool,
         source_id: str,
         /,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -761,7 +761,7 @@ class CutQuadratureRule(StrictModule, NonTrainableState):
         boundary_loop_ids: np.ndarray,
         certificate: CutQuadratureCertificate,
         /,
-    ):
+    ) -> None:
         if volume_uv_points.shape != (volume_weights.size, 2):
             raise ValueError("Volume UV points and weights are incompatible.")
         if (
@@ -1055,7 +1055,7 @@ class CutStabilizationPlan(StrictModule, NonTrainableState):
         support_threshold: float,
         polynomial_degree: int,
         /,
-    ):
+    ) -> None:
         if (
             volume_fractions.ndim != 1
             or aggregate_root_cells.shape != volume_fractions.shape
@@ -1220,7 +1220,7 @@ class CutConditionEvidence(StrictModule, NonTrainableState):
         plan_id: str,
         matrix_fingerprint: dict[str, object],
         /,
-    ):
+    ) -> None:
         self.unstabilized_minimum_eigenvalue = float(unstabilized_minimum_eigenvalue)
         self.stabilized_minimum_eigenvalue = float(stabilized_minimum_eigenvalue)
         self.unstabilized_condition = float(unstabilized_condition)

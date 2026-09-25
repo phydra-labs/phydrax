@@ -86,7 +86,7 @@ class BasisSetReference(StrictModule, NonTrainableState):
         *,
         convention: str = "provider-native",
         artifact: ReferenceArtifactManifest | None = None,
-    ):
+    ) -> None:
         name_ = _identifier(name, "basis name")
         source = _identifier(source_id, "basis source_id")
         convention_ = _identifier(convention, "basis convention")
@@ -118,7 +118,9 @@ class ElectronicEnvironmentPlan(StrictModule, NonTrainableState):
     parameter_ids: tuple[str, ...] = eqx.field(static=True)
     environment_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: str = "vacuum", /, *, parameter_ids: Sequence[str] = ()):
+    def __init__(
+        self, kind: str = "vacuum", /, *, parameter_ids: Sequence[str] = ()
+    ) -> None:
         kind_ = _identifier(kind, "environment kind")
         parameters = _identifiers(parameter_ids, "environment parameter_id")
         self.kind = kind_
@@ -153,7 +155,7 @@ class ElectronicModelChemistryPlan(StrictModule, NonTrainableState):
         correction_ids: Sequence[str] = (),
         relativistic_id: str | None = None,
         model_artifact: ReferenceArtifactManifest | None = None,
-    ):
+    ) -> None:
         if not isinstance(method, AbstractElectronicMethodPlan):
             raise TypeError("method must implement AbstractElectronicMethodPlan.")
         if basis is not None and not isinstance(basis, BasisSetReference):

@@ -63,7 +63,7 @@ class QuantumIntervention(StrictModule):
         intervention_id: str,
         precision: TensorNetworkPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
         hermitian_ = (
             HermitianPrecisionPolicy()
@@ -160,7 +160,7 @@ class ProcessTensorPhysicality(StrictModule):
         *,
         status: str,
         precision_evidence: PrecisionEvidenceEnvelope,
-    ):
+    ) -> None:
         if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
             raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         cp_margins = jnp.asarray(local_cp_margins)
@@ -224,7 +224,7 @@ class ProcessTensorMPO(StrictModule):
         precision: TensorNetworkPrecisionPolicy | None = None,
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
         geometry_ = (
             GeometryPrecisionPolicy()

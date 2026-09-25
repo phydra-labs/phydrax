@@ -62,7 +62,7 @@ class PICOpenBoundaryPlan(StrictModule, NonTrainableState):
         /,
         *,
         kinds: tuple[PICBoundaryKind, ...],
-    ):
+    ) -> None:
         lo = np.asarray(lower, dtype=np.float64)
         hi = np.asarray(upper, dtype=np.float64)
         if lo.ndim != 1 or hi.shape != lo.shape or lo.size not in (1, 2, 3):

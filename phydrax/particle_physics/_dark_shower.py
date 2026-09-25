@@ -95,7 +95,7 @@ class DarkSplittingChannel(StrictModule, NonTrainableState):
         color_rule: DarkColorRule | str,
         kernel_coefficient: float,
         envelope_coefficient: float,
-    ):
+    ) -> None:
         daughters_raw = tuple(daughter_pdg_ids)
         if len(daughters_raw) != 2:
             raise ValueError("daughter_pdg_ids must contain exactly two species.")
@@ -189,7 +189,7 @@ class DarkShowerEpochPlan(StrictModule, NonTrainableState):
         proposal_capacity: int,
         production_evidence_ids: Sequence[str],
         provider_status: int = 1,
-    ):
+    ) -> None:
         if not isinstance(runtime_plan, DarkSectorEpochPlan):
             raise TypeError("runtime_plan must be DarkSectorEpochPlan.")
         if not isinstance(species, ParticleSpeciesTable):

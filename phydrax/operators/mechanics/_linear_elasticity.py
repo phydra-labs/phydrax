@@ -42,7 +42,7 @@ class LinearElasticityTensor(StrictModule):
     successful: Array
     dimension: int = eqx.field(static=True)
 
-    def __init__(self, stiffness: ArrayLike, /):
+    def __init__(self, stiffness: ArrayLike, /) -> None:
         value = jnp.asarray(stiffness)
         if not jnp.issubdtype(value.dtype, jnp.inexact):
             value = value.astype(jnp.float64)

@@ -36,7 +36,7 @@ class CellVertexGeometryElement(StrictModule, NonTrainableState):
     local_dof_count: int = eqx.field(static=True)
     element_id: str = eqx.field(static=True)
 
-    def __init__(self, cell_kind: str, local_dof_count: int, /):
+    def __init__(self, cell_kind: str, local_dof_count: int, /) -> None:
         kind = str(cell_kind)
         count = int(local_dof_count)
         if kind not in ("polygon", "polyhedron"):
@@ -72,7 +72,7 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
         geometry_dofs: Mapping[str, ArrayLike],
         coordinates: ArrayLike,
         /,
-    ):
+    ) -> None:
         items = tuple(sorted((str(name), element) for name, element in elements.items()))
         routes = {
             str(name): np.asarray(value, dtype=np.int32)

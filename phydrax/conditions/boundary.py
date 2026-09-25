@@ -72,7 +72,7 @@ class Dirichlet(AbstractResidualCondition):
         *,
         target: ConditionValue | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         self.fields = _fields(field)
         self.on = _validate_support(on)
         self.target = _condition_value(target, self.on, 0.0)
@@ -108,7 +108,7 @@ class Neumann(AbstractResidualCondition):
         target: ConditionValue | None = None,
         mode: Literal["reverse", "forward"] = "reverse",
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(on, DomainComponent):
             raise TypeError("Neumann conditions require one DomainComponent.")
         if mode not in ("reverse", "forward"):
@@ -161,7 +161,7 @@ class Robin(AbstractResidualCondition):
         var: str = "x",
         mode: Literal["reverse", "forward"] = "reverse",
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(on, DomainComponent):
             raise TypeError("Robin conditions require one DomainComponent.")
         if mode not in ("reverse", "forward"):
@@ -220,7 +220,7 @@ class Absorbing(AbstractResidualCondition):
         target: ConditionValue | None = None,
         mode: Literal["reverse", "forward"] = "reverse",
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(on, DomainComponent):
             raise TypeError("Absorbing conditions require one DomainComponent.")
         if time_var not in on.domain.labels:

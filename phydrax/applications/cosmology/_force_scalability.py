@@ -35,7 +35,7 @@ class MeshMatchedNearFieldGate(StrictModule, NonTrainableState):
         cutoff: float,
         maximum_pairs: int,
         maximum_relative_error: float,
-    ):
+    ) -> None:
         cutoff_ = float(cutoff)
         pairs = int(maximum_pairs)
         error = float(maximum_relative_error)
@@ -101,7 +101,7 @@ class CosmologySnapshotProduct(StrictModule, NonTrainableState):
         box_size: tuple[float, ...],
         artifact: ScientificArtifactEnvelope,
         /,
-    ):
+    ) -> None:
         ids = jax.lax.stop_gradient(jnp.asarray(particle_ids))
         position = jax.lax.stop_gradient(jnp.asarray(positions))
         momentum = jax.lax.stop_gradient(
@@ -192,7 +192,7 @@ class DistributedPMFeasibilityEvidence(StrictModule, NonTrainableState):
         dtype_bytes: int = 8,
         arrays_per_device: int = 8,
         byte_budget_per_device: int,
-    ):
+    ) -> None:
         mesh = tuple(mesh_shape)
         devices = tuple(device_mesh_shape)
         capacity = int(particle_capacity_per_device)

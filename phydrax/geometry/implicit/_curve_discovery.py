@@ -107,7 +107,7 @@ class ImplicitCurvePlan(StrictModule):
         *,
         policy: ImplicitSurfacePolicy,
         source_id: str,
-    ):
+    ) -> None:
         vertices_ = np.asarray(vertices, dtype=np.float64)
         edges_ = np.asarray(edges, dtype=np.int32)
         pairs_ = np.asarray(intersection_pairs, dtype=np.int32).reshape((-1, 2))

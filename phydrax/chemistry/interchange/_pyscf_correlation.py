@@ -85,7 +85,7 @@ class PySCFCoupledClusterProvider(AbstractCoupledClusterProvider):
     provider_version: str = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         version = (
             importlib.metadata.version("pyscf")
             if is_pyscf_correlation_available()

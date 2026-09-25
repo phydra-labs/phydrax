@@ -31,7 +31,7 @@ class OpticalPhononBath(StrictModule):
     temperature: Array
     bath_id: str = eqx.field(static=True)
 
-    def __init__(self, energy, coupling, temperature, *, bath_id):
+    def __init__(self, energy, coupling, temperature, *, bath_id) -> None:
         self.energy = _array(energy, "phonon energy", positive=True)
         self.coupling = _array(coupling, "local phonon coupling")
         self.temperature = _array(temperature, "phonon bath temperature", positive=True)
@@ -65,7 +65,7 @@ class PhononEnergyGrid(StrictModule):
     points: int = eqx.field(static=True)
     phonon_bins: int = eqx.field(static=True)
 
-    def __init__(self, lower, upper, *, points, phonon_energy):
+    def __init__(self, lower, upper, *, points, phonon_energy) -> None:
         lo, hi = float(lower), float(upper)
         if (
             isinstance(points, bool)

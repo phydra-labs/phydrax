@@ -85,7 +85,7 @@ class PolynomialChaosBasis(StrictModule, NonTrainableState):
         *,
         maximum_features: int = 4096,
         maximum_storage_bytes: int = 64 * 1024**2,
-    ):
+    ) -> None:
         factor_values = (
             (factors,) if isinstance(factors, ProbabilityDomain) else tuple(factors)
         )
@@ -195,7 +195,7 @@ class PolynomialChaosExpansion(StrictModule):
     output_specs: tuple[_OutputLeafSpec, ...] = eqx.field(static=True)
     expansion_id: str = eqx.field(static=True)
 
-    def __init__(self, basis: PolynomialChaosBasis, coefficients: Any, /):
+    def __init__(self, basis: PolynomialChaosBasis, coefficients: Any, /) -> None:
         if not isinstance(basis, PolynomialChaosBasis):
             raise TypeError("basis must be a PolynomialChaosBasis.")
         leaves, tree = jax.tree_util.tree_flatten(
@@ -371,7 +371,7 @@ class PolynomialChaosFitResult(StrictModule):
         solver_diagnostics: Sequence[Any] = (),
         evidence: Mapping[str, Any],
         provenance: Mapping[str, Any],
-    ):
+    ) -> None:
         if not isinstance(expansion, PolynomialChaosExpansion):
             raise TypeError("expansion must be a PolynomialChaosExpansion.")
         statuses = tuple(
@@ -413,7 +413,7 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
         precision: IntegrationPrecisionPolicy | None = None,
         maximum_model_evaluations: int = _DEFAULT_MAXIMUM_MODEL_EVALUATIONS,
         maximum_basis_bytes: int = _DEFAULT_MAXIMUM_BASIS_BYTES,
-    ):
+    ) -> None:
         if not isinstance(basis, PolynomialChaosBasis):
             raise TypeError("basis must be a PolynomialChaosBasis.")
         if not isinstance(integration_plan, ProductIntegrationPlan):
@@ -660,7 +660,7 @@ class PolynomialChaosRegressionPlan(StrictModule, NonTrainableState):
         least_squares_policy: LinearSolvePolicy | None = None,
         maximum_samples: int = _DEFAULT_MAXIMUM_SAMPLES,
         maximum_design_bytes: int = _DEFAULT_MAXIMUM_DESIGN_BYTES,
-    ):
+    ) -> None:
         if not isinstance(basis, PolynomialChaosBasis):
             raise TypeError("basis must be a PolynomialChaosBasis.")
         exact = LinearSolvePolicy(DenseLU()) if exact_policy is None else exact_policy

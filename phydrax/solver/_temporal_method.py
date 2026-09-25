@@ -136,7 +136,7 @@ class TemporalMethodCapabilities(StrictModule, NonTrainableState):
         levy_area: str | None = None,
         verified: bool = True,
         method_id: str,
-    ):
+    ) -> None:
         forms = tuple(equation_forms)
         if not forms or len(set(forms)) != len(forms):
             raise ValueError("Temporal equation forms must be non-empty and unique.")
@@ -350,7 +350,7 @@ class TemporalDifferentiationEvidence(StrictModule, NonTrainableState):
         stochastic_semantics: TemporalStochasticSemantics,
         implementation_id: str,
         verified: bool = True,
-    ):
+    ) -> None:
         if form not in (
             "discretize-then-optimize",
             "optimize-then-discretize",
@@ -474,7 +474,7 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
         maximum_steps: int | None,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
         state_coordinates: RealCoordinateEvidence | None = None,
-    ):
+    ) -> None:
         if not isinstance(capabilities, TemporalMethodCapabilities):
             raise TypeError("capabilities must be TemporalMethodCapabilities.")
         if not isinstance(differentiation, TemporalDifferentiationEvidence):

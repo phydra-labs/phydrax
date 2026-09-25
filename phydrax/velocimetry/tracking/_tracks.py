@@ -65,7 +65,7 @@ class TrackLinkPlan(StrictModule, NonTrainableState):
         initial_velocity_variance: float = 1.0,
         ambiguity_margin: float = 0.25,
         small_solve_plan: SmallLinearSolvePlan | None = None,
-    ):
+    ) -> None:
         for name, value in (
             ("maximum_tracks", maximum_tracks),
             ("maximum_missed", maximum_missed),
@@ -610,7 +610,7 @@ class OfflineTrackRefinementPlan(StrictModule, NonTrainableState):
         death_cost: float = 1.0,
         gap_penalty: float = 0.25,
         maximum_iterations: int = 10_000,
-    ):
+    ) -> None:
         for name, value in (
             ("maximum_gap", maximum_gap),
             ("maximum_iterations", maximum_iterations),

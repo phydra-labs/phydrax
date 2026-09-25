@@ -23,7 +23,7 @@ class Selection(StrictModule):
 class Interior(Selection):
     """Select the full-dimensional interior support."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
 
@@ -38,7 +38,7 @@ class Boundary(Selection):
         *,
         tags: Sequence[str] | None = None,
         entity_ids: Sequence[int] | None = None,
-    ):
+    ) -> None:
         tags_ = None if tags is None else tuple(str(tag) for tag in tags)
         entity_ids_ = None if entity_ids is None else tuple(map(int, entity_ids))
         if tags_ is not None and (not tags_ or any(not tag for tag in tags_)):
@@ -54,21 +54,21 @@ class Fixed(Selection):
 
     value: Array
 
-    def __init__(self, value: ArrayLike, /):
+    def __init__(self, value: ArrayLike, /) -> None:
         self.value = jnp.asarray(value, dtype=jnp.float64)
 
 
 class FixedStart(Selection):
     """Select a factor-defined start endpoint or row-specific initial state."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
 
 class FixedEnd(Selection):
     """Select a factor-defined end endpoint or row-specific terminal state."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
 
@@ -77,7 +77,7 @@ class SelectionSpec(StrictModule):
 
     by_label: frozendict[str, Selection]
 
-    def __init__(self, by_label: Mapping[str, Selection] | None = None, /):
+    def __init__(self, by_label: Mapping[str, Selection] | None = None, /) -> None:
         resolved = {} if by_label is None else dict(by_label)
         for label, selection in resolved.items():
             if not isinstance(label, str) or not label:

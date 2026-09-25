@@ -363,7 +363,7 @@ class ImmersedBodyRegimePlan(StrictModule, NonTrainableState):
         distributed_transfer: DistributedMACMarkerTransfer | None = None,
         lubrication: ResolvedLubricationCorrectionPlan | None = None,
         marker_constraint_count: int | None = None,
-    ):
+    ) -> None:
         regime, owner_id, bound_markers, bound_geometry, contact_capable = (
             _owner_contract(owner)
         )

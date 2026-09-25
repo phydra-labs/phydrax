@@ -42,7 +42,7 @@ class GaussianLindbladProblem(StrictModule):
         *,
         linear: LinearSolvePolicy | None = None,
         problem_id: str = "gaussian-lindblad",
-    ):
+    ) -> None:
         if not isinstance(initial_state, BosonicGaussianState):
             raise TypeError("initial_state must be BosonicGaussianState.")
         linear_ = LinearSolvePolicy(DenseLU()) if linear is None else linear
@@ -145,7 +145,7 @@ class GaussianLindbladSolution(StrictModule):
         precision: TemporalPrecisionPolicy,
         geometry_precision,
         hermitian_precision,
-    ):
+    ) -> None:
         if not isinstance(precision, TemporalPrecisionPolicy):
             raise TypeError("precision must be TemporalPrecisionPolicy.")
         means_ = jnp.asarray(means)

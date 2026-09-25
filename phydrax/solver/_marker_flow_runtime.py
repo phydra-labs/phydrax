@@ -94,7 +94,7 @@ class HydrodynamicLoadPlan(StrictModule, NonTrainableState):
         topology_epoch_id: str,
         reference_point_id: str,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         ids = np.asarray(body_ids)
         dimension = int(ambient_dimension)
         tolerance_ = float(tolerance)
@@ -394,7 +394,7 @@ class MarkerFlowAdaptiveStepPlan(StrictModule, NonTrainableState):
         safety: float = 0.8,
         minimum_step: float = 1.0e-12,
         maximum_step: float = 1.0,
-    ):
+    ) -> None:
         safety_ = float(safety)
         minimum = float(minimum_step)
         maximum = float(maximum_step)
@@ -477,7 +477,7 @@ class MarkerFlowTrajectoryAdapter(StrictModule, NonTrainableState):
         /,
         *,
         adapter_id: str,
-    ):
+    ) -> None:
         if not callable(step) or not callable(observe):
             raise TypeError("Trajectory step and observation must be callable.")
         identifier = str(adapter_id)
@@ -641,7 +641,7 @@ class MarkerFlowCompiledExportPlan(StrictModule, NonTrainableState):
         fixed_routes: bool,
         fixed_topology: bool,
         fixed_random_schedule: bool,
-    ):
+    ) -> None:
         signature = array_tree_signature(state_template)
         self.state_signature = signature
         self.fixed_routes = bool(fixed_routes)

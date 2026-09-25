@@ -48,7 +48,7 @@ class MACFreeSurfaceViscousMeasurePlan(StrictModule, NonTrainableState):
     density: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, operators: PreparedMACOperators, density: float, /):
+    def __init__(self, operators: PreparedMACOperators, density: float, /) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         density_ = float(density)

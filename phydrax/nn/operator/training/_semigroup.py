@@ -122,7 +122,7 @@ class ConditionedSemigroupObjective:
     weight: float = 1.0
     key_mode: SemigroupKeyMode = "fold_in"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.reduction not in ("mean", "sum"):
             raise ValueError("reduction must be 'mean' or 'sum'.")
         if not isfinite(float(self.weight)) or float(self.weight) < 0.0:
@@ -194,7 +194,7 @@ class DistributionalSemigroupObjective:
     weight: float = 1.0
     key_mode: SemigroupKeyMode = "fold_in"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if int(self.num_samples) < 2:
             raise ValueError("num_samples must be at least two.")
         if self.measure not in ("quadrature", "uniform"):
@@ -368,7 +368,7 @@ class SinkhornDistributionalSemigroupObjective:
     cost: AbstractGroundCost | None = None
     solver: AbstractBalancedTransportSolver | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if int(self.num_samples) < 2:
             raise ValueError("num_samples must be at least two.")
         if self.measure not in ("quadrature", "uniform"):

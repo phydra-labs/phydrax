@@ -43,7 +43,7 @@ class EvolutionJacobianAction(AbstractLinearOperator):
         *,
         args: Any = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(evolution, AbstractDifferentiableEvolution):
             raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         state_array = jnp.asarray(state)
@@ -163,7 +163,7 @@ class EvolutionArgumentJacobianAction(AbstractLinearOperator):
         /,
         *,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(evolution, AbstractDifferentiableEvolution):
             raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         state_array = jnp.asarray(state)

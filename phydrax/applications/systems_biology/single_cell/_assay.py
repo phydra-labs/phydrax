@@ -36,7 +36,7 @@ class TranscriptCountAssay:
     spliced: PreparedCountMeasurement
     calibration: ReferenceArtifactManifest
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.unspliced, PreparedCountMeasurement) or not isinstance(
             self.spliced, PreparedCountMeasurement
         ):
@@ -102,7 +102,7 @@ class TranscriptCounts:
         assay_id: str,
         source_id: str,
         preprocessing_id: str,
-    ):
+    ) -> None:
         if not isinstance(gene, GeneIdentity):
             raise TypeError("gene must be GeneIdentity.")
         ids = tuple(_identity(x, "cell_id") for x in cell_ids)

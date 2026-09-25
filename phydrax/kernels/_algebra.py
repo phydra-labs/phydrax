@@ -16,7 +16,7 @@ class SumKernel(AbstractPositiveDefiniteKernel):
 
     kernels: tuple[AbstractPositiveDefiniteKernel, ...]
 
-    def __init__(self, kernels: tuple[AbstractPositiveDefiniteKernel, ...], /):
+    def __init__(self, kernels: tuple[AbstractPositiveDefiniteKernel, ...], /) -> None:
         flattened: list[AbstractPositiveDefiniteKernel] = []
         for kernel in kernels:
             if not isinstance(kernel, AbstractPositiveDefiniteKernel):
@@ -73,7 +73,7 @@ class ProductKernel(AbstractPositiveDefiniteKernel):
 
     kernels: tuple[AbstractPositiveDefiniteKernel, ...]
 
-    def __init__(self, kernels: tuple[AbstractPositiveDefiniteKernel, ...], /):
+    def __init__(self, kernels: tuple[AbstractPositiveDefiniteKernel, ...], /) -> None:
         flattened: list[AbstractPositiveDefiniteKernel] = []
         for kernel in kernels:
             if not isinstance(kernel, AbstractPositiveDefiniteKernel):
@@ -138,7 +138,7 @@ class ScaleKernel(AbstractPositiveDefiniteKernel):
         kernel: AbstractPositiveDefiniteKernel,
         scale: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a positive-definite kernel.")
         value = jnp.asarray(scale, dtype=jnp.float64)
@@ -188,7 +188,7 @@ class AmplitudeKernel(AbstractPositiveDefiniteKernel):
         kernel: AbstractPositiveDefiniteKernel,
         amplitude: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a positive-definite kernel.")
         value = jnp.asarray(amplitude, dtype=jnp.float64)
@@ -236,7 +236,7 @@ class NormalizedKernel(AbstractPositiveDefiniteKernel):
 
     kernel: AbstractPositiveDefiniteKernel
 
-    def __init__(self, kernel: AbstractPositiveDefiniteKernel, /):
+    def __init__(self, kernel: AbstractPositiveDefiniteKernel, /) -> None:
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a positive-definite kernel.")
         self.kernel = kernel

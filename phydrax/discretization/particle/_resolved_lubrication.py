@@ -39,7 +39,7 @@ class ResolvedLubricationCorrectionPlan(StrictModule, NonTrainableState):
         cutoff: ArrayLike,
         minimum_gap: ArrayLike,
         /,
-    ):
+    ) -> None:
         viscosity = np.asarray(dynamic_viscosity)
         cutoff_ = np.asarray(cutoff)
         minimum = np.asarray(minimum_gap)

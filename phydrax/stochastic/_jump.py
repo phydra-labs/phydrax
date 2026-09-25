@@ -122,7 +122,7 @@ class PoissonClockRealization(StrictModule):
         coupling_id: str | None = None,
         _path_indices: Array | None = None,
         _realization_id: str | None = None,
-    ):
+    ) -> None:
         key = _key(root_key, owner="PoissonClockRealization")
         channels = int(num_channels)
         capacity = int(max_events_per_channel)
@@ -300,7 +300,7 @@ class JumpEventBatch(StrictModule):
         state_shape: Sequence[int] = (),
         pre_states: ArrayLike | None = None,
         post_states: ArrayLike | None = None,
-    ):
+    ) -> None:
         time_values = jnp.asarray(times, dtype=jnp.float64)
         if time_values.ndim < 1 or time_values.shape[-1] <= 0:
             raise ValueError("times must have a non-empty trailing event axis.")
@@ -483,7 +483,7 @@ class JumpProcess(AbstractJumpProcess):
         process_id: str,
         mark_shape: Sequence[int] = (),
         mark_fn: MarkSampler | None = None,
-    ):
+    ) -> None:
         if not callable(intensity_fn) or not callable(jump_fn):
             raise TypeError("intensity_fn and jump_fn must be callable.")
         if mark_fn is not None and not callable(mark_fn):

@@ -44,7 +44,7 @@ class HistoryExposure:
     molecule_count: int
     dose_standard_error_gy: float | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _nonnegative(self.deposited_energy, "scored deposited energy")
         if not math.isfinite(self.mass) or self.mass <= 0:
             raise ValueError("Scored mass must be finite and positive.")

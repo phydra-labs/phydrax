@@ -40,7 +40,7 @@ class AtomisticGraphExecutionPlan(StrictModule, NonTrainableState):
         backend: AtomisticGraphBackend = "dense",
         maximum_dense_atoms: int | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         neighbors = int(maximum_neighbors)
         dense = None if maximum_dense_atoms is None else int(maximum_dense_atoms)
         if neighbors < 0:

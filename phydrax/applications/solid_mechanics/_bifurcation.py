@@ -135,7 +135,7 @@ class MechanicsBifurcationDetector(StrictModule):
         /,
         *,
         detector_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(equilibrium, MechanicsEquilibriumProblem):
             raise TypeError("equilibrium must be a MechanicsEquilibriumProblem.")
         identifier = (
@@ -341,7 +341,7 @@ class MechanicsBranch(StrictModule):
         imperfection_path_id: str | None = None,
         realization_id: str,
         provenance_id: str,
-    ):
+    ) -> None:
         if continuation is not None and not isinstance(continuation, ContinuationBranch):
             raise TypeError("continuation must be a ContinuationBranch or None.")
         if seed is not None and not isinstance(seed, CorrectedBranchSeed):
@@ -418,7 +418,7 @@ class MechanicsBranchEdge(StrictModule):
         relation: MechanicsBranchRelation = "branch-switch",
         symmetry_related: bool = False,
         edge_id: str | None = None,
-    ):
+    ) -> None:
         if relation not in ("primary", "branch-switch", "imperfection", "continued"):
             raise ValueError("Unsupported mechanics branch relation.")
         parent = _identifier(parent_branch_id, "parent_branch_id")
@@ -465,7 +465,7 @@ class MechanicsBranchGraph(StrictModule):
         branches: Sequence[MechanicsBranch],
         edges: Sequence[MechanicsBranchEdge] = (),
         /,
-    ):
+    ) -> None:
         branches_ = tuple(branches)
         edges_ = tuple(edges)
         if not branches_ or any(
@@ -577,7 +577,7 @@ class BranchSwitchPolicy(StrictModule):
         quotient_symmetry: bool = False,
         control_protocol: str,
         policy_id: str | None = None,
-    ):
+    ) -> None:
         amplitude_ = float(amplitude)
         offset = float(coordinate_offset)
         tolerances = tuple(
@@ -862,7 +862,7 @@ class ImperfectionFamily(StrictModule):
         discretization_id: str,
         fabrication_provenance_id: str,
         family_id: str | None = None,
-    ):
+    ) -> None:
         shape_ = jax.tree.map(jnp.asarray, shape)
         leaves = jax.tree.leaves(shape_)
         if not leaves or any(
@@ -924,7 +924,7 @@ class ImperfectionStudy(StrictModule):
         *,
         limit_resolved: Any,
         study_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(family, ImperfectionFamily):
             raise TypeError("family must be an ImperfectionFamily.")
         amplitudes_ = jnp.asarray(amplitudes)
@@ -1014,7 +1014,7 @@ class EnergyBarrierEvidence(StrictModule):
         stationary_tolerance: float = 1e-7,
         path_tolerance: float = 1e-5,
         evidence_id: str | None = None,
-    ):
+    ) -> None:
         if not potential_verified or not conservative_verified:
             raise ValueError(
                 "Energy-barrier evidence requires a verified conservative potential."
@@ -1126,7 +1126,7 @@ class PhysicalSelectionPolicy(StrictModule):
         energy_tolerance: float = 1e-8,
         user_branch_id: str | None = None,
         policy_id: str | None = None,
-    ):
+    ) -> None:
         if mode not in (
             "stable-connected",
             "global-energy-minimum",

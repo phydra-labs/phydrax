@@ -28,7 +28,7 @@ from ._assignment import (
 class GIMPAssignmentInput(StrictModule):
     half_widths: Array
 
-    def __init__(self, half_widths: ArrayLike, /):
+    def __init__(self, half_widths: ArrayLike, /) -> None:
         value = jnp.asarray(half_widths)
         if value.ndim != 2:
             raise ValueError("GIMP half widths must have shape (particles, dimension).")
@@ -117,7 +117,7 @@ class UniformGIMPSplatAssignment(AbstractStructuredSplatAssignment):
         *,
         maximum_half_width_cells: float = 1.0,
         evolving: bool = False,
-    ):
+    ) -> None:
         widths = np.asarray(reference_half_widths, dtype=np.float64)
         maximum = float(maximum_half_width_cells)
         if (

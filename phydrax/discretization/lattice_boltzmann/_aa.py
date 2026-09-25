@@ -50,7 +50,7 @@ class AALatticeBoltzmannPlan(StrictModule, NonTrainableState):
     velocity_set: LatticeBoltzmannVelocitySet
     addressing_id: str = eqx.field(static=True)
 
-    def __init__(self, velocity_set: LatticeBoltzmannVelocitySet, /):
+    def __init__(self, velocity_set: LatticeBoltzmannVelocitySet, /) -> None:
         if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):
             raise TypeError("velocity_set must be a LatticeBoltzmannVelocitySet.")
         self.velocity_set = velocity_set

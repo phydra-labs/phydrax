@@ -67,7 +67,7 @@ class AffineFeedbackPolicy(AbstractControlParameterization, NonTrainableState):
         case_shape: Sequence[int] = (),
         policy_id: str,
         _allow_nonfinite: bool = False,
-    ):
+    ) -> None:
         cases = _case_shape(case_shape)
         if not isinstance(state_size, int) or state_size <= 0:
             raise ValueError("state_size must be a positive integer.")
@@ -213,7 +213,7 @@ class QuadraticValueFunction(StrictModule):
         *,
         time_grid: TimeGrid | None,
         case_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         cases = _case_shape(case_shape)
         matrix = jnp.asarray(matrices)
         vector = jnp.asarray(linear)

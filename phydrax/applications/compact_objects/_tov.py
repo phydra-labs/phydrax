@@ -35,7 +35,7 @@ class EquationOfStateTable(StrictModule, NonTrainableState):
         *,
         eos_id="tabulated-eos",
         unit_system="geometric",
-    ):
+    ) -> None:
         label = str(eos_id).strip()
         units = str(unit_system).strip().lower()
         if not label:
@@ -111,7 +111,7 @@ class TovPlan(StrictModule, NonTrainableState):
     radial_nodes: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, eos, radial_nodes, /):
+    def __init__(self, eos, radial_nodes, /) -> None:
         if not isinstance(eos, EquationOfStateTable):
             raise TypeError("eos must be an EquationOfStateTable.")
         radii = np.asarray(radial_nodes, dtype=np.float64)

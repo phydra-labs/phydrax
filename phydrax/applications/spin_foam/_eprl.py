@@ -60,7 +60,7 @@ class EPRLVertexPlan(StrictModule):
         quadrature_id: str,
         precision_bits: int,
         maximum_support_tuples: int,
-    ):
+    ) -> None:
         spins = tuple(boundary_twice_spins)
         intertwiners = tuple(boundary_twice_intertwiners)
         gamma = float(immirzi_parameter)

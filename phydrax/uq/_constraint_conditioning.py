@@ -77,7 +77,7 @@ class ConstraintLikelihoodTerm(StrictModule):
         likelihood_id: str = "constraint-likelihood",
         stamp: ConditionRealizationStamp | None = None,
         bound: BoundCondition | None = None,
-    ):
+    ) -> None:
         raw_value = jnp.asarray(observed)
         if jnp.iscomplexobj(raw_value):
             raise TypeError("observed must be real-valued.")
@@ -311,7 +311,7 @@ class LinearGaussianConstraintConditioner(StrictModule):
         numerical_jitter: ArrayLike = 0.0,
         rank_tolerance: ArrayLike = 1e-8,
         support_tolerance: ArrayLike = 1e-8,
-    ):
+    ) -> None:
         jitter = jnp.asarray(numerical_jitter, dtype=jnp.float64)
         rank = jnp.asarray(rank_tolerance, dtype=jnp.float64)
         support = jnp.asarray(support_tolerance, dtype=jnp.float64)
@@ -533,7 +533,7 @@ class ApproximateGaussianConstraintConditioner(StrictModule):
         beta: float = 2.0,
         kappa: float = 0.0,
         hermite_order: int = 3,
-    ):
+    ) -> None:
         if method not in ("first-order", "cubature", "unscented", "gauss-hermite"):
             raise ValueError("Unknown nonlinear Gaussian approximation method.")
         jitter = jnp.asarray(numerical_jitter, dtype=jnp.float64)

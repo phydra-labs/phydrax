@@ -134,7 +134,7 @@ class ReducedFormCreditModel(StrictModule):
         pricing_measure_id: str,
         model_id: str,
         default_process_id: str,
-    ):
+    ) -> None:
         _require_survival_curve(survival_curve)
         if not isinstance(recovery, RecoveryTerms):
             raise TypeError("recovery must be RecoveryTerms.")
@@ -165,7 +165,7 @@ class IntensityCreditModel(StrictModule):
         transformation: IntensityTransformation,
         factor_layout_id: str,
         model_id: str,
-    ):
+    ) -> None:
         if not isinstance(base, ReducedFormCreditModel):
             raise TypeError("base must be a ReducedFormCreditModel.")
         loadings = jnp.asarray(factor_loadings, dtype=jnp.float64)
@@ -203,7 +203,7 @@ class StructuralCreditModel(StrictModule):
         reference_entity_id: str,
         factor_layout_id: str,
         model_id: str,
-    ):
+    ) -> None:
         self.initial_asset_value = _scalar(
             initial_asset_value, "initial_asset_value", positive=True
         )

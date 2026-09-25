@@ -57,7 +57,7 @@ class ConfinedFIBMobilityPlan(AbstractHydrodynamicMobilityPlan):
         *,
         maximum_particles: int,
         symmetry_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(transfer, PreparedMACMarkerTransfer):
             raise TypeError("transfer must be PreparedMACMarkerTransfer.")
         if not isinstance(inverse_stokes, AbstractLinearOperator):
@@ -116,7 +116,7 @@ class PreparedConfinedFIBMobility(AbstractPreparedHydrodynamicMobility):
         system: PreparedAtomisticSystem,
         active_slots: ArrayLike,
         /,
-    ):
+    ) -> None:
         slots = _active_slots(plan.maximum_particles, system, active_slots)
         markers = plan.transfer.markers
         if markers.active_count != slots.size:

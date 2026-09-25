@@ -161,7 +161,7 @@ class ChamberSurfaceTopologyEvidence(StrictModule, NonTrainableState):
     outward: Array
     successful: Array
 
-    def __init__(self, **values):
+    def __init__(self, **values) -> None:
         self.edge_incidence_counts = jnp.asarray(
             values["edge_incidence_counts"], dtype=jnp.int32
         )
@@ -201,7 +201,7 @@ class ChamberSurfacePlan(StrictModule, NonTrainableState):
         *,
         vertex_global_ids: ArrayLike | None = None,
         geometric_tolerance: float = 0.0,
-    ):
+    ) -> None:
         name = _nonempty(chamber_name, "Chamber name")
         coordinates = np.asarray(reference_coordinates, dtype=np.float64)
         faces = np.asarray(triangles, dtype=np.int32)
@@ -327,7 +327,7 @@ class CavityVolumeEvidence(StrictModule, NonTrainableState):
     positive_orientation: Array
     successful: Array
 
-    def __init__(self, **values):
+    def __init__(self, **values) -> None:
         self.face_signed_contributions = jnp.asarray(values["face_signed_contributions"])
         self.signed_volume = jnp.asarray(values["signed_volume"])
         self.minimum_double_area = jnp.asarray(values["minimum_double_area"])
@@ -398,7 +398,7 @@ class OrientedChamberSurface(StrictModule, NonTrainableState):
         *,
         geometric_tolerance: float,
         surface_id: str,
-    ):
+    ) -> None:
         self.chamber_name = _nonempty(chamber_name, "Chamber name")
         self.reference_coordinates = jnp.asarray(reference_coordinates)
         self.triangles = jnp.asarray(triangles, dtype=jnp.int32)

@@ -136,7 +136,7 @@ class VasicekModel(StrictModule):
         currency_id: str,
         state_layout_id: str,
         model_id: str,
-    ):
+    ) -> None:
         self.mean_reversion = _scalar(mean_reversion, "mean_reversion", positive=True)
         self.long_run_rate = _scalar(long_run_rate, "long_run_rate")
         self.volatility = _nonnegative_scalar(volatility, "volatility")
@@ -167,7 +167,7 @@ class HullWhiteModel(StrictModule):
         currency_id: str,
         state_layout_id: str,
         model_id: str,
-    ):
+    ) -> None:
         times = _strict_grid(mean_times, "mean_times")
         values = _finite_vector(mean_values, "mean_values", minimum_size=2)
         if values.shape != times.shape:
@@ -201,7 +201,7 @@ class CIRModel(StrictModule):
         currency_id: str,
         state_layout_id: str,
         model_id: str,
-    ):
+    ) -> None:
         self.mean_reversion = _scalar(mean_reversion, "mean_reversion", positive=True)
         self.long_run_rate = _scalar(long_run_rate, "long_run_rate", positive=True)
         self.volatility = _scalar(volatility, "volatility", positive=True)
@@ -234,7 +234,7 @@ class CIRPlusPlusModel(StrictModule):
         /,
         *,
         model_id: str,
-    ):
+    ) -> None:
         if not isinstance(base, CIRModel):
             raise TypeError("base must be a CIRModel.")
         times = _strict_grid(shift_times, "shift_times")
@@ -284,7 +284,7 @@ class FiniteFactorHJMModel(StrictModule):
         pricing_measure_id: str,
         state_layout_id: str,
         model_id: str,
-    ):
+    ) -> None:
         times = _strict_grid(tenor_times, "tenor_times")
         ids = tuple(_identifier(value, "factor_id") for value in factor_ids)
         if not ids or len(set(ids)) != len(ids):
@@ -337,7 +337,7 @@ class LiborMarketModel(StrictModule):
         pricing_measure_id: str,
         state_layout_id: str,
         model_id: str,
-    ):
+    ) -> None:
         times = _strict_grid(tenor_times, "tenor_times")
         ids = tuple(_identifier(value, "factor_id") for value in factor_ids)
         if not ids or len(set(ids)) != len(ids):
@@ -395,7 +395,7 @@ class RatesPathBatch(StrictModule):
         law_id: str,
         realization_id: str,
         state_layout_id: str,
-    ):
+    ) -> None:
         nodes = jnp.asarray(times, dtype=jnp.float64)
         paths = jnp.asarray(values, dtype=jnp.float64)
         path_valid = jnp.asarray(valid, dtype=jnp.bool_)

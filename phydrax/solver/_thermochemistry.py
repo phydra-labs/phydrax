@@ -65,7 +65,7 @@ class ThermochemistryProcessPlan(AbstractBalanceLawProcessPlan):
         ] = "explicit-subcycled",
         nonlinear_iterations: int = 12,
         nonlinear_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         count = int(subcycles)
@@ -115,7 +115,7 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
         plan: ThermochemistryProcessPlan,
         transport: AbstractPreparedBalanceLawTransport,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             transport.dynamics.system,
             (

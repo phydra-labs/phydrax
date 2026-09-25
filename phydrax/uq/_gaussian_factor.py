@@ -51,7 +51,7 @@ class GaussianFactor(StrictModule):
         rank_tolerance: ArrayLike = 0.0,
         factor_id: str = "gaussian-factor",
         resolved_method: str = "provided-rectangular-factor",
-    ):
+    ) -> None:
         value = jnp.asarray(factor)
         if not jnp.issubdtype(value.dtype, jnp.inexact):
             raise TypeError("Gaussian factors must have an inexact dtype.")

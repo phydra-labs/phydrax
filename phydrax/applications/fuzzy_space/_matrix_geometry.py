@@ -34,7 +34,7 @@ class FuzzySphereMatrixGeometryPlan(StrictModule):
         /,
         *,
         maximum_matrix_elements: int = 4_000_000,
-    ):
+    ) -> None:
         spin = int(twice_spin)
         dimension = spin + 1
         maximum = int(maximum_matrix_elements)
@@ -205,7 +205,7 @@ class FuzzyScalarMatrixModelPlan(StrictModule):
         proposal_scale: float = 0.05,
         draws: int = 100,
         burn_in: int = 20,
-    ):
+    ) -> None:
         if not isinstance(geometry, PreparedFuzzySphereMatrixGeometry):
             raise TypeError("geometry must be PreparedFuzzySphereMatrixGeometry.")
         mass = float(mass_squared)

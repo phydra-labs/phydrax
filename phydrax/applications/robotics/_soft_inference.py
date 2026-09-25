@@ -81,7 +81,7 @@ class PositiveParameterMap(StrictModule, NonTrainableState):
         *,
         minimum: float = 0.0,
         maximum: float | None = None,
-    ):
+    ) -> None:
         lower = float(minimum)
         upper = None if maximum is None else float(maximum)
         if not isfinite(lower) or lower < 0.0:
@@ -139,7 +139,7 @@ class BoundedParameterMap(StrictModule, NonTrainableState):
     name: str = eqx.field(static=True)
     map_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, lower: float, upper: float, /):
+    def __init__(self, name: str, lower: float, upper: float, /) -> None:
         lower_ = float(lower)
         upper_ = float(upper)
         if not isfinite(lower_) or not isfinite(upper_) or upper_ <= lower_:
@@ -191,7 +191,7 @@ class SPDParameterMap(StrictModule, NonTrainableState):
         /,
         *,
         diagonal_floor: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(dimension, int) or isinstance(dimension, bool) or dimension < 1:
             raise ValueError("SPDParameterMap dimension must be a positive integer.")
         floor = float(diagonal_floor)
@@ -282,7 +282,7 @@ class ReducedRodParameterization(StrictModule, NonTrainableState):
         /,
         *,
         parameterization_id: str | None = None,
-    ):
+    ) -> None:
         maps_ = tuple(maps)
         if not maps_ or any(
             not isinstance(
@@ -353,7 +353,7 @@ class CalibrationExperiment(StrictModule, NonTrainableState):
         route_id: str,
         weight: Any = None,
         route_valid: Callable[[Mapping[str, Array], Any], ArrayLike] | None = None,
-    ):
+    ) -> None:
         if not callable(residual):
             raise TypeError("CalibrationExperiment residual must be callable.")
         if route_valid is not None and not callable(route_valid):
@@ -387,7 +387,7 @@ class CalibrationAcceptance(StrictModule, NonTrainableState):
         maximum_held_out_absolute: float = np.inf,
         maximum_condition_number: float = np.inf,
         require_validation: bool = False,
-    ):
+    ) -> None:
         values = (
             maximum_training_rmse,
             maximum_validation_rmse,
@@ -488,7 +488,7 @@ class ReducedRodCalibrationProblem(StrictModule, NonTrainableState):
         relative_rank_tolerance: float = 1e-8,
         absolute_rank_tolerance: float = 0.0,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(parameterization, ReducedRodParameterization):
             raise TypeError("parameterization must be ReducedRodParameterization.")
         if not isinstance(acceptance, CalibrationAcceptance):
@@ -985,7 +985,7 @@ class FixedModeDerivativeEvidence(StrictModule, NonTrainableState):
         primal_result_id: str,
         maximum_condition_number: float = np.inf,
         maximum_derivative_residual: float = np.inf,
-    ):
+    ) -> None:
         margins = tuple(
             jnp.asarray(value).reshape(())
             for value in (
@@ -1082,7 +1082,7 @@ class SoftCoDesignConstraint(StrictModule, NonTrainableState):
         upper: Any = jnp.inf,
         depends_on_state: bool = True,
         constraint_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("SoftCoDesignConstraint function must be callable.")
         self.function = function
@@ -1106,7 +1106,7 @@ class CoDesignHeldOutScenario(StrictModule, NonTrainableState):
         /,
         *,
         scenario_id: str,
-    ):
+    ) -> None:
         if not callable(qualifies):
             raise TypeError("CoDesignHeldOutScenario qualifies must be callable.")
         self.qualifies = qualifies
@@ -1172,7 +1172,7 @@ class SoftRobotCoDesignProblem(StrictModule, NonTrainableState):
         design_bounds: Bounds | None = None,
         has_aux: bool = False,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(parameterization, ReducedRodParameterization):
             raise TypeError("parameterization must be ReducedRodParameterization.")
         for value, name in (

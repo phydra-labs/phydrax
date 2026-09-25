@@ -34,7 +34,7 @@ from ._uniform_square import UniformSquareTensor
 class TRGMethod(StrictModule):
     method_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.method_id = "trg"
 
 
@@ -46,7 +46,7 @@ class HOTRGMethod(StrictModule):
         self,
         *,
         first_direction: Literal["vertical", "horizontal"] = "vertical",
-    ):
+    ) -> None:
         if first_direction not in ("vertical", "horizontal"):
             raise ValueError("first_direction must be 'vertical' or 'horizontal'.")
         self.first_direction = first_direction
@@ -75,7 +75,7 @@ class TensorRenormalizationProblem(StrictModule):
         /,
         *,
         problem_id: str = "uniform-square-partition-function",
-    ):
+    ) -> None:
         if not isinstance(tensor, UniformSquareTensor):
             raise TypeError("tensor must be a UniformSquareTensor.")
         if jnp.issubdtype(tensor.value.dtype, jnp.complexfloating):
@@ -106,7 +106,7 @@ class TensorRenormalizationResourcePolicy(StrictModule):
         maximum_workspace_bytes: int = 2**31,
         maximum_history_elements: int = 1_000_000,
         contractions: ContractionResourcePolicy | None = None,
-    ):
+    ) -> None:
         limits = tuple(
             (
                 maximum_tensor_elements,
@@ -157,7 +157,7 @@ class TensorRenormalizationPolicy(StrictModule):
         terminal_imaginary_tolerance: float = 1e-10,
         terminal_positivity_tolerance: float = 0.0,
         resources: TensorRenormalizationResourcePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(method, (TRGMethod, HOTRGMethod)):
             raise TypeError("method must be TRGMethod or HOTRGMethod.")
         capacity = int(maximum_bond_dimension)
@@ -220,7 +220,7 @@ class TensorRenormalizationStagePlan(StrictModule):
         merge: ContractionPlan | None,
         coarse: ContractionPlan,
         /,
-    ):
+    ) -> None:
         self.kind = str(kind)
         self.input_shape = tuple(input_shape)
         self.output_shape = tuple(output_shape)

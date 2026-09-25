@@ -48,7 +48,7 @@ class CADProjectionPlan(StrictModule, NonTrainableState):
         *,
         selector_id: str,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         tolerance_ = float(tolerance)
         identifier = str(selector_id)
         if (
@@ -116,7 +116,7 @@ class CurvatureAdaptationPlan(StrictModule, NonTrainableState):
         minimum_degree: int = 1,
         maximum_degree: int = 8,
         maximum_displacement_fraction: float = 0.25,
-    ):
+    ) -> None:
         error = float(target_error)
         minimum = int(minimum_degree)
         maximum = int(maximum_degree)

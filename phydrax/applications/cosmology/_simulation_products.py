@@ -208,7 +208,7 @@ class SimulationProductStatusEvidence(StrictModule, NonTrainableState):
         /,
         *,
         failure_reason: str = "none",
-    ):
+    ) -> None:
         if not isinstance(check_names, Sequence) or isinstance(check_names, str):
             raise TypeError("check_names must be a sequence of identifiers.")
         names = tuple(
@@ -294,7 +294,7 @@ class WaveSnapshotEvidence(StrictModule, NonTrainableState):
     producer_state_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
-    def __init__(self, result: WaveDarkMatterResult, /):
+    def __init__(self, result: WaveDarkMatterResult, /) -> None:
         if not isinstance(result, WaveDarkMatterResult):
             raise TypeError("result must be WaveDarkMatterResult.")
         diagnostics = result.diagnostics
@@ -395,7 +395,7 @@ class ParticleSnapshotEvidence(StrictModule, NonTrainableState):
         /,
         *,
         producer_plan: CosmologicalParticleMeshPlan | CosmologicalSIDMPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             result,
             (
@@ -522,7 +522,7 @@ class GasSnapshotEvidence(StrictModule, NonTrainableState):
         self,
         result: WaveParticleGasCosmologyResult,
         /,
-    ):
+    ) -> None:
         if not isinstance(result, WaveParticleGasCosmologyResult):
             raise TypeError("result must be WaveParticleGasCosmologyResult.")
         gas = result.state.gas
@@ -617,7 +617,7 @@ class CommonGravitySnapshotEvidence(StrictModule, NonTrainableState):
     producer_result_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
-    def __init__(self, result: SharedPeriodicGravityResult, /):
+    def __init__(self, result: SharedPeriodicGravityResult, /) -> None:
         if not isinstance(result, SharedPeriodicGravityResult):
             raise TypeError("result must be SharedPeriodicGravityResult.")
         values = (
@@ -709,7 +709,7 @@ class WaveSimulationSnapshot(StrictModule, NonTrainableState):
         density: ArrayLike | None = None,
         potential: ArrayLike | None = None,
         poisson_result: WaveDarkMatterPoissonResult | None = None,
-    ):
+    ) -> None:
         value = jax.lax.stop_gradient(jnp.asarray(psi))
         scale = _scalar(scale_factor, "scale_factor")
         density_ = (
@@ -897,7 +897,7 @@ class ParticleSimulationSnapshot(StrictModule, NonTrainableState):
         inactive_reference_momenta: ArrayLike | None = None,
         inactive_reference_masses: ArrayLike | None = None,
         inactive_reference_weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         ids = jax.lax.stop_gradient(jnp.asarray(stable_ids))
         position = jax.lax.stop_gradient(jnp.asarray(positions))
         momentum = jax.lax.stop_gradient(
@@ -1130,7 +1130,7 @@ class GasSimulationSnapshot(StrictModule, NonTrainableState):
         physics_id: str,
         scale_id: str,
         coordinate_time_level: str,
-    ):
+    ) -> None:
         fields = jax.lax.stop_gradient(jnp.asarray(conserved_fields))
         scale = _scalar(scale_factor, "scale_factor")
         if not isinstance(component_names, Sequence) or isinstance(component_names, str):
@@ -1255,7 +1255,7 @@ class CommonGravitySimulationSnapshot(StrictModule, NonTrainableState):
         scale_id: str,
         potential_time_level: str,
         producer_result: SharedPeriodicGravityResult,
-    ):
+    ) -> None:
         density = jax.lax.stop_gradient(jnp.asarray(total_comoving_density))
         potential_ = jax.lax.stop_gradient(jnp.asarray(potential, dtype=density.dtype))
         acceleration = jax.lax.stop_gradient(
@@ -1395,7 +1395,7 @@ class CosmologyOutputBundle(StrictModule, NonTrainableState):
         producer_result: (
             WaveParticleCosmologyResult | WaveParticleGasCosmologyResult | None
         ) = None,
-    ):
+    ) -> None:
         scale = _scalar(scale_factor, "scale_factor")
         children = tuple(
             value for value in (wave, particles, gas, common_gravity) if value is not None
@@ -1641,7 +1641,7 @@ class DarkMatterRestartSnapshot(StrictModule, NonTrainableState):
         output_cursor: ArrayLike,
         accepted_evidence: Any = (),
         parent_checkpoint_id: str | None = None,
-    ):
+    ) -> None:
         if _contains_analysis_product(component_state):
             raise TypeError(
                 "Analysis products cannot be promoted to restart component state."
@@ -1773,7 +1773,7 @@ class DarkMatterCheckpointRecoveryEvidence(StrictModule, NonTrainableState):
         event_epoch_verified: ArrayLike,
         parent_chain_verified: ArrayLike,
         failure_reason: str = "none",
-    ):
+    ) -> None:
         checkpoint = _fingerprint_id(source_checkpoint_id, "source_checkpoint_id")
         if checkpoint is None:
             raise ValueError("source_checkpoint_id must be present.")
@@ -1828,7 +1828,7 @@ class DarkMatterCheckpointPayload(StrictModule, NonTrainableState):
         recovery: DarkMatterCheckpointRecoveryEvidence,
         contract_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(snapshot, DarkMatterRestartSnapshot):
             raise TypeError("snapshot must be DarkMatterRestartSnapshot.")
         if not isinstance(envelope, RuntimeCheckpointEnvelope):
@@ -1930,7 +1930,7 @@ class DarkMatterCheckpointContract(StrictModule, NonTrainableState):
         scale_id: str,
         partition_id: str | None = "serial",
         encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
-    ):
+    ) -> None:
         encoding = (
             RuntimeCheckpointEncodingPlan() if encoding_plan is None else encoding_plan
         )

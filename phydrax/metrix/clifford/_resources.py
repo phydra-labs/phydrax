@@ -27,7 +27,7 @@ class CliffordResourceBudget(StrictModule, NonTrainableState):
         maximum_product_terms: int = 262_144,
         maximum_plan_bytes: int = 64 * 1024**2,
         maximum_dense_kernel_bytes: int = 8 * 1024**2,
-    ):
+    ) -> None:
         values = (
             int(maximum_blades),
             int(maximum_product_terms),
@@ -109,7 +109,7 @@ class CliffordResourceEvidence(StrictModule, NonTrainableState):
         plan_bytes: int,
         dense_kernel_bytes: int,
         budget: CliffordResourceBudget,
-    ):
+    ) -> None:
         if not isinstance(budget, CliffordResourceBudget):
             raise TypeError("budget must be a CliffordResourceBudget.")
         blades = int(blade_count)

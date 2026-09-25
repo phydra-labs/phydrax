@@ -45,7 +45,7 @@ class CommitteeReductionPolicy(StrictModule, NonTrainableState):
         *,
         policy: OODPolicy = OODPolicy.DIAGNOSE,
         transition_width: float = 0.1,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -103,7 +103,7 @@ class CommitteeAtomisticPotential(StrictModule):
     policy: CommitteeReductionPolicy
     committee_id: str = eqx.field(static=True)
 
-    def __init__(self, members, policy: CommitteeReductionPolicy, /):
+    def __init__(self, members, policy: CommitteeReductionPolicy, /) -> None:
         values = tuple(members)
         if len(values) < 2 or any(
             not isinstance(value, PreparedAtomisticPotentialProgram) for value in values
@@ -184,7 +184,7 @@ class ConservativeUncertaintyBlend(StrictModule):
         committee: CommitteeAtomisticPotential,
         baseline: PreparedAtomisticPotentialProgram,
         /,
-    ):
+    ) -> None:
         if committee.members[0].system.prepared_id != baseline.system.prepared_id:
             raise ValueError("Committee and baseline belong to different systems.")
         self.committee = committee
@@ -243,7 +243,7 @@ class SegmentFallbackPolicy(StrictModule, NonTrainableState):
     fallback_provider_id: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, fallback_provider_id: str, /):
+    def __init__(self, fallback_provider_id: str, /) -> None:
         identifier = str(fallback_provider_id).strip()
         if not identifier:
             raise ValueError("fallback_provider_id must be non-empty.")
@@ -297,7 +297,7 @@ class CommitteeAcquisitionScorePolicy(StrictModule, NonTrainableState):
         /,
         *,
         aggregation: AcquisitionAggregation = AcquisitionAggregation.MAXIMUM,
-    ):
+    ) -> None:
         scales = float(energy_scale), float(force_scale), float(atom_scale)
         if any(not np.isfinite(value) or value <= 0.0 for value in scales):
             raise ValueError(
@@ -346,7 +346,7 @@ class AcquisitionPlan(StrictModule, NonTrainableState):
         /,
         *,
         minimum_score: float = 0.0,
-    ):
+    ) -> None:
         if int(maximum_frames) <= 0 or float(minimum_score) < 0.0:
             raise ValueError("Acquisition capacity or minimum score is invalid.")
         if not isinstance(scoring, CommitteeAcquisitionScorePolicy):

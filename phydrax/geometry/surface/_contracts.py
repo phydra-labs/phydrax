@@ -49,7 +49,7 @@ class SurfacePreparationError(ValueError):
         *,
         issues: Sequence[str] = (),
         report: SurfaceAuditReport | None = None,
-    ):
+    ) -> None:
         if not isinstance(status, SurfacePreparationStatus):
             raise TypeError("status must be a SurfacePreparationStatus.")
         message_ = str(message)
@@ -79,7 +79,7 @@ class SurfaceMetadata(StrictModule, NonTrainableState):
         coordinate_contract: SpatialCoordinateContract,
         provenance: Sequence[str],
         cell_tags: Sequence[str] = (),
-    ):
+    ) -> None:
         source = str(source_id)
         revision = str(source_revision)
         if not isinstance(coordinate_contract, SpatialCoordinateContract):
@@ -128,7 +128,7 @@ class SurfaceSelection(StrictModule, NonTrainableState):
         *,
         cell_entity_set_id: str,
         role: str = "surface",
-    ):
+    ) -> None:
         name_ = str(name)
         role_ = str(role)
         entity_set = str(cell_entity_set_id)
@@ -177,7 +177,7 @@ class SurfaceInterface(StrictModule, NonTrainableState):
         *,
         minus_region: str,
         plus_region: str,
-    ):
+    ) -> None:
         name_ = str(name)
         minus = str(minus_region)
         plus = str(plus_region)
@@ -235,7 +235,7 @@ class SurfaceAuditPolicy(StrictModule, NonTrainableState):
         maximum_edges: int | None = None,
         maximum_components: int | None = None,
         maximum_boundary_edges: int | None = None,
-    ):
+    ) -> None:
         minimum_area = float(minimum_face_area)
         relative = float(relative_degeneracy_tolerance)
         minimum_volume = float(minimum_closed_volume)
@@ -301,7 +301,7 @@ class SurfaceOrientationRepair(StrictModule, NonTrainableState):
         component_ids: ArrayLike,
         source_topology_id: str,
         repaired_topology_id: str,
-    ):
+    ) -> None:
         source = np.asarray(source_face_indices, dtype=np.int64)
         signs = np.asarray(orientation_signs, dtype=np.int8)
         components = np.asarray(component_ids, dtype=np.int32)
@@ -352,7 +352,7 @@ class SurfaceChartMappingEvidence(StrictModule, NonTrainableState):
         chart_ids: ArrayLike,
         cell_global_ids: ArrayLike,
         cell_entity_set_id: str,
-    ):
+    ) -> None:
         charts = np.asarray(chart_ids, dtype=np.int32)
         cells = np.asarray(cell_global_ids, dtype=np.int64)
         entity_set = str(cell_entity_set_id)
@@ -436,7 +436,7 @@ class SurfaceAuditReport(StrictModule, NonTrainableState):
         geometry_id: str,
         policy_id: str,
         policy_accepts_open: bool,
-    ):
+    ) -> None:
         areas = np.asarray(face_areas, dtype=np.float64)
         components = np.asarray(component_ids, dtype=np.int32)
         closed = np.asarray(component_closed, dtype=np.bool_)
@@ -564,7 +564,7 @@ class SurfaceValidityCertificate(StrictModule, NonTrainableState):
     certificate_id: str = eqx.field(static=True)
     valid: Array
 
-    def __init__(self, report: SurfaceAuditReport, /):
+    def __init__(self, report: SurfaceAuditReport, /) -> None:
         if not isinstance(report, SurfaceAuditReport):
             raise TypeError("Surface validity certificates require an audit report.")
         if not bool(np.asarray(report.valid)):

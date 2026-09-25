@@ -47,7 +47,7 @@ class SelectiveRiskCurveResult(StrictModule):
         valid: ArrayLike,
         status: ArrayLike,
         effective_weight: ArrayLike,
-    ):
+    ) -> None:
         self.aurc = jnp.asarray(aurc)
         self.score_threshold = jnp.asarray(score_threshold)
         self.coverage = jnp.asarray(coverage)

@@ -315,7 +315,7 @@ class HardConstraintTransform(AbstractOperatorOutputTransform):
     identity: str
     lift_fn: Callable[..., Array] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.field_name:
             raise ValueError("field_name must be non-empty.")
         if not self.identity:
@@ -380,7 +380,7 @@ class ConservationProjection(AbstractOperatorOutputTransform):
     identity: str | None = None
     correction_fn: Callable[..., Array] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.field_name:
             raise ValueError("field_name must be non-empty.")
         configured = int(self.source_name is not None) + int(
@@ -464,7 +464,7 @@ class OperatorOutputPipeline(StrictModule):
 
     transforms: tuple[AbstractOperatorOutputTransform, ...] = eqx.field(static=True)
 
-    def __init__(self, *transforms: AbstractOperatorOutputTransform):
+    def __init__(self, *transforms: AbstractOperatorOutputTransform) -> None:
         if any(
             not isinstance(item, AbstractOperatorOutputTransform) for item in transforms
         ):
@@ -574,7 +574,7 @@ class WeakOperatorLoss(AbstractOperatorLossTerm):
     normalize_tests: bool = True
     space: Literal["execution", "physical"] = "physical"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name or not self.identity:
             raise ValueError("Weak loss name and identity must be non-empty.")
         if not callable(self.residual_fn) or not callable(self.test_fn):

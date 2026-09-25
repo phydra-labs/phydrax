@@ -69,7 +69,7 @@ class PreparedNematicDynamics(StrictModule, NonTrainableState):
         *,
         anchoring: NematicAnchoringPlan | None = None,
         energy_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(finite_difference, PreparedFiniteDifferenceDiscretization):
             raise TypeError(
                 "finite_difference must be PreparedFiniteDifferenceDiscretization."
@@ -258,7 +258,7 @@ class PreparedNematicSemiImplicitStepPlan(StrictModule, NonTrainableState):
         dynamics: PreparedNematicDynamics,
         time_step: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedNematicDynamics):
             raise TypeError("dynamics must be PreparedNematicDynamics.")
         step = jnp.asarray(time_step)
@@ -400,7 +400,7 @@ class MACNematicCouplingPlan(StrictModule, NonTrainableState):
         density: float = 1.0,
         work_tolerance: float = 1.0e-10,
         maximum_cells: int = 1_000_000,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedNematicDynamics):
             raise TypeError("dynamics must be PreparedNematicDynamics.")
         if not isinstance(operators, PreparedMACOperators):

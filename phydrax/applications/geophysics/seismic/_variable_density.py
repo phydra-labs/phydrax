@@ -46,7 +46,7 @@ class VariableDensityAcousticPlan(StrictModule, NonTrainableState):
         absorber_cells: int = 0,
         absorber_strength: float = 3.0,
         cfl_limit: float = 0.95,
-    ):
+    ) -> None:
         self.baseline = ConstantDensityAcousticPlan(
             grid,
             time_step,

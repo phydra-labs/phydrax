@@ -91,7 +91,7 @@ class ColumnParameterSpace(StrictModule):
     names: tuple[str, ...] = eqx.field(static=True)
     parameter_id: str = eqx.field(static=True)
 
-    def __init__(self, names, scales, lower, upper):
+    def __init__(self, names, scales, lower, upper) -> None:
         names = tuple(names)
         if not names or len(set(names)) != len(names) or set(names) - set(_PARAMETERS):
             raise ValueError("Parameters must be unique supported native column leaves.")
@@ -134,7 +134,7 @@ class ColumnParameterSpace(StrictModule):
             )
         return plan
 
-    def check(self, physical):
+    def check(self, physical) -> None:
         values = np.asarray(physical)
         if values.shape != self.scales.shape or not np.all(np.isfinite(values)):
             raise ValueError(
@@ -162,7 +162,7 @@ class ColumnIntervention:
     longwave_multiplier: float = 1.0
     slab_capacity_multiplier: float = 1.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _nonempty(self.label, "Intervention label")
         values = (
             self.solar_multiplier,
@@ -185,7 +185,7 @@ class ColumnObservationBinding:
     operator: GeophysicalObservationOperator
     times: tuple[float, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.signal not in _SIGNALS:
             raise ValueError("Unknown interactive-column observation signal.")
         if not isinstance(self.operator, GeophysicalObservationOperator):
@@ -224,7 +224,7 @@ class _DifferentiableColumnMethod(AbstractFixedStepMethod, NonTrainableState):
     plan: InteractiveMoistColumnPlan
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, plan):
+    def __init__(self, plan) -> None:
         self.plan = plan
         self.method_id = canonical_fingerprint(
             {"kind": "column-inference-fixed-step", "plan": plan.plan_id}
@@ -302,7 +302,7 @@ class ColumnExperiment:
         ventilation=0.0,
         shear=0.0,
         heating_rate=0.0,
-    ):
+    ) -> None:
         bindings = tuple(bindings)
         if not bindings or not all(
             isinstance(x, ColumnObservationBinding) for x in bindings
@@ -550,7 +550,9 @@ class ColumnObservationData:
     role: str
     data_id: str
 
-    def __init__(self, experiment, products, *, provenance, role, covariance=None):
+    def __init__(
+        self, experiment, products, *, provenance, role, covariance=None
+    ) -> None:
         products = tuple(products)
         if role not in ("calibration", "holdout"):
             raise ValueError("Observation role must be calibration or holdout.")
@@ -722,7 +724,7 @@ class ColumnCalibrationProblem:
     data: tuple[ColumnObservationData, ...]
     problem_id: str
 
-    def __init__(self, plan, space, data):
+    def __init__(self, plan, space, data) -> None:
         data = tuple(data)
         if not isinstance(plan, InteractiveMoistColumnPlan) or not isinstance(
             space, ColumnParameterSpace
@@ -961,7 +963,7 @@ class ColumnDesignCandidate:
     covariance: uq.DenseCovariance
     provenance: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _nonempty(self.provenance, "Candidate error provenance")
         size = sum(
             len(b.times) * b.operator.transfer.target.vector_space.size
@@ -1066,7 +1068,7 @@ def design_column_intervention(problem, result, candidates, *, reference_covaria
     return ColumnDesignResult(chosen, values, flags, identity)
 
 
-def _matching_result(problem, result):
+def _matching_result(problem, result) -> None:
     if result.problem_id != problem.problem_id:
         raise ValueError(
             "Inference artifact belongs to a different model/parameter/observation lineage."

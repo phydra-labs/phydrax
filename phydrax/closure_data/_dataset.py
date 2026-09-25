@@ -90,7 +90,7 @@ class DatasetExtent(StrictModule, NonTrainableState):
         realization_id: str,
         time_block_id: str,
         sample_count: int,
-    ):
+    ) -> None:
         identifiers = tuple(
             str(value).strip()
             for value in (case_id, trajectory_id, realization_id, time_block_id)
@@ -137,7 +137,7 @@ class ClosureDatasetChunk(StrictModule, NonTrainableState):
         byte_size: int,
         sha256: str,
         encoding: str = "identity",
-    ):
+    ) -> None:
         extent = str(extent_id).strip()
         logical = str(logical_name).strip()
         digest = str(sha256).strip().lower()
@@ -229,7 +229,7 @@ class ChunkedClosureDatasetManifest(StrictModule, NonTrainableState):
         analysis_dag_id: str,
         extents: tuple[DatasetExtent, ...],
         chunks: tuple[ClosureDatasetChunk, ...],
-    ):
+    ) -> None:
         dataset = str(dataset_id).strip()
         schema = str(schema_id).strip()
         dag = str(analysis_dag_id).strip()
@@ -406,7 +406,7 @@ class ClosureSampleKey(StrictModule, NonTrainableState):
         realization_id: str,
         time_block_id: str,
         time_index: int,
-    ):
+    ) -> None:
         identifiers = tuple(
             str(value).strip()
             for value in (case_id, trajectory_id, realization_id, time_block_id)
@@ -449,7 +449,9 @@ class ClosureSample(StrictModule, NonTrainableState):
     schema_id: str = eqx.field(static=True)
     sample_id: str = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, key: ClosureSampleKey, /, *, schema_id: str):
+    def __init__(
+        self, values: ArrayLike, key: ClosureSampleKey, /, *, schema_id: str
+    ) -> None:
         if not isinstance(key, ClosureSampleKey):
             raise TypeError("key must be a ClosureSampleKey.")
         array = jnp.asarray(values)
@@ -477,7 +479,7 @@ class PartitionAssignment(StrictModule, NonTrainableState):
 
     def __init__(
         self, *, sample_id: str, group_key: tuple[str, ...], split: DatasetSplit
-    ):
+    ) -> None:
         sample = str(sample_id).strip()
         group = tuple(str(value).strip() for value in group_key)
         split_ = str(split).strip()
@@ -518,7 +520,7 @@ class LeakageSafePartitionPlan(StrictModule, NonTrainableState):
         validation_fraction: float,
         test_fraction: float,
         salt: str,
-    ):
+    ) -> None:
         level_ = str(level).strip()
         fractions = tuple(
             float(value) for value in (train_fraction, validation_fraction, test_fraction)
@@ -583,7 +585,7 @@ class LeakageSafePartition(StrictModule, NonTrainableState):
         plan: LeakageSafePartitionPlan,
         assignments: tuple[PartitionAssignment, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, LeakageSafePartitionPlan):
             raise TypeError("plan must be a LeakageSafePartitionPlan.")
         values = tuple(assignments)
@@ -643,7 +645,7 @@ class NormalizerProvenance(StrictModule, NonTrainableState):
         training_sample_ids: tuple[str, ...],
         feature_name: str,
         schema_id: str,
-    ):
+    ) -> None:
         partition = str(partition_id).strip()
         assignments = tuple(str(value).strip() for value in training_assignment_ids)
         samples = tuple(str(value).strip() for value in training_sample_ids)
@@ -690,7 +692,7 @@ class TrainOnlyNormalizer(StrictModule, NonTrainableState):
         /,
         *,
         epsilon: float,
-    ):
+    ) -> None:
         if not isinstance(provenance, NormalizerProvenance):
             raise TypeError("provenance must be NormalizerProvenance.")
         mean_ = jnp.asarray(mean)

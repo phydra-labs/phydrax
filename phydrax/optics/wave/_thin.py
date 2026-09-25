@@ -63,7 +63,7 @@ class ScalarThinTransmission(StrictModule):
         /,
         *,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(space, PlaneFieldSpace):
             raise TypeError("space must be a PlaneFieldSpace.")
         values = _complex_transmission("transmission", transmission, space.shape)
@@ -120,7 +120,7 @@ class JonesThinTransmission(StrictModule):
         /,
         *,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(space, PlaneFieldSpace):
             raise TypeError("space must be a PlaneFieldSpace.")
         shape = space.shape + (2, 2)

@@ -155,7 +155,7 @@ class GreenKernelOperator(AbstractOperatorModel):
         boundary_key: str = "boundary",
         query_chunk_size: int = 256,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         coordinate_dimension = int(coord_dim)
         forcing_count = _get_size(forcing_channels)
         boundary_count = _get_size(boundary_channels)

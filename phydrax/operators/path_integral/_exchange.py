@@ -37,7 +37,7 @@ class ExchangePathPlan(StrictModule):
         statistics: Literal["boson", "fermion"],
         active: ArrayLike | None = None,
         require_full_enumeration: bool = False,
-    ):
+    ) -> None:
         table = np.asarray(permutations)
         if (
             table.ndim != 2

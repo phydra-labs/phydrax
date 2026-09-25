@@ -62,7 +62,7 @@ class ThermalLatticeBoltzmannProblemIR(StrictModule, NonTrainableState):
         volumetric_source: ArrayLike = 0.0,
         boussinesq: BoussinesqCouplingPlan | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         boundary_values = tuple(boundaries)
         source = np.asarray(volumetric_source, dtype=np.float64)
@@ -127,7 +127,7 @@ class CompiledThermalLatticeBoltzmannProblem(StrictModule, NonTrainableState):
         step_size: float,
         cell_measure: ArrayLike,
         /,
-    ):
+    ) -> None:
         shape = tuple(spatial_shape)
         dx = float(spacing)
         dt = float(step_size)
@@ -228,7 +228,7 @@ class CompiledThermalLatticeBoltzmannProblem(StrictModule, NonTrainableState):
             raise ValueError("The compiled thermal problem has no Boussinesq coupling.")
         return boussinesq_force(self.temperature(state), self.problem.boussinesq)
 
-    def _validate_state(self, state):
+    def _validate_state(self, state) -> None:
         if not isinstance(state, ThermalLatticeBoltzmannState):
             raise TypeError("state must be a ThermalLatticeBoltzmannState.")
         if state.state_id != self.compilation_id:

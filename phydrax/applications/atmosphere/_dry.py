@@ -54,7 +54,9 @@ class DryAir(StrictModule, NonTrainableState):
     heat_capacity_pressure: float = eqx.field(static=True)
     air_id: str = eqx.field(static=True)
 
-    def __init__(self, mole_fractions: Sequence[float] = (0.78084, 0.20946, 0.00934)):
+    def __init__(
+        self, mole_fractions: Sequence[float] = (0.78084, 0.20946, 0.00934)
+    ) -> None:
         fraction = np.asarray(mole_fractions, dtype=np.float64)
         if (
             fraction.shape != (3,)
@@ -164,7 +166,7 @@ class DryHydrostaticReference(StrictModule, NonTrainableState):
         pressure: float = 100000.0,
         height: float = 0.0,
         gravity: float = 9.80665,
-    ):
+    ) -> None:
         if family not in ("isothermal", "isentropic"):
             raise ValueError("Hydrostatic family must be isothermal or isentropic.")
         values = (float(temperature), float(pressure), float(height), float(gravity))
@@ -290,7 +292,7 @@ class DryAtmospherePlan(StrictModule, NonTrainableState):
         prescribed: Sequence[tuple[ArrayLike | None, ArrayLike | None]] | None = None,
         order: int = 2,
         cfl: float = 0.35,
-    ):
+    ) -> None:
         shape_ = tuple(shape)
         bounds_ = np.asarray(bounds, dtype=np.float64)
         if (
@@ -452,7 +454,9 @@ class PreparedDryAtmosphere(AbstractFixedStepMethod, NonTrainableState):
     method_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: DryAtmospherePlan, balance: PreparedAtmosphericBalance):
+    def __init__(
+        self, plan: DryAtmospherePlan, balance: PreparedAtmosphericBalance
+    ) -> None:
         self.plan, self.balance = plan, balance
         self.precision = FiniteVolumePrecisionPolicy(
             jnp.dtype(balance.reference.dtype).name

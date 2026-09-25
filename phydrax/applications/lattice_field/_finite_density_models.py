@@ -44,7 +44,7 @@ class HRGSpectrum(StrictModule, NonTrainableState):
         source_release: str,
         checksum: str,
         interaction_prescription: str = "ideal-boltzmann",
-    ):
+    ) -> None:
         masses_ = np.asarray(masses, dtype=np.float64)
         degeneracies_ = np.asarray(degeneracies, dtype=np.float64)
         charges_ = np.asarray(charges, dtype=np.float64)
@@ -181,7 +181,7 @@ class FiniteDensityProviderGrid(StrictModule, NonTrainableState):
         source_kind: FiniteDensitySourceKind,
         provider_release: str,
         checksum: str,
-    ):
+    ) -> None:
         temperatures_ = np.asarray(temperatures, dtype=np.float64)
         baryon = np.asarray(baryon_chemical_potentials, dtype=np.float64)
         regular = np.asarray(regular_pressure_over_temperature4, dtype=np.float64)

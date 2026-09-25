@@ -67,7 +67,7 @@ class PassiveOceanTrajectoryPlan(StrictModule, NonTrainableState):
     maximum_steps: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, ocean: PreparedHydrostaticOcean, maximum_steps: int, /):
+    def __init__(self, ocean: PreparedHydrostaticOcean, maximum_steps: int, /) -> None:
         if not isinstance(ocean, PreparedHydrostaticOcean):
             raise TypeError("ocean must be a PreparedHydrostaticOcean.")
         capacity = int(maximum_steps)

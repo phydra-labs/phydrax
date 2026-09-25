@@ -71,7 +71,7 @@ class Uniform(AbstractDistribution):
     low: Array
     high: Array
 
-    def __init__(self, low: ArrayLike, high: ArrayLike):
+    def __init__(self, low: ArrayLike, high: ArrayLike) -> None:
         low_array = jnp.asarray(low, dtype=jnp.float64).reshape(())
         high_array = jnp.asarray(high, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(low_array)) or not bool(jnp.isfinite(high_array)):
@@ -146,7 +146,7 @@ class Normal(AbstractDistribution):
     location: Array
     scale: Array
 
-    def __init__(self, location: ArrayLike, scale: ArrayLike):
+    def __init__(self, location: ArrayLike, scale: ArrayLike) -> None:
         location_array, scale_array = jnp.broadcast_arrays(
             jnp.asarray(location, dtype=jnp.float64),
             jnp.asarray(scale, dtype=jnp.float64),
@@ -228,7 +228,7 @@ class LogNormal(AbstractDistribution):
     location: Array
     scale: Array
 
-    def __init__(self, location: ArrayLike, scale: ArrayLike):
+    def __init__(self, location: ArrayLike, scale: ArrayLike) -> None:
         location_array = jnp.asarray(location, dtype=jnp.float64).reshape(())
         scale_array = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(location_array)):
@@ -320,7 +320,7 @@ class EmpiricalDistribution(AbstractDistribution):
         self,
         values: ArrayLike,
         probabilities: ArrayLike | None = None,
-    ):
+    ) -> None:
         values_array = jnp.asarray(values, dtype=jnp.float64)
         if values_array.ndim != 1 or values_array.shape[0] <= 0:
             raise ValueError("Empirical values must be a non-empty 1D array.")

@@ -40,7 +40,7 @@ class AlchemicalSwitchingLineage(StrictModule, NonTrainableState):
 
     def __init__(
         self, origin_ids, chain_ids, draw_indices, repeat_ids, dependence_ids, /
-    ):
+    ) -> None:
         arrays = tuple(
             np.asarray(value)
             for value in (
@@ -149,7 +149,7 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
         protocol_time: float,
         sample_count: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedAtomisticDynamics):
             raise TypeError("dynamics must be PreparedAtomisticDynamics.")
         if not isinstance(thermodynamic, PreparedThermodynamicStateTable):

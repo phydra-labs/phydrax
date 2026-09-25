@@ -67,7 +67,7 @@ class RandomizedResidualSamples(StrictModule):
         weights: ArrayLike | None = None,
         dependence_ids: ArrayLike | None = None,
         estimator_id: str = "randomized-residual",
-    ):
+    ) -> None:
         samples = jnp.asarray(values)
         sample_axes = _shape(sample_shape, owner="sample_shape")
         event_axes = _shape(event_shape, owner="event_shape")
@@ -148,7 +148,7 @@ class RandomizedResidualBatch(StrictModule):
         /,
         *,
         batch_id: str = "randomized-residual",
-    ):
+    ) -> None:
         self.collocation = collocation
         self.left_key = left_key
         self.right_key = right_key
@@ -278,7 +278,7 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
         scalar_weight: ArrayLike = 1.0,
         label: str | None = None,
         precision: IntegrationPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(residual_evaluator):
             raise TypeError("residual_evaluator must be callable.")
         if loss_mode not in ("u_statistic", "independent_product", "plug_in"):

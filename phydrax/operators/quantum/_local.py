@@ -60,7 +60,7 @@ class LocalOperatorEstimate(StrictModule):
         estimator_variance: ArrayLike | None = None,
         estimator_count: ArrayLike | None = None,
         estimator_method: str = "deterministic",
-    ):
+    ) -> None:
         values = jnp.asarray(value)
         validity = jnp.asarray(valid, dtype=jnp.bool_)
         statuses = jnp.asarray(status, dtype=jnp.int32)

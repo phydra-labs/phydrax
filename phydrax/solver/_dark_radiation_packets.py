@@ -249,7 +249,7 @@ class DarkRadiationPacketPlan(StrictModule, NonTrainableState):
         *,
         epoch_plan: DarkSectorEpochPlan,
         owner_count: int = 1,
-    ):
+    ) -> None:
         packets = int(capacity)
         events = int(event_capacity)
         owners = int(owner_count)

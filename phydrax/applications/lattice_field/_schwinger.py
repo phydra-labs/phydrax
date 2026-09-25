@@ -58,7 +58,7 @@ class SchwingerChainModel(StrictModule, NonTrainableState):
         gauge_coupling: float,
         left_boundary_flux: float = 0.0,
         external_flux: ArrayLike | None = None,
-    ):
+    ) -> None:
         sites = int(site_count)
         spacing = float(lattice_spacing)
         mass_ = float(mass)

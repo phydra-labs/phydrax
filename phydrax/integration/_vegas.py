@@ -63,7 +63,7 @@ class VegasPlan(StrictModule, NonTrainableState):
         adaptation_power: float = 0.5,
         minimum_bin_fraction: float = 1.0e-6,
         max_evaluations: int = 1_000_000,
-    ):
+    ) -> None:
         lower_ = np.asarray(lower, dtype=np.float64)
         upper_ = np.asarray(upper, dtype=np.float64)
         if lower_.ndim != 1 or lower_.size == 0 or upper_.shape != lower_.shape:
@@ -150,7 +150,7 @@ class FrozenVegasGrid(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str,
-    ):
+    ) -> None:
         edges_ = np.asarray(edges, dtype=np.float64)
         if edges_.ndim != 2 or edges_.shape[1] < 3:
             raise ValueError("VEGAS edges must have shape (dimension, bins + 1).")
@@ -203,7 +203,7 @@ class PreparedVegas(StrictModule, NonTrainableState):
     grid: FrozenVegasGrid
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: VegasPlan, grid: FrozenVegasGrid, /):
+    def __init__(self, plan: VegasPlan, grid: FrozenVegasGrid, /) -> None:
         if grid.plan_id != plan.plan_id:
             raise ValueError("Frozen VEGAS grid was prepared for a different plan.")
         self.plan = plan

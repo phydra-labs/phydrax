@@ -77,7 +77,7 @@ class QuoteKey(StrictModule, NonTrainableState):
         venue: str = "",
         currency: Currency | None = None,
         fx_pair: FXPair | None = None,
-    ):
+    ) -> None:
         reference = _nonempty(reference_id, "reference_id")
         field_ = _nonempty(field, "field").lower()
         venue_ = _optional_text(venue, "venue")
@@ -150,7 +150,7 @@ class QuoteObservation(StrictModule, NonTrainableState):
         timestamp: FinancialTimestamp,
         lineage: DataLineage,
         /,
-    ):
+    ) -> None:
         if not isinstance(key, QuoteKey):
             raise TypeError("key must be a QuoteKey.")
         scalar = np.asarray(value)
@@ -243,7 +243,9 @@ class FixingSeries(StrictModule, NonTrainableState):
     observations: tuple[QuoteObservation, ...]
     series_id: str = eqx.field(static=True)
 
-    def __init__(self, key: QuoteKey, observations: Sequence[QuoteObservation], /):
+    def __init__(
+        self, key: QuoteKey, observations: Sequence[QuoteObservation], /
+    ) -> None:
         if not isinstance(key, QuoteKey):
             raise TypeError("key must be a QuoteKey.")
         values = tuple(observations)

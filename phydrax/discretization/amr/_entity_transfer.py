@@ -44,7 +44,7 @@ class CompatibleEntityTransferEvidence(StrictModule, NonTrainableState):
         roundtrip_defect: float,
         commuting_defect: float,
         /,
-    ):
+    ) -> None:
         defects = (
             float(constant_defect),
             float(roundtrip_defect),
@@ -253,7 +253,7 @@ class CompatibleEntityTransferFamily(StrictModule, NonTrainableState):
         /,
         *,
         dtype=jnp.float64,
-    ):
+    ) -> None:
         ratio = int(refinement_ratio)
         capacities = tuple(route_capacities)
         dimension = coarse.complex.dimension

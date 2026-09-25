@@ -89,7 +89,7 @@ class ChargedParticleTransportPlan(StrictModule, NonTrainableState):
         maximum_step_length: float,
         maximum_fractional_energy_loss: float = 0.05,
         cutoff_energy_ev: float,
-    ):
+    ) -> None:
         if not isinstance(geometry, VoxelRadiationGeometryPlan):
             raise TypeError("geometry must be VoxelRadiationGeometryPlan.")
         if not isinstance(materials, ChargedRadiationMaterialLibrary):

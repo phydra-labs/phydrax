@@ -50,7 +50,7 @@ class SignatureRecurrentCell(AbstractRecurrentOutputCell):
         /,
         *,
         include_scalar: bool = False,
-    ):
+    ) -> None:
         resolved_dimension = int(dimension)
         resolved_depth = int(depth)
         if resolved_dimension <= 0:

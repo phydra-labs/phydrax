@@ -50,7 +50,7 @@ class HolzapfelOgden2009Parameters(StrictModule, NonTrainableState):
         a_fs: ArrayLike,
         b_fs: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value) for value in (a, b, a_f, b_f, a_s, b_s, a_fs, b_fs)
         )
@@ -145,7 +145,7 @@ class HolzapfelOgden2009TensionOnlyEnergy(StrictModule, NonTrainableState):
         cell_index: int | None = None,
         frame_tolerance: float = 1.0e-8,
         energy_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(parameters, HolzapfelOgden2009Parameters):
             raise TypeError("parameters must be HolzapfelOgden2009Parameters.")
         frame, identifier, selected_cell = resolve_material_frame(

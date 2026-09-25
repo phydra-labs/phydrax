@@ -98,7 +98,7 @@ class LineGraph(StrictModule):
         transition_edges: Any,
         source_edge_indices: Any,
         target_edge_indices: Any,
-    ):
+    ) -> None:
         self.graph = graph
         self.original_edges = jnp.asarray(original_edges, dtype=jnp.int32)
         self.transition_edges = jnp.asarray(transition_edges, dtype=jnp.int32)
@@ -230,7 +230,7 @@ class MeshDualGraph(StrictModule):
         dual_edges: Any,
         boundary_faces: Any,
         interior_faces: Any,
-    ):
+    ) -> None:
         self.graph = graph
         self.face_nodes = jnp.asarray(face_nodes, dtype=jnp.int32)
         self.dual_edges = jnp.asarray(dual_edges, dtype=jnp.int32)

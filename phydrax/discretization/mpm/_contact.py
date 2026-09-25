@@ -46,7 +46,7 @@ class SharpCoulombMPMFrictionPlan(AbstractMPMFrictionPlan):
     coefficient: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, coefficient: float, /):
+    def __init__(self, coefficient: float, /) -> None:
         value = float(coefficient)
         if not np.isfinite(value) or value < 0.0:
             raise ValueError("Coulomb coefficient must be finite and nonnegative.")
@@ -64,7 +64,7 @@ class SmoothCoulombMPMFrictionPlan(AbstractMPMFrictionPlan):
     regularization: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, coefficient: float, /, *, regularization: float = 1.0e-4):
+    def __init__(self, coefficient: float, /, *, regularization: float = 1.0e-4) -> None:
         value = float(coefficient)
         regularization_ = float(regularization)
         if (
@@ -111,7 +111,7 @@ class RigidMPMContactPlan(StrictModule, NonTrainableState):
         wall_velocity: Callable | None = None,
         wall_velocity_id: str | None = None,
         smooth_normal_regularization: float | None = None,
-    ):
+    ) -> None:
         if geometry is None:
             raise TypeError("geometry must provide signed_distance and boundary_normal.")
         if not isinstance(friction, AbstractMPMFrictionPlan):

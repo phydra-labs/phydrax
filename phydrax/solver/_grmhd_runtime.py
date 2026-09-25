@@ -192,7 +192,7 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         cfl: float = 0.35,
         divergence_tolerance: float = 1.0e-10,
         balance_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(system, IdealValenciaGRMHDSystem):
             raise TypeError("system must be IdealValenciaGRMHDSystem.")
         if not isinstance(constrained_transport, GRMHDConstrainedTransportPlan):

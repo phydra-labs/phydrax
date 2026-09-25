@@ -52,7 +52,7 @@ class DistributedPhaseFieldCheckpointManifest(StrictModule, NonTrainableState):
         *,
         stochastic_id: str | None = None,
         active_storage_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be FiniteElementDiscretization.")
         method = str(method_id)
@@ -105,7 +105,7 @@ class DistributedPhaseFieldPlan(StrictModule, NonTrainableState):
         axis_name: str = "phase_field_parts",
         physics_weight: float = 1.0,
         cut_penalty: float = 0.25,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be FiniteElementDiscretization.")
         parts = int(part_count)

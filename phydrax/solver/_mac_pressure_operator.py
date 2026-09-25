@@ -92,7 +92,7 @@ class MACPressureRobinSide(StrictModule, NonTrainableState):
         beta: float,
         value: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         axis_ = int(axis)
         alpha_ = float(alpha)
         beta_ = float(beta)
@@ -187,7 +187,7 @@ class MACPressureSolveResult(StrictModule):
 class _ScaledIdentityPressurePreconditioner(AbstractPreconditioner, NonTrainableState):
     inverse_scale: Array
 
-    def __init__(self, operators: PreparedMACOperators, scale: ArrayLike, /):
+    def __init__(self, operators: PreparedMACOperators, scale: ArrayLike, /) -> None:
         scale_ = jnp.asarray(scale, dtype=operators.pressure_space.dtype).reshape(())
         if not bool(np.isfinite(np.asarray(scale_))) or bool(np.asarray(scale_) <= 0.0):
             raise ValueError("Pressure preconditioner scale must be finite and positive.")
@@ -240,7 +240,7 @@ class MACWeightedPressureAction(StrictModule, NonTrainableState):
         gauge: bool,
         nonsymmetric_traction: bool = False,
         action_id: str,
-    ):
+    ) -> None:
         sides = tuple(robin_sides)
         dimension = len(operators.discretization.cell_shape)
         if not all(
@@ -368,7 +368,7 @@ class MACPressureOperatorSpec(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         maximum_resource_bytes: int = 512 * 1024**2,
         geometry_epoch: int = 0,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         boundaries_ = (
@@ -552,7 +552,7 @@ class PreparedMACPressureOperator(StrictModule, NonTrainableState):
     preparation: MACPressurePreparationEvidence
     preparation_id: str = eqx.field(static=True)
 
-    def __init__(self, spec: MACPressureOperatorSpec, /):
+    def __init__(self, spec: MACPressureOperatorSpec, /) -> None:
         if not isinstance(spec, MACPressureOperatorSpec):
             raise TypeError("spec must be MACPressureOperatorSpec.")
         action = MACWeightedPressureAction(

@@ -71,7 +71,7 @@ class StateSpaceWindowPlan(StrictModule):
         target_length: int,
         left_buffer: int = 0,
         right_buffer: int = 0,
-    ):
+    ) -> None:
         steps = int(num_steps)
         target = int(target_length)
         left = int(left_buffer)
@@ -139,7 +139,7 @@ class BufferedStateSpaceVariationalConfig(StrictModule):
         hidden_size: int = 64,
         scale_floor: float = 1e-6,
         optimization: VariationalConfig | None = None,
-    ):
+    ) -> None:
         optimization_ = VariationalConfig() if optimization is None else optimization
         if not isinstance(optimization_, VariationalConfig):
             raise TypeError("optimization must be VariationalConfig or None.")

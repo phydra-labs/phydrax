@@ -69,7 +69,7 @@ class ConditionalHolomorphicMapCertificate(AbstractConstructionCertificate):
         bias_mode: str,
         branch_names: tuple[str, ...],
         branch_fusion: str,
-    ):
+    ) -> None:
         input_size = int(query_complex_input_size)
         output_size = int(complex_output_size)
         latent = int(latent_size)
@@ -140,7 +140,7 @@ class TargetAugmentedBranchEncoder(AbstractBranchEncoder):
         free_encoder: AbstractBranchEncoder,
         target_indices: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(free_encoder, AbstractBranchEncoder):
             raise TypeError("free_encoder must be AbstractBranchEncoder.")
         indices = tuple(target_indices)
@@ -209,7 +209,7 @@ class HolomorphicBasisTrunk(AbstractBasisTrunk, NonTrainableState):
         *,
         constraint_operator: PreparedHolomorphicConstraintOperator | None = None,
         coefficient_map: HolomorphicAffineCoefficientMap | None = None,
-    ):
+    ) -> None:
         if not isinstance(frame, HolomorphicLinearFrame):
             raise TypeError("frame must implement HolomorphicLinearFrame.")
         if constraint_operator is not None and not isinstance(
@@ -381,7 +381,7 @@ class ConditionalHolomorphicDeepONet(AbstractOperatorModel):
     out_size: int | Literal["scalar"]
     _certificate: ConditionalHolomorphicMapCertificate
 
-    def __init__(self, operator: DeepONet, /):
+    def __init__(self, operator: DeepONet, /) -> None:
         if not isinstance(operator, DeepONet):
             raise TypeError("operator must be DeepONet.")
         if not isinstance(operator.trunk, HolomorphicBasisTrunk):
@@ -497,7 +497,7 @@ class ConditionalHarmonicOperator2D(AbstractOperatorModel):
     in_size: int | Literal["scalar"]
     out_size: Literal["scalar"]
 
-    def __init__(self, potential: ConditionalHolomorphicDeepONet, /):
+    def __init__(self, potential: ConditionalHolomorphicDeepONet, /) -> None:
         if not isinstance(potential, ConditionalHolomorphicDeepONet):
             raise TypeError("potential must be ConditionalHolomorphicDeepONet.")
         if potential.conditional_holomorphic_certificate().complex_output_size != 1:

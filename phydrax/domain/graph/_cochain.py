@@ -30,7 +30,7 @@ _COCHAIN_FIELD_SPEC_KEY = "_phydrax_cochain_field_spec"
 class _CochainDegreeMask(StrictModule):
     degree: int
 
-    def __init__(self, degree: int):
+    def __init__(self, degree: int) -> None:
         self.degree = int(degree)
 
     def __call__(self, cell: Mapping[str, object]):

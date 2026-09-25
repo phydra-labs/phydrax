@@ -2220,13 +2220,13 @@ def _put_bsde_evaluation(result, arrays, fields, *, prefix):
     return metadata
 
 
-def _put_field(fields, arrays, name, value):
+def _put_field(fields, arrays, name, value) -> None:
     array_name = f"field/{name}"
     arrays[array_name] = _portable_array(value)
     fields[name] = array_name
 
 
-def _put_tree(trees, arrays, name, tree):
+def _put_tree(trees, arrays, name, tree) -> None:
     path_leaves = jax.tree_util.tree_flatten_with_path(tree)[0]
     if not path_leaves:
         raise ValueError(f"Result array tree {name!r} has no leaves.")
@@ -2240,7 +2240,7 @@ def _put_tree(trees, arrays, name, tree):
     trees[name] = {"paths": paths, "arrays": names}
 
 
-def _put_array_leaves(trees, arrays, name, tree):
+def _put_array_leaves(trees, arrays, name, tree) -> None:
     paths = []
     names = []
     for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
@@ -2261,7 +2261,7 @@ def _put_flat_inexact_tree(
     tree,
     *,
     expected_size,
-):
+) -> None:
     paths = []
     names = []
     leaf_shapes = []

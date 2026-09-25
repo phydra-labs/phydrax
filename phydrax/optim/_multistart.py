@@ -51,7 +51,7 @@ class MultiStartPolicy(StrictModule):
         normal_scale: float = 1.0,
         seed: int = 0,
         lane_count: int | None = None,
-    ):
+    ) -> None:
         method = ProjectedLBFGS() if local_method is None else local_method
         if not isinstance(method, AbstractMinimizationMethod):
             raise TypeError("local_method must be AbstractMinimizationMethod or None.")

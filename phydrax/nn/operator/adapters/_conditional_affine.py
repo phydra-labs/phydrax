@@ -43,7 +43,7 @@ class TrainedChemicalConditionalAffineTransition(StrictModule):
         minimum_duration: float | None = None,
         maximum_duration: float | None = None,
         transition_id: str | None = None,
-    ):
+    ) -> None:
         from phydrax.nn.operator.training._trained_operator import TrainedOperator
 
         if not isinstance(trained_operator, TrainedOperator):

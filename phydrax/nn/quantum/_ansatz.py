@@ -60,7 +60,7 @@ class JastrowSpinAmplitude(StrictModule, ParameterOwner):
     couplings: Array
     site_count: int = eqx.field(static=True)
 
-    def __init__(self, fields: ArrayLike, couplings: ArrayLike, /):
+    def __init__(self, fields: ArrayLike, couplings: ArrayLike, /) -> None:
         h, matrix = jnp.asarray(fields), jnp.asarray(couplings)
         if h.ndim != 1 or matrix.shape != (h.shape[0], h.shape[0]) or h.size < 1:
             raise ValueError(
@@ -127,7 +127,7 @@ class RestrictedBoltzmannAmplitude(StrictModule, ParameterOwner):
 
     def __init__(
         self, visible_bias: ArrayLike, hidden_bias: ArrayLike, weights: ArrayLike, /
-    ):
+    ) -> None:
         visible, hidden, matrix = map(jnp.asarray, (visible_bias, hidden_bias, weights))
         if (
             visible.ndim != 1
@@ -266,7 +266,7 @@ class AutoregressiveSpinAmplitude(StrictModule, ParameterOwner):
         *,
         phase_bias=None,
         phase_weights=None,
-    ):
+    ) -> None:
         bias, weights = jnp.asarray(conditional_bias), jnp.asarray(conditional_weights)
         if bias.ndim != 1 or weights.shape != (bias.shape[0], bias.shape[0]):
             raise ValueError(
@@ -329,7 +329,7 @@ class SlaterJastrowAmplitude(StrictModule):
         *,
         electron_count: int,
         cusp_id: str,
-    ):
+    ) -> None:
         if not callable(orbital_evaluator) or not callable(jastrow):
             raise TypeError("orbital_evaluator and jastrow must be callable.")
         count = int(electron_count)
@@ -375,7 +375,7 @@ class CircuitAmplitude(StrictModule, ParameterOwner):
         /,
         *,
         maximum_dimension: int,
-    ):
+    ) -> None:
         from ...solver._quantum_program import PreparedDenseQuantumProgram
 
         if not isinstance(prepared, PreparedDenseQuantumProgram):

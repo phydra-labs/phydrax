@@ -60,7 +60,7 @@ class GaussConstraintNetwork(StrictModule):
         link_wire_ids: Sequence[str] | None = None,
         matter_wire_ids: Sequence[str] | None = None,
         hermiticity_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         incidence_host = np.asarray(vertex_link_incidence)
         if (
             incidence_host.ndim != 2
@@ -260,7 +260,7 @@ class GaussSectorResourcePolicy(StrictModule):
         maximum_dense_elements: int = 1 << 27,
         maximum_basis_states: int = 1 << 20,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         dimension = int(maximum_hilbert_dimension)
         dense = int(maximum_dense_elements)
         basis = int(maximum_basis_states)

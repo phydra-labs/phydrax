@@ -66,7 +66,7 @@ class FDTransformAxisReport(StrictModule, NonTrainableState):
         unknown_count: int,
         spacing: float,
         nullspace_dimension: int,
-    ):
+    ) -> None:
         self.axis = axis
         self.primary_entity = primary_entity
         self.lower_boundary = lower_boundary
@@ -111,7 +111,7 @@ class _FDSecondDifferenceAxis(StrictModule, NonTrainableState):
         unknown_count: int,
         spacing: float,
         /,
-    ):
+    ) -> None:
         self.axis = int(axis)
         self.primary_entity = primary_entity
         self.lower_boundary, self.upper_boundary = boundaries
@@ -177,7 +177,7 @@ class FDLaplacianDiagonalization(StrictModule, NonTrainableState):
         grid: PreparedTensorGrid,
         boundaries: Mapping[str, FDBoundaryPair] | Sequence[FDBoundaryPair],
         /,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("grid must be a PreparedTensorGrid.")
         pairs = _normalize_boundaries(grid, boundaries)
@@ -318,7 +318,7 @@ class FDLaplacianSolvePlan(StrictModule, NonTrainableState):
         compatibility: CompatibilityPolicy = "error",
         gauge: GaugePolicy = "minimum_norm",
         zero_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(diagonalization, FDLaplacianDiagonalization):
             raise TypeError("diagonalization must be FDLaplacianDiagonalization.")
         scale = jnp.asarray(operator_scale, dtype=diagonalization.space.dtype)

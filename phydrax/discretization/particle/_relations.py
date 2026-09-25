@@ -251,7 +251,7 @@ class DynamicPairRelationPlan(StrictModule, NonTrainableState):
         event_capacity: int | None = None,
         incarnation_maximum: int = 2**31 - 1,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         types = np.asarray(endpoint_types)
         relation_count = int(relation_capacity)
         width = int(parameter_width)
@@ -372,7 +372,7 @@ class PreparedDynamicPairRelations(StrictModule, NonTrainableState):
         /,
         *,
         prepared_scope_id: str = "dynamic-pair-relations",
-    ):
+    ) -> None:
         if not isinstance(plan, DynamicPairRelationPlan):
             raise TypeError("plan must be a DynamicPairRelationPlan.")
         scope = str(prepared_scope_id)
@@ -1057,7 +1057,7 @@ class PairSpringPlan(StrictModule, NonTrainableState):
         *,
         minimum_length: float = 1.0e-12,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         stiffness = int(stiffness_parameter)
         rest = int(rest_length_parameter)
         minimum = float(minimum_length)
@@ -1117,7 +1117,7 @@ class PreparedPairSpringEnergy(StrictModule, NonTrainableState):
         /,
         *,
         ambient_dimension: int,
-    ):
+    ) -> None:
         if not isinstance(plan, PairSpringPlan):
             raise TypeError("plan must be a PairSpringPlan.")
         if not isinstance(relations, PreparedDynamicPairRelations):

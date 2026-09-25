@@ -31,7 +31,7 @@ class QuantumGeometricTensorResult(StrictModule):
         tensor: ArrayLike,
         berry_connection: ArrayLike,
         normalization_residual: ArrayLike,
-    ):
+    ) -> None:
         self.state = jnp.asarray(state)
         self.tensor = jnp.asarray(tensor)
         self.metric = jnp.real(self.tensor)

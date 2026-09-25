@@ -27,7 +27,7 @@ class AlgebraElementLayout(StrictModule, NonTrainableState):
         /,
         *,
         algebra_axis: int = -1,
-    ):
+    ) -> None:
         if not isinstance(algebra, AbstractFiniteRealAlgebraSpec):
             raise TypeError("algebra must implement AbstractFiniteRealAlgebraSpec.")
         axis = int(algebra_axis)

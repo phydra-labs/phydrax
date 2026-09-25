@@ -248,7 +248,7 @@ class IREEExecutable:
         manifest: IREEArtifactManifest,
         module_bytes: bytes,
         /,
-    ):
+    ) -> None:
         compiler, runtime = import_iree()
         del compiler
         config = runtime.Config(manifest.runtime_driver)

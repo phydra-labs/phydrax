@@ -189,7 +189,7 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
         tail_start_wavenumber: float | None = None,
         reality_tolerance: float = 1.0e-10,
         solenoidal_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledIncompressibleSpectralDynamics):
             raise TypeError("dynamics must be CompiledIncompressibleSpectralDynamics.")
         projector = dynamics.projector
@@ -822,7 +822,7 @@ class SpectralChannelStatisticsPlan(StrictModule, NonTrainableState):
         kinematic_viscosity: float,
         wall_normal_axis: int = 1,
         reality_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         if len(discretization.axes) != 3:
@@ -1079,7 +1079,7 @@ class MACPlaneWallStatisticsPlan(StrictModule, NonTrainableState):
         streamwise_axis: int = 0,
         lower_wall_velocity: ArrayLike | None = None,
         upper_wall_velocity: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         dimension = len(operators.discretization.cell_shape)

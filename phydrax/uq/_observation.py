@@ -49,7 +49,7 @@ class LikelihoodObservationModel(AbstractObservationModel):
         parameters: (
             Callable[[Array, Array, StateSpaceStepContext], Mapping[str, Any]] | None
         ) = None,
-    ):
+    ) -> None:
         if not isinstance(likelihood, AbstractLikelihood):
             raise TypeError("likelihood must implement AbstractLikelihood.")
         if not callable(location):

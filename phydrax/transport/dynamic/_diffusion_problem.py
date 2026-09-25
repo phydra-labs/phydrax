@@ -46,7 +46,7 @@ class DiffusionBridgeProblem(StrictModule):
         *,
         state_geometry: Any = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(initial_law, AbstractProbabilityLaw) or not isinstance(
             terminal_law, AbstractProbabilityLaw
         ):
@@ -113,7 +113,7 @@ class DiffusionBridgePlan(StrictModule):
         audit_capacity: int = 128,
         minimum_ess: float = 2.0,
         maximum_tail_error: float = 0.1,
-    ):
+    ) -> None:
         capacity = int(support_capacity)
         block = int(transition_block_size)
         audit = int(audit_capacity)

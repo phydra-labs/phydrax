@@ -34,7 +34,7 @@ class ContourBlockPlan(StrictModule, NonTrainableState):
         contour_fraction: float,
         contour_steps: int,
         /,
-    ):
+    ) -> None:
         identifier = str(block_id).strip()
         source = str(source_node).strip()
         target = str(target_node).strip()
@@ -86,7 +86,7 @@ class PolymerContourArchitecturePlan(StrictModule, NonTrainableState):
         /,
         *,
         root_node: str,
-    ):
+    ) -> None:
         identifier = str(architecture_id).strip()
         values = tuple(blocks)
         root = str(root_node).strip()
@@ -171,7 +171,7 @@ class PolymerComponentPlan(StrictModule, NonTrainableState):
         volume_fraction: float,
         polymerization_index: float,
         /,
-    ):
+    ) -> None:
         identifier = str(component_id).strip()
         fraction = float(volume_fraction)
         polymerization = float(polymerization_index)
@@ -214,7 +214,7 @@ class IncompressibleGaussianMixturePlan(StrictModule, NonTrainableState):
         chi_n: ArrayLike,
         components: tuple[PolymerComponentPlan, ...],
         /,
-    ):
+    ) -> None:
         identifiers = tuple(str(value).strip() for value in species_ids)
         lengths = np.asarray(statistical_segment_lengths, dtype=np.float64)
         interactions = np.asarray(chi_n, dtype=np.float64)

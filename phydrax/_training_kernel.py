@@ -131,7 +131,7 @@ class TrainingRejectionBudgetError(RuntimeError):
         outcome: TrainingAttemptOutcome,
         state: Any = None,
         evidence: Any = None,
-    ):
+    ) -> None:
         super().__init__(message)
         self.consecutive_rejections = consecutive_rejections
         self.attempt_cursor = attempt_cursor
@@ -300,7 +300,7 @@ class KernelObjective(StrictModule):
         route: DerivativeRoute,
         fn: ObjectiveFunction,
         weight: float = 1.0,
-    ):
+    ) -> None:
         identifier = _identifier(objective_id, "objective_id")
         if not isinstance(kind, ObjectiveKind):
             raise TypeError("kind must be an ObjectiveKind.")
@@ -462,7 +462,7 @@ class OptaxUpdateRule(AbstractKernelUpdateRule):
         rule_id: str,
         reevaluates_objective: bool = False,
         evaluation_parameters: EvaluationParametersFn | None = None,
-    ):
+    ) -> None:
         if not isinstance(optimizer, optax.GradientTransformation):
             raise TypeError("optimizer must be an optax.GradientTransformation.")
         if not isinstance(reevaluates_objective, bool):
@@ -580,7 +580,7 @@ class BacktrackingLineSearchRule(AbstractKernelUpdateRule):
         growth: float = 2.0,
         sufficient_decrease: float = 1e-4,
         max_trials: int = 20,
-    ):
+    ) -> None:
         values = (initial_step, shrink, growth, sufficient_decrease)
         if any(
             isinstance(value, (bool, np.bool_)) or not np.isfinite(float(value))
@@ -870,7 +870,7 @@ class TrainingKernelSpec(StrictModule):
         target_policy: TargetPolicy | None = None,
         lane_layout: LaneLayout | None = None,
         accumulation_dtype: Any = jnp.float64,
-    ):
+    ) -> None:
         if not isinstance(rule, AbstractKernelUpdateRule):
             raise TypeError("rule must be an AbstractKernelUpdateRule.")
         context_ = _identifier(context, "context")

@@ -116,7 +116,7 @@ def _distribution_evidence(name, expected_version):
     }
 
 
-def _verify_sources(request):
+def _verify_sources(request) -> None:
     identities = request["source_files_sha256"]
     for name, expected in identities.items():
         if _digest(Path("source") / name) != expected:
@@ -142,7 +142,7 @@ def _ansys_processes(psutil):
     ]
 
 
-def main():
+def main() -> None:
     if sys.platform != "win32":
         raise RuntimeError(
             "The pinned QDesignOptimizer profile requires Windows AEDT COM."

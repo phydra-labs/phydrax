@@ -66,7 +66,7 @@ class NonlinearWork(StrictModule):
         preconditioner_applications: Any = 0,
         local_updates: Any = 0,
         complete: bool = True,
-    ):
+    ) -> None:
         values = {
             "residual_evaluations": residual_evaluations,
             "validity_evaluations": validity_evaluations,
@@ -131,7 +131,7 @@ class NonlinearWorkBudget(StrictModule):
         linear_iterations: Any = -1,
         preconditioner_applications: Any = -1,
         local_updates: Any = -1,
-    ):
+    ) -> None:
         values = {
             "residual_evaluations": residual_evaluations,
             "validity_evaluations": validity_evaluations,
@@ -226,7 +226,7 @@ class NonlinearAttemptEvidence(StrictModule):
         skipped: Any = False,
         failure_origin: str = "",
         children: tuple[NonlinearAttemptEvidence, ...] = (),
-    ):
+    ) -> None:
         identifier = str(component_id)
         if not identifier:
             raise ValueError("component_id must be non-empty.")

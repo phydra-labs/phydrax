@@ -76,7 +76,7 @@ class TemporalPrecisionPolicy(StrictModule, NonTrainableState):
         decision_dtype: Any | None = None,
         checkpoint_dtype: Any | None = None,
         output_dtype: Any | None = None,
-    ):
+    ) -> None:
         coefficient = (
             None
             if coefficient_dtype is None

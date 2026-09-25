@@ -47,7 +47,7 @@ class ThreePhononScatteringResult(StrictModule, NonTrainableState):
         coalescence_count,
         successful,
         /,
-    ):
+    ) -> None:
         self.decay_rates = jnp.asarray(decay)
         self.coalescence_rates = jnp.asarray(coalescence, dtype=self.decay_rates.dtype)
         self.total_rates = self.decay_rates + self.coalescence_rates
@@ -102,7 +102,7 @@ class ThreePhononModeVertices(StrictModule, NonTrainableState):
         ifc3_id,
         phonon_result_id,
         /,
-    ):
+    ) -> None:
         decay = np.asarray(decay_vertices)
         coalescence = np.asarray(coalescence_vertices)
         frequency = np.asarray(angular_frequencies)
@@ -181,7 +181,7 @@ class IFC3ModeVertexPlan(StrictModule, NonTrainableState):
         phonon_result_id: str,
         maximum_channels: int = 50_000_000,
         maximum_bytes: int = 2_147_483_648,
-    ):
+    ) -> None:
         if not isinstance(ifc3, ThirdOrderForceConstants):
             raise TypeError("ifc3 must be ThirdOrderForceConstants.")
         if not isinstance(units, AtomisticUnitSystem):
@@ -375,7 +375,7 @@ class ThreePhononRTAResult(StrictModule, NonTrainableState):
         successful,
         unit_system_id,
         /,
-    ):
+    ) -> None:
         self.scattering = scattering
         self.lifetimes = jnp.asarray(lifetimes)
         self.mode_conductivity = jnp.asarray(
@@ -444,7 +444,7 @@ class ThreePhononRTAPlan(StrictModule, NonTrainableState):
         *,
         maximum_channels: int = 50_000_000,
         detailed_balance_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         if not isinstance(ifc3, ThirdOrderForceConstants):
             raise TypeError("ifc3 must be canonical ThirdOrderForceConstants.")
         if not ifc3.source_kind.startswith("provider-"):

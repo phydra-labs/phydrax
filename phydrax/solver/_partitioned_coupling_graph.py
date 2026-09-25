@@ -104,7 +104,7 @@ class CouplingGraph(StrictModule, NonTrainableState):
         subsystems: tuple[AbstractCouplingSubsystem, ...],
         exchanges: tuple[CouplingExchange, ...],
         /,
-    ):
+    ) -> None:
         subsystems_ = tuple(subsystems)
         exchanges_ = tuple(exchanges)
         if not subsystems_ or any(
@@ -203,7 +203,7 @@ class CouplingStagePlan(StrictModule, NonTrainableState):
         cyclic: bool,
         subsystem_ids: tuple[str, ...],
         exchange_ids: tuple[str, ...],
-    ):
+    ) -> None:
         self.subsystem_indices = tuple(subsystem_indices)
         self.internal_exchange_indices = tuple(internal_exchange_indices)
         self.incoming_exchange_indices = tuple(incoming_exchange_indices)
@@ -234,7 +234,7 @@ class CouplingResourcePolicy(StrictModule, NonTrainableState):
         maximum_interface_size: int | None = None,
         maximum_state_bytes: int | None = None,
         maximum_history_bytes: int | None = None,
-    ):
+    ) -> None:
         values = (
             maximum_interface_size,
             maximum_state_bytes,

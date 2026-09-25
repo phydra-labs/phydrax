@@ -51,7 +51,7 @@ class CharacteristicNonreflectingBoundaryPlan(StrictModule, NonTrainableState):
         *,
         relaxation: float = 1.0,
         sonic_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         relaxation_ = float(relaxation)
         tolerance = float(sonic_tolerance)
         if (
@@ -196,7 +196,7 @@ class CompressibleSpongePlan(StrictModule):
         start_coordinate: float,
         end_coordinate: float,
         profile_power: float = 2.0,
-    ):
+    ) -> None:
         target = jnp.asarray(target_state)
         strength_ = float(strength)
         start = float(start_coordinate)

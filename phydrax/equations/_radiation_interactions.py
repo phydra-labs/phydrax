@@ -73,7 +73,7 @@ class RadiationCrossSectionLibrary(StrictModule, NonTrainableState):
         commercial_use: bool = False,
         redistribution: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         tables = (photoelectric, compton, rayleigh)
         if not all(
             isinstance(table, DiagnosticPhotonCoefficientTable) for table in tables

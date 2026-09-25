@@ -36,7 +36,7 @@ class DifferentialNormalization(StrictModule, NonTrainableState):
     coordinate_scale: Array
     field_scale: Array
 
-    def __init__(self, coordinate_scale: Array, field_scale: Array, /):
+    def __init__(self, coordinate_scale: Array, field_scale: Array, /) -> None:
         coordinate = jnp.asarray(coordinate_scale, dtype=jnp.float64).reshape((-1,))
         field = jnp.asarray(field_scale, dtype=jnp.float64).reshape((-1,))
         if coordinate.size == 0 or field.size == 0:
@@ -68,7 +68,7 @@ class LinearDifferentialTransform(StrictModule, NonTrainableState):
 
     coefficients: Array
 
-    def __init__(self, coefficients: Array, /):
+    def __init__(self, coefficients: Array, /) -> None:
         tensor = jnp.asarray(coefficients, dtype=jnp.float64)
         if tensor.ndim != 3 or any(size <= 0 for size in tensor.shape):
             raise ValueError(
@@ -128,7 +128,7 @@ class DifferentialFieldDecoder(_AbstractBaseModel):
         backend: DerivativeBackend = "autodiff",
         step: float | Array = 1e-3,
         normalization: DifferentialNormalization | None = None,
-    ):
+    ) -> None:
         dimension = int(decoder.in_size if coord_dim is None else coord_dim)
         if dimension <= 0:
             raise ValueError("coord_dim must be positive.")

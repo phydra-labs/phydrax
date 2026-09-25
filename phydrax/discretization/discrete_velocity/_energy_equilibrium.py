@@ -164,7 +164,7 @@ class PositiveEnergyEquilibriumPlan(StrictModule, NonTrainableState):
         residual_tolerance: float = 1.0e-10,
         interior_tolerance: float = 1.0e-10,
         damping: float = 0.9,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if quadrature.dimension != 2:

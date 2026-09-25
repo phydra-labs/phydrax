@@ -55,7 +55,7 @@ class LeastSquaresRoutePolicy(StrictModule):
         rank_cutoff: float = 1e-10,
         iterative_tolerance: float = 1e-8,
         iterative_steps: int = 1000,
-    ):
+    ) -> None:
         dimension = int(dense_dimension)
         steps = int(iterative_steps)
         values = tuple(

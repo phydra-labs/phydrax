@@ -103,7 +103,7 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         require_complete: bool = True,
         route_id: str | None = None,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             source, UnstructuredFiniteVolumeDiscretization
         ) or not isinstance(target, UnstructuredFiniteVolumeDiscretization):

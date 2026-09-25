@@ -63,7 +63,7 @@ class ComplexOptimizerStateGroup:
         name: str,
         kind: ComplexOptimizerRouteKind,
         paths: Sequence[str],
-    ):
+    ) -> None:
         name_ = str(name)
         paths_ = tuple(str(path) for path in paths)
         if not name_ or "/" in name_ or name_ in (".", ".."):
@@ -164,7 +164,9 @@ class ComplexOptimizerInterchangeEntry(StrictModule):
     values: tuple[Array, ...]
     entry_id: str = eqx.field(static=True)
 
-    def __init__(self, group: ComplexOptimizerStateGroup, values: Sequence[Any], /):
+    def __init__(
+        self, group: ComplexOptimizerStateGroup, values: Sequence[Any], /
+    ) -> None:
         values_ = tuple(jnp.asarray(value) for value in values)
         expected = 1 if group.kind != "cartesian-second-moment" else 2
         if len(values_) != expected:
@@ -196,7 +198,7 @@ class ComplexOptimizerInterchangeState(StrictModule):
         layout: ComplexOptimizerStateLayout,
         entries: Sequence[ComplexOptimizerInterchangeEntry],
         /,
-    ):
+    ) -> None:
         entries_ = tuple(entries)
         expected = tuple(group.name for group in layout.groups)
         if tuple(entry.name for entry in entries_) != expected:
@@ -218,7 +220,7 @@ class RNGInterchangeState(StrictModule):
     paths: tuple[str, ...] = eqx.field(static=True)
     content_id: str = eqx.field(static=True)
 
-    def __init__(self, rng_state: Any, /):
+    def __init__(self, rng_state: Any, /) -> None:
         path_leaves, _ = jax.tree_util.tree_flatten_with_path(rng_state)
         paths = tuple(jax.tree_util.keystr(path) or "<root>" for path, _ in path_leaves)
         keys = tuple(leaf for _, leaf in path_leaves)

@@ -52,7 +52,7 @@ class NeuralCDEVectorField(StrictModule):
         *,
         state_shape: Sequence[int],
         control_dimension: int,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
         shape = tuple(state_shape)
@@ -106,7 +106,7 @@ class NeuralCDETrainingData(StrictModule):
         time_channel: int,
         case_ids: Sequence[str] | None = None,
         data_id: str | None = None,
-    ):
+    ) -> None:
         path_values = tuple(paths)
         if not path_values or any(
             not isinstance(path, AbstractDifferentiableDrivingPath)
@@ -271,7 +271,7 @@ class NeuralCDETrainingState(StrictModule):
         batch_size: int,
         seed: int,
         shuffle: bool,
-    ):
+    ) -> None:
         if not callable(vector_field):
             raise TypeError("vector_field must be callable.")
         if not isinstance(training, TrainingKernelState):

@@ -71,7 +71,7 @@ class StructuredTransferReport(StrictModule, NonTrainableState):
         conservation_residual: float | None,
         transfer_id: str,
         tolerance: float,
-    ):
+    ) -> None:
         constant = float(constant_residual)
         conservation = (
             None if conservation_residual is None else float(conservation_residual)
@@ -114,7 +114,7 @@ class StructuredTensorTransferOperator(AbstractLinearOperator):
         /,
         *,
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(source, ArraySpace) or not isinstance(target, ArraySpace):
             raise TypeError("Structured transfers require ArraySpace source and target.")
         precision_ = (
@@ -236,7 +236,7 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
         /,
         *,
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, FDExecutionPrecisionPolicy):
             raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
@@ -452,7 +452,7 @@ class _DenseCoarsePreconditioner(AbstractPreconditioner, NonTrainableState):
         operator: AbstractLinearOperator,
         precision: FDExecutionPrecisionPolicy,
         /,
-    ):
+    ) -> None:
         matrix = precision.accumulation(operator._materialize())
         inverse_result = pseudoinverse(
             matrix,
@@ -512,7 +512,7 @@ class StructuredMultigridResult(StrictModule, NonTrainableState):
         /,
         *,
         precision_evidence: object,
-    ):
+    ) -> None:
         self.value = value
         self.residual_norms = residual_norms
         scale = jnp.maximum(1.0, residual_norms[0])
@@ -534,7 +534,7 @@ class _RedBlackPreconditioner(AbstractPreconditioner, NonTrainableState):
         shape: tuple[int, ...],
         relaxation: float,
         /,
-    ):
+    ) -> None:
         coordinates = jnp.indices(shape)
         parity = jnp.sum(coordinates, axis=0) % 2
         self.operator = operator
@@ -588,7 +588,7 @@ class _LinePreconditioner(AbstractPreconditioner, NonTrainableState):
         diffusion: PreparedConservativeDiffusion,
         axis: int,
         /,
-    ):
+    ) -> None:
         lower, diagonal, upper = _line_coefficients(diffusion, axis)
         self.lower = lower
         self.diagonal = diagonal
@@ -760,7 +760,7 @@ class StructuredMultigridPlan(StrictModule, NonTrainableState):
         post_smoothing: int = 2,
         cycle_kind: MultigridCycleKind = "v",
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(finest_operator, PreparedConservativeDiffusion):
             raise TypeError(
                 "Structured multigrid requires PreparedConservativeDiffusion."
@@ -861,7 +861,7 @@ class PreparedStructuredMultigrid(StrictModule):
     nullspace_dimension: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: StructuredMultigridPlan, /):
+    def __init__(self, plan: StructuredMultigridPlan, /) -> None:
         if not isinstance(plan, StructuredMultigridPlan):
             raise TypeError("plan must be StructuredMultigridPlan.")
         grids = [plan.finest_operator.plan.grid]

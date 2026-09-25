@@ -104,7 +104,7 @@ class RandomizedDifferentialPlan(StrictModule):
         node_coupling: RandomizedNodeCoupling = "independent",
         prefer_exact: bool = True,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         from ..operators.differential._dimension_estimators import (
             DimensionSamplingPolicy,
         )

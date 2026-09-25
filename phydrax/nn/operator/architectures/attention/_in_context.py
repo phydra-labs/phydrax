@@ -58,7 +58,7 @@ class OperatorPromptState(StrictModule):
         case_shape: tuple[int, ...],
         capacity: int,
         tokens_per_example: int,
-    ):
+    ) -> None:
         cases = tuple(case_shape)
         values_ = jnp.asarray(values)
         if values_.ndim != len(cases) + 2:
@@ -97,7 +97,7 @@ class InContextOperatorState(StrictModule):
         mask: Array,
         case_shape: tuple[int, ...],
         prompt_state: OperatorPromptState,
-    ):
+    ) -> None:
         self.values = jnp.asarray(values)
         self.weights = jnp.asarray(weights)
         self.mask = jnp.asarray(mask, dtype=jnp.bool_)
@@ -156,7 +156,7 @@ class InContextOperator(AbstractEncodedOperatorModel):
         attention_block_size: int = 256,
         accumulation_dtype: str = "input",
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_channels = _get_size(in_channels)
         self.out_channels = _get_size(out_channels)
         self.coord_dim = int(coord_dim)

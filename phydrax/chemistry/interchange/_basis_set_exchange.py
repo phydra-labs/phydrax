@@ -39,7 +39,7 @@ class GaussianBasisImport(StrictModule, NonTrainableState):
         artifact: ReferenceArtifactManifest,
         package_version: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(basis, GaussianBasisPlan):
             raise TypeError("basis must be GaussianBasisPlan.")
         if not isinstance(artifact, ReferenceArtifactManifest):

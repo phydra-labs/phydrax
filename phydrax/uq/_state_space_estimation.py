@@ -182,7 +182,7 @@ class StateSpaceExperiment(StrictModule):
         covariance_regularization: float = 0.0,
         temporal_method: KalmanExecutionMethod = "auto",
         transform_safe: bool = False,
-    ):
+    ) -> None:
         if not callable(problem):
             raise TypeError("problem must be callable.")
         if likelihood is not None and not callable(likelihood):
@@ -456,7 +456,7 @@ class MultiExperimentStateSpaceLikelihood(AbstractPosteriorTerm):
         /,
         *,
         label: str = "multi_experiment_state_space",
-    ):
+    ) -> None:
         resolved = tuple(experiments)
         if not resolved:
             raise ValueError("At least one state-space experiment is required.")
@@ -564,7 +564,7 @@ class StateSpaceEstimation(StrictModule):
         /,
         *,
         label: str = "multi_experiment_state_space",
-    ):
+    ) -> None:
         if not isinstance(parameter_space, ParameterSpace):
             raise TypeError("parameter_space must be a ParameterSpace.")
         likelihood = MultiExperimentStateSpaceLikelihood(experiments, label=label)

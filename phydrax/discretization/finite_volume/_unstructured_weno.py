@@ -51,7 +51,7 @@ class UnstructuredWENOZReconstructionPlan(StrictModule, NonTrainableState):
         epsilon: float = 1e-12,
         power: int = 2,
         limiter: UnstructuredWENOLimiter = "cell_extrema",
-    ):
+    ) -> None:
         if isinstance(degree, bool) or not isinstance(degree, Integral):
             raise TypeError("degree must be an integer.")
         degree_ = int(degree)
@@ -123,7 +123,7 @@ class PreparedUnstructuredWENOZReconstruction(StrictModule, NonTrainableState):
         plan: UnstructuredWENOZReconstructionPlan,
         discretization: UnstructuredFiniteVolumeDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, UnstructuredWENOZReconstructionPlan):
             raise TypeError("plan must be UnstructuredWENOZReconstructionPlan.")
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):

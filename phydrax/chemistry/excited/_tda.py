@@ -51,7 +51,7 @@ class ExcitedStateManifoldPlan(StrictModule, NonTrainableState):
         residual_tolerance: float = 1.0e-8,
         degeneracy_absolute: float = 1.0e-6,
         degeneracy_relative: float = 1.0e-8,
-    ):
+    ) -> None:
         roots = int(root_count)
         spin = str(spin_sector).strip()
         symmetry = None if symmetry_sector is None else str(symmetry_sector).strip()
@@ -109,7 +109,7 @@ class TammDancoffPlan(StrictModule, NonTrainableState):
         energy_unit: UnitDefinition,
         transition_dipole_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         if not isinstance(manifold, ExcitedStateManifoldPlan):
             raise TypeError("manifold must be ExcitedStateManifoldPlan.")
         matrix = jnp.asarray(response_matrix)
@@ -268,7 +268,7 @@ class NonadiabaticCouplingResult(StrictModule, NonTrainableState):
         inverse_length_unit: UnitDefinition,
         energy_weighted_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         derivative = jnp.asarray(derivative_couplings)
         weighted = jnp.asarray(energy_weighted_couplings, dtype=derivative.dtype)
         if (

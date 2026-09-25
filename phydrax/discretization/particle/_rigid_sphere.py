@@ -37,7 +37,7 @@ class RigidSphereSetPlan(StrictModule, NonTrainableState):
         fixed_mask: ArrayLike | None = None,
         name: str = "rigid-spheres",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         radii_host = np.asarray(radii)
         material_host = np.asarray(material_ids)
         if radii_host.ndim != 1 or radii_host.size == 0:
@@ -114,7 +114,9 @@ class PreparedRigidSphereSet(StrictModule, NonTrainableState):
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: RigidSphereSetPlan, particles: ParticleDiscretization, /):
+    def __init__(
+        self, plan: RigidSphereSetPlan, particles: ParticleDiscretization, /
+    ) -> None:
         if not isinstance(plan, RigidSphereSetPlan):
             raise TypeError("plan must be a RigidSphereSetPlan.")
         if not isinstance(particles, ParticleDiscretization):

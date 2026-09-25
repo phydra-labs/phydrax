@@ -22,7 +22,7 @@ RematerializationPolicy: TypeAlias = Literal["store", "rematerialize"]
 class LinearizationPolicy(StrictModule):
     rematerialization: RematerializationPolicy = eqx.field(static=True)
 
-    def __init__(self, rematerialization: RematerializationPolicy = "store", /):
+    def __init__(self, rematerialization: RematerializationPolicy = "store", /) -> None:
         if rematerialization not in ("store", "rematerialize"):
             raise ValueError("Unknown linearization rematerialization policy.")
         self.rematerialization = rematerialization
@@ -53,7 +53,7 @@ class PreparedLinearization(StrictModule):
         policy: LinearizationPolicy,
         linearization_id: str,
         auxiliary: Any = None,
-    ):
+    ) -> None:
         self.source = source
         self.target = target
         self.point = point

@@ -29,7 +29,7 @@ class PrescribedGridVelocityPlan(StrictModule, NonTrainableState):
     values: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, mask: ArrayLike, values: ArrayLike = 0.0, /):
+    def __init__(self, mask: ArrayLike, values: ArrayLike = 0.0, /) -> None:
         mask_ = np.asarray(mask, dtype=np.bool_)
         values_ = np.asarray(values)
         if mask_.ndim < 2 or mask_.shape[-1] not in (1, 2, 3):

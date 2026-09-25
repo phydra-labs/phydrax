@@ -427,7 +427,7 @@ class _CellMeshTriangleMap(AbstractBoundaryMap):
 
     mesh: CellMesh
 
-    def __init__(self, mesh: CellMesh, /):
+    def __init__(self, mesh: CellMesh, /) -> None:
         self.mesh = mesh
 
     @property
@@ -485,7 +485,7 @@ class SurfaceModel(StrictModule, NonTrainableState):
         selections: Sequence[SurfaceSelection] = (),
         interfaces: Sequence[SurfaceInterface] = (),
         orientation_repair: SurfaceOrientationRepair | None = None,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("SurfaceModel mesh must be a CellMesh.")
         if not isinstance(metadata, SurfaceMetadata):
@@ -681,7 +681,7 @@ class SurfaceRealization(StrictModule, NonTrainableState):
         certificate: SurfaceValidityCertificate,
         chart_mapping: SurfaceChartMappingEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(model, SurfaceModel) or not isinstance(mesh, CellMesh):
             raise TypeError("Surface realization requires SurfaceModel and CellMesh.")
         if not isinstance(policy, SurfaceAuditPolicy) or not isinstance(

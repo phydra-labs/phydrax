@@ -111,7 +111,7 @@ class _PyTreeVectorizer(StrictModule):
     dtypes: tuple[str, ...] = eqx.field(static=True)
     dtype_name: str = eqx.field(static=True)
 
-    def __init__(self, example: PyTree[Any], /):
+    def __init__(self, example: PyTree[Any], /) -> None:
         path_leaves, tree_definition = jax.tree_util.tree_flatten_with_path(example)
         if not path_leaves:
             raise ValueError("A bounded PyTree search requires at least one array leaf.")

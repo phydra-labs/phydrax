@@ -35,7 +35,7 @@ class PreparedWallDistanceField(StrictModule, NonTrainableState):
     geometry_id: str = eqx.field(static=True)
     field_id: str = eqx.field(static=True)
 
-    def __init__(self, distance: ArrayLike, /, *, geometry_id: str):
+    def __init__(self, distance: ArrayLike, /, *, geometry_id: str) -> None:
         value = jnp.asarray(distance)
         geometry = str(geometry_id)
         if (
@@ -64,7 +64,7 @@ class FlatWallDistancePlan(StrictModule, NonTrainableState):
     side: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, axis: int, coordinate: float, side: str, /):
+    def __init__(self, axis: int, coordinate: float, side: str, /) -> None:
         axis_ = int(axis)
         coordinate_ = float(coordinate)
         if axis_ < 0 or not np.isfinite(coordinate_) or side not in ("lower", "upper"):
@@ -99,7 +99,7 @@ class SpalartAllmarasFreestreamPlan(StrictModule, NonTrainableState):
     working_to_molecular_ratio: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, working_to_molecular_ratio: float = 3.0, /):
+    def __init__(self, working_to_molecular_ratio: float = 3.0, /) -> None:
         ratio = float(working_to_molecular_ratio)
         if not np.isfinite(ratio) or ratio <= 0.0:
             raise ValueError("SA-neg freestream working-variable ratio must be positive.")
@@ -136,7 +136,7 @@ class SpalartAllmarasWallBoundary(AbstractConservationBoundary):
         self,
         gas_boundary: NoSlipAdiabaticWallBoundary | NoSlipIsothermalWallBoundary,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             gas_boundary,
             (NoSlipAdiabaticWallBoundary, NoSlipIsothermalWallBoundary),
@@ -219,7 +219,7 @@ class SpalartAllmarasManufacturedPlan(StrictModule):
         /,
         *,
         case_id: str,
-    ):
+    ) -> None:
         if (
             not isinstance(system, SpalartAllmarasCompressibleSystem)
             or not callable(exact_primitive)

@@ -23,7 +23,7 @@ class GuoForcingPlan(StrictModule, NonTrainableState):
     compatible_collision_families: tuple[str, ...] = eqx.field(static=True)
     forcing_id: str = "lattice-boltzmann-forcing:guo"
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.compatible_collision_families = (
             "bgk",
             "central-moment",

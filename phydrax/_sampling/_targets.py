@@ -62,7 +62,9 @@ class FullMarkovTarget(StrictModule):
     evaluate: Callable[[PyTree[Any]], Array]
     target_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluate: Callable[[PyTree[Any]], Array], /, *, target_id: str):
+    def __init__(
+        self, evaluate: Callable[[PyTree[Any]], Array], /, *, target_id: str
+    ) -> None:
         if not callable(evaluate):
             raise TypeError("evaluate must be callable.")
         if not isinstance(target_id, str) or not target_id:
@@ -159,7 +161,7 @@ class IncrementalMarkovTarget(StrictModule):
         maximum_chains: int | None = None,
         cache_bytes_per_chain: int = 0,
         workspace_bytes_per_chain: int = 0,
-    ):
+    ) -> None:
         if not all(callable(value) for value in (initialize, propose, select, refresh)):
             raise TypeError("All incremental target functions must be callable.")
         if refresh_validate is not None and not callable(refresh_validate):

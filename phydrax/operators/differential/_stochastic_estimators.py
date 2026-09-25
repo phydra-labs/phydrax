@@ -126,7 +126,7 @@ class StochasticTracePolicy(StrictModule):
         /,
         *,
         distribution: ProbeDistribution = "rademacher",
-    ):
+    ) -> None:
         count = int(num_probes)
         if count < 2:
             raise ValueError("num_probes must be at least two to estimate uncertainty.")
@@ -151,7 +151,7 @@ class StochasticOperatorEstimate(StrictModule):
         num_probes: int,
         distribution: ProbeDistribution,
         /,
-    ):
+    ) -> None:
         value_array = jnp.asarray(value)
         error_array = jnp.asarray(standard_error)
         if value_array.shape != error_array.shape:
@@ -189,7 +189,7 @@ class StochasticOperatorSamples(StrictModule):
         *,
         distribution: ProbeDistribution,
         dependence_ids: ArrayLike | None = None,
-    ):
+    ) -> None:
         samples = jnp.asarray(values)
         if samples.ndim < 1 or samples.shape[0] < 2:
             raise ValueError("values must contain at least two probe realizations.")

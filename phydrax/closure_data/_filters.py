@@ -43,7 +43,7 @@ class LESFilterPair(StrictModule, NonTrainableState):
         /,
         *,
         test_filter_input: LESFilterPairInput = "primary-resolved",
-    ):
+    ) -> None:
         if not isinstance(primary_filter, ResolvedLESFilter) or not isinstance(
             test_filter, ResolvedLESFilter
         ):
@@ -99,7 +99,7 @@ class FilterSpec(StrictModule, NonTrainableState):
         sigma: tuple[float, ...] = (),
         cutoff_fraction: float = 2.0 / 3.0,
         boundary: FilterBoundary = "periodic",
-    ):
+    ) -> None:
         kind_ = str(kind).strip()
         widths_ = tuple(widths)
         sigma_ = tuple(float(value) for value in sigma)
@@ -173,7 +173,7 @@ class PreparedFilter(StrictModule, NonTrainableState):
     spatial_rank: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, spec: FilterSpec, spatial_shape: tuple[int, ...], /):
+    def __init__(self, spec: FilterSpec, spatial_shape: tuple[int, ...], /) -> None:
         if not isinstance(spec, FilterSpec):
             raise TypeError("spec must be a FilterSpec.")
         shape = tuple(spatial_shape)
@@ -269,7 +269,7 @@ class ReynoldsFilter(StrictModule, NonTrainableState):
     prepared: PreparedFilter
     filter_id: str = eqx.field(static=True)
 
-    def __init__(self, prepared: PreparedFilter, /):
+    def __init__(self, prepared: PreparedFilter, /) -> None:
         if not isinstance(prepared, PreparedFilter):
             raise TypeError("prepared must be a PreparedFilter.")
         self.prepared = prepared
@@ -289,7 +289,9 @@ class FavreFilter(StrictModule, NonTrainableState):
     density_floor: float = eqx.field(static=True)
     filter_id: str = eqx.field(static=True)
 
-    def __init__(self, prepared: PreparedFilter, /, *, density_floor: float = 0.0):
+    def __init__(
+        self, prepared: PreparedFilter, /, *, density_floor: float = 0.0
+    ) -> None:
         if not isinstance(prepared, PreparedFilter):
             raise TypeError("prepared must be a PreparedFilter.")
         floor = float(density_floor)
@@ -360,7 +362,7 @@ class FilterCommutationReport(StrictModule, NonTrainableState):
         axis: int,
         spacing: float,
         filter_id: str,
-    ):
+    ) -> None:
         left = jnp.asarray(filtered_derivative)
         right = jnp.asarray(derivative_filtered)
         if left.shape != right.shape:
@@ -403,7 +405,7 @@ class FilterRefinementReport(StrictModule, NonTrainableState):
         fine_filter_id: str,
         coarse_filter_id: str,
         refinement_ratio: tuple[int, ...],
-    ):
+    ) -> None:
         left = jnp.asarray(restrict_then_filter)
         right = jnp.asarray(filter_then_restrict)
         if left.shape != right.shape:

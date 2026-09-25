@@ -42,7 +42,7 @@ class StreamingGaussianMoments(StrictModule):
         mean: ArrayLike,
         scatter: ArrayLike,
         updates: ArrayLike = 0,
-    ):
+    ) -> None:
         mean_ = jnp.asarray(mean)
         scatter_ = jnp.asarray(scatter)
         if mean_.ndim < 1 or scatter_.shape != mean_.shape[:-1] + (

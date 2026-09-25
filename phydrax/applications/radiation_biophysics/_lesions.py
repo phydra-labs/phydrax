@@ -31,7 +31,7 @@ class IndirectLesionRule:
     species: str
     probability: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _text(self.channel, "channel")
         _text(self.species, "species")
         if not math.isfinite(self.probability) or not 0 <= self.probability <= 1:
@@ -51,7 +51,7 @@ class LesionPolicy:
     scavenging_model_id: str | None
     components: tuple[str, ...] = ("backbone",)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _text(self.policy_id, "lesion policy")
         if not math.isfinite(self.direct_threshold) or self.direct_threshold <= 0:
             raise ValueError("Direct deposited-energy threshold must be positive.")

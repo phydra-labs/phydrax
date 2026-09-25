@@ -41,7 +41,7 @@ class PatchKernelPlan(StrictModule, NonTrainableState):
         *,
         execution: PatchExecutionKind = "vmap",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         shape = tuple(kernel_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("kernel_shape dimensions must be positive.")
@@ -85,7 +85,7 @@ class PreparedPatchKernel(StrictModule, NonTrainableState):
     offsets: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: PatchKernelPlan, input_shape: Sequence[int], /):
+    def __init__(self, plan: PatchKernelPlan, input_shape: Sequence[int], /) -> None:
         if not isinstance(plan, PatchKernelPlan):
             raise TypeError("plan must be a PatchKernelPlan.")
         shape = tuple(input_shape)
@@ -190,7 +190,7 @@ class OrderedPatchKernelPlan(StrictModule, NonTrainableState):
         *,
         direction: SweepDirection = "forward",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         size = int(kernel_size)
         if size <= 0 or size % 2 == 0:
             raise ValueError("Ordered patch kernels require a positive odd kernel size.")

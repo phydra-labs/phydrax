@@ -86,7 +86,7 @@ class OperatorSubspaceCorrection(StrictModule, NonTrainableState):
         target_field_space_id: str,
         transfer_id: str,
         preparation_id: str,
-    ):
+    ) -> None:
         if not isinstance(trial, OperatorTrialSubspace):
             raise TypeError("trial must be an OperatorTrialSubspace.")
         if not isinstance(transferred_subspace, LinearSubspace):
@@ -219,7 +219,7 @@ class OperatorCorrectionCost(StrictModule, NonTrainableState):
         *,
         preparation_workspace_bytes: int,
         inference_workspace_bytes_per_rhs: int,
-    ):
+    ) -> None:
         preparation = int(preparation_workspace_bytes)
         inference = int(inference_workspace_bytes_per_rhs)
         if preparation < 0 or inference < 0:
@@ -264,7 +264,7 @@ class OperatorCorrectionBinding(StrictModule, ExplicitFreeze):
         residual_source_name: str,
         correction_field_name: str,
         condition_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(trained_operator, TrainedOperator):
             raise TypeError("trained_operator must be a TrainedOperator.")
         if not trained_operator.artifact_id:
@@ -412,7 +412,7 @@ class PreparedOperatorCorrection(StrictModule, ExplicitFreeze):
         binding: OperatorCorrectionBinding,
         prepared_input: PreparedOperatorInput,
         /,
-    ):
+    ) -> None:
         if not isinstance(binding, OperatorCorrectionBinding):
             raise TypeError("binding must be an OperatorCorrectionBinding.")
         if not isinstance(prepared_input, PreparedOperatorInput):
@@ -476,7 +476,7 @@ class TrainedOperatorPreconditioner(AbstractPreconditioner):
         prepared: PreparedOperatorCorrection,
         setup_operator: AbstractLinearOperator,
         /,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedOperatorCorrection):
             raise TypeError("prepared must be a PreparedOperatorCorrection.")
         _validate_setup_operator(setup_operator, prepared.binding.solver_space)
@@ -517,7 +517,7 @@ class TrainedOperatorPreconditionerBuilder(AbstractPreconditionerBuilder):
         binding: OperatorCorrectionBinding,
         cost: OperatorCorrectionCost,
         /,
-    ):
+    ) -> None:
         if not isinstance(binding, OperatorCorrectionBinding):
             raise TypeError("binding must be an OperatorCorrectionBinding.")
         if not isinstance(cost, OperatorCorrectionCost):

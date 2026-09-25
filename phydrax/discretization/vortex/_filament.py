@@ -42,7 +42,7 @@ class VortexFilamentTopology(StrictModule, NonTrainableState):
         active: ArrayLike | None = None,
         segment_ids: ArrayLike | None = None,
         topology_id: str | None = None,
-    ):
+    ) -> None:
         vertices = int(vertex_capacity)
         start = np.asarray(start_indices, dtype=np.int32)
         end = np.asarray(end_indices, dtype=np.int32)
@@ -169,7 +169,7 @@ class VortexFilamentState(StrictModule):
         circulation: ArrayLike,
         core_radius: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(topology, VortexFilamentTopology):
             raise TypeError("topology must be a VortexFilamentTopology.")
         vertices = jnp.asarray(vertex_position)

@@ -253,7 +253,7 @@ class VariationalMonteCarloSubspaceProblem(StrictModule):
         | Sequence[ComplexParameterMode] = "real",
         parameter_subspaces: Sequence[ParameterSubspace | None] | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         models_ = tuple(models)
         if len(models_) < 2:
             raise ValueError("Subspace VMC requires at least two amplitude models.")
@@ -415,7 +415,7 @@ class VariationalMonteCarloSubspaceState(StrictModule):
         iteration: int | Array,
         root_key: Key[Array, ""],
         attempt_cursor: int | Array | None = None,
-    ):
+    ) -> None:
         models_ = tuple(models)
         coordinates = tuple(jnp.asarray(value) for value in parameter_coordinates)
         if len(models_) < 2 or len(coordinates) != len(models_):

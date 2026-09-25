@@ -42,7 +42,7 @@ class CoupledContactTransportLaw(AbstractContactTransportLaw):
         pressure_exponent: float = 1.0,
         gap_decay: float,
         friction_heat_fraction: float = 1.0,
-    ):
+    ) -> None:
         exponent = float(pressure_exponent)
         decay = float(gap_decay)
         heat_fraction = float(friction_heat_fraction)

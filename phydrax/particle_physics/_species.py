@@ -40,7 +40,7 @@ class ParticleSpeciesTable(StrictModule, NonTrainableState):
         catalog: ParticleCatalogReference,
         energy_unit: UnitDefinition,
         charge_unit: UnitDefinition,
-    ):
+    ) -> None:
         identifiers = np.asarray(pdg_ids)
         energies = np.asarray(rest_energies)
         charges_ = np.asarray(charges)

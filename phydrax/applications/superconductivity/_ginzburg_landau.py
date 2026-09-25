@@ -91,7 +91,7 @@ class GaugeCovariantGLPlan(StrictModule, NonTrainableState):
         applied_normal_field: ArrayLike = 0.0,
         phase_anchor: int = 0,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(mesh, TriangleMesh):
             raise TypeError("mesh must be TriangleMesh.")
         values = tuple(

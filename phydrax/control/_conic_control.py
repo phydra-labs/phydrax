@@ -73,7 +73,7 @@ class StageSecondOrderConstraint(StrictModule):
         /,
         *,
         label: str = "stage-soc",
-    ):
+    ) -> None:
         identifier = str(label)
         if not identifier:
             raise ValueError("label must be non-empty.")
@@ -104,7 +104,7 @@ class TerminalSecondOrderConstraint(StrictModule):
         /,
         *,
         label: str = "terminal-soc",
-    ):
+    ) -> None:
         identifier = str(label)
         if not identifier:
             raise ValueError("label must be non-empty.")

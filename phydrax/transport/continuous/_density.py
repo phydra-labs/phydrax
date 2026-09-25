@@ -71,7 +71,7 @@ class _ExactAugmentedField(StrictModule):
     event_shape: tuple[int, ...] = eqx.field(static=True)
     event_size: int = eqx.field(static=True)
 
-    def __init__(self, transport: ContinuousTransport, /, *, reverse: bool):
+    def __init__(self, transport: ContinuousTransport, /, *, reverse: bool) -> None:
         self.transport = transport
         self.reverse = bool(reverse)
         self.event_shape = transport.event_shape
@@ -116,7 +116,7 @@ class _StochasticAugmentedField(StrictModule):
         probe_key: Key[Array, ""],
         policy: StochasticTracePolicy,
         /,
-    ):
+    ) -> None:
         self.transport = transport
         self.probe_key = jnp.asarray(probe_key)
         self.policy = policy
@@ -254,7 +254,7 @@ class ContinuousFlowDensityResult(StrictModule):
         num_probes: int,
         probe_distribution: str,
         flow_id: str,
-    ):
+    ) -> None:
         events = tuple(event_shape)
         data = jnp.asarray(data_state)
         base = jnp.asarray(base_state, dtype=data.dtype)
@@ -407,7 +407,7 @@ class ContinuousFlowLaw(AbstractProbabilityLaw):
         *,
         max_exact_dimension: int = 32,
         flow_id: str | None = None,
-    ):
+    ) -> None:
         _validate_density_transport(transport)
         limit = int(max_exact_dimension)
         if limit <= 0:

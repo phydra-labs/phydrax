@@ -40,7 +40,7 @@ class TraceExchangeState(StrictModule):
         left_target: Array,
         right_target: Array,
         quantity_id: str = "value",
-    ):
+    ) -> None:
         left = jnp.asarray(left_values)
         right = jnp.asarray(right_values)
         left_target_ = jnp.asarray(left_target)
@@ -72,7 +72,7 @@ class SchwarzTraceState(StrictModule):
         /,
         *,
         sweep: int,
-    ):
+    ) -> None:
         exchanges_ = tuple(exchanges)
         if any(not isinstance(value, TraceExchangeState) for value in exchanges_):
             raise TypeError("exchanges must contain TraceExchangeState objects.")
@@ -113,7 +113,7 @@ class DiscreteTracePenalty(AbstractScalarTerm):
         side: Literal["left", "right"],
         scale: float = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(pairing, PairedSupport):
             raise TypeError("pairing must be a PairedSupport.")
         if side not in ("left", "right"):
@@ -200,7 +200,7 @@ class SchwarzTraceQuantity(StrictModule):
         left_operator,
         right_operator,
         /,
-    ):
+    ) -> None:
         if not callable(left_operator) or not callable(right_operator):
             raise TypeError("Trace quantity operators must be callable.")
         identifier = str(quantity_id)
@@ -235,7 +235,7 @@ class DiscreteOperatorTracePenalty(AbstractScalarTerm):
         side: Literal["left", "right"],
         scale: float = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not callable(operator):
             raise TypeError("operator must be callable.")
         if side not in ("left", "right"):
@@ -335,7 +335,7 @@ class AitkenTracePlan(StrictModule):
         initial_relaxation: float = 1.0,
         minimum_relaxation: float = 0.05,
         maximum_relaxation: float = 1.5,
-    ):
+    ) -> None:
         initial = float(initial_relaxation)
         minimum = float(minimum_relaxation)
         maximum = float(maximum_relaxation)
@@ -350,7 +350,7 @@ class AitkenTraceState(StrictModule):
     residual: Array
     relaxation: Array
 
-    def __init__(self, residual: Array, relaxation: Array, /):
+    def __init__(self, residual: Array, relaxation: Array, /) -> None:
         self.residual = jnp.asarray(residual)
         self.relaxation = jnp.asarray(relaxation).reshape(())
 

@@ -55,7 +55,7 @@ class PointElectrodeSurvey(StrictModule, NonTrainableState):
         *,
         length_unit: UnitDefinition = METER,
         current_unit: UnitDefinition = AMPERE,
-    ):
+    ) -> None:
         positions_ = np.asarray(
             convert_value(positions, source=length_unit, target=METER), dtype=np.float64
         )
@@ -158,7 +158,7 @@ class PointElectrodeDCPlan(StrictModule, NonTrainableState):
         /,
         *,
         conductivity_unit: UnitDefinition = DC_CONDUCTIVITY_UNIT,
-    ):
+    ) -> None:
         _validate_connected_tetrahedra(mesh)
         if not isinstance(survey, PointElectrodeSurvey):
             raise TypeError("Point-electrode DC requires PointElectrodeSurvey.")
@@ -199,7 +199,7 @@ class PreparedPointElectrodeDC(StrictModule, NonTrainableState):
     policy: la.LinearSolvePolicy
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: PointElectrodeDCPlan, /):
+    def __init__(self, plan: PointElectrodeDCPlan, /) -> None:
         if not isinstance(plan, PointElectrodeDCPlan):
             raise TypeError("Prepared point-electrode model requires its plan.")
         cells = np.concatenate(

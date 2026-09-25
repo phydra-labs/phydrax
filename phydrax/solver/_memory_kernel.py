@@ -43,7 +43,7 @@ class QuantumMemoryKernel(StrictModule):
         *,
         memory_horizon: float,
         kernel_id: str,
-    ):
+    ) -> None:
         if not callable(action):
             raise TypeError("Memory-kernel action must be callable.")
         if memory_horizon <= 0.0:
@@ -82,7 +82,7 @@ class MemoryKernelMasterEquation(StrictModule):
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
         problem_id: str = "memory-kernel-master",
-    ):
+    ) -> None:
         if not callable(local_generator):
             raise TypeError("local_generator must be callable.")
         density = jnp.asarray(initial_density)
@@ -135,7 +135,7 @@ class TimeLocalOpenSystemProblem(StrictModule):
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
         problem_id: str = "time-local-open-system",
-    ):
+    ) -> None:
         if not callable(generator):
             raise TypeError("generator must be callable.")
         density = jnp.asarray(initial_density)
@@ -202,7 +202,7 @@ class OpenSystemHistorySolution(StrictModule):
         geometry_precision: GeometryPrecisionPolicy,
         hermitian_precision: HermitianPrecisionPolicy,
         integration_precision: IntegrationPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         values = jnp.asarray(states)
         times_ = jnp.asarray(times)
         temporal_precision.validate_state(values[0])
@@ -316,7 +316,7 @@ class DynamicalMapPhysicality(StrictModule):
         *,
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         matrix = jnp.asarray(superoperator)
         geometry_ = (
             GeometryPrecisionPolicy()
@@ -550,7 +550,7 @@ class MemoryKernelMapCertification(StrictModule):
         superoperators: ArrayLike,
         certifications: tuple[DynamicalMapPhysicality, ...],
         /,
-    ):
+    ) -> None:
         self.superoperators = jnp.asarray(superoperators)
         self.choi_matrices = jnp.stack([value.choi_matrix for value in certifications])
         self.cp_margins = jnp.stack([value.cp_margin for value in certifications])

@@ -55,7 +55,7 @@ class TrajectoryCaseDataBatch(StrictModule):
         target: ArrayLike,
         case_indices: ArrayLike,
         times: ArrayLike,
-    ):
+    ) -> None:
         self.points = points
         self.target = jnp.asarray(target)
         self.case_indices = jnp.asarray(case_indices, dtype=jnp.int32)
@@ -166,7 +166,7 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
         case_indices: ArrayLike | None = None,
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
-    ):
+    ) -> None:
         """Create a supervised case-level trajectory data constraint.
 
         Parameters:

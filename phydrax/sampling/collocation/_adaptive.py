@@ -195,7 +195,7 @@ class CollocationPopulation(StrictModule):
         refresh_count: int | Array = 0,
         last_refresh: int | Array = 0,
         diagnostics: Any | None = None,
-    ):
+    ) -> None:
         axis, n = _single_axis_and_size(batch)
         if active is not None:
             _validate_axis_field(active, axis=axis, size=n, name="active")
@@ -263,7 +263,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         initial_active_fraction: float = 0.5,
         refinement_fraction: float = 0.05,
         epsilon: float = 1e-12,
-    ):
+    ) -> None:
         if algorithm not in ("periodic", "r3", "rar_d"):
             raise ValueError(f"Unsupported collocation algorithm {algorithm!r}.")
         if int(refresh_every) <= 0:

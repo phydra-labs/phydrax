@@ -22,7 +22,7 @@ class FermionicEnergyShellRegulator(StrictModule, NonTrainableState):
 
     regulator_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.regulator_id = canonical_fingerprint(
             {
                 "kind": "fermionic-additive-energy-shell-regulator",
@@ -109,7 +109,7 @@ class FermiSurfacePatchRGPlan(StrictModule, NonTrainableState):
         regulator: FermionicEnergyShellRegulator | None = None,
         routing_tolerance: float = 1.0e-8,
         maximum_work_elements: int = 8_000_000,
-    ):
+    ) -> None:
         momenta = np.asarray(patch_momenta, dtype=np.float64)
         reciprocal = np.asarray(reciprocal_vectors, dtype=np.float64)
         velocities = np.asarray(fermi_velocities, dtype=np.float64)
@@ -227,7 +227,9 @@ class PreparedFermiSurfacePatchRG(StrictModule, NonTrainableState):
     routing_residuals: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, outgoing_patch, reciprocal_wraps, routing_residuals, /):
+    def __init__(
+        self, plan, outgoing_patch, reciprocal_wraps, routing_residuals, /
+    ) -> None:
         self.plan = plan
         self.outgoing_patch = jnp.asarray(outgoing_patch)
         self.reciprocal_wraps = jnp.asarray(reciprocal_wraps)

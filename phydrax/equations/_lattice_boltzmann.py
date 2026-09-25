@@ -59,7 +59,7 @@ class LatticeBoltzmannProblem(StrictModule, NonTrainableState):
         acceleration_id: str | None = None,
         implicit_acceleration: VelocityDependentAccelerationPlan | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Lattice-Boltzmann problem name must be non-empty.")

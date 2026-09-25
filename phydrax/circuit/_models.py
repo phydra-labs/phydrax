@@ -28,7 +28,7 @@ class ScatteringResponse(StrictModule):
         references: Sequence[WaveReference],
         numeric_version: ArrayLike = 0,
         /,
-    ):
+    ) -> None:
         value = jnp.asarray(matrix)
         if value.ndim < 2 or value.shape[-2] != value.shape[-1]:
             raise ValueError(
@@ -85,7 +85,7 @@ class MatrixScatteringComponent(AbstractScatteringComponent):
         *,
         numeric_version: ArrayLike = 0,
         component_id: str = "matrix-scattering-component",
-    ):
+    ) -> None:
         port_tuple = tuple(ports)
         response = ScatteringResponse(
             matrix,
@@ -148,7 +148,7 @@ class ScatteringAudit(StrictModule):
         passivity_eligible: bool,
         reciprocity_eligible: bool,
         complete_matrix: bool,
-    ):
+    ) -> None:
         self.minimum_passivity_eigenvalue = jnp.asarray(minimum_passivity_eigenvalue)
         self.passivity_residual = jnp.asarray(passivity_residual)
         self.reciprocity_residual = jnp.asarray(reciprocity_residual)
@@ -232,7 +232,7 @@ class CommonNodeJunction(AbstractScatteringComponent):
         *,
         port_ids: Sequence[str] | None = None,
         component_id: str = "common-node-junction",
-    ):
+    ) -> None:
         refs = tuple(
             reference
             if isinstance(reference, ElectricalWaveReference)

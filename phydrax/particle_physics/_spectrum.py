@@ -58,7 +58,7 @@ class SpectrumApproximationProfile(StrictModule):
         electroweak_scale_rule: str,
         correction_ids: Sequence[str],
         source_ids: Sequence[str],
-    ):
+    ) -> None:
         strings = tuple(
             str(value).strip()
             for value in (
@@ -114,7 +114,7 @@ class SpectrumObservableTable(StrictModule):
         unit_ids: Sequence[str],
         values: ArrayLike,
         /,
-    ):
+    ) -> None:
         label_values = tuple(str(value).strip() for value in labels)
         kind_values = tuple(str(value).strip() for value in kinds)
         units = tuple(str(value).strip() for value in unit_ids)
@@ -181,7 +181,7 @@ class SpectrumDiagnostics(StrictModule):
         approximation_warning: ArrayLike,
         residual_norm: ArrayLike,
         warning_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         status = SpectrumStatus(int(numerical_status))
         warnings = tuple(sorted(str(value).strip() for value in warning_ids))
         if any(not value for value in warnings) or len(set(warnings)) != len(warnings):
@@ -252,7 +252,7 @@ class SpectrumCalculationResult(StrictModule):
         provider_id: str,
         input_artifact_id: str,
         output_artifact_id: str,
-    ):
+    ) -> None:
         if not isinstance(observables, SpectrumObservableTable):
             raise TypeError("observables must be SpectrumObservableTable.")
         if not isinstance(diagnostics, SpectrumDiagnostics):

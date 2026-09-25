@@ -54,7 +54,7 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
         expansion_order: int = 8,
         leaf_size: int = 32,
         opening_angle: float = 0.5,
-    ):
+    ) -> None:
         if (
             not isinstance(potential, LaplaceLayerPotential2D)
             or potential.kind != "single"

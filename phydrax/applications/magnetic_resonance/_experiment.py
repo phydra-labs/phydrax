@@ -49,7 +49,7 @@ class FixedPulseSequence(StrictModule):
         /,
         *,
         sequence_id: str = "fixed-pulse-sequence",
-    ):
+    ) -> None:
         times = np.asarray(time_grid_s, dtype=np.float64)
         field = np.asarray(field_t, dtype=np.float64)
         if times.ndim != 1 or times.size < 2 or np.any(~np.isfinite(times)):
@@ -250,7 +250,7 @@ class AcquisitionPlan(StrictModule):
         *,
         receiver_phase_rad: float = 0.0,
         site_weights: Sequence[complex] = (),
-    ):
+    ) -> None:
         dwell = float(dwell_time_s)
         count = int(sample_count)
         phase = float(receiver_phase_rad)
@@ -298,7 +298,7 @@ class InstrumentPlan(StrictModule):
         gain: float = 1.0,
         receiver_phase_rad: float = 0.0,
         frequency_offset_hz: float = 0.0,
-    ):
+    ) -> None:
         gain_ = float(gain)
         phase = float(receiver_phase_rad)
         offset = float(frequency_offset_hz)

@@ -105,7 +105,7 @@ class StochasticCollocationPlan(StrictModule):
         axis_rules: (CollocationAxisRule | Sequence[CollocationAxisRule] | None) = "auto",
         include_previous: bool = True,
         plan_id: str = "stochastic-collocation",
-    ):
+    ) -> None:
         probability_factors = tuple(factors)
         if not probability_factors or any(
             not isinstance(factor, ProbabilityDomain) for factor in probability_factors
@@ -185,7 +185,7 @@ class StochasticCollocationNodeEvaluation(StrictModule):
         valid: ArrayLike = True,
         status: ArrayLike = COLLOCATION_SUCCESS,
         provenance: str = "conditional-solver",
-    ):
+    ) -> None:
         valid_value = jnp.asarray(valid, dtype=jnp.bool_)
         status_value = jnp.asarray(status, dtype=jnp.int32)
         if valid_value.shape != () or status_value.shape != ():

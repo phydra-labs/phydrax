@@ -50,7 +50,7 @@ class KineticVolumeRenderPlan(StrictModule, NonTrainableState):
         slice_index: int = 0,
         lower_bound: float | None = None,
         upper_bound: float | None = None,
-    ):
+    ) -> None:
         if projection not in ("slice", "maximum", "mean"):
             raise ValueError(f"Unknown kinetic volume projection {projection!r}.")
         axis_value = int(axis)

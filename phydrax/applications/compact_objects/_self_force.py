@@ -48,7 +48,7 @@ class ModeSumRegularizationParameters(StrictModule, NonTrainableState):
         gauge,
         worldline_id,
         component_basis,
-    ):
+    ) -> None:
         values = [np.asarray(value, dtype=np.float64) for value in (A, B, C, D)]
         if any(value.shape != values[0].shape for value in values[1:]) or any(
             np.any(~np.isfinite(value)) for value in values
@@ -142,7 +142,7 @@ class FirstOrderSelfForceModeSum(StrictModule, NonTrainableState):
         tail_window=6,
         tail_fit_tolerance=5.0e-3,
         maximum_tail_fraction=0.25,
-    ):
+    ) -> None:
         if not isinstance(regularization, ModeSumRegularizationParameters):
             raise TypeError("regularization must be ModeSumRegularizationParameters.")
         ell_max_value = int(ell_max)

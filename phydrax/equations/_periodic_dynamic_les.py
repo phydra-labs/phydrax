@@ -52,7 +52,7 @@ class PeriodicFourierTestFilterPlan(StrictModule, NonTrainableState):
     grid_filter_plan: PeriodicFourierGridFilterPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, test_filter: ResolvedLESFilter, /):
+    def __init__(self, test_filter: ResolvedLESFilter, /) -> None:
         grid_filter = PeriodicFourierGridFilterPlan(test_filter)
         self.test_filter = test_filter
         self.grid_filter_plan = grid_filter
@@ -98,7 +98,7 @@ class PreparedPeriodicFourierTestFilter(StrictModule, NonTrainableState):
         resolved_filter: PreparedPeriodicFourierGridFilter,
         test_discretization: TensorSpectralDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, PeriodicFourierTestFilterPlan):
             raise TypeError("plan must be a PeriodicFourierTestFilterPlan.")
         if not isinstance(resolved_filter, PreparedPeriodicFourierGridFilter):
@@ -234,7 +234,7 @@ class PeriodicDynamicLESPlan(StrictModule, NonTrainableState):
         /,
         *,
         energy_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(dynamic_model, PreparedDynamicSmagorinskyPlan):
             raise TypeError("dynamic_model must be PreparedDynamicSmagorinskyPlan.")
         if not isinstance(grid_filter, PeriodicFourierGridFilterPlan):
@@ -341,7 +341,7 @@ class PreparedPeriodicDynamicLES(StrictModule, NonTrainableState):
         test_discretization: TensorSpectralDiscretization,
         projector: PeriodicLerayProjector,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, PeriodicDynamicLESPlan):
             raise TypeError("plan must be PeriodicDynamicLESPlan.")
         if not isinstance(discretization, TensorSpectralDiscretization):

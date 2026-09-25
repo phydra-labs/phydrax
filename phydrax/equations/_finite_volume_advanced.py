@@ -76,7 +76,7 @@ class HydrostaticLayerCoupling(StrictModule, NonTrainableState):
 class MultilayerShallowWaterSystem(AbstractAdmissibleSystem, NonTrainableState):
     coupling: HydrostaticLayerCoupling
 
-    def __init__(self, coupling: HydrostaticLayerCoupling, dimension: int = 1, /):
+    def __init__(self, coupling: HydrostaticLayerCoupling, dimension: int = 1, /) -> None:
         if not isinstance(coupling, HydrostaticLayerCoupling) or int(dimension) not in (
             1,
             2,
@@ -210,7 +210,7 @@ class BedloadSedimentPlan(StrictModule, NonTrainableState):
         /,
         *,
         gravity: float = 9.81,
-    ):
+    ) -> None:
         values = tuple(
             map(
                 float,
@@ -280,7 +280,7 @@ class ShallowWaterExnerSystem(AbstractAdmissibleSystem, NonTrainableState):
         /,
         *,
         bed_bounds: tuple[float, float],
-    ):
+    ) -> None:
         if not isinstance(base, ShallowWaterSystem) or not isinstance(
             sediment, BedloadSedimentPlan
         ):

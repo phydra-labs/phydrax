@@ -31,7 +31,7 @@ class MomentumVertexState(StrictModule):
         four_point_vertex: ArrayLike,
         wavefunction_renormalization: ArrayLike = 1.0,
         /,
-    ):
+    ) -> None:
         self.inverse_propagator = jnp.asarray(inverse_propagator)
         self.four_point_vertex = jnp.asarray(four_point_vertex)
         self.wavefunction_renormalization = jnp.asarray(
@@ -76,7 +76,7 @@ class MomentumVertexGridFlowPlan(StrictModule, NonTrainableState):
         *,
         angular_order: int = 16,
         maximum_grid_entries: int = 1_000_000,
-    ):
+    ) -> None:
         momentum = np.asarray(momentum_nodes, dtype=np.float64)
         order = int(angular_order)
         capacity = int(maximum_grid_entries)
@@ -135,7 +135,7 @@ class PreparedMomentumVertexGridFlow(StrictModule, NonTrainableState):
     support_mask: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MomentumVertexGridFlowPlan, /):
+    def __init__(self, plan: MomentumVertexGridFlowPlan, /) -> None:
         if not isinstance(plan, MomentumVertexGridFlowPlan):
             raise TypeError("plan must be MomentumVertexGridFlowPlan.")
         p = plan.momentum_nodes[:, None, None]

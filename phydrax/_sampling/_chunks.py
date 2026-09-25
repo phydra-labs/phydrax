@@ -35,7 +35,9 @@ class MarkovChunkPlan(StrictModule):
     chunk_count: int = eqx.field(static=True)
     capacity: int = eqx.field(static=True)
 
-    def __init__(self, total_draws: int, chunk_size: int, /, *, steps_per_draw: int = 1):
+    def __init__(
+        self, total_draws: int, chunk_size: int, /, *, steps_per_draw: int = 1
+    ) -> None:
         total, chunk, steps = int(total_draws), int(chunk_size), int(steps_per_draw)
         if total <= 0 or chunk <= 0 or steps <= 0:
             raise ValueError(

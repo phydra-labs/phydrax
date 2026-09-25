@@ -41,7 +41,7 @@ class FactorizedBilinearTerm(StrictModule):
         *,
         coefficient: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(left, AxisFactorizedField) or not isinstance(
             right, AxisFactorizedField
         ):

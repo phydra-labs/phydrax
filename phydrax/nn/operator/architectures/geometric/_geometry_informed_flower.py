@@ -107,7 +107,7 @@ class GeometryInformedFlower(AbstractOperatorModel):
         conserve_mass: bool = False,
         conservation_source_key: str | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         shape = tuple(latent_shape)
         if len(shape) != int(coord_dim):
             raise ValueError("latent_shape rank must match coord_dim.")

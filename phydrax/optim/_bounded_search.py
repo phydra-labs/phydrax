@@ -27,7 +27,7 @@ class _BoundedVectorDomain(StrictModule):
         lower_bounds: ArrayLike,
         upper_bounds: ArrayLike,
         /,
-    ):
+    ) -> None:
         initial = np.asarray(initial_vector)
         lower = np.asarray(lower_bounds)
         upper = np.asarray(upper_bounds)

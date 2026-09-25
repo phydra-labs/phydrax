@@ -150,7 +150,7 @@ class VariablePatchEntityBucketView(StrictModule, NonTrainableState):
         owned: Array,
         valid: Array,
         /,
-    ):
+    ) -> None:
         indices = jnp.asarray(global_indices, dtype=jnp.int32)
         signs = jnp.asarray(orientation_signs)
         owned_ = jnp.asarray(owned, dtype=jnp.bool_)
@@ -210,7 +210,7 @@ class VariablePatchEntityComplex(StrictModule, NonTrainableState):
         entity_capacity: Sequence[int],
         incidence_capacity: Sequence[int],
         /,
-    ):
+    ) -> None:
         if not isinstance(topology, VariablePatchHierarchyTopology):
             raise TypeError("Variable patch entity complex requires realized topology.")
         level_ = int(level)
@@ -453,7 +453,7 @@ class VariablePatchEntityComplexPlan(StrictModule, NonTrainableState):
     capacity_plan: BlockHierarchyCapacityPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, capacity_plan: BlockHierarchyCapacityPlan, /):
+    def __init__(self, capacity_plan: BlockHierarchyCapacityPlan, /) -> None:
         if not isinstance(capacity_plan, BlockHierarchyCapacityPlan):
             raise TypeError(
                 "Variable patch entity complex requires BlockHierarchyCapacityPlan."

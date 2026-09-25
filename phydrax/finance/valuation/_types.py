@@ -59,7 +59,7 @@ class ValuationEvidence(StrictModule):
         binding: FinanceEvidenceBinding | None = None,
         pricing_law: PricingLaw | None = None,
         status: ValuationStatus = ValuationStatus.SUCCESS,
-    ):
+    ) -> None:
         if not isinstance(route, str) or not route:
             raise ValueError("route must be a non-empty string.")
         if binding is not None and not isinstance(binding, FinanceEvidenceBinding):
@@ -114,7 +114,7 @@ class ValuationResult(StrictModule):
         standard_error: ArrayLike | None = None,
         currency: Currency | None = None,
         diagnostics: Any = None,
-    ):
+    ) -> None:
         if not isinstance(evidence, ValuationEvidence):
             raise TypeError("evidence must be ValuationEvidence.")
         if currency is not None and not isinstance(currency, Currency):
@@ -181,7 +181,7 @@ class ValuationReplayEvidence(StrictModule):
         /,
         *,
         route: str,
-    ):
+    ) -> None:
         expected = jnp.asarray(expected_value)
         replayed = jnp.asarray(replayed_value, dtype=expected.dtype)
         tolerance_ = jnp.asarray(tolerance, dtype=expected.dtype)

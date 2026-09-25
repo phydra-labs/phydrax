@@ -325,7 +325,7 @@ class CompressiblePlaneBaseflowPlan(StrictModule):
         *,
         wall_normal_axis: int = 0,
         homogeneous_axes: Sequence[int] | None = None,
-    ):
+    ) -> None:
         if not isinstance(case, CompressibleFlowCaseSpec):
             raise TypeError(
                 "Compressible baseflow preparation requires a case specification."
@@ -944,7 +944,7 @@ class SlowGrowthContinuation(StrictModule):
         accepted_step: int = 0,
         accepted_time: float = 0.0,
         continuation_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(snapshot, CompressiblePlaneBaseflowSnapshot):
             raise TypeError("Slow-growth continuation requires a baseflow snapshot.")
         step = int(accepted_step)
@@ -1207,7 +1207,7 @@ class TemporalSlowGrowthModelPlan(StrictModule, NonTrainableState):
         displacement_thickness_rate: float | None = None,
         momentum_thickness_rate: float | None = None,
         evidence_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         rate = float(growth_rate)
         if not np.isfinite(rate):
             raise ValueError("Temporal slow-growth rate must be finite.")
@@ -1301,7 +1301,7 @@ class SpatialSlowGrowthModelPlan(StrictModule, NonTrainableState):
         displacement_thickness_rate: float | None = None,
         momentum_thickness_rate: float | None = None,
         evidence_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         velocity = float(streamwise_convection_velocity)
         if not np.isfinite(velocity):
             raise ValueError("Modeled-spatial convection velocity must be finite.")

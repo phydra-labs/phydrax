@@ -50,7 +50,7 @@ class AnisotropicHPattern(StrictModule, NonTrainableState):
     child_ordinals: tuple[int, ...] = eqx.field(static=True)
     pattern_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, axes: Sequence[int], /):
+    def __init__(self, dimension: int, axes: Sequence[int], /) -> None:
         dimension_ = int(dimension)
         axes_ = tuple(sorted(int(axis) for axis in axes))
         if (
@@ -410,7 +410,7 @@ class GeometryOrderAdaptation(StrictModule, NonTrainableState):
         target_order: Sequence[int],
         coordinate_values: ArrayLike,
         /,
-    ):
+    ) -> None:
         source = np.asarray(source_nodes)
         target = np.asarray(target_nodes)
         values = np.asarray(coordinate_values)
@@ -459,7 +459,7 @@ class NIrregularMortarPlan(StrictModule, NonTrainableState):
         patch_points: Sequence[ArrayLike],
         patch_weights: Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         nodes = np.asarray(coarse_nodes)
         points = tuple(np.asarray(value) for value in patch_points)
         weights = tuple(np.asarray(value) for value in patch_weights)
@@ -503,7 +503,7 @@ class TensorCompatibleFamily(StrictModule, NonTrainableState):
         cell_kind: Literal["quadrilateral", "hexahedron"],
         degree: int,
         /,
-    ):
+    ) -> None:
         p = int(degree)
         dimension = 2 if cell_kind == "quadrilateral" else 3
         if kind not in ("Hcurl", "Hdiv") or p < 1:
@@ -580,7 +580,7 @@ class TensorDeRhamComplex(StrictModule, NonTrainableState):
     curl_div_defect: Array
     complex_id: str = eqx.field(static=True)
 
-    def __init__(self, degree: int, dimension: int, /):
+    def __init__(self, degree: int, dimension: int, /) -> None:
         p = int(degree)
         d = int(dimension)
         if p < 1 or d not in (2, 3):
@@ -663,7 +663,7 @@ class TensorDeRhamComplex(StrictModule, NonTrainableState):
 class TensorPiolaMap(StrictModule, NonTrainableState):
     mapping: Literal["covariant", "contravariant"] = eqx.field(static=True)
 
-    def __init__(self, mapping: Literal["covariant", "contravariant"], /):
+    def __init__(self, mapping: Literal["covariant", "contravariant"], /) -> None:
         if mapping not in ("covariant", "contravariant"):
             raise ValueError("Piola mapping must be covariant or contravariant.")
         self.mapping = mapping
@@ -779,7 +779,7 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
         cell_kind: Literal["prism", "pyramid"],
         degree: int | tuple[int, int],
         /,
-    ):
+    ) -> None:
         kind = str(cell_kind)
         if kind == "prism" and isinstance(degree, tuple):
             if len(degree) != 2:
@@ -1006,7 +1006,9 @@ class LevelSetCutQuadrature(StrictModule, NonTrainableState):
     active: Array
     volume_fraction: Array
 
-    def __init__(self, points: ArrayLike, weights: ArrayLike, level_set: ArrayLike, /):
+    def __init__(
+        self, points: ArrayLike, weights: ArrayLike, level_set: ArrayLike, /
+    ) -> None:
         points_ = jnp.asarray(points)
         weights_ = jnp.asarray(weights)
         phi = jnp.asarray(level_set)
@@ -1033,7 +1035,9 @@ class TensorDeRhamTransferPlan(StrictModule, NonTrainableState):
     commuting_curl_error: Array
     commuting_divergence_error: Array
 
-    def __init__(self, source: TensorDeRhamComplex, target: TensorDeRhamComplex, /):
+    def __init__(
+        self, source: TensorDeRhamComplex, target: TensorDeRhamComplex, /
+    ) -> None:
         if source.dimension != target.dimension or source.degree > target.degree:
             raise ValueError(
                 "Compatible p transfer requires equal dimensions and nested degree."
@@ -1165,7 +1169,7 @@ class CompatibleTraceConstraint(StrictModule, NonTrainableState):
         master_nodes: ArrayLike,
         side_nodes: ArrayLike,
         /,
-    ):
+    ) -> None:
         if representation not in ("tangential", "normal"):
             raise ValueError("Compatible trace representation must be tangential/normal.")
         self.representation = representation
@@ -1192,7 +1196,7 @@ class CompatibleMortarPlan(StrictModule, NonTrainableState):
         differential_left: ArrayLike,
         differential_right: ArrayLike,
         /,
-    ):
+    ) -> None:
         left = np.asarray(left_trace.prolongation)
         right = np.asarray(right_trace.prolongation)
         d_left = np.asarray(differential_left)
@@ -1210,7 +1214,7 @@ class CompatibleAuxiliaryMultigrid(StrictModule, NonTrainableState):
     injection: Array
     auxiliary_inverse: Array
 
-    def __init__(self, injection: ArrayLike, auxiliary_operator: ArrayLike, /):
+    def __init__(self, injection: ArrayLike, auxiliary_operator: ArrayLike, /) -> None:
         injection_ = np.asarray(injection)
         operator = np.asarray(auxiliary_operator)
         if injection_.ndim != 2 or operator.shape != (
@@ -1236,7 +1240,7 @@ class HybridRefinementPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, cell_kind: str, child_bounds: Sequence[tuple[ArrayLike, ArrayLike]], /
-    ):
+    ) -> None:
         kind = str(cell_kind)
         bounds = tuple(
             (jnp.asarray(lower), jnp.asarray(upper)) for lower, upper in child_bounds
@@ -1264,7 +1268,7 @@ class HybridMortarPlan(StrictModule, NonTrainableState):
         mortar_points: ArrayLike,
         degree: int,
         /,
-    ):
+    ) -> None:
         left = np.asarray(left_nodes)
         right = np.asarray(right_nodes)
         points = np.asarray(mortar_points)
@@ -1317,7 +1321,7 @@ class UnfittedAggregationPlan(StrictModule, NonTrainableState):
         /,
         *,
         minimum_fraction: float = 0.1,
-    ):
+    ) -> None:
         fractions = np.asarray(volume_fractions)
         neighbors_ = np.asarray(neighbors, dtype=np.int32)
         if fractions.ndim != 1 or neighbors_.shape[0] != fractions.size:
@@ -1366,7 +1370,7 @@ class ConservativeMovingInterfaceTransfer(StrictModule, NonTrainableState):
         target_basis: ArrayLike,
         physical_weights: ArrayLike,
         /,
-    ):
+    ) -> None:
         source = np.asarray(source_basis)
         target = np.asarray(target_basis)
         weights = np.asarray(physical_weights)

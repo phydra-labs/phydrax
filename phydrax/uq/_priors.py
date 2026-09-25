@@ -20,7 +20,7 @@ class PowerLaw(AbstractDistribution):
     low: Array
     high: Array
 
-    def __init__(self, alpha: ArrayLike, low: ArrayLike, high: ArrayLike):
+    def __init__(self, alpha: ArrayLike, low: ArrayLike, high: ArrayLike) -> None:
         exponent = jnp.asarray(alpha, dtype=jnp.float64).reshape(())
         lower = jnp.asarray(low, dtype=jnp.float64).reshape(())
         upper = jnp.asarray(high, dtype=jnp.float64).reshape(())
@@ -101,7 +101,7 @@ class TruncatedNormal(AbstractDistribution):
         scale: ArrayLike,
         low: ArrayLike,
         high: ArrayLike,
-    ):
+    ) -> None:
         location_ = jnp.asarray(location, dtype=jnp.float64).reshape(())
         scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         low_ = jnp.asarray(low, dtype=jnp.float64).reshape(())
@@ -185,7 +185,7 @@ class TruncatedNormal(AbstractDistribution):
 class HalfNormal(AbstractDistribution):
     scale: Array
 
-    def __init__(self, scale: ArrayLike):
+    def __init__(self, scale: ArrayLike) -> None:
         scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(scale_) & (scale_ > 0.0)):
             raise ValueError("Half-normal scale must be finite and positive.")
@@ -231,7 +231,7 @@ class Cauchy(AbstractDistribution):
     location: Array
     scale: Array
 
-    def __init__(self, location: ArrayLike, scale: ArrayLike):
+    def __init__(self, location: ArrayLike, scale: ArrayLike) -> None:
         location_ = jnp.asarray(location, dtype=jnp.float64).reshape(())
         scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(location_) & jnp.isfinite(scale_) & (scale_ > 0.0)):
@@ -278,7 +278,7 @@ class StudentT(AbstractDistribution):
         degrees_of_freedom: ArrayLike,
         location: ArrayLike = 0.0,
         scale: ArrayLike = 1.0,
-    ):
+    ) -> None:
         df = jnp.asarray(degrees_of_freedom, dtype=jnp.float64).reshape(())
         location_ = jnp.asarray(location, dtype=jnp.float64).reshape(())
         scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())

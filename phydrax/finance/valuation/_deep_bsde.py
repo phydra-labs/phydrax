@@ -47,7 +47,7 @@ class DeepBSDEApplicability(StrictModule):
         terminal_rmse_tolerance: float,
         constraint_tolerance: float,
         minimum_valid_fraction: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(pricing_law, PricingLaw):
             raise TypeError("pricing_law must be a PricingLaw, not a P/stress law.")
         identifiers = tuple(
@@ -114,7 +114,7 @@ class DeepBSDECausalityEvidence(StrictModule):
         filtration_id: str,
         evidence_id: str,
         tolerance: float,
-    ):
+    ) -> None:
         dependency = jnp.asarray(maximum_future_dependency, dtype=jnp.float64)
         nodes = int(checked_time_nodes)
         tolerance_ = float(tolerance)
@@ -157,7 +157,7 @@ class DeepBSDESupportEvidence(StrictModule):
         factor_layout_id: str,
         evidence_id: str,
         tolerance: float,
-    ):
+    ) -> None:
         violation = jnp.asarray(maximum_support_violation, dtype=jnp.float64)
         count = jnp.asarray(active_path_count, dtype=jnp.int32)
         tolerance_ = float(tolerance)

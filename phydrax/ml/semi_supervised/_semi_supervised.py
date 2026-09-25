@@ -69,7 +69,7 @@ class GraphFitDiagnostics(StrictModule):
         valid: Any,
         status: Any,
         method: str,
-    ):
+    ) -> None:
         self.residual = jnp.asarray(residual)
         self.labeled_samples = jnp.asarray(labeled_samples)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
@@ -98,7 +98,7 @@ class SelfTrainingDiagnostics(StrictModule):
         status: Any,
         iterations: int,
         method: str,
-    ):
+    ) -> None:
         self.confidence = jnp.asarray(confidence)
         self.labeled_samples = jnp.asarray(labeled_samples)
         self.child_status = jnp.asarray(child_status, dtype=jnp.int32)
@@ -261,7 +261,7 @@ class LabelPropagationModel(AbstractFittedModel):
         /,
         *,
         class_labels: Any = None,
-    ):
+    ) -> None:
         x = jnp.asarray(training_features)
         probabilities = jnp.asarray(distributions)
         weights = jnp.asarray(training_weight)
@@ -351,7 +351,7 @@ class HardLabelPropagationModel(AbstractFittedModel):
     out_size: Literal["scalar"] = eqx.field(static=True)
     _input_binding = ModelBinding.blockwise("structured")
 
-    def __init__(self, soft_model: LabelPropagationModel, /):
+    def __init__(self, soft_model: LabelPropagationModel, /) -> None:
         self.soft_model = soft_model
         self.in_size = soft_model.in_size
         self.out_size = "scalar"
@@ -378,7 +378,7 @@ class LabelPropagationRecipe(AbstractRecipe):
         iterations: int = 100,
         tolerance: float = 1e-6,
         num_classes: int | None = None,
-    ):
+    ) -> None:
         if int(iterations) <= 0 or float(tolerance) < 0.0:
             raise ValueError("iterations must be positive and tolerance nonnegative.")
         if kernel is not None and not isinstance(kernel, AbstractPositiveDefiniteKernel):
@@ -489,7 +489,7 @@ class LabelSpreadingRecipe(AbstractRecipe):
         iterations: int = 100,
         tolerance: float = 1e-6,
         num_classes: int | None = None,
-    ):
+    ) -> None:
         if not 0.0 < float(alpha) < 1.0 or int(iterations) <= 0 or float(tolerance) < 0.0:
             raise ValueError(
                 "alpha must be in (0, 1), iterations positive, and tolerance nonnegative."
@@ -593,7 +593,9 @@ class LabelSpreadingRecipe(AbstractRecipe):
 class HardLabelPropagationRecipe(AbstractRecipe):
     soft_recipe: LabelPropagationRecipe | LabelSpreadingRecipe
 
-    def __init__(self, soft_recipe: LabelPropagationRecipe | LabelSpreadingRecipe, /):
+    def __init__(
+        self, soft_recipe: LabelPropagationRecipe | LabelSpreadingRecipe, /
+    ) -> None:
         if not isinstance(soft_recipe, (LabelPropagationRecipe, LabelSpreadingRecipe)):
             raise TypeError("soft_recipe must be label propagation or label spreading.")
         self.soft_recipe = soft_recipe
@@ -684,7 +686,7 @@ class SoftSelfTrainingModel(AbstractFittedModel):
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     _input_binding = ModelBinding.pointwise()
 
-    def __init__(self, model: AbstractArrayModel, /):
+    def __init__(self, model: AbstractArrayModel, /) -> None:
         self.model = model
         self.in_size = model.in_size
         self.out_size = model.out_size
@@ -702,7 +704,7 @@ class HardSelfTrainingModel(AbstractFittedModel):
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     _input_binding = ModelBinding.pointwise()
 
-    def __init__(self, model: AbstractArrayModel, /):
+    def __init__(self, model: AbstractArrayModel, /) -> None:
         self.model = model
         self.in_size = model.in_size
         self.out_size = model.out_size
@@ -721,7 +723,7 @@ class SoftSelfTrainingRecipe(AbstractRecipe):
 
     def __init__(
         self, recipe: AbstractRecipe, /, *, iterations: int = 5, blend: float = 1.0
-    ):
+    ) -> None:
         if not isinstance(recipe, AbstractRecipe):
             raise TypeError("recipe must be an AbstractRecipe.")
         if int(iterations) <= 0 or not 0.0 < float(blend) <= 1.0:
@@ -825,7 +827,7 @@ class HardSelfTrainingRecipe(AbstractRecipe):
         *,
         iterations: int = 5,
         confidence_threshold: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(recipe, AbstractRecipe):
             raise TypeError("recipe must be an AbstractRecipe.")
         if int(iterations) <= 0 or not 0.0 <= float(confidence_threshold) <= 1.0:
@@ -939,7 +941,7 @@ class SoftOneClassCompositionModel(AbstractFittedModel):
         *,
         threshold: Any,
         temperature: Any,
-    ):
+    ) -> None:
         if detector.in_size != predictor.in_size:
             raise ValueError("detector and predictor must share an input size.")
         self.detector = detector
@@ -994,7 +996,7 @@ class HardOneClassCompositionModel(AbstractFittedModel):
         /,
         *,
         threshold: Any,
-    ):
+    ) -> None:
         if detector.in_size != predictor.in_size:
             raise ValueError("detector and predictor must share an input size.")
         self.detector = detector
@@ -1069,7 +1071,7 @@ class SoftOneClassCompositionRecipe(AbstractRecipe):
         *,
         threshold: float = 0.0,
         temperature: float = 0.1,
-    ):
+    ) -> None:
         if not isinstance(detector_recipe, AbstractRecipe) or not isinstance(
             predictor_recipe, AbstractRecipe
         ):
@@ -1169,7 +1171,7 @@ class HardOneClassCompositionRecipe(AbstractRecipe):
         /,
         *,
         threshold: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(detector_recipe, AbstractRecipe) or not isinstance(
             predictor_recipe, AbstractRecipe
         ):

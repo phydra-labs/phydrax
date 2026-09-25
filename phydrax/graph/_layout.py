@@ -88,7 +88,7 @@ class LayoutPlan(StrictModule):
     max_edges: int = eqx.field(static=True)
     max_graphs: int = eqx.field(static=True)
 
-    def __init__(self, *, max_nodes: int, max_edges: int, max_graphs: int):
+    def __init__(self, *, max_nodes: int, max_edges: int, max_graphs: int) -> None:
         self.max_nodes = int(max_nodes)
         self.max_edges = int(max_edges)
         self.max_graphs = int(max_graphs)

@@ -77,7 +77,7 @@ class QuadratureMomentCertification(StrictModule, NonTrainableState):
         maximum_degree: int,
         tolerance: float,
         positive_weights: bool,
-    ):
+    ) -> None:
         exponents_ = tuple(tuple(row) for row in exponents)
         expected_host = np.asarray(expected_moments)
         measured_host = np.asarray(measured_moments, dtype=expected_host.dtype)
@@ -142,7 +142,7 @@ class CertifiedDiscreteVelocityQuadrature(StrictModule, NonTrainableState):
         certified_degree: int,
         transport_kind: VelocityTransportKind,
         tolerance: float = 5e-12,
-    ):
+    ) -> None:
         name_ = str(name)
         velocity_values = np.asarray(velocities)
         weight_values = np.asarray(weights)

@@ -130,7 +130,7 @@ class _GraphClassificationScore(StrictModule, BatchEvaluator):
         classification_kind: ClassificationKind,
         objective: ClassificationObjective,
         class_count: int | None,
-    ):
+    ) -> None:
         self.logits = logits
         self.target = target
         self.target_mask = target_mask
@@ -251,7 +251,7 @@ class _GraphClassificationIntegrand(StrictModule):
         target_schema: TargetSchema,
         objective: ClassificationObjective,
         class_count: int | None,
-    ):
+    ) -> None:
         self.field = field
         self.domain = domain
         self.target = target

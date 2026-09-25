@@ -57,7 +57,7 @@ class ConflictFreeGradientPolicy(StrictModule, NonTrainableState):
         minimum_norm: float = 1e-12,
         projection_tolerance: float = 1e-10,
         failure: ConflictFreeFailureMode = "status",
-    ):
+    ) -> None:
         rank = RankPolicy() if rank_policy is None else rank_policy
         if not isinstance(rank, RankPolicy):
             raise TypeError("rank_policy must be a RankPolicy.")
@@ -124,7 +124,7 @@ class ConflictFreeGradientResult(StrictModule):
         successful: Array,
         status: Array,
         policy_id: str,
-    ):
+    ) -> None:
         self.direction = direction
         self.norms = jnp.asarray(norms)
         self.cosine_matrix = jnp.asarray(cosine_matrix)

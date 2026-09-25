@@ -85,7 +85,7 @@ class HolomorphicJetFunctionalTerm(StrictModule, NonTrainableState):
         derivative_multi_index: Sequence[int],
         weight: ArrayLike = 1.0 + 0.0j,
         /,
-    ):
+    ) -> None:
         output = int(output_index)
         derivative = tuple(derivative_multi_index)
         weight_raw = np.asarray(weight)
@@ -136,7 +136,7 @@ class HolomorphicPointFunctional(StrictModule, NonTrainableState):
         *,
         construction: str = "complex-jet-real-linear-functional",
         construction_dependencies: Sequence[str] = (),
-    ):
+    ) -> None:
         coordinate_ = _coordinate_vector(coordinate)
         terms_ = tuple(terms)
         if not terms_ or not all(
@@ -352,7 +352,7 @@ class HolomorphicConstraintOperatorEvidence(StrictModule, NonTrainableState):
         nullity: int,
         factorization_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         singular_values_ = jnp.asarray(singular_values)
         scalars = tuple(
             jnp.asarray(value)
@@ -420,7 +420,7 @@ class HolomorphicConstraintOperatorPlan(StrictModule, NonTrainableState):
         rank_cutoff: float | None = None,
         maximum_factor_bytes: int = 512 * 1024**2,
         maximum_workspace_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         if not isinstance(frame, HolomorphicLinearFrame):
             raise TypeError("frame must implement HolomorphicLinearFrame.")
         functionals_ = tuple(functionals)
@@ -555,7 +555,7 @@ class PreparedHolomorphicConstraintOperator(StrictModule, NonTrainableState):
         /,
         *,
         evidence: HolomorphicConstraintOperatorEvidence,
-    ):
+    ) -> None:
         if not isinstance(plan, HolomorphicConstraintOperatorPlan):
             raise TypeError("plan must be HolomorphicConstraintOperatorPlan.")
         if not isinstance(prepared_operator, PreparedConstraintOperator):
@@ -639,7 +639,7 @@ class HolomorphicConstraintLiftEvidence(StrictModule, NonTrainableState):
         tolerance: ArrayLike,
         target: ArrayLike,
         prepared_id: str,
-    ):
+    ) -> None:
         residual = jnp.asarray(residual_norm)
         tolerance_ = jnp.asarray(tolerance)
         if residual.shape != () or tolerance_.shape != ():
@@ -673,7 +673,7 @@ class HolomorphicAffineCoefficientMap(StrictModule, NonTrainableState):
         operator: PreparedHolomorphicConstraintOperator,
         target: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(operator, PreparedHolomorphicConstraintOperator):
             raise TypeError("operator must be PreparedHolomorphicConstraintOperator.")
         target_ = jnp.asarray(target)
@@ -742,7 +742,7 @@ class ConstrainedHolomorphicPotential(StrictModule, ParameterOwner):
         /,
         *,
         initial_free_coordinates: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(coefficient_map, HolomorphicAffineCoefficientMap):
             raise TypeError("coefficient_map must be HolomorphicAffineCoefficientMap.")
         free = (
@@ -856,7 +856,7 @@ class HolomorphicProjectionState(StrictModule):
         functional_values: ArrayLike,
         correction_coefficients: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = jnp.asarray(functional_values)
         correction = jnp.asarray(correction_coefficients)
         if values.ndim != 1 or correction.ndim != 1:
@@ -871,7 +871,7 @@ class HolomorphicConstraintProjector(StrictModule, NonTrainableState):
     operator: PreparedHolomorphicConstraintOperator
     projector_id: str = eqx.field(static=True)
 
-    def __init__(self, operator: PreparedHolomorphicConstraintOperator, /):
+    def __init__(self, operator: PreparedHolomorphicConstraintOperator, /) -> None:
         if not isinstance(operator, PreparedHolomorphicConstraintOperator):
             raise TypeError("operator must be PreparedHolomorphicConstraintOperator.")
         if operator.evidence.rank != operator.target_count:
@@ -913,7 +913,7 @@ class ProjectedHolomorphicPotential(StrictModule):
         projector: HolomorphicConstraintProjector,
         coefficient_map: HolomorphicAffineCoefficientMap,
         /,
-    ):
+    ) -> None:
         if not isinstance(provider, HolomorphicPotentialProvider):
             raise TypeError("provider must implement HolomorphicPotentialProvider.")
         if not isinstance(projector, HolomorphicConstraintProjector):

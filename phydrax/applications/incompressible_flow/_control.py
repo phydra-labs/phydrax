@@ -54,7 +54,7 @@ class _ConstantMACFlowTargetSchedule(StrictModule, NonTrainableState):
     value: Array
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, value: ArrayLike, /):
+    def __init__(self, value: ArrayLike, /) -> None:
         values = np.asarray(value, dtype=np.float64)
         if values.ndim == 0:
             values = values.reshape((1,))
@@ -105,7 +105,7 @@ class MACFlowControlTarget(StrictModule, NonTrainableState):
         frozen_density: ArrayLike | None = None,
         schedule_id: str | None = None,
         density_id: str | None = None,
-    ):
+    ) -> None:
         if kind not in (
             "pressure_gradient",
             "bulk_velocity",
@@ -505,7 +505,7 @@ class MACFlowControlPlan(StrictModule):
         projection_tolerance: float = 1.0e-7,
         condition_limit: float = 1.0e10,
         maximum_resource_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         dynamics, _ = _method_dynamics(method)
         if not isinstance(target, MACFlowControlTarget):
             raise TypeError("target must be a MACFlowControlTarget.")
@@ -568,7 +568,7 @@ class PreparedMACFlowControl(StrictModule):
     control_space_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MACFlowControlPlan, /):
+    def __init__(self, plan: MACFlowControlPlan, /) -> None:
         if not isinstance(plan, MACFlowControlPlan):
             raise TypeError("plan must be a MACFlowControlPlan.")
         dynamics, method_kind = _method_dynamics(plan.method)

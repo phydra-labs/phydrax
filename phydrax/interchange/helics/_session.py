@@ -122,7 +122,7 @@ class HelicsValueSession:
         timeout: float = 30,
         expected_version: str | None = None,
         source_url: str = "",
-    ):
+    ) -> None:
         _host_only(time_delta, publications, subscriptions)
         _require_optional(
             "helics", "install helics>=3 with a host-compatible native HELICS library"

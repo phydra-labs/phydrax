@@ -34,7 +34,7 @@ class DEMMaterialTable(StrictModule):
         *,
         rolling_friction: ArrayLike | None = None,
         material_id: str | None = None,
-    ):
+    ) -> None:
         young = np.asarray(young_modulus)
         poisson = np.asarray(poisson_ratio)
         restitution_ = np.asarray(restitution)

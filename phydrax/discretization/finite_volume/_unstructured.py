@@ -652,7 +652,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         field_name: str = "state",
         component_names: Sequence[str] = ("value",),
         _prepared: _PreparedUnstructuredFiniteVolumeData | None = None,
-    ):
+    ) -> None:
         if _prepared is not None:
             self.mesh = _prepared.mesh
             self.vertices = _prepared.vertices
@@ -1035,7 +1035,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
 
     def __init__(
         self, plan: UnstructuredFiniteVolumePlan, /, *, numeric_version: str = "0"
-    ):
+    ) -> None:
         if not isinstance(plan, UnstructuredFiniteVolumePlan):
             raise TypeError("plan must be UnstructuredFiniteVolumePlan.")
         mesh = plan.mesh

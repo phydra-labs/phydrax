@@ -33,7 +33,7 @@ class MPMPhysicalFieldPlan(StrictModule, NonTrainableState):
     units: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, role: MPMFieldRole, field_id: str, units: str, /):
+    def __init__(self, role: MPMFieldRole, field_id: str, units: str, /) -> None:
         role_ = MPMFieldRole(role)
         identifier = str(field_id)
         units_ = str(units)
@@ -73,7 +73,7 @@ class BiotPoromechanicsParameters(StrictModule, NonTrainableState):
         permeability: ArrayLike,
         fluid_viscosity: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -112,7 +112,7 @@ class ThermalMPMParameters(StrictModule, NonTrainableState):
         plastic_heat_fraction: ArrayLike,
         reference_temperature: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -161,7 +161,7 @@ class MPMCoupledBoundaryPlan(StrictModule, NonTrainableState):
         temperature_mask: ArrayLike,
         temperature_values: ArrayLike,
         heat_flux: ArrayLike,
-    ):
+    ) -> None:
         pressure_mask_ = np.asarray(pressure_mask, dtype=np.bool_)
         temperature_mask_ = np.asarray(temperature_mask, dtype=np.bool_)
         if pressure_mask_.shape != temperature_mask_.shape:
@@ -228,7 +228,7 @@ class PreparedMPMCoupledFieldOperator(StrictModule, NonTrainableState):
         thermal: ThermalMPMParameters,
         boundaries: MPMCoupledBoundaryPlan,
         /,
-    ):
+    ) -> None:
         shape = tuple(grid_shape)
         spacing_ = tuple(float(value) for value in spacing)
         periodic_ = tuple(bool(value) for value in periodic)

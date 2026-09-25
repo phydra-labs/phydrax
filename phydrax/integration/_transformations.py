@@ -27,7 +27,7 @@ class MeasureTransformationRecord(StrictModule):
         *,
         source_provenance: str,
         target_provenance: str,
-    ):
+    ) -> None:
         kind_ = str(kind)
         source = str(source_provenance)
         target = str(target_provenance)
@@ -52,7 +52,7 @@ class TransformedIntegrationDiagnostics(StrictModule):
         transformations: tuple[MeasureTransformationRecord, ...],
         reduction: Any,
         /,
-    ):
+    ) -> None:
         transformations_ = tuple(transformations)
         if any(
             not isinstance(item, MeasureTransformationRecord) for item in transformations_

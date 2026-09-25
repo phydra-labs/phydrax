@@ -32,7 +32,7 @@ class ParticleBackendPolicy(StrictModule, NonTrainableState):
         /,
         *,
         determinism: ParticleDeterminism = "deterministic",
-    ):
+    ) -> None:
         if backend not in ("pure-jax", "pallas", "triton"):
             raise ValueError("Unknown particle backend.")
         if determinism not in ("fast", "deterministic", "compensated"):
@@ -66,7 +66,7 @@ class ParticleKernelRequestPlan(StrictModule, NonTrainableState):
         kernel_gradient: bool = True,
         smoothing_derivative: bool = False,
         materialize: bool = False,
-    ):
+    ) -> None:
         self.distance = bool(distance)
         self.direction = bool(direction)
         self.kernel_value = bool(kernel_value)
@@ -127,7 +127,7 @@ class ParticleDomainDecompositionPlan(StrictModule, NonTrainableState):
     box: ParticleBox
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, partitions: int, halo_radius: float, box: ParticleBox, /):
+    def __init__(self, partitions: int, halo_radius: float, box: ParticleBox, /) -> None:
         if partitions <= 0 or halo_radius <= 0.0:
             raise ValueError("Particle decomposition parameters are invalid.")
         self.partitions = int(partitions)

@@ -45,7 +45,7 @@ class ChemistryResultCodec(StrictModule, NonTrainableState):
         *,
         encoder_id: str,
         decoder_id: str,
-    ):
+    ) -> None:
         if not isinstance(result_type, type):
             raise TypeError("result_type must be a concrete type.")
         if not isinstance(archive, ProductionChemistryArchivePlan):

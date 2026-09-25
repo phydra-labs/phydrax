@@ -35,7 +35,7 @@ class RectangularLinearROMProblem(StrictModule, NonTrainableState):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(reduction, TrialTestReduction):
             raise TypeError("reduction must be TrialTestReduction.")
         if reduction.test_rank < reduction.trial_rank:
@@ -93,7 +93,7 @@ class ReducedInfSupEvidence(StrictModule, NonTrainableState):
         pressure_basis_id: str,
         divergence_operator_id: str,
         minimum_accepted: float,
-    ):
+    ) -> None:
         matrix = jnp.asarray(reduced_divergence)
         if matrix.ndim != 2:
             raise ValueError("reduced_divergence must be a matrix.")
@@ -148,7 +148,7 @@ class DescriptorStructureEvidence(StrictModule, NonTrainableState):
         regular: bool,
         impulse_free: bool,
         pencil_id: str,
-    ):
+    ) -> None:
         finite = int(finite_dimension)
         algebraic = int(algebraic_dimension)
         index_ = int(index)
@@ -197,7 +197,7 @@ class IndexOneDescriptorReduction(StrictModule, NonTrainableState):
         algebraic_matrix: ArrayLike,
         evidence: DescriptorStructureEvidence,
         /,
-    ):
+    ) -> None:
         if (
             not isinstance(evidence, DescriptorStructureEvidence)
             or not evidence.index_one_supported

@@ -79,7 +79,7 @@ class StateTimeProcessConditioner(StrictModule):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     condition_size: int = eqx.field(static=True)
 
-    def __init__(self, state_shape: Sequence[int], /):
+    def __init__(self, state_shape: Sequence[int], /) -> None:
         self.state_shape = _shape(state_shape, name="state_shape")
         self.condition_size = prod(self.state_shape) + 2
 
@@ -104,7 +104,7 @@ class IdentityCoefficientTransition(StrictModule):
 
     state_shape: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, state_shape: Sequence[int], /):
+    def __init__(self, state_shape: Sequence[int], /) -> None:
         self.state_shape = _shape(state_shape, name="state_shape")
 
     def __call__(
@@ -139,7 +139,7 @@ class FlowProcessDistribution(AbstractProcessDistribution):
         condition: ArrayLike,
         event_shape: Sequence[int],
         process_id: str,
-    ):
+    ) -> None:
         if not isinstance(flow, AbstractFlowDistribution):
             raise TypeError("flow must be an AbstractFlowDistribution.")
         events = _shape(event_shape, name="event_shape")
@@ -225,7 +225,7 @@ class LatentFlowCoefficientProcess(AbstractMarginalTransitionLaw, ParameterOwner
         state_shape: Sequence[int],
         process_id: str | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(flow, AbstractFlowDistribution):
             raise TypeError("flow must be an AbstractFlowDistribution.")
         if not callable(conditioner) or not callable(location_transition):

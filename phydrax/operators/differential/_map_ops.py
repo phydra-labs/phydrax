@@ -39,7 +39,7 @@ class _RiemannianMapCallable(StrictModule):
         function_coordinate_position: int,
         operation: MapOperation,
         /,
-    ):
+    ) -> None:
         self.function = function
         self.source_metric = source_metric
         self.target_metric = target_metric

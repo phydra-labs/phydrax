@@ -67,7 +67,7 @@ class OperatorCheckpointManifest(NonTrainableState):
         code_license: str,
         weights_license: str,
         checkpoint_sha256: str,
-    ):
+    ) -> None:
         self.architecture = str(architecture)
         self.model_version = str(model_version)
         self.source_uri = str(source_uri)
@@ -286,7 +286,7 @@ class ExternalOperatorAdapter(AbstractOperatorModel):
         capabilities: ExecutionCapabilities,
         in_size: int | tuple[int, ...] | Literal["scalar"],
         out_size: int | tuple[int, ...] | Literal["scalar"],
-    ):
+    ) -> None:
         if (
             not callable(runner)
             or not callable(input_adapter)

@@ -314,7 +314,7 @@ class AbstractForceDensityLoadModel(StrictModule):
 class FixedNodalLoadModel(AbstractForceDensityLoadModel):
     """Fixed global nodal loads supplied as the load parameters."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -368,7 +368,7 @@ class EdgeLineLoadModel(AbstractForceDensityLoadModel, NonTrainableState):
         *,
         measure: Literal["current", "reference"] = "current",
         reference_lengths: ArrayLike | None = None,
-    ):
+    ) -> None:
         if measure not in ("current", "reference"):
             raise ValueError("measure must be 'current' or 'reference'.")
         if measure == "current" and reference_lengths is not None:
@@ -470,7 +470,7 @@ class ReferenceMemberSelfWeightModel(AbstractForceDensityLoadModel, NonTrainable
     gravity: Array
     _load_model_id: str = eqx.field(static=True)
 
-    def __init__(self, reference_lengths: ArrayLike, gravity: ArrayLike, /):
+    def __init__(self, reference_lengths: ArrayLike, gravity: ArrayLike, /) -> None:
         lengths = jnp.asarray(reference_lengths)
         gravity_ = jnp.asarray(gravity)
         if lengths.ndim != 1 or gravity_.ndim != 1:
@@ -549,7 +549,7 @@ class SurfacePressureLoadModel(AbstractForceDensityLoadModel):
     _mechanical_load: GeneralFollowerLoad
     _state: MechanicalLoadState
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._mechanical_load = GeneralFollowerLoad(
             _adapter_pressure_law,
             support="boundary",
@@ -644,7 +644,7 @@ class SurfaceTractionLoadModel(AbstractForceDensityLoadModel, NonTrainableState)
         *,
         measure: Literal["current", "reference"] = "current",
         reference_positions: ArrayLike | None = None,
-    ):
+    ) -> None:
         if measure not in ("current", "reference"):
             raise ValueError("measure must be 'current' or 'reference'.")
         if measure == "reference" and reference_positions is None:
@@ -781,7 +781,7 @@ class PneumaticPressureLoadModel(AbstractForceDensityLoadModel, NonTrainableStat
         *,
         reference_volume: float = 1.0,
         exponent: float = 1.0,
-    ):
+    ) -> None:
         if law not in ("fixed", "ideal-gas"):
             raise ValueError("law must be 'fixed' or 'ideal-gas'.")
         volume = float(reference_volume)
@@ -918,7 +918,7 @@ class CompositeForceDensityLoadModel(AbstractForceDensityLoadModel):
     _load_model_id: str = eqx.field(static=True)
     _depends_on_positions: bool = eqx.field(static=True)
 
-    def __init__(self, models: Sequence[AbstractForceDensityLoadModel], /):
+    def __init__(self, models: Sequence[AbstractForceDensityLoadModel], /) -> None:
         resolved = tuple(models)
         if not resolved or any(
             not isinstance(model, AbstractForceDensityLoadModel) for model in resolved

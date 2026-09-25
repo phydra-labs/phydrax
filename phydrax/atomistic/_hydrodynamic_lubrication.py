@@ -44,7 +44,7 @@ class HardSphereLubricationPlan(StrictModule):
         /,
         *,
         maximum_dofs: int,
-    ):
+    ) -> None:
         values = (
             hydrodynamic_radius,
             dynamic_viscosity,

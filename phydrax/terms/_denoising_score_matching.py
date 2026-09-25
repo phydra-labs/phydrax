@@ -110,7 +110,7 @@ class DenoisingScoreMatchingBatch(StrictModule):
         weighting: DenoisingScoreWeighting,
         batch_id: str,
         data_provenance: str,
-    ):
+    ) -> None:
         clean = jnp.asarray(clean_state)
         perturbed = jnp.asarray(perturbed_state, dtype=clean.dtype)
         noise_array = jnp.asarray(noise, dtype=clean.dtype)
@@ -234,7 +234,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
         state_label: str = "x",
         time_label: str = "t",
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(score_name, str) or not score_name:
             raise ValueError("score_name must be a non-empty string.")
         if not isinstance(process, AbstractGaussianDiffusion):

@@ -81,7 +81,7 @@ class Almonacid2024MuscleAponeurosisParameters(StrictModule):
     aponeurosis: Almonacid2024MaterialParameters
     density_kg_per_m3: Array
 
-    def __init__(self, muscle, aponeurosis, density_kg_per_m3, /):
+    def __init__(self, muscle, aponeurosis, density_kg_per_m3, /) -> None:
         if not isinstance(muscle, Almonacid2024MaterialParameters) or not isinstance(
             aponeurosis, Almonacid2024MaterialParameters
         ):
@@ -110,7 +110,7 @@ class Almonacid2024Control(StrictModule):
 
     def __init__(
         self, time_s, activation, engineering_strain, /, *, source_id, successful=True
-    ):
+    ) -> None:
         time = _scalar(time_s, "time_s")
         self.activation = _scalar(activation, "activation")
         self.engineering_strain = _scalar(engineering_strain, "engineering_strain")
@@ -149,7 +149,7 @@ class Almonacid2024InputHistory(StrictModule):
     source_id: str = eqx.field(static=True)
     source_provenance: str = eqx.field(static=True)
 
-    def __init__(self, activation_table, strain_table, /, *, source_id):
+    def __init__(self, activation_table, strain_table, /, *, source_id) -> None:
         tables = [
             np.asarray(table, dtype=np.float64)
             for table in (activation_table, strain_table)
@@ -343,7 +343,7 @@ class Almonacid2024MuscleAponeurosisPlan(StrictModule, NonTrainableState):
         stress_scale_Pa=2e5,
         method=None,
         termination=None,
-    ):
+    ) -> None:
         if not isinstance(geometry, Almonacid2024Geometry):
             raise TypeError("geometry must be Almonacid2024Geometry.")
         if not str(control_source_id).strip() or pulling_face_id not in range(1, 8):
@@ -988,7 +988,7 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
         )
 
 
-def _verify_repository_inputs(directory):
+def _verify_repository_inputs(directory) -> None:
     manifest_path = directory / "manifest.json"
     if not manifest_path.is_file():
         raise ValueError("Pinned repository inputs require their immutable manifest.")

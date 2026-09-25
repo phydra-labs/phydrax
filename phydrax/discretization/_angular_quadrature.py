@@ -39,7 +39,7 @@ class CertifiedSlabAngularQuadrature(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-12,
         quadrature_id: str | None = None,
-    ):
+    ) -> None:
         mu = np.asarray(ordinates, dtype=np.float64)
         weight = np.asarray(weights, dtype=np.float64)
         tolerance_ = float(tolerance)

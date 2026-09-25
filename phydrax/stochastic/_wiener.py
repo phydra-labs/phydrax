@@ -133,7 +133,7 @@ class WienerRealization(StrictModule):
         _path_indices: Array | None = None,
         _realization_id: str | None = None,
         _path_signs: Array | None = None,
-    ):
+    ) -> None:
         key = _validated_key(root_key)
         if len(support) != 2:
             raise ValueError("WienerRealization support must contain exactly two bounds.")

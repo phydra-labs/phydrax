@@ -83,7 +83,7 @@ class BoundaryPatch(StrictModule, NonTrainableState):
         represented_geometry_id: str,
         physical_geometry_id: str | None = None,
         exact_to_physical: bool = False,
-    ):
+    ) -> None:
         if not isinstance(component, DomainComponent):
             raise TypeError("BoundaryPatch.component must be a DomainComponent.")
         variable_ = str(variable)
@@ -198,7 +198,7 @@ class BoundaryJunction(StrictModule, NonTrainableState):
         compatibility_operator_id: str,
         transition_ids: Sequence[str] = (),
         orientation_signs: Sequence[int] = (),
-    ):
+    ) -> None:
         indices = tuple(patch_indices)
         if len(indices) < 2 or len(set(indices)) != len(indices) or min(indices) < 0:
             raise ValueError(
@@ -266,7 +266,7 @@ class BoundarySupportEvidence(StrictModule, NonTrainableState):
         intersections_resolved: bool,
         coverage_complete: bool,
         physical_exact: bool,
-    ):
+    ) -> None:
         supports = tuple(str(value) for value in support_ids)
         junctions = tuple(str(value) for value in junction_ids)
         represented = tuple(str(value) for value in represented_geometry_ids)
@@ -335,7 +335,7 @@ class BoundaryCover(StrictModule, NonTrainableState):
         *,
         disjoint_pairs: Sequence[tuple[int, int, str]],
         evidence: BoundarySupportEvidence,
-    ):
+    ) -> None:
         patches_ = tuple(patches)
         junctions_ = tuple(junctions)
         if not patches_:

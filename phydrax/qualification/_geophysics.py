@@ -69,7 +69,7 @@ class GeophysicalReferenceComparison(StrictModule, NonTrainableState):
         standardized_rms: float | None,
         passed: bool,
         /,
-    ):
+    ) -> None:
         if reference_kind not in ("external-oracle", "field"):
             raise ValueError("Reference comparison kind is invalid.")
         self.reference_kind = reference_kind
@@ -203,7 +203,7 @@ class GeophysicalReferenceRecipe(StrictModule, NonTrainableState):
         maximum_standardized_rms: float | None = None,
         maximum_samples: int,
         minimum_valid_samples: int = 1,
-    ):
+    ) -> None:
         if reference_kind not in ("external-oracle", "field"):
             raise ValueError("Reference kind must be external-oracle or field.")
         if not isinstance(artifact, ReferenceArtifactManifest):

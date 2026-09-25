@@ -91,7 +91,7 @@ class EmbeddedTransferPartition(StrictModule):
         source_route_owner: ArrayLike,
         partition_count: int,
         /,
-    ):
+    ) -> None:
         target = np.asarray(target_owner)
         routes = np.asarray(source_route_owner)
         if not np.issubdtype(target.dtype, np.integer) or not np.issubdtype(

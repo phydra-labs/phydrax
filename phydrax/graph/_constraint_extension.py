@@ -53,7 +53,7 @@ class GraphHarmonicCorrectionProvider(StrictModule, NonTrainableState):
         anchored_components: tuple[int, ...],
         gauged_components: tuple[int, ...] = (),
         gauge_certificate_id: str | None = None,
-    ):
+    ) -> None:
         operators = (
             restriction_operator,
             candidate_operator,

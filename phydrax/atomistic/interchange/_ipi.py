@@ -51,7 +51,7 @@ class IPITransportPlan(StrictModule, NonTrainableState):
         timeout: float = 60.0,
         maximum_atoms: int = 1_000_000,
         maximum_extra_bytes: int = 1_000_000,
-    ):
+    ) -> None:
         if mode not in ("unix", "tcp"):
             raise ValueError("i-PI transport mode must be unix or tcp.")
         port_ = None if port is None else int(port)
@@ -129,7 +129,7 @@ class IPIResponse(StrictModule):
 
 
 class IPISession:
-    def __init__(self, connection: socket.socket, plan: IPITransportPlan, /):
+    def __init__(self, connection: socket.socket, plan: IPITransportPlan, /) -> None:
         self.connection = connection
         self.plan = plan
         self.status = IPITransportStatus.READY
@@ -222,12 +222,12 @@ class IPISession:
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.close()
 
 
 class IPIListener:
-    def __init__(self, server: socket.socket, plan: IPITransportPlan, /):
+    def __init__(self, server: socket.socket, plan: IPITransportPlan, /) -> None:
         self.server = server
         self.plan = plan
 
@@ -236,7 +236,7 @@ class IPIListener:
         connection.settimeout(self.plan.timeout)
         return IPISession(connection, self.plan)
 
-    def close(self):
+    def close(self) -> None:
         self.server.close()
         if self.plan.mode == "unix":
             Path(self.plan.address).unlink(missing_ok=True)
@@ -244,7 +244,7 @@ class IPIListener:
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.close()
 
 
@@ -256,7 +256,7 @@ class TransportedExternalAtomisticProvider(AbstractExternalAtomisticProvider):
 
     def __init__(
         self, session: IPISession, provider_id: str, /, *, conservative: bool = True
-    ):
+    ) -> None:
         self.session = session
         self.provider_id = str(provider_id)
         self.conservative = bool(conservative)

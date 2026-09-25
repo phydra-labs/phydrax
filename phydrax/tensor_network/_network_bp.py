@@ -25,7 +25,9 @@ class FactorTensor(StrictModule):
     variables: tuple[str, ...] = eqx.field(static=True)
     values: Array
 
-    def __init__(self, factor_id: str, variables: Sequence[str], values: ArrayLike, /):
+    def __init__(
+        self, factor_id: str, variables: Sequence[str], values: ArrayLike, /
+    ) -> None:
         identifier = str(factor_id)
         variables_ = tuple(str(name) for name in variables)
         values_ = jnp.asarray(values)
@@ -56,7 +58,7 @@ class FactorGraphNetwork(StrictModule):
         variable_cardinalities: Mapping[str, int],
         factors: Sequence[FactorTensor],
         /,
-    ):
+    ) -> None:
         names = tuple(sorted(str(name) for name in variable_cardinalities))
         cardinalities = tuple(int(variable_cardinalities[name]) for name in names)
         factors_ = tuple(factors)
@@ -134,7 +136,7 @@ class NetworkBPPolicy(StrictModule):
         maximum_message_elements: int = 10_000_000,
         maximum_factor_elements: int = 100_000_000,
         maximum_workspace_bytes: int = 2**31,
-    ):
+    ) -> None:
         if any(
             not isinstance(value, Integral) or isinstance(value, bool)
             for value in (

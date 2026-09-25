@@ -69,7 +69,7 @@ class ChemicalAffinePivot(StrictModule):
         direction: ChemicalReactionDirection | str,
         species: str,
         /,
-    ):
+    ) -> None:
         reaction = int(reaction_index)
         direction_ = ChemicalReactionDirection(direction)
         species_ = str(species)
@@ -96,7 +96,7 @@ class ChemicalConditionalAffinePlan(StrictModule):
         *,
         pivots=(),
         plan_id: str | None = None,
-    ):
+    ) -> None:
         affine = tuple(str(value) for value in affine_species)
         drivers = tuple(str(value) for value in driver_species)
         pivots_ = tuple(pivots)
@@ -181,7 +181,7 @@ class ChemicalConditionalAffineDrivers(StrictModule):
         /,
         *,
         runtime: ChemicalRateRuntime | None = None,
-    ):
+    ) -> None:
         species = jnp.asarray(species_concentrations)
         if species.ndim < 1:
             raise ValueError("species_concentrations must have a trailing driver axis.")
@@ -268,7 +268,7 @@ class PreparedChemicalConditionalAffine(StrictModule):
         plan: ChemicalConditionalAffinePlan,
         certificate: ChemicalConditionalAffineCertificate,
         /,
-    ):
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         if not isinstance(plan, ChemicalConditionalAffinePlan):

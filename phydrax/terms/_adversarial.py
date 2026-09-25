@@ -23,7 +23,7 @@ class ImplicitGenerator(StrictModule):
     event_shape: tuple[int, ...] = eqx.field(static=True)
     generator_id: str = eqx.field(static=True)
 
-    def __init__(self, generator, event_shape, /, *, generator_id: str):
+    def __init__(self, generator, event_shape, /, *, generator_id: str) -> None:
         if not callable(generator) or not generator_id:
             raise TypeError("generator must be callable with a non-empty ID.")
         shape = tuple(event_shape)

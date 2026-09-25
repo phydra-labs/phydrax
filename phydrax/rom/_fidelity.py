@@ -31,7 +31,7 @@ class AffineLinearROMFidelityEvaluator(StrictModule, NonTrainableState):
         cost: float,
         observable: str = "state",
         evaluator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, PreparedAffineLinearROM):
             raise TypeError("model must be a PreparedAffineLinearROM.")
         if not isinstance(level, FidelityLevelSpec):

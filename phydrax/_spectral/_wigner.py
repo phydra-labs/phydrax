@@ -61,7 +61,7 @@ class _RecursiveWignerExecution(StrictModule, NonTrainableState):
         sampling: SphericalSampling,
         lower_bandlimit: int,
         max_precompute_bytes: int,
-    ):
+    ) -> None:
         estimate = 512 * directional_bandlimit * bandlimit**2
         limit = _validate_limit(max_precompute_bytes, estimate, "recursive")
         forward = tuple(
@@ -148,7 +148,7 @@ class _PrecomputedWignerExecution(StrictModule, NonTrainableState):
         directional_bandlimit: int,
         sampling: SphericalSampling,
         max_precompute_bytes: int,
-    ):
+    ) -> None:
         forward_theta = (
             s2_samples.ntheta(2 * bandlimit, "mwss")
             if sampling in ("mw", "mwss")
@@ -269,7 +269,7 @@ class WignerTransformPlan(StrictModule, NonTrainableState):
         execution: SphericalExecution = "recursive",
         lower_bandlimit: int = 0,
         max_precompute_bytes: int = _DEFAULT_PRECOMPUTE_BYTES,
-    ):
+    ) -> None:
         selected_bandlimit = int(bandlimit)
         selected_directional = int(directional_bandlimit)
         selected_lower = int(lower_bandlimit)

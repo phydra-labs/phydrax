@@ -120,7 +120,7 @@ class DEMSensitivityPolicy(StrictModule, NonTrainableState):
         acceptance_margin: float = 1.0e-8,
         neighborhood_margin: float = 1.0e-8,
         perturbation_scale: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(mode, BranchDifferentiationPolicy):
             raise TypeError("mode must be a BranchDifferentiationPolicy.")
         match mode:

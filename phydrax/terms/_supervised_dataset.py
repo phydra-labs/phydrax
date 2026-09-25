@@ -51,7 +51,7 @@ class SupervisedDatasetBatch(StrictModule):
         indices: ArrayLike,
         sample_weight: ArrayLike | None = None,
         target_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         target_array = jnp.asarray(target)
         indices_array = jnp.asarray(indices, dtype=jnp.int32)
         if indices_array.ndim != 1:
@@ -132,7 +132,7 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
         indices: ArrayLike | None = None,
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
-    ):
+    ) -> None:
         if not isinstance(component.domain, DatasetDomain):
             raise TypeError("SupervisedDatasetTerm requires a DatasetDomain component.")
         sampling_ = normalize_case_sampling(

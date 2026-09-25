@@ -227,7 +227,7 @@ class MoistColumnPlan(StrictModule, NonTrainableState):
         mixing_rate: float = 0.0,
         surface_temperature: float = 290.0,
         forcing_cadence: int = 1,
-    ):
+    ) -> None:
         if thermodynamics is not None and not isinstance(
             thermodynamics, MoistThermodynamicPlan
         ):

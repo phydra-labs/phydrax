@@ -38,7 +38,7 @@ class InterfaceOrientation(StrictModule, NonTrainableState):
         *,
         permutation: Sequence[int] | None = None,
         flips: Sequence[bool] | None = None,
-    ):
+    ) -> None:
         rank = int(trace_rank)
         if rank < 0:
             raise ValueError("Trace rank must be non-negative.")
@@ -107,7 +107,7 @@ class BlockInterface(StrictModule, NonTrainableState):
         right_side: BlockSide,
         orientation: InterfaceOrientation,
         /,
-    ):
+    ) -> None:
         values = tuple(
             str(value) for value in (name, left_block, left_axis, right_block, right_axis)
         )
@@ -166,7 +166,7 @@ class MultiblockInterfaceReport(StrictModule, NonTrainableState):
         nesting_ratio: int,
         geometry_residual: float,
         tolerance: float,
-    ):
+    ) -> None:
         residual = float(geometry_residual)
         ratio = int(nesting_ratio)
         conforming = left_trace_shape == right_trace_shape
@@ -206,7 +206,7 @@ class MultiblockGridPlan(StrictModule, NonTrainableState):
         /,
         *,
         geometry_tolerance: float = 1e-9,
-    ):
+    ) -> None:
         block_values = tuple(blocks)
         names = tuple(str(name) for name, _ in block_values)
         prepared = tuple(value for _, value in block_values)
@@ -325,7 +325,7 @@ class PreparedMultiblockGrid(StrictModule, NonTrainableState):
         /,
         *,
         interface_coordinates: Sequence[tuple[Array, Array]] | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, MultiblockGridPlan):
             raise TypeError("plan must be MultiblockGridPlan.")
         supplied = (

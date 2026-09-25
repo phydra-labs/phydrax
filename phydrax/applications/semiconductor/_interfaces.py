@@ -165,7 +165,7 @@ class ThermionicInterface(StrictModule):
         provenance: str,
         maximum_reduced_chemical_potential: float = -2.0,
         prefactor_unit: UnitDefinition = THERMIONIC_NUMBER_PREFACTOR_UNIT,
-    ):
+    ) -> None:
         self.prefactor = _positive_scalar(
             prefactor,
             prefactor_unit,

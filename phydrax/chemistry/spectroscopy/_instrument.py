@@ -56,7 +56,7 @@ class SpectralInstrumentPlan(StrictModule, NonTrainableState):
         convolution_method: ConvolutionMethod = "direct",
         area_tolerance: float = 5.0e-3,
         profile: SpectralProfilePlan | None = None,
-    ):
+    ) -> None:
         profile_id = str(source_profile_id).strip()
         channels = int(channel_capacity)
         coordinates = int(coordinate_capacity)
@@ -123,7 +123,7 @@ class PreparedSpectralInstrument(StrictModule, NonTrainableState):
         normalized_kernel: ArrayLike,
         kernel_normalization_residual: ArrayLike,
         /,
-    ):
+    ) -> None:
         kernel = jnp.asarray(normalized_kernel)
         residual = jnp.asarray(kernel_normalization_residual, dtype=kernel.dtype).reshape(
             ()
@@ -162,7 +162,7 @@ class SpectralInstrumentEvidence(StrictModule, NonTrainableState):
         finite_window_loss: ArrayLike,
         successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         residuals = jnp.asarray(
             [kernel_normalization_residual, area_residual, finite_window_loss],
             dtype=jnp.float64,
@@ -202,7 +202,7 @@ class SpectralInstrumentResult(StrictModule, NonTrainableState):
         evidence: SpectralInstrumentEvidence,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         coordinate = jnp.asarray(coordinates)
         values = jnp.asarray(convolved_values)
         if values.shape != (len(raw_response.channels), coordinate.size):

@@ -42,7 +42,7 @@ class SparseStorage(StrictModule):
         shape: tuple[int, int],
         sorted_indices: bool = True,
         canonical: bool = True,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         indices_ = jnp.asarray(indices)
         indptr_ = jnp.asarray(indptr)

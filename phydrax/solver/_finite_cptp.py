@@ -50,7 +50,7 @@ class FiniteLindbladChannelPlan(StrictModule):
         evaluation: Literal["left", "midpoint"] = "midpoint",
         tolerance: float = 1e-8,
         plan_id: str,
-    ):
+    ) -> None:
         operators = jnp.asarray(jumps)
         rate_values = jnp.asarray(rates)
         if (

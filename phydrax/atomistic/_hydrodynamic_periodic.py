@@ -120,7 +120,7 @@ class DirectPeriodicRPYMobilityPlan(AbstractHydrodynamicMobilityPlan):
         maximum_particles: int,
         maximum_modes: int = 100_000,
         convergence_tolerance: float = 5.0e-3,
-    ):
+    ) -> None:
         radius = float(hydrodynamic_radius)
         viscosity = float(dynamic_viscosity)
         extent = int(reciprocal_extent)
@@ -182,7 +182,7 @@ class PreparedDirectPeriodicRPYMobility(AbstractPreparedHydrodynamicMobility):
         system: PreparedAtomisticSystem,
         active_slots: ArrayLike,
         /,
-    ):
+    ) -> None:
         if system.cell is None or not system.cell.fully_periodic or system.cell.rank != 3:
             raise ValueError("Direct periodic RPY requires a fully periodic 3-D cell.")
         slots = _active_slots(plan.maximum_particles, system, active_slots)
@@ -335,7 +335,7 @@ class PositiveSplitPeriodicRPYMobilityPlan(AbstractHydrodynamicMobilityPlan):
         maximum_particles: int,
         maximum_modes: int = 100_000,
         convergence_tolerance: float = 5.0e-3,
-    ):
+    ) -> None:
         direct = DirectPeriodicRPYMobilityPlan(
             hydrodynamic_radius,
             dynamic_viscosity,
@@ -399,7 +399,7 @@ class PreparedPositiveSplitPeriodicRPYMobility(AbstractPreparedHydrodynamicMobil
         system: PreparedAtomisticSystem,
         active_slots: ArrayLike,
         /,
-    ):
+    ) -> None:
         direct_plan = DirectPeriodicRPYMobilityPlan(
             plan.hydrodynamic_radius,
             plan.dynamic_viscosity,

@@ -61,7 +61,7 @@ class SelfAdjointSpectrumPolicy(StrictModule):
         absolute_tolerance: float = 1e-10,
         max_retained_bytes: int = 512 * 1024 * 1024,
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         tolerance_ = EigenTolerancePolicy() if tolerance is None else tolerance
         resources_ = EigenResourcePolicy() if resources is None else resources
         materialization_ = (
@@ -106,7 +106,7 @@ class SelfAdjointSpectrumCostEstimate(StrictModule):
         *,
         retained_bytes: int,
         workspace_bytes: int,
-    ):
+    ) -> None:
         if not isinstance(source, EigenCostEstimate):
             raise TypeError("source must be an EigenCostEstimate.")
         retained = int(retained_bytes)
@@ -134,7 +134,7 @@ class SelfAdjointSpectrumPlan(StrictModule):
         eigen_plan: EigenSolvePlan,
         cost: SelfAdjointSpectrumCostEstimate,
         /,
-    ):
+    ) -> None:
         _require_problem(problem)
         if not isinstance(policy, SelfAdjointSpectrumPolicy):
             raise TypeError("policy must be a SelfAdjointSpectrumPolicy.")
@@ -189,7 +189,7 @@ class SelfAdjointSpectrumDiagnostics(StrictModule):
         *,
         retained_bytes: int,
         workspace_bytes: int,
-    ):
+    ) -> None:
         residual = jnp.asarray(maximum_residual_norm)
         relative = jnp.asarray(maximum_relative_residual)
         normalization = jnp.asarray(normalization_error)

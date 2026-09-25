@@ -52,7 +52,7 @@ class IdentityLoss(AbstractRobustLoss):
 class HuberLoss(AbstractRobustLoss):
     delta: float = eqx.field(static=True)
 
-    def __init__(self, delta: float = 1.0, /):
+    def __init__(self, delta: float = 1.0, /) -> None:
         value = float(delta)
         if not isfinite(value) or value <= 0.0:
             raise ValueError("Huber delta must be finite and positive.")
@@ -76,7 +76,7 @@ class HuberLoss(AbstractRobustLoss):
 class SoftL1Loss(AbstractRobustLoss):
     scale: float = eqx.field(static=True)
 
-    def __init__(self, scale: float = 1.0, /):
+    def __init__(self, scale: float = 1.0, /) -> None:
         value = float(scale)
         if not isfinite(value) or value <= 0.0:
             raise ValueError("Soft-L1 scale must be finite and positive.")
@@ -99,7 +99,7 @@ class SoftL1Loss(AbstractRobustLoss):
 class CauchyLoss(AbstractRobustLoss):
     scale: float = eqx.field(static=True)
 
-    def __init__(self, scale: float = 1.0, /):
+    def __init__(self, scale: float = 1.0, /) -> None:
         value = float(scale)
         if not isfinite(value) or value <= 0.0:
             raise ValueError("Cauchy scale must be finite and positive.")
@@ -122,7 +122,7 @@ class CauchyLoss(AbstractRobustLoss):
 class ArctanLoss(AbstractRobustLoss):
     scale: float = eqx.field(static=True)
 
-    def __init__(self, scale: float = 1.0, /):
+    def __init__(self, scale: float = 1.0, /) -> None:
         value = float(scale)
         if not isfinite(value) or value <= 0.0:
             raise ValueError("Arctan scale must be finite and positive.")
@@ -146,7 +146,7 @@ class ArctanLoss(AbstractRobustLoss):
 class TukeyLoss(AbstractRobustLoss):
     scale: float = eqx.field(static=True)
 
-    def __init__(self, scale: float = 1.0, /):
+    def __init__(self, scale: float = 1.0, /) -> None:
         value = float(scale)
         if not isfinite(value) or value <= 0.0:
             raise ValueError("Tukey scale must be finite and positive.")
@@ -176,7 +176,7 @@ class ScaledLoss(AbstractRobustLoss):
     loss: AbstractRobustLoss
     scale: float = eqx.field(static=True)
 
-    def __init__(self, loss: AbstractRobustLoss, scale: float, /):
+    def __init__(self, loss: AbstractRobustLoss, scale: float, /) -> None:
         if not isinstance(loss, AbstractRobustLoss):
             raise TypeError("loss must be AbstractRobustLoss.")
         value = float(scale)

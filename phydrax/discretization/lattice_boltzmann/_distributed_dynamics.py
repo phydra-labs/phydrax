@@ -42,7 +42,7 @@ class PreparedDistributedLatticeBoltzmannDynamics(StrictModule, NonTrainableStat
         dynamics: PreparedLatticeBoltzmannDynamics,
         halo: LatticeBoltzmannHaloSchedule,
         /,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedLatticeBoltzmannDynamics):
             raise TypeError("dynamics must be PreparedLatticeBoltzmannDynamics.")
         if not isinstance(halo, LatticeBoltzmannHaloSchedule):

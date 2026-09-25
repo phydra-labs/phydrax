@@ -54,7 +54,7 @@ class ComputationAwareSparseVariationalGaussianProcessELBO(StrictModule):
         *,
         regularization: ArrayLike = 1e-8,
         likelihood_samples: int = 8,
-    ):
+    ) -> None:
         if not isinstance(state, GaussianProcessLikelihoodState):
             raise TypeError("state must be a GaussianProcessLikelihoodState.")
         points = jnp.asarray(observation_points)

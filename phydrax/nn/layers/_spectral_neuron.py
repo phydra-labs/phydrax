@@ -83,7 +83,7 @@ class SpectralNeuronInitializationReport(StrictModule, NonTrainableState):
         jitter_bound: float,
         perturbation_bound: float,
         certified_minimum_gap: float,
-    ):
+    ) -> None:
         features = int(feature_count)
         dimension = int(matrix_size)
         index = int(eigen_index)
@@ -171,7 +171,7 @@ class SpectralNeuron(_AbstractBaseModel):
         dtype: Any = jnp.float32,
         precision: HermitianPrecisionPolicy | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if isinstance(matrix_size, bool) or not isinstance(matrix_size, Integral):
             raise TypeError("SpectralNeuron matrix_size must be an integer.")
         if isinstance(eigen_index, bool) or not isinstance(eigen_index, Integral):

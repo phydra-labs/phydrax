@@ -32,7 +32,7 @@ class UniformAbelianMatrixProductState(StrictModule):
         physical_charges: Sequence[Sequence[Sequence[int]]],
         unit_cell_charge: Sequence[int],
         /,
-    ):
+    ) -> None:
         if not isinstance(state, UniformMatrixProductState) or not isinstance(
             group, AbelianGroup
         ):
@@ -84,7 +84,7 @@ class UniformAbelianMatrixProductOperator(StrictModule):
         charge_labels: Sequence[str],
         physical_charges: Sequence[Sequence[Sequence[int]]],
         /,
-    ):
+    ) -> None:
         if not isinstance(operator, UniformMatrixProductOperator) or not isinstance(
             group, AbelianGroup
         ):

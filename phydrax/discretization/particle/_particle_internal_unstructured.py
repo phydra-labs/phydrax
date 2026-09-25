@@ -61,7 +61,7 @@ class UnstructuredParticleInternalMeshPlan(AbstractParticleInternalMeshPlan):
         tetrahedra: ArrayLike | None = None,
         boundary_patches=None,
         mesh_id: str | None = None,
-    ):
+    ) -> None:
         finite_volume = UnstructuredFiniteVolumePlan(
             vertices,
             triangles=triangles,
@@ -99,7 +99,7 @@ class PreparedUnstructuredParticleInternalMesh(AbstractPreparedParticleInternalM
     transport_relation: EdgeRelation
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: UnstructuredParticleInternalMeshPlan, /):
+    def __init__(self, plan: UnstructuredParticleInternalMeshPlan, /) -> None:
         if not isinstance(plan, UnstructuredParticleInternalMeshPlan):
             raise TypeError("plan must be UnstructuredParticleInternalMeshPlan.")
         discretization = plan.finite_volume.prepare()

@@ -117,7 +117,7 @@ class StateDependentDiscontinuityTracker(StrictModule):
         root_rtol: float,
         root_atol: float,
         max_root_iterations: int,
-    ):
+    ) -> None:
         if not delays:
             raise ValueError("A state-dependent tracker requires at least one delay.")
         if depth <= 0:
@@ -781,7 +781,7 @@ class StateDependentAdaptiveController(dfx.AbstractAdaptiveStepSizeController):
         self,
         controller: dfx.AbstractAdaptiveStepSizeController,
         tracker: StateDependentDiscontinuityTracker,
-    ):
+    ) -> None:
         self.controller = controller
         self.tracker = tracker
 
@@ -864,7 +864,7 @@ class StateDependentFixedController(dfx.AbstractStepSizeController):
         self,
         controller: dfx.AbstractStepSizeController,
         tracker: StateDependentDiscontinuityTracker,
-    ):
+    ) -> None:
         self.controller = controller
         self.tracker = tracker
 

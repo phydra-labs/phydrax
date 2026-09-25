@@ -64,7 +64,7 @@ class ShiftedLinearSystemFamily(StrictModule):
         *,
         spectral_interval: SpectralInterval | None = None,
         family_id: str | None = None,
-    ):
+    ) -> None:
         _validate_operator(operator)
         values = jnp.asarray(shifts)
         if values.ndim != 1 or values.size < 1:
@@ -125,7 +125,7 @@ class ShiftedSolveResourcePolicy(StrictModule):
         max_matvec_count: int | None = None,
         max_storage_bytes: int | None = None,
         max_workspace_bytes: int | None = None,
-    ):
+    ) -> None:
         self.max_matvec_count = _optional_nonnegative_int(
             max_matvec_count, "max_matvec_count"
         )
@@ -165,7 +165,7 @@ class ShiftedSolvePolicy(StrictModule):
         relative_tolerance: float = 1e-8,
         absolute_tolerance: float = 1e-10,
         resources: ShiftedSolveResourcePolicy | None = None,
-    ):
+    ) -> None:
         if method not in ("auto", "arnoldi", "lanczos"):
             raise ValueError("Unknown shifted Krylov method.")
         if execution not in ("retained", "streaming"):

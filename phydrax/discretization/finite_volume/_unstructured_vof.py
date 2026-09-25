@@ -596,7 +596,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         bisection_iterations: int = 60,
         topology_epoch_id: str | None = None,
         geometry_family_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError("VOF requires unstructured FV geometry.")
         if discretization.cell_dimension != 2 or not isinstance(

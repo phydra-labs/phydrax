@@ -179,7 +179,7 @@ class DiagramGeneratorPlan(StrictModule, NonTrainableState):
         maximum_diagrams: int = 1_024,
         maximum_candidates: int = 250_000,
         maximum_canonical_permutations: int = 40_320,
-    ):
+    ) -> None:
         propagators_, rules_ = tuple(propagators), tuple(vertex_rules)
         if not propagators_ or any(
             not isinstance(item, PropagatorSpec) for item in propagators_
@@ -275,7 +275,7 @@ class PreparedDiagramGenerator(StrictModule, NonTrainableState):
         dimension: int,
         candidate_bound: int,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.external_states = external_states
         self.dimension = int(dimension)

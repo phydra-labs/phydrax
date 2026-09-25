@@ -34,7 +34,7 @@ class ClassificationObjective(StrictModule, NonTrainableState):
         gamma: float = 2.0,
         alpha: float | Sequence[float] | None = None,
         thresholds: Sequence[float] | None = None,
-    ):
+    ) -> None:
         if kind not in ("nll", "soft_cross_entropy", "focal"):
             raise ValueError(f"Unsupported classification objective {kind!r}.")
         gamma_value = float(gamma)

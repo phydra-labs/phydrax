@@ -247,7 +247,7 @@ class SupervisedClassificationTerm(_AbstractSupervisedLikelihoodTerm):
         reduction: Literal["mean", "sum"] = "mean",
         indices: ArrayLike | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(target_schema, TargetSchema):
             raise TypeError("target_schema must be a TargetSchema.")
         kind = target_schema.kind
@@ -354,7 +354,7 @@ class SupervisedSoftClassificationTerm(_AbstractSupervisedDatasetObservationTerm
         reduction: Literal["mean", "sum"] = "mean",
         indices: ArrayLike | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(target_schema, TargetSchema) or target_schema.kind not in (
             "binary",
             "multiclass",
@@ -508,7 +508,7 @@ class SupervisedFocalClassificationTerm(_AbstractSupervisedDatasetObservationTer
         reduction: Literal["mean", "sum"] = "mean",
         indices: ArrayLike | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(target_schema, TargetSchema) or target_schema.kind not in (
             "binary",
             "multiclass",
@@ -640,7 +640,7 @@ class SupervisedOrdinalClassificationTerm(_AbstractSupervisedLikelihoodTerm):
         reduction: Literal["mean", "sum"] = "mean",
         indices: ArrayLike | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(target_schema, TargetSchema) or target_schema.kind != "ordinal":
             raise ValueError("Ordinal classification requires an ordinal TargetSchema.")
         if target_encoding not in ("hard", "soft"):

@@ -52,7 +52,7 @@ class ElectronicVMCResourcePlan(StrictModule):
         spatial_dimension: int = 3,
         maximum_pair_elements: int = 1_000_000,
         maximum_determinant_work: int = 100_000_000,
-    ):
+    ) -> None:
         electrons, determinants, dimension = (
             int(electron_count),
             int(determinant_count),
@@ -103,7 +103,7 @@ class StochasticElectronicKineticPolicy(StrictModule):
         minimum_probes: int = 1,
         standard_error_tolerance: float = 0.0,
         method: Literal["hutchinson", "orthogonal-hutchinson"] = "hutchinson",
-    ):
+    ) -> None:
         maximum, minimum = int(maximum_probes), int(minimum_probes)
         tolerance = float(standard_error_tolerance)
         if maximum <= 0 or minimum <= 0 or minimum > maximum or tolerance < 0.0:
@@ -214,7 +214,7 @@ class ElectronicIntegralHamiltonian(StrictModule):
         ] = "spin-free",
         projector_id: str | None = None,
         tolerance: float = 1e-8,
-    ):
+    ) -> None:
         one, two = jnp.asarray(one_body), jnp.asarray(two_body)
         if one.ndim != 2 or one.shape[0] != one.shape[1] or two.shape != one.shape * 2:
             raise ValueError("one_body/two_body require shapes (n,n) and (n,n,n,n).")

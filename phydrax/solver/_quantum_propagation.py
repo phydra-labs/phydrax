@@ -64,7 +64,7 @@ class UnitaryPropagatorProblem(StrictModule):
         temporal_precision: TemporalPrecisionPolicy | None = None,
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(hamiltonian):
             raise TypeError("hamiltonian must be callable.")
         dimension_ = int(dimension)
@@ -182,7 +182,7 @@ class _UnitaryPropagatorDrift(StrictModule):
         problem: UnitaryPropagatorProblem,
         group: UnitaryGroup | SpecialUnitaryGroup,
         /,
-    ):
+    ) -> None:
         self.problem = problem
         self.group = group
 
@@ -225,7 +225,7 @@ class UnitaryPropagatorSolution(StrictModule):
         hbar: ArrayLike,
         geometry_precision_evidence: PrecisionEvidenceEnvelope,
         hermitian_precision_evidence: PrecisionEvidenceEnvelope,
-    ):
+    ) -> None:
         self.differential_solution = differential_solution
         self.times = differential_solution.times
         self.propagators = differential_solution.states

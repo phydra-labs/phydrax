@@ -75,7 +75,7 @@ class QuadraticGrandPotentialPhase(StrictModule, NonTrainableState):
         reference_composition: ArrayLike,
         susceptibility: ArrayLike,
         /,
-    ):
+    ) -> None:
         identifier = str(phase_id)
         reference_ = np.asarray(reference)
         composition = np.asarray(reference_composition)
@@ -157,7 +157,7 @@ class GrandPotentialMaterialCatalog(StrictModule, NonTrainableState):
     component_count: int = eqx.field(static=True)
     catalog_id: str = eqx.field(static=True)
 
-    def __init__(self, phases: Sequence[QuadraticGrandPotentialPhase], /):
+    def __init__(self, phases: Sequence[QuadraticGrandPotentialPhase], /) -> None:
         values = tuple(phases)
         if (
             len(values) < 2
@@ -206,7 +206,7 @@ class GrandPotentialMixtureModel(StrictModule, NonTrainableState):
         gradient_coefficient: ArrayLike,
         kinetic_coefficient: ArrayLike,
         mobility: AbstractPhaseFieldMobility | ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(catalog, GrandPotentialMaterialCatalog):
             raise TypeError("catalog must be GrandPotentialMaterialCatalog.")
         scalars = tuple(
@@ -470,7 +470,7 @@ class GrandPotentialFEMPlan(StrictModule, NonTrainableState):
         absolute_energy_tolerance: float = 1.0e-8,
         relative_energy_tolerance: float = 1.0e-8,
         component_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(model, GrandPotentialMixtureModel):
             raise TypeError("model must be GrandPotentialMixtureModel.")
         values = tuple(
@@ -538,7 +538,7 @@ class PreparedGrandPotentialFEM(AbstractFixedStepMethod, NonTrainableState):
         phase_field: str,
         chemical_field: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, GrandPotentialFEMPlan):
             raise TypeError("plan must be GrandPotentialFEMPlan.")
         phase_index = discretization._field_index(phase_field)

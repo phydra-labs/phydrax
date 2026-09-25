@@ -42,7 +42,7 @@ class TrajectoryEventLayout(StrictModule):
         origin: ArrayLike | None = None,
         valid_time: ArrayLike | None = None,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         grid = jnp.asarray(times, dtype=jnp.float64)
         shape = tuple(state_shape)
         if grid.ndim != 1 or grid.size < 2 or bool(jnp.any(jnp.diff(grid) <= 0.0)):
@@ -153,7 +153,7 @@ class PathCoefficientDiffusion(StrictModule):
         /,
         *,
         score_dependency: PathScoreDependency = "global",
-    ):
+    ) -> None:
         if not isinstance(layout, TrajectoryEventLayout):
             raise TypeError("layout must be a TrajectoryEventLayout.")
         if coefficient_process.state_shape != (layout.coefficient_layout.rank,):

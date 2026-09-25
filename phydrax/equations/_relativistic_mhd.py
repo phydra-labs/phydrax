@@ -128,7 +128,7 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
         bracket_iterations: int = 16,
         absolute_tolerance: float = 1.0e-11,
         relative_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(eos, AbstractRelativisticEOS):
             raise TypeError("eos must be AbstractRelativisticEOS.")
         if not isinstance(scale, RelativityScaleContract):

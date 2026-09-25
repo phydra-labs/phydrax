@@ -224,7 +224,9 @@ class FlowTransportSchedule(StrictModule):
     period: float = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, sample_times: ArrayLike, volume_flow: ArrayLike, period: float, /):
+    def __init__(
+        self, sample_times: ArrayLike, volume_flow: ArrayLike, period: float, /
+    ) -> None:
         times = np.asarray(sample_times, dtype=np.float64)
         flow = np.asarray(volume_flow, dtype=np.float64)
         width = float(period)

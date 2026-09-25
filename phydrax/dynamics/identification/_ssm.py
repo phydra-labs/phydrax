@@ -32,7 +32,7 @@ class SpectralSubmanifoldEvidence(StrictModule, NonTrainableState):
         *,
         spectral_quotient: int,
         minimum_resonance_detuning: float,
-    ):
+    ) -> None:
         eigenvalues = jnp.asarray(selected_eigenvalues)
         gap = jnp.asarray(spectral_gap)
         quotient = int(spectral_quotient)
@@ -81,7 +81,7 @@ class SpectralSubmanifoldModel(StrictModule, NonTrainableState):
         validity_radius: float,
         observation_contract_id: str,
         partition_id: str,
-    ):
+    ) -> None:
         chart = jnp.asarray(chart_coefficients)
         flow = jnp.asarray(flow_coefficients)
         powers = jnp.asarray(exponents, dtype=jnp.int32)

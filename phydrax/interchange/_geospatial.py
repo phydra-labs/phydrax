@@ -89,7 +89,7 @@ class GeospatialTransform(StrictModule, NonTrainableState):
         *,
         parameters: Mapping[str, Any] | Sequence[tuple[str, Any]] = (),
         resources: Sequence[ResourceManifest] = (),
-    ):
+    ) -> None:
         self.operation = _label(operation, "Transformation operation")
         self.source_coordinate_id = _label(source_coordinate_id, "Source coordinate ID")
         self.target_coordinate_id = _label(target_coordinate_id, "Target coordinate ID")
@@ -187,7 +187,7 @@ class GeospatialContract(StrictModule, NonTrainableState):
         mask_semantics: str = "unknown",
         metadata: Mapping[str, Any] | Sequence[tuple[str, Any]] = (),
         transformations: Sequence[GeospatialTransform] = (),
-    ):
+    ) -> None:
         if not isinstance(spatial, SpatialCoordinateContract):
             raise TypeError("spatial must be SpatialCoordinateContract.")
         axes = tuple(_label(item, "Horizontal axis") for item in horizontal_axes)
@@ -549,7 +549,7 @@ class QualifiedGeospatialGrid(StrictModule, NonTrainableState):
         valid: ArrayLike | None = None,
         value_role: str = "scalar",
         resources: Sequence[ResourceManifest] = (),
-    ):
+    ) -> None:
         if not isinstance(contract, GeospatialContract):
             raise TypeError("contract must be GeospatialContract.")
         contract.require_grid()

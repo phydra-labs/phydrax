@@ -91,7 +91,7 @@ class GeneralEigenproblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         _require_general_endomorphism(operator, "operator")
         if mass_operator is not None:
             _require_general_endomorphism(mass_operator, "mass_operator")
@@ -142,7 +142,7 @@ class GeneralEigenSelection(StrictModule):
         count: int | None = None,
         target: complex = 0.0,
         selection_id: str | None = None,
-    ):
+    ) -> None:
         kinds = (
             "all",
             "finite",
@@ -202,7 +202,7 @@ class GeneralEigenSelection(StrictModule):
 class StandardTransform(StrictModule):
     """Use the pencil operator itself (or ``B^{-1} A`` when ``B`` is present)."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         return
 
     @property
@@ -215,7 +215,7 @@ class ShiftInvertTransform(StrictModule):
 
     shift: complex = eqx.field(static=True)
 
-    def __init__(self, shift: complex, /):
+    def __init__(self, shift: complex, /) -> None:
         shift_ = complex(shift)
         if not math.isfinite(shift_.real) or not math.isfinite(shift_.imag):
             raise ValueError("shift must be finite.")
@@ -231,7 +231,7 @@ class CayleyTransform(StrictModule):
 
     shift: complex = eqx.field(static=True)
 
-    def __init__(self, shift: complex, /):
+    def __init__(self, shift: complex, /) -> None:
         shift_ = complex(shift)
         if not math.isfinite(shift_.real) or not math.isfinite(shift_.imag):
             raise ValueError("shift must be finite.")
@@ -252,7 +252,7 @@ GeneralEigenTransform: TypeAlias = (
 class DenseSchurQZ(StrictModule):
     """Host LAPACK Schur/QZ eigenpairs, including homogeneous pencil values."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         return
 
     @property
@@ -265,7 +265,7 @@ class RestartedArnoldi(StrictModule):
 
     subspace_dimension: int | None = eqx.field(static=True)
 
-    def __init__(self, *, subspace_dimension: int | None = None):
+    def __init__(self, *, subspace_dimension: int | None = None) -> None:
         dimension = None if subspace_dimension is None else int(subspace_dimension)
         if dimension is not None and dimension < 3:
             raise ValueError("subspace_dimension must be at least three or None.")
@@ -298,7 +298,7 @@ class GeneralEigenTolerancePolicy(StrictModule):
         homogeneous_relative: float = 1e-12,
         mass_rank_relative: float = 1e-12,
         cluster_relative: float = 1e-8,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -339,7 +339,7 @@ class GeneralEigenResourcePolicy(StrictModule):
         workspace_bytes: int = 2 * 1024 * 1024 * 1024,
         krylov_basis_bytes: int = 1024 * 1024 * 1024,
         operator_matvecs: int = 10_000_000,
-    ):
+    ) -> None:
         values = tuple(
             (
                 max_dimension,
@@ -390,7 +390,7 @@ class GeneralEigenSolvePolicy(StrictModule):
         singular_mass: SingularMassPolicy = "report",
         initial_vector: ArrayLike | None = None,
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         method_ = DenseSchurQZ() if method is None else method
         transform_ = StandardTransform() if transform is None else transform
         selection_ = GeneralEigenSelection.all() if selection is None else selection
@@ -1572,7 +1572,7 @@ class _CanonicalCoordinateAdjoint(AbstractLinearOperator):
 
     operator: AbstractLinearOperator
 
-    def __init__(self, operator: AbstractLinearOperator, /):
+    def __init__(self, operator: AbstractLinearOperator, /) -> None:
         self.source = operator.target
         self.target = operator.source
         self.operator = operator

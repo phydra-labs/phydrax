@@ -129,7 +129,7 @@ class MartingaleTransportProblem(StrictModule):
         source_coordinates: ArrayLike | None = None,
         target_coordinates: ArrayLike | None = None,
         constraint_tolerance: float = 1e-7,
-    ):
+    ) -> None:
         if not isinstance(transport, DiscreteTransportProblem):
             raise TypeError("transport must be a DiscreteTransportProblem.")
         tolerance = float(constraint_tolerance)

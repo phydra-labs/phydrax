@@ -39,7 +39,7 @@ class SolidHarmonicPlan(StrictModule, NonTrainableState):
         *,
         kind: SolidHarmonicKind = "regular",
         reality: bool = True,
-    ):
+    ) -> None:
         if isinstance(bandlimit, bool) or not isinstance(bandlimit, Integral):
             raise TypeError("bandlimit must be a static integer.")
         limit = int(bandlimit)
@@ -82,7 +82,7 @@ class PreparedSolidHarmonicSynthesis(StrictModule, NonTrainableState):
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: SolidHarmonicPlan, /):
+    def __init__(self, plan: SolidHarmonicPlan, /) -> None:
         if not isinstance(plan, SolidHarmonicPlan):
             raise TypeError("plan must be a SolidHarmonicPlan.")
         layout = plan.layout

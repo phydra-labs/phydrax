@@ -78,7 +78,7 @@ class UncertaintyComponent(StrictModule, NonTrainableState):
         label: str,
         kind: UncertaintyKind,
         conditionally_independent: bool,
-    ):
+    ) -> None:
         values = np.asarray(variance, dtype=np.float64)
         if values.ndim != 1 or not np.all(np.isfinite(values)) or np.any(values < 0.0):
             raise ValueError("Uncertainty variances must be finite non-negative vectors.")
@@ -118,7 +118,7 @@ class StabilityPrediction(StrictModule, NonTrainableState):
         observable: str,
         sign_convention: str,
         model_id: str,
-    ):
+    ) -> None:
         means = np.asarray(mean, dtype=np.float64)
         validity = np.asarray(valid, dtype=np.bool_)
         ids = tuple(_identifier(value, "prediction case ID") for value in case_ids)
@@ -353,7 +353,7 @@ class GlobalSubstitutionBaseline(AbstractProteinStabilityPredictor):
         assay_channel: str,
         condition_id: str,
         ridge: float,
-    ):
+    ) -> None:
         coefficient_array = jnp.asarray(coefficients, dtype=jnp.float64)
         covariance = jnp.asarray(parameter_covariance, dtype=jnp.float64)
         residual = jnp.asarray(residual_variance, dtype=jnp.float64).reshape(())
@@ -555,7 +555,7 @@ class RegularizedEnvironmentModel(AbstractProteinStabilityPredictor):
         sign_convention: str,
         family_effect_scale: float,
         ridge: float,
-    ):
+    ) -> None:
         coefficients_ = jnp.asarray(coefficients, dtype=jnp.float64)
         covariance = jnp.asarray(parameter_covariance, dtype=jnp.float64)
         residual = jnp.asarray(residual_variance, dtype=jnp.float64).reshape(())
@@ -869,7 +869,7 @@ class RegularizedPairInteractionModel(StrictModule):
         assay_channel: str,
         condition_id: str,
         sign_convention: str,
-    ):
+    ) -> None:
         coefficients_ = jnp.asarray(coefficients, dtype=jnp.float64)
         covariance = jnp.asarray(parameter_covariance, dtype=jnp.float64)
         residual = jnp.asarray(residual_variance, dtype=jnp.float64).reshape(())
@@ -1200,7 +1200,7 @@ class ProteinStabilityModelSelectionRecord:
         *,
         candidate_hyperparameters: Mapping[str, Mapping[str, float]],
         score_name: str = "family-macro-mae-kcal-per-mol",
-    ):
+    ) -> None:
         if not isinstance(cohort, ProteinStabilityCohort):
             raise TypeError("cohort must be a ProteinStabilityCohort.")
         values = tuple(features)

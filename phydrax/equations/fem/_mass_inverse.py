@@ -67,7 +67,7 @@ class PreparedDiscontinuousMassInverse(StrictModule):
         *,
         strategy: DiscontinuousMassStrategy = "auto",
         structure_tolerance: float = 1.0e-11,
-    ):
+    ) -> None:
         from ...integration._rules import reference_rule_data
 
         if not isinstance(discretization, FiniteElementDiscretization):

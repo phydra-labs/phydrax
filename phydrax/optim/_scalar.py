@@ -79,7 +79,7 @@ class ScalarIterativeState(StrictModule):
         linear_refresh_state: LinearRefreshState | None = None,
         direction_fallbacks: Any = 0,
         metrics: IterativeStepMetrics | None = None,
-    ):
+    ) -> None:
         self.iteration = jnp.asarray(iteration, dtype=jnp.int32)
         self.initial_optimality_norm = jnp.asarray(initial_optimality_norm)
         self.accepted_steps = jnp.asarray(accepted_steps, dtype=jnp.int32)
@@ -111,7 +111,7 @@ class _ScalarRun(StrictModule):
         state: ScalarIterativeState,
         status: Any,
         /,
-    ):
+    ) -> None:
         self.parameters = parameters
         self.state = state
         self.status = jnp.asarray(status, dtype=jnp.int32)

@@ -62,7 +62,7 @@ class ElasticAcquisition(StrictModule, NonTrainableState):
         source_positions_m: ArrayLike,
         receiver_positions_m: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.sources = PreparedAcousticSampling(grid, source_positions_m)
         self.receivers = PreparedAcousticSampling(grid, receiver_positions_m)
         self.acquisition_id = canonical_fingerprint(
@@ -99,7 +99,7 @@ class PeriodicIsotropicElasticWavePlan(StrictModule, NonTrainableState):
         /,
         *,
         cfl_limit: float = 0.9,
-    ):
+    ) -> None:
         if not isinstance(grid, AcousticGrid):
             raise TypeError("Elastic waves require AcousticGrid.")
         dt, maximum = float(time_step_s), float(maximum_p_wavespeed_m_s)

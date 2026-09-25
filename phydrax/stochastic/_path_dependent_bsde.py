@@ -66,7 +66,7 @@ class ReflectedPathDependentBSDEProblem(StrictModule):
         lower_obstacle: Callable[[Array, Array, Array, Any], Array] | None = None,
         upper_obstacle: Callable[[Array, Array, Array, Any], Array] | None = None,
         args: Any = None,
-    ):
+    ) -> None:
         for owner, value in (
             ("forward_sampler", forward_sampler),
             ("path_features", path_features),

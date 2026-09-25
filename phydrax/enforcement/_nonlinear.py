@@ -94,7 +94,7 @@ class AdditiveCorrectionChart(AbstractCorrectionChart):
         /,
         *,
         chart_id: str | None = None,
-    ):
+    ) -> None:
         names = (
             (field_names,)
             if isinstance(field_names, str)
@@ -159,7 +159,7 @@ class CallableCorrectionChart(AbstractCorrectionChart):
         /,
         *,
         chart_id: str,
-    ):
+    ) -> None:
         if not callable(origin) or not callable(retraction):
             raise TypeError("Correction-chart origin and retraction must be callable.")
         identifier = str(chart_id)
@@ -239,7 +239,7 @@ class NonlinearFieldRetraction(AbstractFieldRealization):
         refresh_validator: RefreshValidator | None = None,
         certification_tolerance: float = 1e-8,
         provider_id: str | None = None,
-    ):
+    ) -> None:
         method_ = NewtonKrylov() if method is None else method
         termination_ = NonlinearTermination() if termination is None else termination
         sources_ = tuple(sources)
@@ -530,7 +530,7 @@ class LocalNonlinearRetraction(AbstractFieldRealization):
 
     realization: NonlinearFieldRetraction
 
-    def __init__(self, chart: AbstractCorrectionChart, /, **kwargs: Any):
+    def __init__(self, chart: AbstractCorrectionChart, /, **kwargs: Any) -> None:
         self.realization = NonlinearFieldRetraction(
             chart, objective="local-root", **kwargs
         )
@@ -550,7 +550,7 @@ class MinimumDistanceRetraction(AbstractFieldRealization):
 
     realization: NonlinearFieldRetraction
 
-    def __init__(self, chart: AbstractCorrectionChart, /, **kwargs: Any):
+    def __init__(self, chart: AbstractCorrectionChart, /, **kwargs: Any) -> None:
         self.realization = NonlinearFieldRetraction(
             chart, objective="minimum-distance", **kwargs
         )

@@ -92,7 +92,7 @@ class DetectorResourcePolicy(StrictModule, NonTrainableState):
         maximum_trajectory_cases: int,
         maximum_trajectory_samples: int,
         maximum_interpolation_routes: int,
-    ):
+    ) -> None:
         values = {
             "maximum_nodes": maximum_nodes,
             "maximum_edges": maximum_edges,
@@ -151,7 +151,7 @@ class DetectorElectrode(StrictModule, NonTrainableState):
     node_mask: Array
     electrode_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, node_mask: ArrayLike, /):
+    def __init__(self, name: str, node_mask: ArrayLike, /) -> None:
         if not isinstance(name, str) or not name or name != name.strip():
             raise ValueError("Electrode names must be nonempty canonical strings.")
         raw = np.asarray(node_mask)
@@ -208,7 +208,7 @@ class SemiconductorDetectorPlan(StrictModule, NonTrainableState):
         permittivity_unit: UnitDefinition = PERMITTIVITY_UNIT,
         transverse_unit: UnitDefinition | None = None,
         evidence_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be StructuredCochainBridge.")
         if not isinstance(resources, DetectorResourcePolicy):
@@ -364,7 +364,7 @@ class DetectorBiasElectrostaticPlan(StrictModule, NonTrainableState):
         /,
         *,
         voltage_unit: UnitDefinition = VOLT,
-    ):
+    ) -> None:
         if not isinstance(detector, SemiconductorDetectorPlan):
             raise TypeError("detector must be SemiconductorDetectorPlan.")
         voltages = _si(electrode_voltages, voltage_unit, VOLT)
@@ -499,7 +499,7 @@ class DetectorWeightingFieldPlan(StrictModule, NonTrainableState):
     electrostatics: tuple[CochainElectrostaticPlan, ...]
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, detector: SemiconductorDetectorPlan, /):
+    def __init__(self, detector: SemiconductorDetectorPlan, /) -> None:
         if not isinstance(detector, SemiconductorDetectorPlan):
             raise TypeError("detector must be SemiconductorDetectorPlan.")
         # All physical boundary vertices are Dirichlet for weighting solves.

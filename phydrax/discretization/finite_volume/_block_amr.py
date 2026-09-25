@@ -64,7 +64,7 @@ class _BlockAMRFaceRoute(StrictModule, NonTrainableState):
         block_id: str,
         block_kind: str,
         /,
-    ):
+    ) -> None:
         self.level = int(level)
         self.axis = int(axis)
         self.face_indices = jnp.asarray(face_indices, dtype=jnp.int32)
@@ -110,7 +110,7 @@ class BlockAMRFiniteVolumePlan(StrictModule):
         source: SourceFunction | None = None,
         source_id: str | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(hierarchy, PreparedFDAMRHierarchy):
             raise TypeError("hierarchy must be PreparedFDAMRHierarchy.")
         if not isinstance(method, FiniteVolumeMethodPlan):
@@ -210,7 +210,7 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule):
         plan: BlockAMRFiniteVolumePlan,
         topology: BlockHierarchyTopology,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, BlockAMRFiniteVolumePlan):
             raise TypeError("plan must be BlockAMRFiniteVolumePlan.")
         hierarchy_plan = plan.hierarchy.plan.hierarchy

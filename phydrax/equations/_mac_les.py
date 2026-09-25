@@ -158,7 +158,7 @@ class MACAlgebraicLESPlan(StrictModule, NonTrainableState):
     prepared_model: PreparedAlgebraicLESModel
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, prepared_model: PreparedAlgebraicLESModel, /):
+    def __init__(self, prepared_model: PreparedAlgebraicLESModel, /) -> None:
         if not isinstance(prepared_model, PreparedAlgebraicLESModel):
             raise TypeError("prepared_model must be PreparedAlgebraicLESModel.")
         self.prepared_model = prepared_model
@@ -193,7 +193,7 @@ class PreparedMACAlgebraicLES(StrictModule, NonTrainableState):
         plan: MACAlgebraicLESPlan,
         momentum: PreparedMACMomentumOperators,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, MACAlgebraicLESPlan):
             raise TypeError("plan must be MACAlgebraicLESPlan.")
         if not isinstance(momentum, PreparedMACMomentumOperators):

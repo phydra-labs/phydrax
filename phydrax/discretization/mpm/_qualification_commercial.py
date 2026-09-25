@@ -47,7 +47,7 @@ class MPMIndependentReview(StrictModule, NonTrainableState):
         technical_reviewer_id: str,
         release_approver_id: str,
         validation_data_owner_id: str | None = None,
-    ):
+    ) -> None:
         values = (
             str(author_id),
             str(technical_reviewer_id),
@@ -89,7 +89,7 @@ class MPMStandardsTrace(StrictModule, NonTrainableState):
         requirement: str,
         evidence_ids: Sequence[str],
         satisfied: bool,
-    ):
+    ) -> None:
         standard_ = str(standard)
         edition_ = str(edition)
         applicability_ = str(applicability)
@@ -125,7 +125,7 @@ class MPMStandardsTraceabilityMatrix(StrictModule, NonTrainableState):
     traces: tuple[MPMStandardsTrace, ...]
     matrix_id: str = eqx.field(static=True)
 
-    def __init__(self, traces: Sequence[MPMStandardsTrace], /):
+    def __init__(self, traces: Sequence[MPMStandardsTrace], /) -> None:
         traces_ = tuple(traces)
         if not traces_ or any(
             not isinstance(value, MPMStandardsTrace) for value in traces_
@@ -156,7 +156,7 @@ class MPMCommercialProfile(StrictModule, NonTrainableState):
         support_matrix: MPMSupportMatrix,
         standards: MPMStandardsTraceabilityMatrix,
         /,
-    ):
+    ) -> None:
         name_ = str(name)
         kind_ = MPMCommercialProfileKind(kind)
         if (

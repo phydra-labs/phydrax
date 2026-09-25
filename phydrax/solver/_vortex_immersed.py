@@ -44,7 +44,7 @@ class VortexImmersedHybridPlan(StrictModule, NonTrainableState):
         transfer: MACVortexParticleTransferPlan,
         projection: MACImmersedBoundaryProjectionPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(transfer, MACVortexParticleTransferPlan) or not isinstance(
             projection, MACImmersedBoundaryProjectionPlan
         ):

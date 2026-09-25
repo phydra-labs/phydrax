@@ -61,7 +61,7 @@ class DistributedOutputMask(StrictModule, NonTrainableState):
         virial: bool = True,
         atom_energy: bool = False,
         partition_energy: bool = True,
-    ):
+    ) -> None:
         values = (energy, forces, virial, atom_energy, partition_energy)
         if any(not isinstance(value, (bool, np.bool_)) for value in values):
             raise TypeError("Distributed output requests must be booleans.")
@@ -88,7 +88,7 @@ class DistributedReductionPolicy(StrictModule, NonTrainableState):
     mode: DistributedReductionMode = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, mode: DistributedReductionMode = "deterministic", /):
+    def __init__(self, mode: DistributedReductionMode = "deterministic", /) -> None:
         if mode not in ("fast", "deterministic", "compensated"):
             raise ValueError("Unknown distributed reduction mode.")
         self.mode = mode
@@ -122,7 +122,7 @@ class DistributedCollectiveOperations(StrictModule, NonTrainableState):
         *,
         partition_index: int,
         collective_id: str,
-    ):
+    ) -> None:
         if (
             not callable(exchange)
             or not callable(reverse_exchange)
@@ -201,7 +201,7 @@ class DistributedPMEPlan(StrictModule, NonTrainableState):
         *,
         interpolation_order: int = 4,
         decomposition_axis: int = 0,
-    ):
+    ) -> None:
         shape = tuple(grid_shape)
         if len(shape) != 3 or any(
             isinstance(value, (bool, np.bool_))
@@ -287,7 +287,7 @@ class DistributedPolarizationPlan(StrictModule, NonTrainableState):
         *,
         maximum_iterations: int = 100,
         tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         if (
             isinstance(maximum_iterations, (bool, np.bool_))
             or not isinstance(maximum_iterations, (int, np.integer))
@@ -489,7 +489,7 @@ class DistributedAtomisticPlan(StrictModule, NonTrainableState):
         pme: DistributedPMEPlan | None = None,
         polarization: DistributedPolarizationPlan | None = None,
         execution_mode: DistributedExecutionMode = "local-reference",
-    ):
+    ) -> None:
         if not isinstance(system, PreparedAtomisticSystem) or not isinstance(
             decomposition, ParticleDomainDecompositionPlan
         ):
@@ -852,7 +852,9 @@ class DistributedAtomisticCheckpointIdentity(StrictModule, NonTrainableState):
     payload_digest: str = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
-    def __init__(self, state: DistributedAtomisticState, units: AtomisticUnitSystem, /):
+    def __init__(
+        self, state: DistributedAtomisticState, units: AtomisticUnitSystem, /
+    ) -> None:
         if not isinstance(state, DistributedAtomisticState) or not isinstance(
             units, AtomisticUnitSystem
         ):

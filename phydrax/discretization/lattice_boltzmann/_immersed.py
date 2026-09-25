@@ -73,7 +73,7 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
         iteration_count: int = 4,
         kernel_radius: float = 2.0,
         convergence_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("discretization must be LatticeBoltzmannDiscretization.")
         iterations = int(iteration_count)

@@ -143,7 +143,7 @@ class OperatorTopology(StrictModule, NonTrainableState):
         validate: bool = True,
         _graph_fingerprint: str | None = None,
         _support_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(graph, GraphIR):
             raise TypeError("OperatorTopology graph must be a GraphIR.")
         cases = tuple(case_shape)

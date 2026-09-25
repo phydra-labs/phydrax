@@ -55,7 +55,7 @@ class ChargedRadiationMaterialLibrary(StrictModule, NonTrainableState):
         *,
         commercial_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         energy = np.asarray(energy_ev, dtype=np.float64)
         stopping = np.asarray(stopping_power_ev_m, dtype=np.float64)
         scattering = np.asarray(scattering_power_rad2_m, dtype=np.float64)

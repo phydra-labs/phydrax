@@ -57,7 +57,7 @@ class _FiniteTransportMeasure(StrictModule):
         event_shape: tuple[int, ...],
         normalized: bool,
         provenance: str,
-    ):
+    ) -> None:
         points_ = jnp.asarray(points, dtype=jnp.float64)
         probabilities_ = jnp.asarray(probabilities, dtype=jnp.float64)
         active_ = jnp.asarray(active, dtype=jnp.bool_)

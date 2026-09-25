@@ -81,7 +81,7 @@ class SR3Regression(AbstractSparseRegression):
         unbiased_refit: bool = False,
         zero_tolerance: float | None = None,
         max_features: int = 4096,
-    ):
+    ) -> None:
         regularization_value = float(regularization)
         relaxation = float(relaxation_strength)
         convergence_tolerance = float(tolerance)

@@ -75,7 +75,7 @@ class SpectralSelection(StrictModule):
         boundary_tolerance: float = 1e-8,
         expected_dimension: int | None = None,
         selection_id: str | None = None,
-    ):
+    ) -> None:
         if kind not in ("real-below", "real-above", "disk", "exterior-disk"):
             raise ValueError("Unknown spectral selection kind.")
         threshold_ = float(threshold)
@@ -193,7 +193,7 @@ class SpectralSubspaceResourcePolicy(StrictModule):
         max_retained_bytes: int = 512 * 1024 * 1024,
         max_workspace_bytes: int = 1024 * 1024 * 1024,
         max_separation_entries: int = 1_000_000,
-    ):
+    ) -> None:
         values = tuple(
             (
                 max_dimension,
@@ -237,7 +237,7 @@ class SpectralSubspacePolicy(StrictModule):
         minimum_eigenvalue_gap: float = 0.0,
         require_exact_separation: bool = False,
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         materialization_ = (
             MaterializationPolicy() if materialization is None else materialization
         )

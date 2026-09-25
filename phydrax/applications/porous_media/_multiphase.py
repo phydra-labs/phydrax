@@ -60,7 +60,7 @@ class MultiphaseConservationPlan(StrictModule, NonTrainableState):
         phase_names: tuple[str, ...],
         component_names: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError(
                 "Multiphase conservation requires unstructured finite volume geometry."

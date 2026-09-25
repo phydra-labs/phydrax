@@ -39,7 +39,7 @@ class SecondaryJumpProcess(AbstractJumpProcess):
     num_channels: int = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
-    def __init__(self, destinations, legal, rates, *, process_id):
+    def __init__(self, destinations, legal, rates, *, process_id) -> None:
         raw_destinations = jnp.asarray(destinations)
         if raw_destinations.ndim != 2 or min(raw_destinations.shape) <= 0:
             raise ValueError(

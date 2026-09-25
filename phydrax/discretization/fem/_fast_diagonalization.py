@@ -54,7 +54,7 @@ class FastDiagonalizationEligibility(StrictModule):
         reasons: tuple[str, ...],
         axis_sizes: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         reasons_ = tuple(str(reason) for reason in reasons)
         sizes = tuple(axis_sizes)
         if any(not reason for reason in reasons_) or any(size < 1 for size in sizes):
@@ -97,7 +97,7 @@ class TensorFastDiagonalizationPreconditioner(
         eligibility: FastDiagonalizationEligibility,
         builder_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedLinearSolve):
             raise TypeError("prepared must be a PreparedLinearSolve.")
         structured_operator = prepared.problem.operator
@@ -188,7 +188,7 @@ class TensorFastDiagonalizationBuilder(AbstractPreconditionerBuilder):
         *,
         diffusion: tuple[float, ...] | None = None,
         reaction: float = 0.0,
-    ):
+    ) -> None:
         masses = tuple(mass_operators)
         stiffnesses = tuple(stiffness_operators)
         if len(masses) not in (2, 3) or len(stiffnesses) != len(masses):

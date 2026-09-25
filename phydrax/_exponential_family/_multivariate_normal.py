@@ -86,7 +86,7 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
     packed_size: int = eqx.field(static=True)
     _signature: ExponentialFamilySignature = eqx.field(static=True)
 
-    def __init__(self, event_size: int):
+    def __init__(self, event_size: int) -> None:
         dimension = int(event_size)
         if dimension <= 0:
             raise ValueError("event_size must be positive.")

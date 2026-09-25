@@ -46,7 +46,7 @@ class UchidaUmberger2010Parameters(StrictModule):
         *,
         aerobic_factor: ArrayLike = 1.5,
         minimum_heat_rate_W_per_kg: ArrayLike = 1.0,
-    ):
+    ) -> None:
         vectors = tuple(
             _vector(value, name)
             for value, name in (
@@ -121,7 +121,7 @@ class UchidaUmberger2010Plan(StrictModule):
         parameters: UchidaUmberger2010Parameters,
         muscle_ids: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(parameters, UchidaUmberger2010Parameters):
             raise TypeError("parameters must be UchidaUmberger2010Parameters.")
         ids = tuple(str(value).strip() for value in muscle_ids)

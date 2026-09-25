@@ -71,7 +71,7 @@ class TransportBoundary(StrictModule):
         dirichlet_mask: ArrayLike | None = None,
         dispersion_concentration: ArrayLike = 0.0,
         dispersion_flux: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError("TransportBoundary requires native prepared FV geometry.")
         if not isinstance(component_count, int) or component_count < 1:
@@ -165,7 +165,7 @@ class ComponentTransport(StrictModule):
         nonnegative_components: tuple[bool, ...] | None = None,
         dispersion: HybridMimeticDiffusion | None = None,
         dispersion_tensor: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError("ComponentTransport requires native prepared FV geometry.")
         names = tuple(component_names)

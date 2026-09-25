@@ -76,7 +76,7 @@ class KANCapacityAdaptationReport(StrictModule, NonTrainableState):
         numerator_projection_bounds: tuple[float, ...] = (),
         denominator_projection_bounds: tuple[float, ...] = (),
         denominator_lower_bounds: tuple[float, ...] = (),
-    ):
+    ) -> None:
         self.operation = operation
         self.paths = paths
         self.old_coefficient_counts = old_coefficient_counts

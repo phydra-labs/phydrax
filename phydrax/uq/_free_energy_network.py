@@ -74,7 +74,7 @@ class FreeEnergyEdgeObservation(StrictModule, NonTrainableState):
         selection_id: str,
         influence_values: ArrayLike | None = None,
         influence_basis_id: str | None = None,
-    ):
+    ) -> None:
         estimate = _real_array(value, "value").reshape(())
         variance_ = _real_array(variance, "variance").reshape(())
         source = _identifier(source_state_id, "source_state_id")
@@ -181,7 +181,7 @@ class FreeEnergyNetworkPlan(StrictModule, NonTrainableState):
         reference_state_id: str,
         rank_tolerance: float = 1.0e-12,
         maximum_cycle_z_score: float = 5.0,
-    ):
+    ) -> None:
         states = tuple(_identifier(value, "state_id") for value in state_ids)
         if len(states) < 2 or len(set(states)) != len(states):
             raise ValueError(
@@ -266,7 +266,7 @@ class FreeEnergyNetworkResult(StrictModule, NonTrainableState):
         /,
         *,
         observation_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(plan, FreeEnergyNetworkPlan):
             raise TypeError("plan must be FreeEnergyNetworkPlan.")
         free = _real_array(free_energies, "free_energies").reshape((-1,))

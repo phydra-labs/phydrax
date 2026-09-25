@@ -35,7 +35,7 @@ class HypersurfacePatchEvaluation(StrictModule):
         valid: ArrayLike,
         chart_index: int,
         pivot_index: int,
-    ):
+    ) -> None:
         self.affine_coordinates = jnp.asarray(affine_coordinates)
         self.tangent_basis = jnp.asarray(tangent_basis)
         self.induced_metric = jnp.asarray(induced_metric)
@@ -53,7 +53,7 @@ class HypersurfacePatchGeometry(StrictModule):
 
     def __init__(
         self, hypersurface: ProjectiveHypersurface, /, *, tolerance: float = 1e-9
-    ):
+    ) -> None:
         if not isinstance(hypersurface, ProjectiveHypersurface):
             raise TypeError("hypersurface must be a ProjectiveHypersurface.")
         self.hypersurface = hypersurface
@@ -130,7 +130,7 @@ class HypersurfacePatchGeometry(StrictModule):
 class ResidueCanonicalSection(StrictModule):
     geometry: HypersurfacePatchGeometry
 
-    def __init__(self, geometry: HypersurfacePatchGeometry, /):
+    def __init__(self, geometry: HypersurfacePatchGeometry, /) -> None:
         self.geometry = geometry
 
     def coefficient(

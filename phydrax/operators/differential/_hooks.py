@@ -99,7 +99,7 @@ class _BlendWithGateCallable(StrictModule, DerivativeRuleProvider):
         base_pos: tuple[int, ...],
         overlay_pos: tuple[int, ...],
         gate_pos: tuple[int, ...],
-    ):
+    ) -> None:
         self.base = base
         self.overlay = overlay
         self.gate = gate

@@ -96,7 +96,7 @@ class FiniteOrthogonalGroup(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1e-6,
-    ):
+    ) -> None:
         resolved_name = str(name)
         if not resolved_name:
             raise ValueError("Finite group names must be non-empty.")

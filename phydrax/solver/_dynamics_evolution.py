@@ -121,7 +121,7 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
         atol: float = 1.0e-8,
         max_steps: int | None = 4096,
         evolution_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, ContinuousSystem):
             raise TypeError("DiffraxEvolution system must be a ContinuousSystem.")
         if input_policy is not None and not isinstance(input_policy, AbstractInputPolicy):

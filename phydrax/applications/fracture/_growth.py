@@ -53,7 +53,7 @@ class CrackGrowthProposal(StrictModule, NonTrainableState):
         base_geometry_id: str,
         base_topology_id: str,
         base_state_version: int,
-    ):
+    ) -> None:
         tip_identifier = int(tip_id)
         direction_ = np.asarray(direction)
         increment_ = np.asarray(increment)
@@ -136,7 +136,7 @@ class SharpFractureState(StrictModule, NonTrainableState):
         *,
         accepted_step: int = 0,
         state_version: int = 0,
-    ):
+    ) -> None:
         if not isinstance(geometry, CrackFrontGeometry):
             raise TypeError("geometry must be CrackFrontGeometry.")
         if not isinstance(topology, SharpCrackTopology):
@@ -191,7 +191,7 @@ class CrackGrowthTransaction(StrictModule, NonTrainableState):
         accepted: bool,
         base_state_id: str,
         base_state_version: int,
-    ):
+    ) -> None:
         if not isinstance(proposal, CrackGrowthProposal):
             raise TypeError("proposal must be CrackGrowthProposal.")
         if not isinstance(candidate, SharpFractureState):

@@ -15,7 +15,7 @@ class FrequencyAxis(StrictModule, NonTrainableState):
     frequency_hz: Array
     axis_id: str = eqx.field(static=True)
 
-    def __init__(self, frequency_hz: ArrayLike, /):
+    def __init__(self, frequency_hz: ArrayLike, /) -> None:
         f = np.asarray(frequency_hz, float)
         if (
             f.ndim != 1

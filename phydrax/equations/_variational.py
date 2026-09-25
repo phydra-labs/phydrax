@@ -83,7 +83,7 @@ class VariationalActionDescriptor(StrictModule, NonTrainableState):
         coefficient_values: Sequence["VariationalCoefficient"] = (),
         provider_offers: Sequence[str] = ("native",),
         evaluator: Callable | None = None,
-    ):
+    ) -> None:
         kind = str(action_kind)
         provider_kind = str(provider_action_kind)
         domain = str(default_domain_kind)
@@ -154,7 +154,7 @@ class VariationalCoefficient(StrictModule, NonTrainableState):
         rule_id: str | None = None,
         side: str = "none",
         layout_axes: Sequence[str] | None = None,
-    ):
+    ) -> None:
         location_ = str(location)
         if location_ not in ("point", "cell", "facet", "quadrature", "dof"):
             raise ValueError(
@@ -379,7 +379,7 @@ class DiffusionAction(StrictModule, NonTrainableState):
         action_id="diffusion",
         domain=None,
         rules=(),
-    ):
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         if not field or not identifier:
@@ -434,7 +434,7 @@ class TensorDiffusionAction(StrictModule, NonTrainableState):
         action_id="tensor-diffusion",
         domain=None,
         rules=(),
-    ):
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         axes = tuple(str(value) for value in tensor_axes)
@@ -519,7 +519,7 @@ class MassAction(StrictModule, NonTrainableState):
 
     def __init__(
         self, field_name: str, value=1.0, /, *, action_id="mass", domain=None, rules=()
-    ):
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         if not field or not identifier:
@@ -559,7 +559,7 @@ class SourceAction(StrictModule, NonTrainableState):
 
     def __init__(
         self, field_name: str, source, /, *, action_id="source", domain=None, rules=()
-    ):
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         if not field or not identifier:
@@ -606,7 +606,7 @@ class BoundaryLoadAction(StrictModule, NonTrainableState):
         action_id="boundary-load",
         domain=None,
         rules=(),
-    ):
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         if not field or not identifier:

@@ -33,7 +33,7 @@ class PhaseFluidMaterial(StrictModule, NonTrainableState):
         /,
         *,
         material_id: str,
-    ):
+    ) -> None:
         densities = np.asarray(phase_densities)
         viscosities = np.asarray(phase_viscosities)
         identifier = str(material_id)
@@ -101,7 +101,7 @@ class ModelHCouplingPlan(StrictModule, NonTrainableState):
         *,
         force_representation: CapillaryForceRepresentation = "mu-grad-phi",
         incompressibility_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(material, PhaseFluidMaterial):
             raise TypeError("material must be PhaseFluidMaterial.")
         if force_representation not in ("mu-grad-phi", "minus-phi-grad-mu"):

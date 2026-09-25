@@ -55,7 +55,7 @@ class FiniteSupportNaturalSolvePlan(StrictModule):
         minimum_probability: float = 0.0,
         line_search_factors: tuple[float, ...] = (1.0, 0.5, 0.25, 0.125),
         portable: bool = False,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         tolerance = float(residual_tolerance)
         probability = float(minimum_probability)
@@ -128,7 +128,7 @@ class FiniteSupportExponentialFamily(AbstractExponentialFamily):
         family_id: str,
         support_id: str | None = None,
         solve_plan: FiniteSupportNaturalSolvePlan | None = None,
-    ):
+    ) -> None:
         statistic_host = np.asarray(statistics)
         base_host = np.asarray(base_probabilities)
         if statistic_host.ndim != 2:

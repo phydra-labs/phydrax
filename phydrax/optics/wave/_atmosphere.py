@@ -45,7 +45,7 @@ class VonKarmanPhaseScreenPlan(StrictModule, NonTrainableState):
         *,
         inner_scale: ArrayLike = 0.0,
         remove_piston: bool = True,
-    ):
+    ) -> None:
         if not isinstance(space, PlaneFieldSpace):
             raise TypeError("space must be a PlaneFieldSpace.")
         if space.topology != "periodic-cell":
@@ -196,7 +196,7 @@ class AtmosphericLayer(StrictModule, NonTrainableState):
         /,
         *,
         layer_id: str,
-    ):
+    ) -> None:
         if not isinstance(screen, VonKarmanPhaseScreenPlan):
             raise TypeError("screen must be a VonKarmanPhaseScreenPlan.")
         altitude_ = jnp.asarray(altitude, dtype=jnp.float64)
@@ -234,7 +234,7 @@ class AtmosphericLayer(StrictModule, NonTrainableState):
 class LayeredAtmosphere(StrictModule, NonTrainableState):
     layers: tuple[AtmosphericLayer, ...]
 
-    def __init__(self, layers: Sequence[AtmosphericLayer], /):
+    def __init__(self, layers: Sequence[AtmosphericLayer], /) -> None:
         layers_ = tuple(layers)
         if not layers_ or not all(
             isinstance(layer, AtmosphericLayer) for layer in layers_

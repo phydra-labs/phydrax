@@ -17,7 +17,7 @@ class _PointwiseTransformCallable(StrictModule):
     source: DomainFunction
     operation: str
 
-    def __init__(self, source: DomainFunction, operation: str):
+    def __init__(self, source: DomainFunction, operation: str) -> None:
         self.source = source
         self.operation = operation
 

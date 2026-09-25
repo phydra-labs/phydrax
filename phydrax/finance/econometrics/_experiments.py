@@ -47,7 +47,7 @@ class WalkForwardDefinition(StrictModule):
         embargo_ns: int = 0,
         minimum_training_rows: int = 8,
         expanding: bool = True,
-    ):
+    ) -> None:
         spans = tuple(
             (
                 training_span_ns,

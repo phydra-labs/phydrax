@@ -54,7 +54,7 @@ class BalanceLawAdaptivePolicy(StrictModule, NonTrainableState):
         growth_factor: float = 1.25,
         minimum_step_size: float = 1e-12,
         maximum_step_size: float = np.inf,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         retries = int(maximum_retries)
         safety = float(safety_factor)
@@ -141,7 +141,7 @@ class BalanceLawDecisionJournal(StrictModule):
         reached_final_time: Array,
         process_ids: tuple[str, ...],
         source_plan_id: str,
-    ):
+    ) -> None:
         attempted_ = jnp.asarray(attempted, dtype=jnp.bool_)
         capacity = attempted_.size
         aligned = (
@@ -214,7 +214,7 @@ class AdaptiveBalanceLawRolloutPlan(StrictModule, NonTrainableState):
         final_time: float,
         policy: BalanceLawAdaptivePolicy,
         /,
-    ):
+    ) -> None:
         if not isinstance(runtime, PreparedBalanceLawRuntime):
             raise TypeError("runtime must be PreparedBalanceLawRuntime.")
         if not isinstance(policy, BalanceLawAdaptivePolicy):

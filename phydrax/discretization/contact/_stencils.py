@@ -115,7 +115,7 @@ class ContactStencilBatch(StrictModule, NonTrainableState):
         overflow_count: ArrayLike = 0,
         route_keys: ArrayLike | None = None,
         batch_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(kind, ContactStencilKind):
             raise TypeError("kind must be ContactStencilKind.")
         count = int(capacity)

@@ -42,7 +42,7 @@ class TriangleWallPlan(StrictModule, NonTrainableState):
         triangle_ids: ArrayLike | None = None,
         area_tolerance: float = 1.0e-14,
         wall_id: str | None = None,
-    ):
+    ) -> None:
         vertices_ = np.asarray(vertices)
         triangles_ = np.asarray(triangles)
         materials = np.asarray(triangle_material)
@@ -129,7 +129,7 @@ class PreparedTriangleWall(StrictModule, NonTrainableState):
     vertex_owner_triangle_ids: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: TriangleWallPlan, /):
+    def __init__(self, plan: TriangleWallPlan, /) -> None:
         if not isinstance(plan, TriangleWallPlan):
             raise TypeError("plan must be a TriangleWallPlan.")
         face_vertices = plan.vertices[plan.triangles]

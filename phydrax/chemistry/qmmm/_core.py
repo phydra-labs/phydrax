@@ -51,7 +51,7 @@ class QuantumRegionPlan(StrictModule, NonTrainableState):
         link_ratio: float = 0.72,
         total_charge: int = 0,
         spin_multiplicity: int = 1,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         ids = tuple(particle_ids)
@@ -114,7 +114,7 @@ class PreparedQuantumRegion(StrictModule, NonTrainableState):
     mm_indices: tuple[int, ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: QuantumRegionPlan, /):
+    def __init__(self, plan: QuantumRegionPlan, /) -> None:
         system = plan.system
         id_to_index = {
             int(value): index
@@ -243,7 +243,7 @@ class QMMMEvaluation(StrictModule, NonTrainableState):
         /,
         *,
         point_charge_forces: ArrayLike | None = None,
-    ):
+    ) -> None:
         total = jnp.asarray(total_energy).reshape(())
         dtype = total.dtype
         classical_full = jnp.asarray(classical_full_energy, dtype=dtype).reshape(())
@@ -302,7 +302,7 @@ class SubtractiveQMMMSurface(AbstractPreparedPotentialEnergySurface):
         quantum_model: AbstractPreparedPotentialEnergySurface,
         classical_model: AbstractPreparedPotentialEnergySurface,
         /,
-    ):
+    ) -> None:
         if not isinstance(region, PreparedQuantumRegion):
             raise TypeError("region must be PreparedQuantumRegion.")
         surfaces = (classical_full, quantum_model, classical_model)
@@ -400,7 +400,7 @@ class EmbeddedRegionEvaluation(StrictModule, NonTrainableState):
         successful: ArrayLike,
         provider_id: str,
         /,
-    ):
+    ) -> None:
         energy_ = jnp.asarray(energy).reshape(())
         region = jnp.asarray(region_forces, dtype=energy_.dtype)
         points = jnp.asarray(point_charge_forces, dtype=energy_.dtype)
@@ -473,7 +473,7 @@ class CallableEmbeddedRegionProvider(AbstractEmbeddedRegionProvider):
         /,
         *,
         conservative: bool = True,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()
@@ -526,7 +526,7 @@ class NativeRHFEmbeddedRegionProvider(AbstractEmbeddedRegionProvider):
     unit_system_id: str = eqx.field(static=True)
     conservative: bool = eqx.field(static=True)
 
-    def __init__(self, plan: NativeRHFPlan, /):
+    def __init__(self, plan: NativeRHFPlan, /) -> None:
         if not isinstance(plan, NativeRHFPlan):
             raise TypeError("plan must be NativeRHFPlan.")
         self.plan = plan
@@ -639,7 +639,7 @@ class ElectrostaticEmbeddingQMMMSurface(AbstractPreparedPotentialEnergySurface):
         quantum_provider: AbstractEmbeddedRegionProvider,
         classical_partition_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(region, PreparedQuantumRegion):
             raise TypeError("region must be PreparedQuantumRegion.")
         if not isinstance(classical_partition, AbstractPreparedPotentialEnergySurface):

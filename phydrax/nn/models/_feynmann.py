@@ -33,7 +33,7 @@ def _inv_softplus(y: Array) -> Array:
 class _InputComplexify(StrictModule):
     phi: Array  # (in_features,)
 
-    def __init__(self, in_features: int, key: Array):
+    def __init__(self, in_features: int, key: Array) -> None:
         self.phi = jr.uniform(key, (in_features,), minval=-jnp.pi, maxval=jnp.pi)
 
     def __call__(self, x: Array) -> Array:
@@ -53,7 +53,7 @@ class _ComplexLinearSoftplus(StrictModule):
         out_features: int,
         key: Array,
         init_mag: float | None = None,
-    ):
+    ) -> None:
         k1, k2, k3, k4 = jr.split(key, 4)
         self.theta = jr.uniform(
             k1, (out_features, in_features), minval=-jnp.pi, maxval=jnp.pi
@@ -85,7 +85,7 @@ class _ModReLU(StrictModule):
     b: Array
     eps: float = 1e-6
 
-    def __init__(self, features: int, b_init: float = 0.0):
+    def __init__(self, features: int, b_init: float = 0.0) -> None:
         self.b = jnp.full((features,), b_init)
 
     def __call__(self, z: Array) -> Array:
@@ -99,7 +99,7 @@ class _FeynBlockStep(StrictModule):
     block: "_SumOverPathsDense"
     activation: _ModReLU
 
-    def __init__(self, block: "_SumOverPathsDense", activation: _ModReLU):
+    def __init__(self, block: "_SumOverPathsDense", activation: _ModReLU) -> None:
         self.block = block
         self.activation = activation
 
@@ -120,7 +120,7 @@ class _ActionNet(StrictModule):
         key: Array,
         *,
         rwf: bool | tuple[float, float] = True,
-    ):
+    ) -> None:
         k1, k2, k3 = jr.split(key, 3)
         self.l1 = RealLinear(
             in_size=2 * in_complex_features,
@@ -177,7 +177,7 @@ class _SumOverPathsDense(StrictModule):
         learn_gates: bool = True,
         *,
         rwf: bool | tuple[float, float] = True,
-    ):
+    ) -> None:
         k_theta, k_bphase, k_rho, k_brho, k_action = jr.split(key, 5)
         # Initialize theta and bias_phase uniformly
         self.theta = jr.uniform(
@@ -249,7 +249,7 @@ class _RealConcatDense(StrictModule):
         key: Array,
         *,
         rwf: bool | tuple[float, float] = True,
-    ):
+    ) -> None:
         self.linear = RealLinear(
             in_size=2 * in_complex_features,
             out_size=out_features,
@@ -325,7 +325,7 @@ class FeynmaNN(_AbstractBaseModel):
         rwf: bool | tuple[float, float] = False,
         keep_output_complex: bool = False,
         scan: bool = False,
-    ):
+    ) -> None:
         in_features = _get_size(in_size)
         out_features = _get_size(out_size)
 

@@ -375,7 +375,7 @@ class SolarTransportPlan(StrictModule, NonTrainableState):
         observation_radius_m: float,
         maximum_jump_events: int = 128,
         maximum_guard_events: int = 1,
-    ):
+    ) -> None:
         if not isinstance(profile, SmoothStellarRadialProfile) or not isinstance(
             scattering, ElasticScatteringTable
         ):

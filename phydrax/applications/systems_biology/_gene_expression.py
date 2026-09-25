@@ -80,7 +80,7 @@ class TelegraphGeneExpressionPlan(StrictModule, NonTrainableState):
         /,
         *,
         name: str = "telegraph-gene-expression",
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name or name.strip() != name:
             raise ValueError("Telegraph model name must be a non-empty, trimmed string.")
         rates = (
@@ -144,7 +144,7 @@ class TelegraphFitTarget(StrictModule, NonTrainableState):
     standard_errors: Array
     target_id: str = eqx.field(static=True)
 
-    def __init__(self, moments: ArrayLike, standard_errors: ArrayLike, /):
+    def __init__(self, moments: ArrayLike, standard_errors: ArrayLike, /) -> None:
         values = jnp.asarray(moments, dtype=jnp.float64)
         errors = jnp.asarray(standard_errors, dtype=values.dtype)
         if values.shape != (5,) or errors.shape != (5,):
@@ -208,7 +208,7 @@ class CountMeasurementPlan(StrictModule, NonTrainableState):
         /,
         *,
         observation_capacity: int,
-    ):
+    ) -> None:
         capture_raw = jnp.asarray(capture_probability)
         background_raw = jnp.asarray(background_rate)
         if capture_raw.dtype == jnp.bool_ or background_raw.dtype == jnp.bool_:
@@ -264,7 +264,7 @@ class PreparedCountMeasurement(StrictModule, NonTrainableState):
     capture_indices: Array
     measurement_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: CountMeasurementPlan, /):
+    def __init__(self, plan: CountMeasurementPlan, /) -> None:
         if not isinstance(plan, CountMeasurementPlan):
             raise TypeError("plan must be CountMeasurementPlan.")
         self.plan = plan
@@ -374,7 +374,7 @@ class PreparedTelegraphGeneExpression(StrictModule, NonTrainableState):
     exact_path_differentiable: bool = eqx.field(static=True)
     analytic_moments_differentiable: bool = eqx.field(static=True)
 
-    def __init__(self, plan: TelegraphGeneExpressionPlan, /):
+    def __init__(self, plan: TelegraphGeneExpressionPlan, /) -> None:
         if not isinstance(plan, TelegraphGeneExpressionPlan):
             raise TypeError("plan must be TelegraphGeneExpressionPlan.")
         compartment = CompartmentSpec("nucleus-cytosol", 1.0, unit="cell")

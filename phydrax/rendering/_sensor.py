@@ -61,7 +61,7 @@ class PhotometricResponse(StrictModule, NonTrainableState):
         saturation_level: float = float("inf"),
         shot_noise: bool = False,
         read_noise_std: float = 0.0,
-    ):
+    ) -> None:
         gain_ = float(gain)
         black_ = float(black_level)
         saturation_ = float(saturation_level)
@@ -113,7 +113,7 @@ class ParticleImageFormation(StrictModule, NonTrainableState):
         rasterizer: GaussianRasterizer,
         response: PhotometricResponse | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(rasterizer, GaussianRasterizer):
             raise TypeError("rasterizer must be GaussianRasterizer.")
         response_ = PhotometricResponse() if response is None else response

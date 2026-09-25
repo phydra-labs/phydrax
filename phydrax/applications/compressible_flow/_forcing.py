@@ -67,7 +67,7 @@ class CompressibleForcingPlan(StrictModule):
         injection_density: float = 1.0,
         injection_temperature: float = 300.0,
         volumetric_heating: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(
             system,
             (

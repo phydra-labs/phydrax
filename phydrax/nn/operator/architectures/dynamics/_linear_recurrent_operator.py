@@ -68,7 +68,7 @@ class LinearRecurrentOperator(AbstractOperatorModel):
         maximum_radius: float = 0.999,
         dtype: Any = jnp.float32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         resolved_output = in_channels if out_channels is None else out_channels
         input_count = _get_size(in_channels)
         output_count = _get_size(resolved_output)

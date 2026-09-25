@@ -32,7 +32,7 @@ class OrbitSectorResourcePolicy(StrictModule):
         maximum_group_order: int,
         maximum_orbit_dimension: int,
         maximum_table_bytes: int,
-    ):
+    ) -> None:
         values = (
             int(maximum_group_order),
             int(maximum_orbit_dimension),
@@ -84,7 +84,7 @@ class MonomialConfigurationGenerator(StrictModule):
         order: int,
         local_phases: Sequence[Sequence[complex]] | None = None,
         fermionic_sites: Sequence[int] = (),
-    ):
+    ) -> None:
         name = str(label)
         sites = tuple(str(value) for value in site_ids)
         dimensions = tuple(site_dimensions)
@@ -260,7 +260,7 @@ class FiniteGroupActionPlan(StrictModule):
         generators: Sequence[MonomialConfigurationGenerator],
         resources: OrbitSectorResourcePolicy,
         /,
-    ):
+    ) -> None:
         if not isinstance(basis, AbstractSectorBasis):
             raise TypeError("basis must be an AbstractSectorBasis.")
         values = tuple(generators)
@@ -306,7 +306,7 @@ class CharacterSectorPlan(StrictModule):
         /,
         *,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         name = str(label)
         values = tuple(
             sorted(
@@ -387,7 +387,7 @@ class PreparedOrbitSectorBasis(AbstractSectorBasis):
         *,
         projection_tolerance: float,
         basis_id: str,
-    ):
+    ) -> None:
         if not isinstance(base, AbstractSectorBasis):
             raise TypeError("base must be an AbstractSectorBasis.")
         if not isinstance(action, PreparedFiniteGroupAction):

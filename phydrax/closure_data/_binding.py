@@ -260,7 +260,7 @@ class LearnedClosureBindingPlan(_AbstractLearnedClosureBinding, ExplicitFreeze):
         differentiability: BranchDifferentiationPolicy = (
             BranchDifferentiationPolicy.SMOOTH
         ),
-    ):
+    ) -> None:
         if not callable(predictor):
             raise TypeError("predictor must be callable.")
         # Face corrections and modal drifts are structured callables over native
@@ -346,7 +346,7 @@ class TrainableLearnedClosureBinding(_AbstractLearnedClosureBinding):
 
     predictor: Callable = parameter_field()
 
-    def __init__(self, predictor: Callable, source: LearnedClosureBindingPlan, /):
+    def __init__(self, predictor: Callable, source: LearnedClosureBindingPlan, /) -> None:
         if not isinstance(source, LearnedClosureBindingPlan):
             raise TypeError("source must be a LearnedClosureBindingPlan.")
         self.predictor = trainable_provider(predictor)
@@ -380,7 +380,7 @@ class LearnedStressFeatureSchema(StrictModule, NonTrainableState):
         shape: tuple[int, ...],
         dtype: Any,
         flow_schema_id: str,
-    ):
+    ) -> None:
         name_ = str(name).strip()
         names = tuple(str(value).strip() for value in component_names)
         units = tuple(str(value).strip() for value in component_units)
@@ -484,7 +484,7 @@ class LearnedStressOutputContract(StrictModule, NonTrainableState):
         stress_convention: LESStressConvention = "deviatoric",
         symmetry_tolerance: float = 1e-6,
         trace_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         shape_ = tuple(shape)
         dtype_ = np.dtype(dtype)
         values = tuple(
@@ -597,7 +597,7 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
         normalizer_id: str,
         energy_policy: StressEnergyPolicy = "signed",
         maximum_backscatter_fraction: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(feature_schema, LearnedStressFeatureSchema):
             raise TypeError("feature_schema must be a LearnedStressFeatureSchema.")
         if not isinstance(output_contract, LearnedStressOutputContract):
@@ -768,7 +768,7 @@ class LearnedStressEvidence(StrictModule, NonTrainableState):
         nonfinite_count: ArrayLike,
         valid: ArrayLike,
         plan: LearnedStressBindingPlan,
-    ):
+    ) -> None:
         if not isinstance(plan, LearnedStressBindingPlan):
             raise TypeError("plan must be a LearnedStressBindingPlan.")
         self.raw_local_transfer = jnp.asarray(raw_local_transfer)
@@ -838,7 +838,7 @@ class LearnedStressResult(StrictModule, NonTrainableState):
         derivative_contract: DerivativeContract,
         derivative_valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(evidence, LearnedStressEvidence):
             raise TypeError("evidence must be LearnedStressEvidence.")
         if not isinstance(header, AdmissibilityHeader):
@@ -882,7 +882,7 @@ class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
         /,
         *,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not callable(predictor):
             raise TypeError("predictor must be callable.")
         if not isinstance(normalizer, TrainOnlyNormalizer):
@@ -1157,7 +1157,7 @@ class SpectralDriftEvidence(StrictModule, NonTrainableState):
         dealiasing_kind: str,
         dealiasing_exact: bool,
         energy_policy: SpectralEnergyPolicy,
-    ):
+    ) -> None:
         self.raw_energy_rate = jnp.asarray(raw_energy_rate)
         self.constrained_energy_rate = jnp.asarray(constrained_energy_rate)
         self.divergence_norm = jnp.asarray(divergence_norm)
@@ -1194,7 +1194,9 @@ class SpectralFallbackArtifact(StrictModule, NonTrainableState):
     fallback_kind: str = eqx.field(static=True)
     artifact_id: str = eqx.field(static=True)
 
-    def __init__(self, *, used: ArrayLike, reason_code: ArrayLike, binding_id: str):
+    def __init__(
+        self, *, used: ArrayLike, reason_code: ArrayLike, binding_id: str
+    ) -> None:
         binding = str(binding_id).strip()
         if not binding:
             raise ValueError("binding_id must be non-empty.")
@@ -1228,7 +1230,7 @@ class SpectralDriftResult(StrictModule, NonTrainableState):
         evidence: SpectralDriftEvidence,
         fallback: SpectralFallbackArtifact,
         /,
-    ):
+    ) -> None:
         if not isinstance(evidence, SpectralDriftEvidence):
             raise TypeError("evidence must be SpectralDriftEvidence.")
         if not isinstance(fallback, SpectralFallbackArtifact):
@@ -1265,7 +1267,7 @@ class PreparedSpectralDriftHook(StrictModule):
         *,
         energy_policy: SpectralEnergyPolicy,
         evidence_tolerance: float,
-    ):
+    ) -> None:
         if not isinstance(binding, _AbstractLearnedClosureBinding):
             raise TypeError(
                 "binding must be a LearnedClosureBindingPlan or "

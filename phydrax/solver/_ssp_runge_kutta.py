@@ -23,7 +23,7 @@ class SSPRK33(dfx.AbstractSolver):
     precision: TemporalPrecisionPolicy
     solver_id: str = eqx.field(static=True)
 
-    def __init__(self, *, precision: TemporalPrecisionPolicy | None = None):
+    def __init__(self, *, precision: TemporalPrecisionPolicy | None = None) -> None:
         precision_ = TemporalPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, TemporalPrecisionPolicy):
             raise TypeError("precision must be a TemporalPrecisionPolicy or None.")
@@ -76,7 +76,7 @@ class SSPRK54(dfx.AbstractSolver):
     precision: TemporalPrecisionPolicy
     solver_id: str = eqx.field(static=True)
 
-    def __init__(self, *, precision: TemporalPrecisionPolicy | None = None):
+    def __init__(self, *, precision: TemporalPrecisionPolicy | None = None) -> None:
         precision_ = TemporalPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, TemporalPrecisionPolicy):
             raise TypeError("precision must be a TemporalPrecisionPolicy or None.")

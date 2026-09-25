@@ -35,7 +35,7 @@ class CompressibleLoadHistory(StrictModule, NonTrainableState):
         *,
         valid: ArrayLike | None = None,
         source_id: str,
-    ):
+    ) -> None:
         times_ = jnp.asarray(times)
         force = jnp.asarray(force_coefficients)
         moment = jnp.asarray(moment_coefficients, dtype=force.dtype)
@@ -100,7 +100,7 @@ class CompressibleShockTrackPlan(StrictModule, NonTrainableState):
         *,
         compression_sign: Literal[-1, 1] = 1,
         minimum_gradient: float = 0.0,
-    ):
+    ) -> None:
         lower, upper = (float(value) for value in coordinate_interval)
         threshold = float(minimum_gradient)
         if (
@@ -184,7 +184,7 @@ class CompressibleSnapshotMetricPlan(StrictModule, NonTrainableState):
         component_indices: tuple[int, ...],
         component_scales: tuple[float, ...],
         /,
-    ):
+    ) -> None:
         volumes = jnp.asarray(cell_volumes)
         indices = tuple(component_indices)
         scales = tuple(float(scale) for scale in component_scales)

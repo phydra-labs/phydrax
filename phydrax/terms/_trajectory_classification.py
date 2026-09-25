@@ -77,7 +77,7 @@ class TrajectoryCaseClassificationBatch(StrictModule):
         geometry_weight: ArrayLike,
         case_indices: ArrayLike,
         times: ArrayLike,
-    ):
+    ) -> None:
         self.points = points
         self.target = jnp.asarray(target)
         self.target_mask = (
@@ -112,7 +112,7 @@ class RaggedTimeSeriesClassificationBatch(StrictModule):
         case_indices: ArrayLike,
         time_indices: ArrayLike,
         times: ArrayLike,
-    ):
+    ) -> None:
         self.points = points
         self.target = jnp.asarray(target)
         self.target_mask = (
@@ -829,7 +829,7 @@ class TrajectoryCaseClassificationTerm(AbstractSamplingTerm):
         measure: TrajectoryClassificationMeasure = "statistical",
         case_indices: ArrayLike | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         domain = component.domain
         if not isinstance(
             domain, (TrajectoryDatasetDomain, IrregularTrajectoryDatasetDomain)
@@ -1004,7 +1004,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         measure: TrajectoryClassificationMeasure = "statistical",
         case_indices: ArrayLike | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         domain = component.domain
         if not isinstance(
             domain, (TrajectoryDatasetDomain, IrregularTrajectoryDatasetDomain)

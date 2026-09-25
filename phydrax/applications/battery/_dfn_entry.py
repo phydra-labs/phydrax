@@ -35,7 +35,7 @@ def _identifier(value):
     return value
 
 
-def _numbers(values, name, *, nonnegative=False):
+def _numbers(values, name, *, nonnegative=False) -> None:
     if (
         type(values) is not tuple
         or not values
@@ -66,7 +66,7 @@ class DfnEntryPolicy:
     issued_at: int
     expires_at: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identifier(self.support_tuple_id)
         _identifier(self.source_build_id)
         _numbers(self.scales, "Observable SI scales")
@@ -150,7 +150,7 @@ class DfnReferenceComparison:
     rights: ReferenceRightsAttestation
     rights_signature: SignedQualificationRecord
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identifier(self.engine_id)
         _identifier(self.runtime_family)
         if not isinstance(self.manifest, ReferenceArtifactManifest):
@@ -266,7 +266,7 @@ class DfnEntryAssessment:
     decision_signature: SignedQualificationRecord | None = None
     audits: tuple[DfnEntryAudit, ...] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.policy, DfnEntryPolicy):
             raise TypeError("Entry policy must be typed and precommitted.")
         if (
@@ -592,7 +592,7 @@ def evaluate_dfn_entry_gate(
     )
 
 
-def _verify_audits(assessment, consensus, roles, source_profile_id, at_time):
+def _verify_audits(assessment, consensus, roles, source_profile_id, at_time) -> None:
     expected = {f"mapping:{axis}": (0.0, 0.0, "equal") for axis in _MATCH_AXES}
     expected.update(
         {
@@ -858,7 +858,7 @@ class DfnEntryReleaseRecord:
 
         return MARQUIS_2019_SPME_ENVELOPE.envelope_id
 
-    def verify(self, policy, /, *, at_time):
+    def verify(self, policy, /, *, at_time) -> None:
         from ._qualification import MARQUIS_2019_SPME_SUPPORT
         from ._release import BatteryReleaseRecord
 

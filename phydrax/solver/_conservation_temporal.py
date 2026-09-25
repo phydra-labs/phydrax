@@ -60,7 +60,7 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
         *,
         validator: Callable | None = None,
         method_id: str,
-    ):
+    ) -> None:
         if (
             not isinstance(tableau, AdditiveIMEXTableau)
             or not callable(explicit_rhs)
@@ -222,7 +222,7 @@ class ElementBlockPreconditioner(StrictModule):
         /,
         *,
         preconditioner_id: str,
-    ):
+    ) -> None:
         routes_ = tuple(jnp.asarray(value, dtype=jnp.int32) for value in routes)
         blocks_ = tuple(jnp.asarray(value) for value in blocks)
         if (

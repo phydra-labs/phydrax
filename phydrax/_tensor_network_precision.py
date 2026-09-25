@@ -79,7 +79,7 @@ class TensorNetworkPrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: Any | None = None,
         decision_dtype: Any | None = None,
         output_dtype: Any | None = None,
-    ):
+    ) -> None:
         storage = None if storage_dtype is None else precision_dtype_name(storage_dtype)
         contraction = (
             None if contraction_dtype is None else precision_dtype_name(contraction_dtype)

@@ -97,7 +97,7 @@ class StateAcceptanceEvidence(StrictModule):
         *,
         blocks: Sequence[StateAcceptanceEvidence] = (),
         block_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         scalars = tuple(
             jnp.asarray(value)
             for value in (
@@ -185,7 +185,7 @@ class AdjointAcceptanceEvidence(StrictModule):
         *,
         blocks: Sequence[AdjointAcceptanceEvidence] = (),
         block_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         scalars = tuple(
             jnp.asarray(value)
             for value in (
@@ -270,7 +270,7 @@ class StateAcceptancePolicy(StrictModule):
         accepted_state_statuses: Sequence[Any] = (OptimizationStatus.SUCCESS,),
         accepted_adjoint_statuses: Sequence[Any] = (LinearSolveStatus.SUCCESS,),
         adjoint_certification: Callable | None = None,
-    ):
+    ) -> None:
         state_relative = float(state_relative_tolerance)
         state_absolute = float(state_absolute_tolerance)
         adjoint_relative = float(adjoint_relative_tolerance)
@@ -445,7 +445,7 @@ class StateEquationResult(StrictModule):
         diagnostics: OptimizationDiagnostics,
         acceptance: StateAcceptanceEvidence,
         /,
-    ):
+    ) -> None:
         self.state = _validate_real_inexact_tree(state, name="state")
         self.residual = _validate_real_inexact_tree(residual, name="state residual")
         self.residual_norm = _tree_norm(self.residual)
@@ -494,7 +494,7 @@ class LeastSquaresStateSolver(AbstractStateSolver):
         *,
         method: AbstractLeastSquaresMethod | None = None,
         termination: OptimizationTermination | None = None,
-    ):
+    ) -> None:
         method_ = LevenbergMarquardt() if method is None else method
         termination_ = (
             OptimizationTermination(
@@ -576,7 +576,7 @@ class StateDesignConstraint(StrictModule):
         upper: Any = jnp.inf,
         constraint_id: str,
         depends_on_state: bool = True,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         identifier = str(constraint_id)
@@ -644,7 +644,7 @@ class StateDesignProblem(StrictModule):
         constraints: Sequence[StateDesignConstraint] = (),
         has_aux: bool = False,
         problem_id: str = "state-design",
-    ):
+    ) -> None:
         if not callable(state_residual) or not callable(objective):
             raise TypeError("state_residual and objective must be callable.")
         solver = LeastSquaresStateSolver() if state_solver is None else state_solver
@@ -872,7 +872,7 @@ class StateDesignResult(StrictModule):
         adjoint_acceptance: AdjointAcceptanceEvidence | None = None,
         certificate: ConstrainedOptimalityCertificate | None = None,
         method_evidence: Any = None,
-    ):
+    ) -> None:
         self.state = _validate_real_inexact_tree(state, name="state")
         self.design = _validate_real_inexact_tree(design, name="design")
         self.objective = jnp.asarray(objective)
@@ -1126,7 +1126,7 @@ class ReducedAdjoint(AbstractStateDesignMethod):
         *,
         linear_policy: LinearSolvePolicy | None = None,
         line_search: ArmijoLineSearch | None = None,
-    ):
+    ) -> None:
         policy = _default_adjoint_policy() if linear_policy is None else linear_policy
         search = ArmijoLineSearch() if line_search is None else line_search
         if not isinstance(policy, LinearSolvePolicy):
@@ -1165,7 +1165,7 @@ class SimultaneousKKT(AbstractStateDesignMethod):
 
     method: AbstractLeastSquaresMethod
 
-    def __init__(self, *, method: AbstractLeastSquaresMethod | None = None):
+    def __init__(self, *, method: AbstractLeastSquaresMethod | None = None) -> None:
         method_ = LevenbergMarquardt() if method is None else method
         if not isinstance(method_, AbstractLeastSquaresMethod):
             raise TypeError("method must be an AbstractLeastSquaresMethod or None.")

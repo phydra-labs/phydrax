@@ -184,7 +184,7 @@ class FullDarkSectorStageToken(StrictModule, NonTrainableState):
         epoch_state: DarkSectorEpochState,
         matrix_element_revision: MatrixElementRevision,
         /,
-    ):
+    ) -> None:
         if not isinstance(frame, LocalRelativisticFramePlan):
             raise TypeError("frame must be LocalRelativisticFramePlan.")
         if not isinstance(epoch_state, DarkSectorEpochState):
@@ -263,7 +263,7 @@ class NamedStressEnergyComponent(StrictModule):
         unitarity_defect: ArrayLike,
         evidence_valid: ArrayLike,
         evidence_id: str,
-    ):
+    ) -> None:
         if not isinstance(projection, StressEnergyProjection):
             raise TypeError("projection must be StressEnergyProjection.")
         dtype = projection.energy_density.dtype
@@ -589,7 +589,7 @@ class FullDarkSectorRuntimePlan(StrictModule, NonTrainableState):
         gauge_tolerance: float = 1.0e-8,
         unitarity_tolerance: float = 1.0e-8,
         entropy_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         expected = (
             (units, RelativisticUnitContract, "units"),
             (epoch, DarkSectorEpochPlan, "epoch"),
@@ -947,7 +947,7 @@ class FullDarkSectorCompositeState(StrictModule):
         radiation: RadiationState,
         stage: FullDarkSectorStageToken,
         /,
-    ):
+    ) -> None:
         expected = (
             (epoch, DarkSectorEpochState, "epoch"),
             (quantum, QuantumKineticState, "quantum"),
@@ -1320,7 +1320,7 @@ class FullDarkSectorOutputBundle(StrictModule):
         plan: FullDarkSectorRuntimePlan,
         commit: FullDarkSectorStageCommit,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, FullDarkSectorRuntimePlan):
             raise TypeError("plan must be FullDarkSectorRuntimePlan.")
         if not isinstance(commit, FullDarkSectorStageCommit) or not commit.committed:
@@ -1461,7 +1461,7 @@ class FullDarkSectorCheckpointPlan(StrictModule, NonTrainableState):
         /,
         *,
         epoch_manifest_id: str,
-    ):
+    ) -> None:
         if not isinstance(runtime, FullDarkSectorRuntimePlan):
             raise TypeError("runtime must be FullDarkSectorRuntimePlan.")
         if not isinstance(stage, FullDarkSectorStageToken):

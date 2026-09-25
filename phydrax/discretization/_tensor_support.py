@@ -54,7 +54,7 @@ class GridLocation(StrictModule, NonTrainableState):
         /,
         *,
         location_id: str | None = None,
-    ):
+    ) -> None:
         names = tuple(str(name) for name in axis_names)
         values = tuple(_fraction(value) for value in offsets)
         if not names or any(not name for name in names) or len(set(names)) != len(names):
@@ -128,7 +128,7 @@ class PreparedTensorGrid(StrictModule, NonTrainableState):
         plan_id: str | None = None,
         embedding_id: str | None = None,
         prepared_id: str | None = None,
-    ):
+    ) -> None:
         axes_ = tuple(axes)
         if not axes_ or not all(isinstance(axis, AxisDiscretization) for axis in axes_):
             raise TypeError("axes must contain one or more AxisDiscretization values.")

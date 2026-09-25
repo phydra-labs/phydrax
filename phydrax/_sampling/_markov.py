@@ -129,7 +129,7 @@ class MarkovState(StrictModule):
         valid: Array | None = None,
         step_index: Array | int = 0,
         target_id: str,
-    ):
+    ) -> None:
         count = _chain_count(position)
         positions = jax.tree_util.tree_map(jnp.asarray, position)
         values = jnp.asarray(log_target)
@@ -208,7 +208,7 @@ class MarkovIterationMetrics(StrictModule):
         *,
         warmup,
         draw_index,
-    ):
+    ) -> None:
         self.accepted = jnp.asarray(info.accepted, dtype=jnp.bool_)
         self.log_acceptance_ratio = jnp.asarray(info.log_acceptance_ratio)
         self.proposal_valid = jnp.asarray(info.proposal_valid, dtype=jnp.bool_)
@@ -285,7 +285,7 @@ class MarkovSampleResult(AbstractChainSampleResult):
         warmup_steps: int,
         steps_per_draw: int,
         iteration_evidence: IterationEvidence | None = None,
-    ):
+    ) -> None:
         sample_leaves = jax.tree_util.tree_leaves(samples)
         if not sample_leaves:
             raise ValueError("Markov samples must contain at least one array leaf.")
@@ -363,7 +363,7 @@ class MetropolisHastings(StrictModule):
         /,
         *,
         kernel_id: str = "metropolis-hastings",
-    ):
+    ) -> None:
         if not isinstance(proposal, AbstractProposal):
             raise TypeError("proposal must implement AbstractProposal.")
         if not isinstance(kernel_id, str) or not kernel_id:

@@ -124,7 +124,7 @@ class _AbstractMeshProposal(StrictModule, NonTrainableState):
         dimension: int,
         value_shape: tuple[int, ...],
         proposer_id: str,
-    ):
+    ) -> None:
         if not isinstance(source, CellMeshingResult):
             raise TypeError("source must be CellMeshingResult.")
         _scope_rows(source, scope)
@@ -166,7 +166,7 @@ class MeshMarkingProposal(_AbstractMeshProposal):
         /,
         *,
         proposer_id: str,
-    ):
+    ) -> None:
         super().__init__(
             source,
             scope,
@@ -188,7 +188,7 @@ class MeshSizeProposal(_AbstractMeshProposal):
         /,
         *,
         proposer_id: str,
-    ):
+    ) -> None:
         super().__init__(
             source, scope, sizes, dimension=0, value_shape=(), proposer_id=proposer_id
         )
@@ -205,7 +205,7 @@ class MeshMetricProposal(_AbstractMeshProposal):
         /,
         *,
         proposer_id: str,
-    ):
+    ) -> None:
         dimension = source.mesh.ambient_dimension
         super().__init__(
             source,
@@ -229,7 +229,7 @@ class MeshCoordinateProposal(_AbstractMeshProposal):
         /,
         *,
         proposer_id: str,
-    ):
+    ) -> None:
         if (
             not isinstance(coordinate_contract, SpatialCoordinateContract)
             or coordinate_contract.spatial_id != source.coordinate_contract.spatial_id
@@ -335,7 +335,7 @@ class LearnedMeshProposer(AbstractMeshProposer):
         spatial_dimension: int | None = None,
         ports: ModelPorts | None = None,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
         if kind not in ("marking", "size", "metric"):
@@ -483,7 +483,7 @@ class MeshProposalSafetyPolicy(StrictModule, NonTrainableState):
         maximum_gradation: float = 1.3,
         maximum_marked_cells: int = 100_000,
         maximum_optimization_iterations: int = 50,
-    ):
+    ) -> None:
         if not isinstance(source, CellMeshingResult):
             raise TypeError("source must be CellMeshingResult.")
         minimum, maximum = float(minimum_size), float(maximum_size)
@@ -629,7 +629,7 @@ def _limit_issues(result: CellMeshingResult, limits: MeshingLimits) -> tuple[str
     )
 
 
-def _check_binding(source, proposal, policy):
+def _check_binding(source, proposal, policy) -> None:
     if not isinstance(source, CellMeshingResult):
         raise TypeError("source must be CellMeshingResult.")
     if not isinstance(
@@ -810,7 +810,7 @@ class MeshProposalProjection(StrictModule, NonTrainableState):
 
     def __init__(
         self, proposal, policy, marked_cell_ids, size_field, metric, target_coordinates
-    ):
+    ) -> None:
         self.proposal, self.policy = proposal, policy
         self.marked_cell_ids = jnp.asarray(marked_cell_ids, dtype=jnp.int64)
         self.size_field, self.metric = size_field, metric
@@ -1039,7 +1039,7 @@ class MeshProposalTransaction(StrictModule, NonTrainableState):
         transition,
         transfer,
         optimization,
-    ):
+    ) -> None:
         _check_binding(source, projection.proposal, projection.policy)
         if (
             safety_audit.mesh_id != trusted_result.mesh.mesh_id

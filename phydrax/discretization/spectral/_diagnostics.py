@@ -49,7 +49,7 @@ class ModalDecayReport(StrictModule, NonTrainableState):
         active_mode_mask: ArrayLike,
         diagnostics_id: str,
         prepared_id: str,
-    ):
+    ) -> None:
         self.total_norm = jnp.asarray(total_norm)
         self.tail_norms = jnp.asarray(tail_norms)
         self.relative_tail_norms = jnp.asarray(relative_tail_norms)
@@ -87,7 +87,7 @@ class SpectralModalDiagnosticsPlan(StrictModule, NonTrainableState):
         minimum_tail_modes: int = 2,
         floor_multiplier: float = 32.0,
         maximum_workspace_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         fraction = float(tail_fraction)
@@ -153,7 +153,7 @@ class PreparedSpectralModalDiagnostics(StrictModule, NonTrainableState):
     plan: SpectralModalDiagnosticsPlan
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: SpectralModalDiagnosticsPlan, /):
+    def __init__(self, plan: SpectralModalDiagnosticsPlan, /) -> None:
         if not isinstance(plan, SpectralModalDiagnosticsPlan):
             raise TypeError("plan must be a SpectralModalDiagnosticsPlan.")
         self.plan = plan

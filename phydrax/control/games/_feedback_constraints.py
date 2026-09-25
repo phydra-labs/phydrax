@@ -135,7 +135,7 @@ class ConstrainedFeedbackGameProblem(StrictModule):
         *,
         variational: bool = False,
         problem_id: str = "constrained-feedback-quasi-nash",
-    ):
+    ) -> None:
         if not isinstance(suggestion, LocalAffineGameSuggestion):
             raise TypeError("suggestion must be a LocalAffineGameSuggestion.")
         if not isinstance(constraints, OpenLoopGameConstraints):
@@ -322,7 +322,7 @@ class FeedbackQuasiNashPlan(StrictModule):
         rank_relative_tolerance: float = 1.0e-10,
         rank_absolute_tolerance: float = 0.0,
         maximum_condition: float | None = None,
-    ):
+    ) -> None:
         residual = _positive(residual_tolerance, "residual_tolerance")
         feasibility = _nonnegative(feasibility_tolerance, "feasibility_tolerance")
         strict = _nonnegative(

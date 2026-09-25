@@ -106,7 +106,7 @@ class SampledStateSpaceInput(AbstractStateSpaceInput):
         knot_valid: ArrayLike | None = None,
         interpolation: SampledInputInterpolation,
         input_id: str,
-    ):
+    ) -> None:
         if interpolation not in ("zero-order-hold", "linear"):
             raise ValueError("interpolation must be 'zero-order-hold' or 'linear'.")
         identifier = _name(input_id, owner="input_id")
@@ -229,7 +229,7 @@ class BSplineStateSpaceInput(AbstractStateSpaceInput):
         *,
         case_shape: tuple[int, ...] = (),
         input_id: str,
-    ):
+    ) -> None:
         if not isinstance(grid, BSplineGrid):
             raise TypeError("grid must be a BSplineGrid.")
         cases = _shape(tuple(case_shape), owner="case_shape")

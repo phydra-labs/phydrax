@@ -97,7 +97,7 @@ class BootstrapParticleProposal(AbstractParticleProposal):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     proposal_id: str = eqx.field(static=True)
 
-    def __init__(self, state_shape: tuple[int, ...], /):
+    def __init__(self, state_shape: tuple[int, ...], /) -> None:
         shape = tuple(state_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("state_shape dimensions must be positive.")
@@ -171,7 +171,7 @@ class CallableGuidedParticleProposal(AbstractParticleProposal):
         state_shape: tuple[int, ...],
         lookahead: Callable[..., ArrayLike] | None = None,
         proposal_id: str = "guided",
-    ):
+    ) -> None:
         if not callable(sample) or not callable(log_prob):
             raise TypeError("sample and log_prob must be callable.")
         if lookahead is not None and not callable(lookahead):
@@ -282,7 +282,7 @@ class LinearGaussianGuidedParticleProposal(AbstractParticleProposal):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     proposal_id: str = eqx.field(static=True)
 
-    def __init__(self, state_shape: tuple[int, ...], /):
+    def __init__(self, state_shape: tuple[int, ...], /) -> None:
         shape = tuple(state_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("state_shape dimensions must be positive.")

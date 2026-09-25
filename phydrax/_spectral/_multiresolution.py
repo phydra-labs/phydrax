@@ -29,7 +29,7 @@ class MultiresolutionCoefficients(StrictModule):
         *,
         reconstruction_shapes: Sequence[Sequence[int]],
         transform_fingerprint: str,
-    ):
+    ) -> None:
         scaling_array = jnp.asarray(scaling)
         detail_arrays = tuple(
             tuple(jnp.asarray(band) for band in level) for level in details

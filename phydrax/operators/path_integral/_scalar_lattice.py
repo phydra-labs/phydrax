@@ -55,7 +55,7 @@ class Phi4LatticeAction(AbstractLatticeEuclideanAction):
         kinetic_scale: float = 1.0,
         mass_squared: float = 1.0,
         quartic_coupling: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(discretization, CochainDiscretization):
             raise TypeError("discretization must be CochainDiscretization.")
         if discretization.max_degree < 1:
@@ -161,7 +161,7 @@ class LocalPhi4LatticeAction(AbstractIncrementalLatticeAction):
         incident_signs: ArrayLike,
         incident_valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(base, Phi4LatticeAction):
             raise TypeError("base must be Phi4LatticeAction.")
         edges = jnp.asarray(incident_edges, dtype=jnp.int32)

@@ -248,7 +248,7 @@ class FourthOrderDerivatives(StrictModule, NonTrainableState):
         *,
         boundary: DerivativeBoundary = "periodic",
         dissipation_strength: float = 0.0,
-    ):
+    ) -> None:
         shape = tuple(grid_shape)
         steps = tuple(float(value) for value in spacing)
         strength = float(dissipation_strength)

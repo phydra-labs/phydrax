@@ -17,7 +17,7 @@ class MaterialState(StrictModule, NonTrainableState):
 
     def __init__(
         self, temperature_k, pressure_pa, phase_fractions, internal_variables=()
-    ):
+    ) -> None:
         fractions = jnp.asarray(phase_fractions)
         if fractions.ndim < 1 or fractions.shape[-1] == 0:
             raise ValueError("Phase fractions need a nonempty trailing phase axis.")

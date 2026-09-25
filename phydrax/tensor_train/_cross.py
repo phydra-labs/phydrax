@@ -48,7 +48,7 @@ class TTCrossPlan(StrictModule):
         max_local_unknowns: int,
         regularization: float,
         relative_tolerance: float,
-    ):
+    ) -> None:
         raw_modes = tuple(mode_sizes)
         integer_fields = (
             ("mode_sizes", raw_modes),
@@ -144,7 +144,7 @@ class TTCrossEvidence(StrictModule):
         /,
         *,
         holdout_count: int,
-    ):
+    ) -> None:
         indices = jnp.asarray(evaluation_indices, dtype=jnp.int32)
         values = jnp.asarray(evaluation_values)
         pivots = jnp.asarray(pivot_indices, dtype=jnp.int32)
@@ -184,7 +184,7 @@ class TTCrossResult(StrictModule):
         evidence: TTCrossEvidence,
         converged: Array,
         /,
-    ):
+    ) -> None:
         self.tensor = tensor
         self.evidence = evidence
         self.converged = jnp.asarray(converged, dtype=jnp.bool_)

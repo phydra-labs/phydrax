@@ -120,7 +120,7 @@ class SemiconductorQuantitySpec:
     reference_configuration: str = ""
     quantity_id: str = field(init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         resolved = resolve_quantity(
             domain="semiconductor",
             reference_units=_REFERENCE_UNITS,

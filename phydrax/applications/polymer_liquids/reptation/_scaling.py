@@ -28,7 +28,7 @@ class ChainLengthScalingPlan(StrictModule):
         minimum_chain_lengths: int = 3,
         minimum_r_squared: float = 0.95,
         exponent_interval: tuple[float, float] = (-math.inf, math.inf),
-    ):
+    ) -> None:
         if int(minimum_chain_lengths) < 3:
             raise ValueError("minimum_chain_lengths must be at least three.")
         if not 0.0 <= float(minimum_r_squared) <= 1.0:

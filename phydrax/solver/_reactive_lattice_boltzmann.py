@@ -83,7 +83,7 @@ class ReactiveSpeciesCouplingSchedulePlan(StrictModule, NonTrainableState):
         reaction_substeps: int = 1,
         element_tolerance: float = 1.0e-10,
         energy_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         substeps = int(reaction_substeps)
         etol = float(element_tolerance)
         htol = float(energy_tolerance)

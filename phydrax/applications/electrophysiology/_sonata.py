@@ -288,7 +288,7 @@ def _text(value, name: str) -> str:
 class _Reader:
     """One aggregate byte/element budget across all explicitly supplied resources."""
 
-    def __init__(self, root, limits: ResourceLimits, max_decoded_bytes: int):
+    def __init__(self, root, limits: ResourceLimits, max_decoded_bytes: int) -> None:
         self.root = root
         self.limits = limits
         self.max_decoded_bytes = _integer(max_decoded_bytes, "max_decoded_bytes")
@@ -1227,7 +1227,7 @@ def prepare_sonata_network(
 
 
 class _BoundedBuffer(BytesIO):
-    def __init__(self, limit: int):
+    def __init__(self, limit: int) -> None:
         super().__init__()
         self.limit = limit
 
@@ -1237,7 +1237,7 @@ class _BoundedBuffer(BytesIO):
         return super().write(data)
 
 
-def _dataset(group, name, values):
+def _dataset(group, name, values) -> None:
     if values and isinstance(values[0], str):
         encoded = [value.encode("utf-8") for value in values]
         width = max(1, max(map(len, encoded)))
@@ -1253,7 +1253,7 @@ def _dataset(group, name, values):
         group.create_dataset(name, data=np.asarray(values))
 
 
-def _write_population(group, records, kind):
+def _write_population(group, records, kind) -> None:
     group.create_dataset(
         f"{kind}_id",
         data=np.asarray(

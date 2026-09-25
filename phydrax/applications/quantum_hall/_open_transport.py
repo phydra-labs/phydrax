@@ -43,7 +43,7 @@ class OpenHallTransportPlan(StrictModule, NonTrainableState):
         /,
         *,
         residual_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         generator = np.asarray(liouvillian, dtype=np.complex128)
         currents = np.asarray(current_operators, dtype=np.complex128)
         identifier = str(bath_identity).strip()

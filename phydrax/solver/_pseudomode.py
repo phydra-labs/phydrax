@@ -28,7 +28,7 @@ class PseudomodeEmbeddingProblem(StrictModule):
         *,
         system_dimension: int,
         embedding_id: str,
-    ):
+    ) -> None:
         self.mode = mode
         self.lindblad_problem = lindblad_problem
         self.system_dimension = int(system_dimension)
@@ -56,7 +56,7 @@ class PseudomodeSolution(StrictModule):
         problem: PseudomodeEmbeddingProblem,
         enlarged: LindbladSolution,
         /,
-    ):
+    ) -> None:
         self.enlarged = enlarged
         self.reduced_states = jnp.stack(
             [problem.reduced_system_density(state) for state in enlarged.states]

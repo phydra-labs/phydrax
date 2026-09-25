@@ -41,7 +41,9 @@ class CategoricalDiffusionSchedule(StrictModule):
     num_classes: int = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, transition: ArrayLike, /, *, schedule_id: str | None = None):
+    def __init__(
+        self, transition: ArrayLike, /, *, schedule_id: str | None = None
+    ) -> None:
         kernels = _normalize_rows(np.asarray(transition, dtype=np.float64))
         cumulative = []
         value = np.eye(kernels.shape[1], dtype=np.float64)
@@ -282,7 +284,7 @@ class CategoricalReverseDiffusion(StrictModule):
         terminal_probabilities: ArrayLike | None = None,
         terminal_relationship: CategoricalTerminalRelationship = "assumed",
         terminal_reference_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(schedule, CategoricalDiffusionSchedule) or not callable(
             predictor
         ):

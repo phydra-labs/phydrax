@@ -61,7 +61,7 @@ class MixedBiotPoromechanicsPlan(StrictModule, NonTrainableState):
         /,
         *,
         policy: la.LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not all(
             isinstance(value, la.AbstractLinearOperator)
             for value in (elasticity, coupling, storage, flow)

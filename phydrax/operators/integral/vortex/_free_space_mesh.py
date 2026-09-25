@@ -36,7 +36,9 @@ class FreeSpaceVortexFFTPlan(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, shape: tuple[int, ...], lower: ArrayLike, upper: ArrayLike, /):
+    def __init__(
+        self, shape: tuple[int, ...], lower: ArrayLike, upper: ArrayLike, /
+    ) -> None:
         shape_ = tuple(shape)
         lower_, upper_ = (
             np.asarray(lower, dtype=np.float64),

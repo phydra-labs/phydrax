@@ -69,7 +69,7 @@ class CompleteLiftingSystemPlan(StrictModule, NonTrainableState):
         core_radius: float = 0.02,
         density: float = 1.0,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(surface, PreparedMultiLiftingSurface):
             raise TypeError("surface must be PreparedMultiLiftingSurface.")
         method_ = str(method)

@@ -45,7 +45,7 @@ class AtomisticInterchangeReport(StrictModule, NonTrainableState):
         *,
         source_energy_unit: UnitDefinition | None = None,
         avogadro_constant_set_id: str | None = None,
-    ):
+    ) -> None:
         source = str(source_kind).strip()
         supported = tuple(str(value) for value in supported_terms)
         unsupported = tuple(str(value) for value in unsupported_terms)
@@ -108,7 +108,7 @@ class AtomisticInterchangeBundle(StrictModule):
 
     def __init__(
         self, force_field: AtomisticForceFieldPlan, report: AtomisticInterchangeReport, /
-    ):
+    ) -> None:
         if not isinstance(force_field, AtomisticForceFieldPlan) or not isinstance(
             report, AtomisticInterchangeReport
         ):

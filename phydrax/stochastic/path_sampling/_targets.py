@@ -85,7 +85,7 @@ class FixedPathEnsemble(AbstractPathEnsemble, NonTrainableState):
         initial_region: StateRegionPlan | None = None,
         final_region: StateRegionPlan | None = None,
         ensemble_id: str | None = None,
-    ):
+    ) -> None:
         count = int(path_length)
         if count <= 1:
             raise ValueError("path_length must exceed one.")
@@ -138,7 +138,7 @@ class FirstPassagePathEnsemble(AbstractPathEnsemble, NonTrainableState):
         *,
         minimum_length: int = 2,
         ensemble_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(initial_region, StateRegionPlan) or not isinstance(
             final_region, StateRegionPlan
         ):
@@ -201,7 +201,7 @@ class InterfacePathEnsemble(AbstractPathEnsemble, NonTrainableState):
         *,
         coordinate_id: str,
         ensemble_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(initial_region, StateRegionPlan) or not isinstance(
             final_region, StateRegionPlan
         ):
@@ -281,7 +281,7 @@ class MinusPathEnsemble(AbstractPathEnsemble, NonTrainableState):
         *,
         coordinate_id: str,
         ensemble_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(initial_region, StateRegionPlan):
             raise TypeError("initial_region must be StateRegionPlan.")
         if not callable(coordinate):
@@ -354,7 +354,7 @@ class InterfaceNetworkPlan(StrictModule, NonTrainableState):
         *,
         coordinate_id: str,
         network_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(initial_region, StateRegionPlan) or not isinstance(
             final_region, StateRegionPlan
         ):
@@ -438,7 +438,7 @@ class DeterministicPathAction(AbstractPathAction, NonTrainableState):
         /,
         *,
         action_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(kernel, FunctionalDynamicsKernel):
             raise TypeError("kernel must be FunctionalDynamicsKernel.")
         if kernel.capabilities.stochastic:
@@ -488,7 +488,7 @@ class NormalizedStochasticPathAction(AbstractPathAction, NonTrainableState):
         *,
         initial_density_id: str,
         action_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(kernel, FunctionalDynamicsKernel):
             raise TypeError("kernel must be FunctionalDynamicsKernel.")
         if (
@@ -545,7 +545,9 @@ class SurrogatePathAction(AbstractPathAction, NonTrainableState):
     action_id: str = eqx.field(static=True)
     normalized: bool = eqx.field(static=True, default=False)
 
-    def __init__(self, evaluate: Callable[[PathBuffer], Array], /, *, action_id: str):
+    def __init__(
+        self, evaluate: Callable[[PathBuffer], Array], /, *, action_id: str
+    ) -> None:
         if not callable(evaluate):
             raise TypeError("evaluate must be callable.")
         self.evaluate = evaluate
@@ -637,7 +639,7 @@ class ReducedPathPotential(StrictModule, NonTrainableState):
         *,
         inverse_temperature: float,
         potential_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(ensemble, AbstractPathEnsemble):
             raise TypeError("ensemble must implement AbstractPathEnsemble.")
         if (

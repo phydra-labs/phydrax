@@ -35,7 +35,7 @@ class StencilStateLayout(StrictModule):
         field_names: Sequence[str],
         spatial_shape: Sequence[int],
         /,
-    ):
+    ) -> None:
         fields = tuple(str(name) for name in field_names)
         shape = tuple(spatial_shape)
         if (
@@ -80,7 +80,7 @@ class CompiledStencilDynamics(StrictModule):
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
 
-    def __init__(self, program: PreparedStencilProgram, /):
+    def __init__(self, program: PreparedStencilProgram, /) -> None:
         if not isinstance(program, PreparedStencilProgram):
             raise TypeError("program must be a PreparedStencilProgram.")
         layout = StencilStateLayout(

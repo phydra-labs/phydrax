@@ -50,7 +50,7 @@ class GaugeLoopTerm(StrictModule, NonTrainableState):
         /,
         *,
         name: str,
-    ):
+    ) -> None:
         if not isinstance(paths, OrientedEdgePathPlan) or not paths.require_closed:
             raise TypeError("Gauge loop terms require closed OrientedEdgePathPlan paths.")
         name_ = str(name).strip()
@@ -101,7 +101,7 @@ class ImprovedGaugeAction(AbstractLatticeEuclideanAction):
         /,
         *,
         maximum_loops_per_link: int = 128,
-    ):
+    ) -> None:
         if not isinstance(link_space, MatrixGaugeLinkSpace):
             raise TypeError("link_space must be MatrixGaugeLinkSpace.")
         if not isinstance(link_space.group, (UnitaryGroup, SpecialUnitaryGroup)):
@@ -381,7 +381,7 @@ class GaugeGradientFlowPlan(StrictModule, NonTrainableState):
         steps: int,
         maximum_backtracks: int = 8,
         descent_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(action, (ImprovedGaugeAction, WilsonGaugeAction)):
             raise TypeError("action must be ImprovedGaugeAction or WilsonGaugeAction.")
         dt = float(step_size)

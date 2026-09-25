@@ -44,7 +44,7 @@ class ChannelSBDF2Method(StrictModule, NonTrainableState):
     explicit_stability_radius: float = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         identifier = canonical_fingerprint(
             {
                 "kind": "channel-sbdf2-method",
@@ -115,7 +115,7 @@ class ChannelSBDF2State(StrictModule):
         pressure_gradient: ArrayLike,
         history_count: ArrayLike,
         /,
-    ):
+    ) -> None:
         previous = jnp.asarray(previous_velocity)
         current = jnp.asarray(current_velocity)
         previous_rhs = jnp.asarray(previous_nonlinear_rhs)
@@ -195,7 +195,7 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod, NonTrainableState):
         backward_euler: PreparedChannelStokesSolver,
         bdf2: PreparedChannelStokesSolver,
         /,
-    ):
+    ) -> None:
         self.dynamics = dynamics
         self.backward_euler = backward_euler
         self.bdf2 = bdf2

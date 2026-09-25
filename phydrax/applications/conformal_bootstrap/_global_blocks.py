@@ -366,7 +366,7 @@ class GlobalScalarBlockPlan(StrictModule):
         integer_dimension_offset: float = 1e-6,
         pole_tolerance: float = 1e-10,
         maximum_evaluations: int = 2_000_000,
-    ):
+    ) -> None:
         if not isinstance(data, ConformalDataPlan):
             raise TypeError("data must be ConformalDataPlan.")
         points = np.asarray(evaluation_points, dtype=np.float64)

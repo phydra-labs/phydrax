@@ -45,7 +45,7 @@ class PairwiseExchangeFeatureSchema(StrictModule, NonTrainableState):
         *,
         dtype: Any,
         relation_schema_id: str,
-    ):
+    ) -> None:
         names_ = tuple(str(value).strip() for value in names)
         units_ = tuple(str(value).strip() for value in units)
         dtype_ = np.dtype(dtype)
@@ -150,7 +150,7 @@ class PairwiseExchangeBindingPlan(StrictModule, NonTrainableState):
         query_name: str = "pairs",
         accumulation: ParticleAccumulation = "deterministic",
         conservation_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(feature_schema, PairwiseExchangeFeatureSchema):
             raise TypeError("feature_schema must be PairwiseExchangeFeatureSchema.")
         kind = str(exchange_kind)
@@ -250,7 +250,7 @@ class PreparedPairwiseExchangeBinding(StrictModule, NonTrainableState):
         geometry: ParticlePairGeometry,
         plan: PairwiseExchangeBindingPlan,
         /,
-    ):
+    ) -> None:
         self.trained = trained
         self.template = template
         self.pairs = pairs

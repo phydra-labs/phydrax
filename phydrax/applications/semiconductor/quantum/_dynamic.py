@@ -124,7 +124,7 @@ class QuantumInitialState(StrictModule):
     device_correlation: Array | None
     preparation: str = eqx.field(static=True)
 
-    def __init__(self, *, preparation, device_correlation=None):
+    def __init__(self, *, preparation, device_correlation=None) -> None:
         if preparation not in ("partitioned", "equilibrium"):
             raise ValueError("Preparation must be partitioned or equilibrium.")
         if (preparation == "partitioned") != (device_correlation is not None):
@@ -161,7 +161,7 @@ class QuantumPulse(StrictModule):
     device_energy_shifts: Array
     lead_energy_shifts: Array
 
-    def __init__(self, times, device_energy_shifts, lead_energy_shifts):
+    def __init__(self, times, device_energy_shifts, lead_energy_shifts) -> None:
         t = _array(times, "pulse times")
         d = _array(device_energy_shifts, "device energy shifts")
         l = _array(lead_energy_shifts, "lead energy shifts")

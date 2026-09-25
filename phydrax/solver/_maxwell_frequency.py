@@ -120,7 +120,7 @@ class FrequencyMaxwellOperator(StrictModule):
         /,
         *,
         material_state: Any = None,
-    ):
+    ) -> None:
         if not isinstance(cochain, CochainDiscretization):
             raise TypeError("Frequency Maxwell requires a CochainDiscretization.")
         if not isinstance(layout, MaxwellCochainLayout):
@@ -443,7 +443,7 @@ class MaxwellHarmonicSource(StrictModule):
         /,
         *,
         convention: str = "exp(-i*omega*t)",
-    ):
+    ) -> None:
         if convention != "exp(-i*omega*t)":
             raise ValueError(
                 "Maxwell harmonic source convention must be exp(-i*omega*t)."

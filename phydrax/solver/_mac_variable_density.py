@@ -48,7 +48,7 @@ class _VariableCoefficientMACPressureAction(StrictModule, NonTrainableState):
         operators: PreparedMACOperators,
         face_coefficient: FaceVelocity,
         /,
-    ):
+    ) -> None:
         self.operators = operators
         self.face_coefficient = operators.validate_velocity(face_coefficient)
 
@@ -139,7 +139,7 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         solve_method: str = "auto",
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         tolerance_ = float(tolerance)

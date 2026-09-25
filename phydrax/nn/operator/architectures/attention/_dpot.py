@@ -188,7 +188,7 @@ class _AFNO2D(StrictModule):
         num_blocks: int,
         modes: int | Sequence[int],
         key: Key[Array, ""],
-    ):
+    ) -> None:
         self.width = int(width)
         self.num_blocks = int(num_blocks)
         self.modes = _pair(modes, "modes")
@@ -282,7 +282,7 @@ class _DPOTBlock(StrictModule):
         groups: int,
         double_skip: bool,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         hidden = int(round(float(mlp_ratio) * int(width)))
         if hidden <= 0:
             raise ValueError("mlp_ratio must produce a positive DPOT hidden width.")
@@ -352,7 +352,7 @@ class _TemporalAggregator(StrictModule):
         width: int,
         exponential_embedding: bool,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         self.history_steps = int(history_steps)
         self.width = int(width)
         self.exponential_embedding = bool(exponential_embedding)
@@ -423,7 +423,7 @@ class DPOT(AbstractOperatorModel):
         exponential_time_embedding: bool = True,
         source_key: str | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
         self.image_shape = _pair(image_shape, "image_shape")

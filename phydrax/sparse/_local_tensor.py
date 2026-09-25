@@ -82,7 +82,7 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
         valid: ArrayLike | None = None,
         accumulation: str = "fast",
         properties: OperatorProperties | None = None,
-    ):
+    ) -> None:
         matrices = jnp.asarray(local_matrices)
         inputs = jnp.asarray(input_gathers, dtype=jnp.int32)
         outputs = jnp.asarray(output_gathers, dtype=jnp.int32)

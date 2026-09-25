@@ -64,7 +64,7 @@ class MACRigidImmersedContactMethod(StrictModule, NonTrainableState):
         *,
         maximum_iterations: int = 8,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         tolerance_ = float(tolerance)
         if iterations <= 0 or tolerance_ <= 0.0:
@@ -181,7 +181,7 @@ class MACRigidImmersedJointMethod(StrictModule, NonTrainableState):
         *,
         maximum_iterations: int = 8,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         tolerance_ = float(tolerance)
         if iterations <= 0 or tolerance_ <= 0.0:

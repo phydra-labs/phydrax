@@ -62,7 +62,7 @@ class DiscreteVelocityAdvectionSystem(AbstractAdmissibleSystem, NonTrainableStat
         /,
         *,
         population_floor: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         floor = float(population_floor)
@@ -235,7 +235,7 @@ class ConservativeRelaxationDVMSource(AbstractConservativeDVMSource):
         moment_names: Sequence[str],
         equilibrium_id: str,
         relaxation_rate: float,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         matrix = np.asarray(moment_matrix)
@@ -308,7 +308,7 @@ class DiscreteVelocitySourceComposition(AbstractConservativeDVMSource):
 
     sources: tuple[AbstractConservativeDVMSource, ...]
 
-    def __init__(self, sources: Sequence[AbstractConservativeDVMSource], /):
+    def __init__(self, sources: Sequence[AbstractConservativeDVMSource], /) -> None:
         sources_ = tuple(sources)
         if not sources_ or any(
             not isinstance(source, AbstractConservativeDVMSource) for source in sources_

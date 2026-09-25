@@ -23,7 +23,7 @@ class S3ManifoldPlan(StrictModule, NonTrainableState):
     cut_locus_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, radius: float, /, *, cut_locus_tolerance: float = 1.0e-8):
+    def __init__(self, radius: float, /, *, cut_locus_tolerance: float = 1.0e-8) -> None:
         radius_ = float(radius)
         tolerance = float(cut_locus_tolerance)
         if (
@@ -121,7 +121,7 @@ class S3KDKResult(StrictModule):
 class S3GeodesicKDKPlan(StrictModule, NonTrainableState):
     manifold: S3ManifoldPlan
 
-    def __init__(self, manifold: S3ManifoldPlan, /):
+    def __init__(self, manifold: S3ManifoldPlan, /) -> None:
         self.manifold = manifold
 
     def initialize(
@@ -223,7 +223,7 @@ class S3HarmonicBasisPlan(StrictModule, NonTrainableState):
         *,
         radius: float,
         artifact: ScientificArtifactEnvelope,
-    ):
+    ) -> None:
         indices = tuple(tuple(index) for index in mode_indices)
         evaluation = jax.lax.stop_gradient(jnp.asarray(evaluation_matrix))
         gradient = jax.lax.stop_gradient(
@@ -289,7 +289,9 @@ class S3PoissonPlan(StrictModule, NonTrainableState):
     basis: S3HarmonicBasisPlan
     gravitational_constant: float = eqx.field(static=True)
 
-    def __init__(self, basis: S3HarmonicBasisPlan, gravitational_constant: float, /):
+    def __init__(
+        self, basis: S3HarmonicBasisPlan, gravitational_constant: float, /
+    ) -> None:
         gravity = float(gravitational_constant)
         if not np.isfinite(gravity) or gravity <= 0.0:
             raise ValueError("S3 gravitational constant must be finite and positive.")
@@ -355,7 +357,7 @@ class S3ParticleMeshPlan(StrictModule, NonTrainableState):
         deposition_matrix: ArrayLike,
         gather_matrix: ArrayLike,
         /,
-    ):
+    ) -> None:
         deposit = jax.lax.stop_gradient(jnp.asarray(deposition_matrix))
         gather = jax.lax.stop_gradient(jnp.asarray(gather_matrix, dtype=deposit.dtype))
         node_count = poisson.basis.evaluation_matrix.shape[0]

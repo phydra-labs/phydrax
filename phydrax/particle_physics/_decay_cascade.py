@@ -76,7 +76,7 @@ class DarkDecayChannel(StrictModule, NonTrainableState):
     decay: TwoBodyDecayPlan
     channel_id: str = eqx.field(static=True)
 
-    def __init__(self, decay: TwoBodyDecayPlan, /):
+    def __init__(self, decay: TwoBodyDecayPlan, /) -> None:
         if not isinstance(decay, TwoBodyDecayPlan):
             raise TypeError("decay must be the existing TwoBodyDecayPlan owner.")
         self.decay = decay
@@ -100,7 +100,7 @@ class DarkDecaySpeciesOwner(StrictModule, NonTrainableState):
         *,
         owner_id: str,
         mean_proper_lifetime: float,
-    ):
+    ) -> None:
         channels_ = tuple(channels)
         pdg_id_ = _pdg_id(pdg_id, "pdg_id")
         owner = str(owner_id).strip()
@@ -171,7 +171,7 @@ class DarkDecayCascadePlan(StrictModule, NonTrainableState):
         model_revision_id: str,
         prompt_lifetime_cutoff: float,
         production_evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(runtime_plan, DarkSectorEpochPlan):
             raise TypeError("runtime_plan must be DarkSectorEpochPlan.")
         if not isinstance(species, ParticleSpeciesTable):

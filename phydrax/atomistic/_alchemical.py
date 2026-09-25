@@ -83,7 +83,7 @@ class SoftCorePolicy(StrictModule, NonTrainableState):
         lennard_jones_alpha: float = 0.5,
         electrostatic_alpha: float = 0.5,
         coupling_power: int = 2,
-    ):
+    ) -> None:
         lj = float(lennard_jones_alpha)
         electrostatic = float(electrostatic_alpha)
         if not isinstance(coupling_power, (int, np.integer)) or isinstance(
@@ -128,7 +128,7 @@ class AlchemicalControlSchedulePlan(StrictModule, NonTrainableState):
         control_kinds: Sequence[AlchemicalControlKind | str],
         controls: ArrayLike,
         /,
-    ):
+    ) -> None:
         states = tuple(str(value).strip() for value in state_ids)
         names = tuple(str(value).strip() for value in control_ids)
         kinds = tuple(AlchemicalControlKind(value) for value in control_kinds)
@@ -245,7 +245,7 @@ class AlchemicalInteractionPartitionPlan(StrictModule, NonTrainableState):
         changes_masses: bool = False,
         changes_constraints: bool = False,
         changes_virtual_geometry: bool = False,
-    ):
+    ) -> None:
         names = tuple(str(value).strip() for value in control_ids)
         regions = tuple(np.asarray(value) for value in region_particle_ids)
         modes = (
@@ -351,7 +351,7 @@ class PreparedAlchemicalInteractionPartition(StrictModule, NonTrainableState):
         force_field: PreparedAtomisticForceField,
         soft_core: SoftCorePolicy,
         /,
-    ):
+    ) -> None:
         if plan.control_ids != schedule.control_ids:
             raise ValueError(
                 "Schedule and partition control identities must match exactly."
@@ -757,7 +757,7 @@ class ControlledHamiltonianPlan(StrictModule, NonTrainableState):
         /,
         *,
         soft_core: SoftCorePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(force_field, PreparedAtomisticForceField):
             raise TypeError("force_field must be a PreparedAtomisticForceField.")
         if not isinstance(schedule, AlchemicalControlSchedulePlan):
@@ -808,7 +808,7 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
         plan: ControlledHamiltonianPlan,
         partition: PreparedAlchemicalInteractionPartition,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.force_field = plan.force_field
         self.system = plan.force_field.system

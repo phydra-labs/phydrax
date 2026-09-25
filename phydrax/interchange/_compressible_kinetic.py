@@ -51,7 +51,7 @@ class CompressibleKineticCaseIR(StrictModule):
         relaxation_rate: float,
         time_step: float,
         dtype: str = "float64",
-    ):
+    ) -> None:
         shape = tuple(int(value) for value in grid_shape)
         if len(shape) != 3 or any(value < 1 for value in shape):
             raise ValueError("grid_shape must contain three positive extents.")

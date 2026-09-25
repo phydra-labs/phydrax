@@ -35,21 +35,21 @@ class HardOrdering(StrictModule):
 class PAVOrdering(StrictModule):
     temperature: float = eqx.field(static=True)
 
-    def __init__(self, temperature: float = 0.5, /):
+    def __init__(self, temperature: float = 0.5, /) -> None:
         self.temperature = _positive_temperature(temperature)
 
 
 class WeightedPAVOrdering(StrictModule):
     temperature: float = eqx.field(static=True)
 
-    def __init__(self, temperature: float = 0.5, /):
+    def __init__(self, temperature: float = 0.5, /) -> None:
         self.temperature = _positive_temperature(temperature)
 
 
 class SinkhornOrdering(StrictModule):
     epsilon: float = eqx.field(static=True)
 
-    def __init__(self, epsilon: float = 0.05, /):
+    def __init__(self, epsilon: float = 0.05, /) -> None:
         self.epsilon = _positive_temperature(epsilon)
 
 
@@ -61,7 +61,7 @@ class StraightThroughOrdering(StrictModule):
 
     surrogate: OrderingSurrogate
 
-    def __init__(self, surrogate: OrderingSurrogate | None = None, /):
+    def __init__(self, surrogate: OrderingSurrogate | None = None, /) -> None:
         surrogate_ = PAVOrdering() if surrogate is None else surrogate
         if not isinstance(
             surrogate_, (PAVOrdering, WeightedPAVOrdering, SinkhornOrdering)

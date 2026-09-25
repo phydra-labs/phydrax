@@ -30,7 +30,7 @@ EigenDifferentiationMode: TypeAlias = Literal["none", "eigenvalues"]
 class AutoEigenMethod(StrictModule):
     """Deterministically try LOBPCG before restarted Lanczos."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         return
 
     @property
@@ -41,7 +41,7 @@ class AutoEigenMethod(StrictModule):
 class DenseEigh(StrictModule):
     """Phydrax-native full dense Hermitian eigendecomposition."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         return
 
     @property
@@ -54,7 +54,7 @@ class LOBPCG(StrictModule):
 
     block_dimension: int | None = eqx.field(static=True)
 
-    def __init__(self, *, block_dimension: int | None = None):
+    def __init__(self, *, block_dimension: int | None = None) -> None:
         dimension = None if block_dimension is None else int(block_dimension)
         if dimension is not None and dimension < 1:
             raise ValueError("LOBPCG block_dimension must be positive or None.")
@@ -76,7 +76,7 @@ class RestartedLanczos(StrictModule):
         *,
         subspace_dimension: int | None = None,
         restart_dimension: int | None = None,
-    ):
+    ) -> None:
         subspace = None if subspace_dimension is None else int(subspace_dimension)
         restart = None if restart_dimension is None else int(restart_dimension)
         if subspace is not None and subspace < 2:
@@ -109,7 +109,7 @@ class EigenTolerancePolicy(StrictModule):
         relative: float = 1e-6,
         absolute: float = 1e-8,
         orthogonality: float = 1e-6,
-    ):
+    ) -> None:
         scalars = tuple(float(value) for value in (relative, absolute, orthogonality))
         if any(not math.isfinite(value) or value < 0.0 for value in scalars):
             raise ValueError("Eigen tolerances must be finite and non-negative.")
@@ -137,7 +137,7 @@ class EigenResourcePolicy(StrictModule):
         operator_matvecs: int = 1_000_000,
         metric_matvecs: int = 1_000_000,
         preconditioner_applies: int = 1_000_000,
-    ):
+    ) -> None:
         values = tuple(
             (
                 preparation_bytes,
@@ -194,7 +194,7 @@ class EigenSolvePolicy(StrictModule):
         preconditioning: PreconditioningPolicy | None = None,
         differentiation: EigenDifferentiationMode = "none",
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         method_ = AutoEigenMethod() if method is None else method
         if not isinstance(
             method_,

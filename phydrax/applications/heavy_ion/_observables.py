@@ -19,7 +19,7 @@ class FlowObservablePlan(StrictModule, NonTrainableState):
     harmonics: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, harmonics: Sequence[int], /):
+    def __init__(self, harmonics: Sequence[int], /) -> None:
         harmonics_ = tuple(harmonics)
         if (
             not harmonics_

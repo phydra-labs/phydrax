@@ -88,7 +88,7 @@ class ConservativeVoxelCellTransfer(StrictModule):
         source_id: str,
         target_id: str,
         measure_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         voxel = np.asarray(voxel_indices)
         cell = np.asarray(cell_indices)
         overlap = np.asarray(overlap_measures, dtype=np.float64)

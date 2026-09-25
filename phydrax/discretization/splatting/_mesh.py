@@ -46,7 +46,7 @@ class MeshSplatTarget(StrictModule, NonTrainableState):
         *,
         entity_dimension: int,
         measure: DiscreteMeasure,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         if not isinstance(measure, DiscreteMeasure):
@@ -135,7 +135,7 @@ class SimplicialBarycentricSplatAssignment(StrictModule, NonTrainableState):
         geometry_ad: MeshSplatGeometryAD = "piecewise",
         tie_tolerance: float = 1.0e-10,
         maximum_candidates: int = 64,
-    ):
+    ) -> None:
         if boundary not in ("reject", "drop"):
             raise ValueError("boundary must be 'reject' or 'drop'.")
         if geometry_ad not in ("piecewise", "frozen"):
@@ -298,7 +298,7 @@ class MeshCompactKernelSplatAssignment(StrictModule, NonTrainableState):
         partition_policy: MeshPartitionPolicy = "normalize",
         boundary: MeshSplatBoundaryPolicy = "reject",
         geometry_ad: MeshSplatGeometryAD = "piecewise",
-    ):
+    ) -> None:
         radius = float(support_radius)
         width = int(maximum_entities_per_particle)
         if not np.isfinite(radius) or radius <= 0.0:
@@ -444,7 +444,7 @@ class PreparedMeshParticleGridSplat(StrictModule, NonTrainableState):
         geometry_ad: MeshSplatGeometryAD,
         assignment_kind: str,
         assignment_id: str,
-    ):
+    ) -> None:
         self.target = target
         self.stable_source_ids = stable_source_ids
         self.prepared_active = prepared_active
@@ -689,7 +689,7 @@ class ParticleGridSplatEpoch(StrictModule):
         /,
         *,
         epoch_number: ArrayLike = 0,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedMeshParticleGridSplat):
             raise TypeError("prepared must be PreparedMeshParticleGridSplat.")
         if not isinstance(population, ParticlePopulationState):

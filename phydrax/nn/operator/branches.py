@@ -56,7 +56,7 @@ class OperatorBranchSpec(StrictModule):
         output_spec: OperatorOutputSpec | None = None,
         processor_group: str = "default",
         decoder_group: str | None = None,
-    ):
+    ) -> None:
         resolved_name = str(name)
         if not resolved_name:
             raise ValueError("Branch name must not be empty.")
@@ -114,7 +114,7 @@ class BranchInteractionSpec(StrictModule):
         parameter_group: str = "cross_branch",
         residual: bool = True,
         scale: float = 1.0,
-    ):
+    ) -> None:
         if str(source) == str(target):
             raise ValueError("Branch interactions must connect distinct branches.")
         if int(stage) < 0:
@@ -143,7 +143,7 @@ class OperatorBranchGraph(StrictModule):
         /,
         *,
         interactions: Sequence[BranchInteractionSpec] = (),
-    ):
+    ) -> None:
         branch_tuple = tuple(branches)
         if not branch_tuple:
             raise ValueError("OperatorBranchGraph requires at least one branch.")
@@ -195,7 +195,7 @@ class BranchedEncodedOperatorState(StrictModule):
     branches: frozendict[str, EncodedOperatorState]
     case_shape: tuple[int, ...]
 
-    def __init__(self, branches: Mapping[str, EncodedOperatorState], /):
+    def __init__(self, branches: Mapping[str, EncodedOperatorState], /) -> None:
         if not branches:
             raise ValueError("Branched operator state must not be empty.")
         first = next(iter(branches.values()))

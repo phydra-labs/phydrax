@@ -49,7 +49,7 @@ class LearnedDensePIVPlan(StrictModule, NonTrainableState):
         level_count: int = 3,
         search_radius: int = 2,
         cost_volume_chunk_size: int = 16,
-    ):
+    ) -> None:
         rows, columns = (int(image_shape[0]), int(image_shape[1]))
         channels = int(input_channels)
         levels = int(level_count)
@@ -280,7 +280,7 @@ class _ChannelLastConv2D(StrictModule):
         *,
         key: Key[Array, ""],
         final_scale: float = 1.0,
-    ):
+    ) -> None:
         input_count = int(in_channels)
         output_count = int(out_channels)
         kernel = int(kernel_size)
@@ -329,7 +329,7 @@ class _SharedFeaturePyramid(StrictModule):
         /,
         *,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         keys = jr.split(key, 3)
         self.input_projection = _ChannelLastConv2D(
             input_channels, feature_channels, 3, key=keys[0]
@@ -370,7 +370,7 @@ class _SharedResidualRefinement(StrictModule):
         /,
         *,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         keys = jr.split(key, 3)
         self.input_projection = _ChannelLastConv2D(
             input_channels, hidden_channels, 3, key=keys[0]
@@ -414,7 +414,7 @@ class CorrelationPyramidPIV(AbstractDensePIVModel):
         feature_channels: int = 16,
         refinement_channels: int = 32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(plan, LearnedDensePIVPlan):
             raise TypeError("plan must be a LearnedDensePIVPlan.")
         features = int(feature_channels)

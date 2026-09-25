@@ -55,7 +55,7 @@ class FiniteVolumePhaseChangeStrangMethod(StrictModule):
         transport_runtime: PreparedFiniteVolumeRuntime,
         phase_change: VOFPhaseChangePlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(transport_runtime, PreparedFiniteVolumeRuntime):
             raise TypeError("transport_runtime must be PreparedFiniteVolumeRuntime.")
         if not isinstance(phase_change, VOFPhaseChangePlan):

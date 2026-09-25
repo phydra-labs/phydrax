@@ -73,7 +73,7 @@ class DiscreteOrdinatesTransportPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         dsa: bool = False,
         dsa_relaxation: float = 0.5,
-    ):
+    ) -> None:
         if not isinstance(problem, MultigroupSlabTransportProblem):
             raise TypeError("problem must be MultigroupSlabTransportProblem.")
         iterations = int(maximum_iterations)

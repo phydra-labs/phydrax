@@ -116,7 +116,7 @@ class CliffordProductPlan(StrictModule, NonTrainableState):
         kind: CliffordProductKind = "geometric",
         output_layout: CliffordBladeLayout | None = None,
         backend: Literal["auto", "dense", "sparse"] = "auto",
-    ):
+    ) -> None:
         if not isinstance(algebra, CliffordAlgebraSpec):
             raise TypeError("algebra must be a CliffordAlgebraSpec.")
         for layout in (left_layout, right_layout):

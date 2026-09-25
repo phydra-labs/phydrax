@@ -42,7 +42,7 @@ class AffineSimplexMap(StrictModule, NonTrainableState):
     intrinsic_dimension: int = eqx.field(static=True)
     ambient_dimension: int = eqx.field(static=True)
 
-    def __init__(self, vertices: ArrayLike, /):
+    def __init__(self, vertices: ArrayLike, /) -> None:
         points = jnp.asarray(vertices)
         if not jnp.issubdtype(points.dtype, jnp.inexact):
             points = points.astype("float64")

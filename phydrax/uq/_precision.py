@@ -34,7 +34,7 @@ class PredictivePrecisionPolicy(StrictModule, NonTrainableState):
         *,
         storage_dtype: Any | None = None,
         summary_dtype: Any | None = None,
-    ):
+    ) -> None:
         storage = (
             None if storage_dtype is None else real_precision_dtype_name(storage_dtype)
         )
@@ -127,7 +127,7 @@ class ParticlePrecisionPolicy(StrictModule, NonTrainableState):
         statistics_dtype: Any = jnp.float64,
         decision_dtype: Any = jnp.float64,
         output_dtype: Any | None = None,
-    ):
+    ) -> None:
         state = (
             None
             if state_storage_dtype is None

@@ -1143,7 +1143,7 @@ def _identify_id(
 class _Factor:
     def __init__(
         self, variables: tuple[str, ...], random: tuple[str, ...], values: np.ndarray
-    ):
+    ) -> None:
         self.variables = variables
         self.random = random
         self.values = values

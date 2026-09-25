@@ -91,7 +91,7 @@ class OperatorPrecisionEvidence:
     matmul_precision: MatmulPrecisionName | None
     geometry_mode: Literal["preserve"] = "preserve"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         parameter = real_precision_dtype_name(self.parameter_dtype)
         compute = real_precision_dtype_name(self.compute_dtype)
         real_precision_dtype_name(self.reduction_dtype)
@@ -187,7 +187,7 @@ class OperatorDTypePolicy:
     reduction_dtype: DTypeName = "float32"
     matmul_precision: MatmulPrecisionName | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for value in (
             self.parameter_dtype,
             self.compute_dtype,

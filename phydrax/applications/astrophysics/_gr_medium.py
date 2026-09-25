@@ -44,7 +44,7 @@ class GRMediumFieldUnits(StrictModule, NonTrainableState):
         /,
         *,
         magnetic_field_unit: UnitDefinition = TESLA,
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         if not isinstance(magnetic_field_unit, UnitDefinition):
@@ -116,7 +116,7 @@ class FixedGRFieldSamplingPlan(StrictModule, NonTrainableState):
         query_shape: Sequence[int],
         source_id: str,
         query_fingerprint: str,
-    ):
+    ) -> None:
         shape = tuple(query_shape)
         smooth = jax.lax.stop_gradient(jnp.asarray(interpolation_smooth, dtype=jnp.bool_))
         if not isinstance(stencil, GatherStencil):
@@ -291,7 +291,7 @@ class FastLightSnapshot(StrictModule, NonTrainableState):
         magnetic_field_unit: UnitDefinition = TESLA,
         chart_id: str,
         source_id: str,
-    ):
+    ) -> None:
         axes_host = tuple(np.asarray(axis, dtype=np.float64) for axis in coordinate_axes)
         if (
             len(axes_host) != 3

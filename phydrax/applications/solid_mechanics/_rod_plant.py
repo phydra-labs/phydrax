@@ -63,7 +63,7 @@ class ReducedRodPassiveActuatorState(StrictModule):
 
     values: Array
 
-    def __init__(self, values: ArrayLike, /):
+    def __init__(self, values: ArrayLike, /) -> None:
         self.values = _empty_state(values, "Passive actuator state")
 
 
@@ -72,7 +72,7 @@ class ReducedRodPassiveContactState(StrictModule):
 
     values: Array
 
-    def __init__(self, values: ArrayLike, /):
+    def __init__(self, values: ArrayLike, /) -> None:
         self.values = _empty_state(values, "Passive contact state")
 
 
@@ -81,7 +81,7 @@ class ReducedRodPassiveSensorState(StrictModule):
 
     values: Array
 
-    def __init__(self, values: ArrayLike, /):
+    def __init__(self, values: ArrayLike, /) -> None:
         self.values = _empty_state(values, "Passive sensor state")
 
 
@@ -102,7 +102,7 @@ class ReducedRodPlantState(StrictModule):
         contact_state: ReducedRodPassiveContactState,
         sensor_state: ReducedRodPassiveSensorState,
         /,
-    ):
+    ) -> None:
         if not isinstance(reduced_state, ReducedRodState):
             raise TypeError("reduced_state must be ReducedRodState.")
         if not isinstance(material_state, ReducedRodMaterialState):
@@ -125,7 +125,7 @@ class ReducedRodPlantParameters(StrictModule):
 
     values: Array
 
-    def __init__(self, values: ArrayLike, /):
+    def __init__(self, values: ArrayLike, /) -> None:
         self.values = _empty_state(values, "Passive plant parameters")
 
 
@@ -265,7 +265,7 @@ class PreparedReducedRodPlant(AbstractDiscretePlant, NonTrainableState):
         initial_reduced_state: ReducedRodState | None = None,
         initial_material_state: ReducedRodMaterialState | None = None,
         native_loads: RodLoadLedger | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedReducedRodDynamics):
             raise TypeError("dynamics must be PreparedReducedRodDynamics.")
 

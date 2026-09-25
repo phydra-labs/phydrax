@@ -74,7 +74,7 @@ class FixedImmersedMarkerMotion(StrictModule, NonTrainableState):
         /,
         *,
         geometry_id: str,
-    ):
+    ) -> None:
         if not isinstance(kinematics, LagrangianMarkerKinematics):
             raise TypeError("kinematics must be LagrangianMarkerKinematics.")
         geometry = _identifier(geometry_id, "geometry_id")
@@ -181,7 +181,7 @@ class FixedImmersedMACLESPlan(StrictModule, NonTrainableState):
         marker_wall_normal: ArrayLike | None = None,
         marker_sample_distance: ArrayLike | None = None,
         marker_roughness_height: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not isinstance(algebraic_les, MACAlgebraicLESPlan):
             raise TypeError("algebraic_les must be MACAlgebraicLESPlan.")
         if not isinstance(projection, MACImmersedBoundaryProjectionPlan):
@@ -409,7 +409,7 @@ class PreparedFixedImmersedMACLES(StrictModule, NonTrainableState):
         /,
         *,
         molecular_viscosity: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(plan, FixedImmersedMACLESPlan):
             raise TypeError("plan must be FixedImmersedMACLESPlan.")
         if not isinstance(momentum, PreparedMACMomentumOperators):

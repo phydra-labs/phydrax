@@ -156,7 +156,7 @@ class GammaFamily(AbstractExponentialFamily):
         atol: float = 1e-10,
         rtol: float = 1e-10,
         max_iterations: int = 64,
-    ):
+    ) -> None:
         absolute = float(atol)
         relative = float(rtol)
         iterations = int(max_iterations)

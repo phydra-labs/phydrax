@@ -68,7 +68,7 @@ class CalibrationDiagnostics(StrictModule):
         effective_samples: Any,
         class_mass: Any,
         method: str,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
@@ -293,7 +293,7 @@ class PlattCalibrationModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.slope = jnp.asarray(slope)
         self.intercept = jnp.asarray(intercept)
         self.labels = jnp.asarray(labels)
@@ -350,7 +350,7 @@ class TemperatureCalibrationModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.temperature = jnp.asarray(temperature)
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
@@ -405,7 +405,7 @@ class VectorCalibrationModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.scale = jnp.asarray(scale)
         self.bias = jnp.asarray(bias)
         self.labels = jnp.asarray(labels)
@@ -462,7 +462,7 @@ class MatrixCalibrationModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.matrix = jnp.asarray(matrix)
         self.bias = jnp.asarray(bias)
         self.labels = jnp.asarray(labels)
@@ -519,7 +519,7 @@ class MulticlassCalibrationModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.slope = jnp.asarray(slope)
         self.intercept = jnp.asarray(intercept)
         self.labels = jnp.asarray(labels)
@@ -724,7 +724,7 @@ class PlattCalibrationRecipe(AbstractRecipe):
         tolerance: float = 1e-6,
         l2: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         (
             self.learning_rate,
             self.max_iterations,
@@ -758,7 +758,7 @@ class TemperatureCalibrationRecipe(AbstractRecipe):
         max_iterations: int = 256,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.num_classes = None if num_classes is None else int(num_classes)
         self.minimum_temperature = jnp.asarray(minimum_temperature, dtype=jnp.float64)
         (
@@ -795,7 +795,7 @@ class VectorCalibrationRecipe(AbstractRecipe):
         tolerance: float = 1e-6,
         l2: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.num_classes = None if num_classes is None else int(num_classes)
         (
             self.learning_rate,
@@ -829,7 +829,7 @@ class MatrixCalibrationRecipe(AbstractRecipe):
         tolerance: float = 1e-6,
         l2: float = 1e-5,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.num_classes = None if num_classes is None else int(num_classes)
         (
             self.learning_rate,
@@ -863,7 +863,7 @@ class MulticlassCalibrationRecipe(AbstractRecipe):
         tolerance: float = 1e-6,
         l2: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.num_classes = None if num_classes is None else int(num_classes)
         (
             self.learning_rate,
@@ -962,7 +962,7 @@ class IsotonicCalibrationModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.thresholds = jnp.asarray(thresholds)
         self.values = jnp.asarray(values)
         self.block_count = jnp.asarray(block_count, dtype=jnp.int32)
@@ -1038,7 +1038,7 @@ class SmoothIsotonicCalibrationModel(AbstractFittedModel):
         *,
         bandwidth: float,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.thresholds = jnp.asarray(thresholds)
         self.values = jnp.asarray(values)
         self.block_count = jnp.asarray(block_count, dtype=jnp.int32)
@@ -1167,7 +1167,7 @@ def _fit_isotonic(recipe: Any, batch: MLBatch, *, smooth: bool) -> FitResult:
 class IsotonicCalibrationRecipe(AbstractRecipe):
     weight_policy: WeightPolicy = eqx.field(static=True)
 
-    def __init__(self, *, weight_policy: WeightPolicy = "statistical"):
+    def __init__(self, *, weight_policy: WeightPolicy = "statistical") -> None:
         if weight_policy not in {"none", "statistical", "measure", "product"}:
             raise ValueError("Unsupported weight policy.")
         self.weight_policy = weight_policy
@@ -1183,7 +1183,7 @@ class SmoothIsotonicCalibrationRecipe(AbstractRecipe):
 
     def __init__(
         self, *, bandwidth: float = 0.1, weight_policy: WeightPolicy = "statistical"
-    ):
+    ) -> None:
         bandwidth_ = jnp.asarray(bandwidth, dtype=jnp.float64)
         if (
             bandwidth_.ndim != 0
@@ -1249,7 +1249,7 @@ class CalibratedClassifierModel(AbstractFittedModel):
         calibration_model: AbstractArrayModel,
         labels: Array,
         target_schema: TargetSchema,
-    ):
+    ) -> None:
         self.base_model = base_model
         self.calibration_model = calibration_model
         self.labels = jnp.asarray(labels)
@@ -1323,7 +1323,7 @@ class CalibratedClassifierRecipe(AbstractRecipe):
         /,
         *,
         num_classes: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(base_recipe, AbstractRecipe) or not isinstance(
             calibration_recipe, AbstractRecipe
         ):
@@ -1406,7 +1406,7 @@ class StrictCalibrationCompositionDiagnostics(StrictModule):
         base_status: Any,
         calibration_valid: Any,
         calibration_status: Any,
-    ):
+    ) -> None:
         self.base_valid = jnp.asarray(base_valid, dtype=jnp.bool_)
         self.base_status = jnp.asarray(base_status, dtype=jnp.int32)
         self.calibration_valid = jnp.asarray(calibration_valid, dtype=jnp.bool_)

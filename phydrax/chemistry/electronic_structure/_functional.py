@@ -120,7 +120,7 @@ class NativeXCFunctional(StrictModule, NonTrainableState):
     plan: DensityFunctionalPlan
     functional_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: DensityFunctionalPlan, /):
+    def __init__(self, plan: DensityFunctionalPlan, /) -> None:
         if not isinstance(plan, DensityFunctionalPlan):
             raise TypeError("plan must be DensityFunctionalPlan.")
         supported = {

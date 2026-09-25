@@ -39,7 +39,7 @@ class GRMHDMagneticStateLayout(StrictModule, NonTrainableState):
     electromotive_degree: int | None = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (1, 2, 3):
             raise ValueError("GRMHD layout dimension must be one, two, or three.")
@@ -104,7 +104,7 @@ class GRMHDVectorPotentialGauge(StrictModule, NonTrainableState):
         *,
         propagation_speed: float = 1.0,
         damping_rate: float = 0.0,
-    ):
+    ) -> None:
         if kind not in ("none", "weyl", "generalized_lorenz"):
             raise ValueError("Unknown GRMHD vector-potential gauge.")
         speed = float(propagation_speed)
@@ -198,7 +198,7 @@ class GRMHDConstrainedTransportPlan(StrictModule, NonTrainableState):
         electromotive_plan: AbstractUCTElectromotivePlan | None = None,
         divergence_tolerance: float = 1.0e-10,
         compatibility_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be StructuredCochainBridge.")
         gauge_ = GRMHDVectorPotentialGauge() if gauge is None else gauge

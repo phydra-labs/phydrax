@@ -36,7 +36,7 @@ class BaseSpanId(StrictModule, NonTrainableState):
     coordinates: tuple[int, ...] = eqx.field(static=True)
     value: str = eqx.field(static=True)
 
-    def __init__(self, patch_id: str, coordinates: Sequence[int], /):
+    def __init__(self, patch_id: str, coordinates: Sequence[int], /) -> None:
         patch = _name("patch_id", patch_id)
         coordinate_values = _coordinates(coordinates)
         self.patch_id = patch
@@ -61,7 +61,7 @@ class OverlayCellId(StrictModule, NonTrainableState):
     coordinates: tuple[int, ...] = eqx.field(static=True)
     value: str = eqx.field(static=True)
 
-    def __init__(self, overlay_id: str, coordinates: Sequence[int], /):
+    def __init__(self, overlay_id: str, coordinates: Sequence[int], /) -> None:
         overlay = _name("overlay_id", overlay_id)
         coordinate_values = _coordinates(coordinates)
         self.overlay_id = overlay
@@ -98,7 +98,7 @@ class InterfaceId(StrictModule, NonTrainableState):
         /,
         *,
         periodic: bool = False,
-    ):
+    ) -> None:
         left = _name("left_patch_id", left_patch_id)
         right = _name("right_patch_id", right_patch_id)
         left_values = tuple(left_route)

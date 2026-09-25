@@ -65,7 +65,7 @@ class ParticleLevelSetPlan(StrictModule, NonTrainableState):
         *,
         narrow_band_cells: int = 4,
         minimum_ghost_fraction: float = 1.0e-2,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("grid must be PreparedTensorGrid.")
         radius = float(particle_radius)

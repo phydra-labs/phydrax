@@ -64,7 +64,7 @@ class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
         shape: tuple[int, ...],
         periodic: tuple[bool, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, MaxwellCPMLPlan):
             raise TypeError("plan must be MaxwellCPMLPlan.")
         shape = tuple(shape)
@@ -340,7 +340,7 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
         ]
         | None = None,
         pml: MaxwellCPMLPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid) or len(grid.shape) != 2:
             raise TypeError(
                 "CompatibleMaxwell2DPlan requires a prepared 2-D tensor grid."
@@ -657,7 +657,7 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
         ]
         | None = None,
         pml: MaxwellCPMLPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid) or len(grid.shape) != 1:
             raise TypeError(
                 "CompatibleMaxwell1DPlan requires a prepared 1-D tensor grid."

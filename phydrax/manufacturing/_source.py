@@ -17,7 +17,7 @@ class GaussianMovingSource(StrictModule, NonTrainableState):
     radius_m: Array
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, power_w, absorptivity, radius_m, /):
+    def __init__(self, power_w, absorptivity, radius_m, /) -> None:
         values = (power_w, absorptivity, radius_m)
         if (
             not all(np.isfinite(value) for value in values)
@@ -58,7 +58,7 @@ class GoldakDoubleEllipsoidSource(StrictModule, NonTrainableState):
     width_m: Array
     depth_m: Array
 
-    def __init__(self, power_w, efficiency, front_m, rear_m, width_m, depth_m, /):
+    def __init__(self, power_w, efficiency, front_m, rear_m, width_m, depth_m, /) -> None:
         values = (power_w, efficiency, front_m, rear_m, width_m, depth_m)
         if (
             not all(np.isfinite(value) for value in values)

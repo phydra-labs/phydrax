@@ -60,7 +60,7 @@ class AtomisticCanonicalSamplingQualification(StrictModule, NonTrainableState):
         *,
         sampling_exact: bool,
         sampling_bias_bound: float,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedAtomisticDynamics):
             raise TypeError("dynamics must be PreparedAtomisticDynamics.")
         if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
@@ -107,7 +107,7 @@ class AtomisticReplicaExchangePlan(StrictModule, NonTrainableState):
     realization_id: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, exchange_interval: int = 1, /, *, realization_id: int = 0):
+    def __init__(self, exchange_interval: int = 1, /, *, realization_id: int = 0) -> None:
         interval = int(exchange_interval)
         realization = int(realization_id)
         if interval <= 0 or realization < 0:
@@ -149,7 +149,7 @@ class AtomisticSAMSPlan(StrictModule, NonTrainableState):
         gain_exponent: float = 0.6,
         initial_gain: float = 1.0,
         realization_id: int = 0,
-    ):
+    ) -> None:
         target = np.asarray(target_probabilities, dtype=np.float64).reshape((-1,))
         interval = int(move_interval)
         steps = int(adaptation_steps)
@@ -283,7 +283,7 @@ class AtomisticMultistatePlan(StrictModule, NonTrainableState):
         dependence_group_indices: ArrayLike | None = None,
         repeat_index: int = 0,
         run_id: str,
-    ):
+    ) -> None:
         if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
             raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
         if not isinstance(qualification, AtomisticCanonicalSamplingQualification):
@@ -427,7 +427,7 @@ class PreparedAtomisticMultistate(StrictModule):
         plan: AtomisticMultistatePlan,
         dynamics: PreparedAtomisticDynamics,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, AtomisticMultistatePlan):
             raise TypeError("plan must be AtomisticMultistatePlan.")
         if not isinstance(dynamics, PreparedAtomisticDynamics):
@@ -926,7 +926,7 @@ class AtomisticMultistateSegmentPlan(StrictModule, NonTrainableState):
         segment_index: int,
         predecessor_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(runtime, PreparedAtomisticMultistate):
             raise TypeError("runtime must be PreparedAtomisticMultistate.")
         capacity_ = int(capacity)

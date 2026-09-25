@@ -60,7 +60,7 @@ class CompressibleReferenceWavePlan(StrictModule, NonTrainableState):
         *,
         amplitude: float = 1.0e-3,
         propagation_sign: int = 1,
-    ):
+    ) -> None:
         base = jnp.asarray(base_primitive)
         wave = tuple(float(value) for value in wave_vector)
         amplitude_ = float(amplitude)
@@ -227,7 +227,7 @@ class ManufacturedViscousNSPlan(StrictModule, NonTrainableState):
         exact_state: Callable[[Array, Array, Any], Array],
         exact_state_id: str,
         /,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         identifier = str(exact_state_id)
         if dimension_ not in (1, 2, 3) or not callable(exact_state) or not identifier:

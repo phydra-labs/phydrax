@@ -62,7 +62,7 @@ class CosmologyProductProvenance(StrictModule, NonTrainableState):
         source_kind: CosmologyProductSource,
         differentiation: DerivativeContract,
         parent_product_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         values = tuple(
             str(value).strip()
             for value in (
@@ -177,7 +177,7 @@ class ExpansionHistory(StrictModule):
         provenance: CosmologyProductProvenance,
         realization: CosmologyRealizationSignature,
         /,
-    ):
+    ) -> None:
         _validate_common(scale, provenance, realization)
         nodes = _validated_nodes(scale_factors, "ExpansionHistory")
         hubble = jnp.asarray(hubble_values, dtype=nodes.dtype)
@@ -241,7 +241,7 @@ class LagrangianGrowthHistory(StrictModule):
         provenance: CosmologyProductProvenance,
         realization: CosmologyRealizationSignature,
         /,
-    ):
+    ) -> None:
         _validate_common(scale, provenance, realization)
         nodes = _validated_nodes(scale_factors, "LagrangianGrowthHistory")
         values = tuple(
@@ -337,7 +337,7 @@ class MatterPowerDescriptor(StrictModule, NonTrainableState):
         stage: MatterPowerStage = "linear",
         shot_noise: ShotNoiseConvention = "none",
         spatial_dimension: int = 3,
-    ):
+    ) -> None:
         if left_field not in _MATTER_FIELDS or right_field not in _MATTER_FIELDS:
             raise ValueError("Unknown matter field identity.")
         if gauge not in _GAUGES:
@@ -408,7 +408,7 @@ class MatterPowerTable(StrictModule):
         provenance: CosmologyProductProvenance,
         realization: CosmologyRealizationSignature,
         /,
-    ):
+    ) -> None:
         _validate_common(scale, provenance, realization)
         if not isinstance(descriptor, MatterPowerDescriptor):
             raise TypeError("descriptor must be MatterPowerDescriptor.")
@@ -484,7 +484,7 @@ class LinearTransferDescriptor(StrictModule, NonTrainableState):
         gauge: TransferGauge,
         normalization: str,
         wavenumber_coordinate: Literal["k", "q"] = "k",
-    ):
+    ) -> None:
         fields_ = tuple(str(field).strip() for field in fields)
         if (
             not fields_
@@ -535,7 +535,7 @@ class LinearTransferTable(StrictModule):
         provenance: CosmologyProductProvenance,
         realization: CosmologyRealizationSignature,
         /,
-    ):
+    ) -> None:
         _validate_common(scale, provenance, realization)
         if not isinstance(descriptor, LinearTransferDescriptor):
             raise TypeError("descriptor must be LinearTransferDescriptor.")
@@ -611,7 +611,7 @@ class ThermodynamicsHistory(StrictModule):
         provenance: CosmologyProductProvenance,
         realization: CosmologyRealizationSignature,
         /,
-    ):
+    ) -> None:
         _validate_common(scale, provenance, realization)
         nodes = _validated_nodes(scale_factors, "ThermodynamicsHistory")
         values = tuple(

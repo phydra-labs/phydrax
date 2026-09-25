@@ -97,7 +97,7 @@ class DFSANE(AbstractNonlinearMethod):
         sufficient_decrease: float = 1e-4,
         maximum_search_steps: int = 24,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         history_ = int(history)
         search_steps = int(maximum_search_steps)
         values = tuple(

@@ -40,7 +40,7 @@ class ProjectiveMeasureTarget(StrictModule):
         *,
         measure_kind: ProjectiveMeasureKind,
         precision: IntegrationPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = IntegrationPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, IntegrationPrecisionPolicy):
             raise TypeError("precision must be an IntegrationPrecisionPolicy or None.")
@@ -87,7 +87,7 @@ class ProjectiveIntegralResult(StrictModule):
         valid: ArrayLike,
         precision_evidence: PrecisionEvidenceEnvelope,
         /,
-    ):
+    ) -> None:
         self.normalized_value = jnp.asarray(normalized_value)
         self.physical_value = jnp.asarray(physical_value)
         self.effective_sample_size = jnp.asarray(effective_sample_size)

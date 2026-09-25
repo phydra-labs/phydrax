@@ -71,7 +71,7 @@ class VariablePatchALEPlan(StrictModule, NonTrainableState):
         *,
         endpoint_tolerance: float = 1.0e-10,
         minimum_reduction_factor: float = 0.1,
-    ):
+    ) -> None:
         tolerance = float(endpoint_tolerance)
         reduction = float(minimum_reduction_factor)
         if (

@@ -48,7 +48,7 @@ class BoundarySheetParticleTransferPlan2D(StrictModule, NonTrainableState):
 
     def __init__(
         self, particle_capacity: int, core_radius: float, normal_offset: float, /
-    ):
+    ) -> None:
         capacity = int(particle_capacity)
         core = float(core_radius)
         offset = float(normal_offset)

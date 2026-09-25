@@ -162,7 +162,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         *,
         mapping_id: str,
         consistency_policy: ALEGeometryConsistencyPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(base_plan, UnstructuredFiniteVolumePlan):
             raise TypeError("base_plan must be UnstructuredFiniteVolumePlan.")
         if not callable(motion):

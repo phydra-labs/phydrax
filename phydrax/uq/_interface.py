@@ -39,7 +39,7 @@ class InterfaceAcquisitionPolicy(StrictModule, NonTrainableState):
         residual_weight: float = 1.0,
         diversity_weight: float = 1.0,
         normalization_epsilon: float = 1.0e-12,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (uncertainty_weight, residual_weight, diversity_weight)

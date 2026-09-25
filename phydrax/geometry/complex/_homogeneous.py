@@ -27,7 +27,7 @@ class HomogeneousPolynomialReport(StrictModule):
         euler_residual: ArrayLike,
         finite: ArrayLike,
         tolerance: float,
-    ):
+    ) -> None:
         self.homogeneous_residual = jnp.asarray(homogeneous_residual)
         self.euler_residual = jnp.asarray(euler_residual)
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
@@ -52,7 +52,7 @@ class HomogeneousPolynomial(StrictModule):
         /,
         *,
         polynomial_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         dimension = int(projective_dimension)

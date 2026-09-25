@@ -80,7 +80,7 @@ class AMRTransferBinding(StrictModule, NonTrainableState):
         formulation: NumericalRelativityFormulation,
         transfer_plan_id: str,
         transition_plan_id: str,
-    ):
+    ) -> None:
         identifiers = tuple(
             str(value).strip()
             for value in (
@@ -212,7 +212,7 @@ class NumericalRelativityAMRHaloPlan(StrictModule, NonTrainableState):
         /,
         *,
         transfer: AMREntityTransferPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(topology, BlockHierarchyTopology):
             raise TypeError("NR AMR halo planning requires BlockHierarchyTopology.")
         name = str(field_name)
@@ -383,7 +383,7 @@ class Z4cAMRTransferPlan(StrictModule, NonTrainableState):
         /,
         *,
         constraint_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         tolerance = float(constraint_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError(
@@ -466,7 +466,7 @@ class RelativisticMaterialTransferPlan(StrictModule, NonTrainableState):
         /,
         *,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         tolerance = float(conservation_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError(
@@ -826,7 +826,7 @@ class RelativisticMagneticAMRTransferPlan(StrictModule, NonTrainableState):
         direction: str,
         refinement_ratio: int = 2,
         divergence_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         tolerance = float(divergence_tolerance)
         direction_ = str(direction)
         if (
@@ -912,7 +912,7 @@ class RelativisticMagneticRefluxPlan(StrictModule, NonTrainableState):
         /,
         *,
         divergence_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         tolerance = float(divergence_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("Magnetic reflux tolerance must be finite and nonnegative.")
@@ -996,7 +996,7 @@ class RelativisticMaterialSubcyclingPlan(StrictModule, NonTrainableState):
         *,
         subcycling: bool = True,
         temporal_method_id: str = "temporal:ssprk33",
-    ):
+    ) -> None:
         formulation_ = _formulation(formulation)
         if not any(name in formulation_ for name in ("grhd", "grmhd", "grrmhd")):
             raise ValueError(
@@ -1061,7 +1061,7 @@ class NumericalRelativityAMRTopologyEpoch(StrictModule, NonTrainableState):
         /,
         *,
         magnetic_bridge: StructuredCochainBridge | None = None,
-    ):
+    ) -> None:
         formulation_ = _formulation(formulation)
         if not isinstance(hierarchy, BlockHierarchyState) or not isinstance(
             distribution, PreparedNumericalRelativityAMRDistribution
@@ -1129,7 +1129,7 @@ class NumericalRelativityAMRState(StrictModule):
         epoch: NumericalRelativityAMRTopologyEpoch,
         fields: Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         if not isinstance(epoch, NumericalRelativityAMRTopologyEpoch):
             raise TypeError("NR AMR state requires NumericalRelativityAMRTopologyEpoch.")
         values = tuple(jnp.asarray(value) for value in fields)
@@ -1365,7 +1365,7 @@ class NumericalRelativityAMRTopologyTransition(StrictModule, NonTrainableState):
         /,
         *,
         transfer_plans: Sequence[Any] = (),
-    ):
+    ) -> None:
         if not isinstance(source, NumericalRelativityAMRTopologyEpoch) or not isinstance(
             compilation, BlockTopologyCompileResult
         ):

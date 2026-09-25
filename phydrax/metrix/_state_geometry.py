@@ -476,7 +476,7 @@ class LocalRetraction(StrictModule):
     retraction_id: str = eqx.field(static=True)
     resolved_method: str = eqx.field(static=True)
 
-    def __init__(self, geometry: AbstractStateGeometry, base_point: ArrayLike, /):
+    def __init__(self, geometry: AbstractStateGeometry, base_point: ArrayLike, /) -> None:
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("LocalRetraction geometry must be an AbstractStateGeometry.")
         base = jnp.asarray(base_point)
@@ -589,7 +589,7 @@ class EuclideanStateGeometry(AbstractStateGeometry):
         self,
         *,
         geometry_id: str = "state-geometry:euclidean",
-    ):
+    ) -> None:
         self.geometry_id = _identifier(geometry_id, "geometry_id")
         self.retraction_method = "addition"
         self.trivial = True
@@ -759,7 +759,7 @@ class EmbeddedStateGeometry(AbstractStateGeometry):
         cut_locus_margin_action: Callable[[Array, Array], Array] | None = None,
         isometric_transport: bool = False,
         supports_commutator_free: bool = False,
-    ):
+    ) -> None:
         for function, name in (
             (membership, "membership"),
             (tangent_projection, "tangent_projection"),
@@ -1007,7 +1007,7 @@ class PointwiseStateGeometry(AbstractStateGeometry):
         local_shape: Sequence[int] | None = None,
         tangent_shape: Sequence[int] | None = None,
         geometry_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("Pointwise geometry must wrap an AbstractStateGeometry.")
         point = _role_shape(point_shape, "point_shape")
@@ -1463,7 +1463,7 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
         retraction: MatrixRetraction = "exponential",
         tolerance: float = 1e-6,
         geometry_id: str | None = None,
-    ):
+    ) -> None:
         n = _dimension(dimension)
         if retraction not in ("exponential", "cayley"):
             raise ValueError("SO(n) retraction must be 'exponential' or 'cayley'.")
@@ -1792,7 +1792,7 @@ class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
         *,
         tolerance: float = 1e-8,
         geometry_id: str | None = None,
-    ):
+    ) -> None:
         n = _dimension(dimension)
         if tolerance <= 0.0:
             raise ValueError("tolerance must be positive.")

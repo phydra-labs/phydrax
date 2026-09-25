@@ -39,7 +39,7 @@ class FeatureDefinition(StrictModule):
         /,
         *,
         aggregation: FeatureAggregation = "point",
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("feature name must be nonempty.")
         series = int(series_index)
@@ -88,7 +88,7 @@ class LabelDefinition(StrictModule):
         *,
         horizon: int,
         aggregation: LabelAggregation = "sum",
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("label name must be nonempty.")
         series = int(series_index)
@@ -129,7 +129,7 @@ class FeatureLabelContract(StrictModule):
         *,
         row_capacity: int,
         decision_clock: DecisionClock = "available",
-    ):
+    ) -> None:
         features_ = tuple(features)
         if not features_ or not all(
             isinstance(feature, FeatureDefinition) for feature in features_

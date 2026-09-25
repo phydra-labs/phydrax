@@ -36,7 +36,7 @@ class ExponentialFamilyInformationGeometry(StrictModule):
         /,
         *,
         precision: GeometryPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(family, AbstractExponentialFamily):
             raise TypeError("family must implement AbstractExponentialFamily.")
         precision_ = GeometryPrecisionPolicy() if precision is None else precision

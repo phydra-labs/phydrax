@@ -33,7 +33,7 @@ class EnergyScaling(StrictModule):
     dynamics: float = 1.0
     objective: float = 1.0
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         for value in (
             self.flow,
             self.inventory,
@@ -96,7 +96,7 @@ def information_keys(
 
 
 class _Builder:
-    def __init__(self, scaling):
+    def __init__(self, scaling) -> None:
         self.scaling = scaling
         self.lower, self.upper, self.linear, self.quadratic = [], [], [], []
         self.variables, self.rows, self.binary = [], [], []
@@ -147,7 +147,7 @@ class _Builder:
         self.variables.append(EnergyVariable(name, tuple(indices), scale))
         return np.asarray(indices, dtype=np.int64)
 
-    def row(self, name, terms, rhs=0.0, *, equality=False, scale=1.0):
+    def row(self, name, terms, rhs=0.0, *, equality=False, scale=1.0) -> None:
         combined = {}
         for index, coefficient in terms:
             combined[int(index)] = (

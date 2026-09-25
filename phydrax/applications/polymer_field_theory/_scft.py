@@ -41,7 +41,7 @@ class ContourIntegratorPlan(StrictModule, NonTrainableState):
     kind: ContourIntegratorKind = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: ContourIntegratorKind = "richardson-strang-4", /):
+    def __init__(self, kind: ContourIntegratorKind = "richardson-strang-4", /) -> None:
         if kind not in ("strang-2", "richardson-strang-4"):
             raise ValueError("Unknown Gaussian-chain contour integrator.")
         self.kind = kind
@@ -69,7 +69,7 @@ class SCFTPlan(StrictModule, NonTrainableState):
         relative_tolerance: float = 1.0e-8,
         maximum_iterations: int = 64,
         minimum_partition: float = 1.0e-14,
-    ):
+    ) -> None:
         if not isinstance(model, IncompressibleGaussianMixturePlan):
             raise TypeError("model must be IncompressibleGaussianMixturePlan.")
         integrator = (
@@ -156,7 +156,7 @@ class PreparedSCFT(StrictModule, NonTrainableState):
         /,
         *,
         symmetries: tuple[TensorSpectralSymmetry, ...],
-    ):
+    ) -> None:
         if not isinstance(plan, SCFTPlan):
             raise TypeError("plan must be SCFTPlan.")
         if not isinstance(spectral, TensorSpectralDiscretization):

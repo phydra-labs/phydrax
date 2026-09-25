@@ -65,7 +65,7 @@ class ThermofluidMaterial(StrictModule):
         heat_capacity: float,
         fluid_resistance: float = 0.0,
         resistance_penalty: float = 3.0,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -260,7 +260,7 @@ class ThermofluidTopologyDesign(StrictModule):
         beta: float = 2.0,
         resistance_weight: float = 0.0,
         reference_temperature: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledMACScalarBuoyancyDynamics):
             raise TypeError(
                 "dynamics must be compiled native MAC scalar/buoyancy dynamics."
@@ -658,7 +658,7 @@ class ThermofluidTopologyDesign(StrictModule):
 class _FixedIntegrationStateSolver(AbstractStateSolver):
     workflow: ThermofluidTopologyDesign
 
-    def __init__(self, workflow, /):
+    def __init__(self, workflow, /) -> None:
         self.workflow = workflow
 
     @property

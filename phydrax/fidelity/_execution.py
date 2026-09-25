@@ -54,7 +54,7 @@ class FidelityEvaluation(StrictModule, NonTrainableState):
         artifact_id: str | None = None,
         evidence_ids: tuple[str, ...] = (),
         evaluation_id: str | None = None,
-    ):
+    ) -> None:
         leaves = tuple(jnp.asarray(leaf) for leaf in jax_tree_leaves(observable))
         if not leaves:
             raise ValueError("observable must contain at least one array leaf.")

@@ -44,7 +44,7 @@ class PeriodicFiniteBoundaryPlan(StrictModule, NonTrainableState):
         twists: tuple[float, ...],
         kind: BoundaryKind,
         /,
-    ):
+    ) -> None:
         if any(
             isinstance(value, (bool, np.bool_))
             or not isinstance(value, (int, np.integer))
@@ -137,7 +137,7 @@ class PrescribedPeriodicDisorder(StrictModule, NonTrainableState):
         basis_id: str,
         source_id: str,
         /,
-    ):
+    ) -> None:
         shifts = np.asarray(onsite_shifts)
         basis = str(basis_id).strip()
         source = str(source_id).strip()
@@ -179,7 +179,7 @@ class PeriodicFiniteOrbitalRealization(StrictModule, NonTrainableState):
         basis_id: str,
         orbital_labels: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(hamiltonian, PeriodicFiniteRealization) or not isinstance(
             overlap, PeriodicFiniteRealization
         ):
@@ -225,7 +225,7 @@ class PeriodicFiniteOrbitalPlan(StrictModule, NonTrainableState):
         /,
         *,
         disorder: PrescribedPeriodicDisorder | None = None,
-    ):
+    ) -> None:
         if not isinstance(pencil, PreparedPeriodicOrbitalPencil) or not isinstance(
             boundary, PeriodicFiniteBoundaryPlan
         ):

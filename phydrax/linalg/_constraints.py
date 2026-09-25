@@ -31,7 +31,7 @@ class ConstraintMap(StrictModule, NonTrainableState):
         /,
         *,
         constraint_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(full_space, AbstractVectorSpace) or not isinstance(
             reduced_space, AbstractVectorSpace
         ):

@@ -51,7 +51,7 @@ class GaussianErfVortexKernel3D(StrictModule, NonTrainableState):
     strength_semantics: str = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, *, series_threshold: float = 0.25):
+    def __init__(self, *, series_threshold: float = 0.25) -> None:
         threshold = float(series_threshold)
         if not math.isfinite(threshold) or not 0.0 < threshold <= 1.0:
             raise ValueError("series_threshold must be finite and lie in (0, 1].")

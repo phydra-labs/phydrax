@@ -73,7 +73,7 @@ class LaggedLinearSolveUpdate(AbstractNonlinearUpdate):
         linear_policy: LinearSolvePolicy | None = None,
         damping: float = 1.0,
         update_id: str = "lagged-linear-solve",
-    ):
+    ) -> None:
         if not callable(operator_function):
             raise TypeError("operator_function must be callable.")
         policy = _default_linear_policy() if linear_policy is None else linear_policy

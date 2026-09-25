@@ -198,7 +198,7 @@ class MileusnicSpindleInput(StrictModule, NonTrainableState):
         gamma_dynamic_pps: ArrayLike,
         gamma_static_pps: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.fascicle_length_over_optimal = _scalar(
             fascicle_length_over_optimal, "fascicle_length_over_optimal"
         )
@@ -290,7 +290,7 @@ class MileusnicSpindle2006Plan(StrictModule, NonTrainableState):
     maximum_step_s: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, *, maximum_step_s: float = 1.0e-4):
+    def __init__(self, *, maximum_step_s: float = 1.0e-4) -> None:
         maximum = float(maximum_step_s)
         if not isfinite(maximum) or maximum <= 0.0:
             raise ValueError("maximum_step_s must be positive and finite.")
@@ -326,7 +326,7 @@ class PreparedMileusnicSpindle2006(StrictModule):
         plan: MileusnicSpindle2006Plan,
         parameters: MileusnicSpindle2006Parameters,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, MileusnicSpindle2006Plan):
             raise TypeError("plan must be MileusnicSpindle2006Plan.")
         if not isinstance(parameters, MileusnicSpindle2006Parameters):

@@ -71,7 +71,7 @@ class ConstantPropertyLaw(StrictModule):
         value_unit: str,
         coordinate_unit: str,
         source_id: str,
-    ):
+    ) -> None:
         value_ = jnp.asarray(value)
         if value_.shape != () or jnp.issubdtype(value_.dtype, jnp.complexfloating):
             raise ValueError("Constant property value must be one real scalar.")
@@ -159,7 +159,7 @@ class TabulatedPropertyLaw(StrictModule):
         value_unit: str,
         coordinate_unit: str,
         source_id: str,
-    ):
+    ) -> None:
         nodes_ = jnp.asarray(nodes)
         values_ = jnp.asarray(values)
         if nodes_.ndim != 1 or nodes_.size < 2:
@@ -287,7 +287,7 @@ class ConcentrationTemperaturePropertyLaw(StrictModule):
         quantity: str,
         value_unit: str,
         source_id: str,
-    ):
+    ) -> None:
         concentration_nodes = jnp.asarray(concentration_nodes_mol_m3)
         temperature_nodes = jnp.asarray(temperature_nodes_k)
         table = jnp.asarray(values)

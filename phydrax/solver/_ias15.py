@@ -86,7 +86,7 @@ class IAS15Plan(StrictModule, NonTrainableState):
         maximum_steps_per_interval: int = 1024,
         corrector_iterations: int = 8,
         minimum_step: float = 1.0e-15,
-    ):
+    ) -> None:
         if relative_tolerance <= 0.0 or absolute_tolerance <= 0.0:
             raise ValueError("IAS15 tolerances must be positive.")
         if maximum_steps_per_interval <= 0 or corrector_iterations <= 0:

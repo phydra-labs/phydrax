@@ -30,7 +30,7 @@ class KahlerGaugeInvarianceReport(StrictModule, NonTrainableState):
         /,
         *,
         gauge_id: str,
-    ):
+    ) -> None:
         change = jnp.asarray(maximum_complex_hessian_change)
         tolerance_ = jnp.asarray(tolerance)
         if change.shape != () or tolerance_.shape != ():
@@ -58,7 +58,7 @@ class KahlerHolomorphicGauge(StrictModule):
         /,
         *,
         branch: int = 0,
-    ):
+    ) -> None:
         if not isinstance(base, KahlerPotentialGeometry):
             raise TypeError("base must be KahlerPotentialGeometry.")
         if not isinstance(provider, MultivariableHolomorphicPotentialProvider):

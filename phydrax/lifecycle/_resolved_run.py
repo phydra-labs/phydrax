@@ -173,7 +173,7 @@ class ResolvedRunSpec(StrictModule, NonTrainableState):
         repository_id: str,
         scheduler_id: str,
         auth_policy_id: str,
-    ):
+    ) -> None:
         scientific = _dependencies(scientific_dependencies, "scientific_dependencies")
         deployment = _dependencies(deployment_dependencies, "deployment_dependencies")
         all_dependencies = scientific + deployment

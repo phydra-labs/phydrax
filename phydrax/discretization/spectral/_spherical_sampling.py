@@ -79,7 +79,7 @@ class SphericalSamplePlan(StrictModule, NonTrainableState):
         maximum_factor_bytes: int = 1024 * 1024**2,
         _ordering: HealpixOrdering | None = None,
         _nside: int | None = None,
-    ):
+    ) -> None:
         points_ = jnp.asarray(points)
         if points_.ndim != 2 or points_.shape[1] != 3 or points_.shape[0] == 0:
             raise ValueError("Spherical sample points must have nonempty shape (n, 3).")
@@ -242,7 +242,7 @@ class PreparedSphericalSampleOperator(StrictModule, NonTrainableState):
         plan: SphericalSamplePlan,
         discretization: SphericalSpectralDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, SphericalSamplePlan):
             raise TypeError("plan must be a SphericalSamplePlan.")
         if not isinstance(discretization, SphericalSpectralDiscretization):

@@ -30,7 +30,7 @@ class ConvexConstraintEvidence(StrictModule, NonTrainableState):
     kind: ConvexConstraintKind = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: ConvexConstraintKind, evidence_id: str, /):
+    def __init__(self, kind: ConvexConstraintKind, evidence_id: str, /) -> None:
         if kind not in ("convex-upper", "concave-lower", "affine-equality"):
             raise ValueError("Unknown convex constraint evidence kind.")
         identifier = str(evidence_id)
@@ -97,7 +97,7 @@ class ConvexMixedIntegerNonlinearProgram(StrictModule):
         args: Any = None,
         objective_evidence_id: str,
         program_id: str = "convex-mixed-integer-nonlinear-program",
-    ):
+    ) -> None:
         if not callable(objective) or not callable(constraints):
             raise TypeError("objective and constraints must be callable.")
         lower = jnp.asarray(variable_lower)

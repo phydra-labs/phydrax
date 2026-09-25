@@ -134,7 +134,7 @@ class DeterministicFeedbackGameProblem(StrictModule):
         terminal_costs: Sequence[GameTerminalCost],
         args: Any = None,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(dynamics, DiscreteControlDynamics):
             raise TypeError(
                 "DeterministicFeedbackGameProblem dynamics must be DiscreteControlDynamics."
@@ -215,7 +215,7 @@ class BoundGameInputPolicy(AbstractInputPolicy):
         /,
         *,
         policy_id: str,
-    ):
+    ) -> None:
         if not callable(policy):
             raise TypeError("policy must be callable.")
         if not isinstance(problem, DeterministicFeedbackGameProblem):
@@ -302,7 +302,7 @@ class ILQGameScaling(StrictModule):
         /,
         *,
         scaling_id: str | None = None,
-    ):
+    ) -> None:
         state = _positive_real_vector(state_scales, "state_scales")
         control = _positive_real_vector(control_scales, "control_scales")
         cost = _positive_real_vector(cost_scales, "cost_scales")

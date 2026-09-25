@@ -164,7 +164,7 @@ def _constraint_layout(
         *,
         lower_name,
         upper_name,
-    ):
+    ) -> None:
         nonlocal offset
         lower_flat = materialize_dynamic(lower, template, name=lower_name)
         upper_flat = materialize_dynamic(upper, template, name=upper_name)
@@ -466,7 +466,7 @@ class FilterGlobalization(StrictModule):
         violation_margin: float = 1e-4,
         correction_regularization: float = 1e-10,
         correction_limit: float = 2.0,
-    ):
+    ) -> None:
         objective = float(objective_margin)
         violation = float(violation_margin)
         regularization = float(correction_regularization)
@@ -537,7 +537,7 @@ class AugmentedLagrangian(AbstractMinimizationMethod):
         required_feasibility_reduction: float = 0.25,
         maximum_outer_steps: int = 20,
         inner_maximum_steps: int = 100,
-    ):
+    ) -> None:
         penalty = float(initial_penalty)
         increase = float(penalty_increase)
         maximum = float(maximum_penalty)
@@ -630,7 +630,7 @@ class SQP(AbstractMinimizationMethod):
         max_dense_dimension: int = 512,
         active_tolerance: float = 1e-8,
         hessian_update: Literal["bfgs", "sr1", "exact"] = "bfgs",
-    ):
+    ) -> None:
         search = ArmijoLineSearch() if line_search is None else line_search
         scalars = tuple(
             float(value)

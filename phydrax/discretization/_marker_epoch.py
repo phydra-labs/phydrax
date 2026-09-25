@@ -35,7 +35,7 @@ class MarkerEpochPlan(StrictModule, NonTrainableState):
         *,
         active_mask: ArrayLike | None = None,
         epoch_id: str | None = None,
-    ):
+    ) -> None:
         ids = np.asarray(marker_ids)
         weights = np.asarray(quadrature_weight)
         active = (
@@ -116,7 +116,7 @@ class MarkerEpochTransferPlan(StrictModule, NonTrainableState):
         *,
         differentiation_policy: MarkerTopologyDifferentiationPolicy = "frozen-schedule",
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         matrix = np.asarray(primal)
         expected = (target.capacity, source.capacity)
         tolerance_ = float(tolerance)
@@ -265,7 +265,7 @@ class MarkerMechanicsMigrationPlan(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(transfer, MarkerEpochTransferPlan):
             raise TypeError("transfer must be MarkerEpochTransferPlan.")
         dimension = int(ambient_dimension)

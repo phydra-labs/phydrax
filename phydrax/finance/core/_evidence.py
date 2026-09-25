@@ -43,7 +43,7 @@ class FinanceEvidenceBinding(StrictModule):
         numerical_evidence_ids: Sequence[str],
         use_evidence_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         data = _evidence_group(data_evidence_ids, "data_evidence_ids")
         model = _evidence_group(model_evidence_ids, "model_evidence_ids")
         numerical = _evidence_group(numerical_evidence_ids, "numerical_evidence_ids")

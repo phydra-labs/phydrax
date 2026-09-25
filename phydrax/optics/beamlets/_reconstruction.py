@@ -45,7 +45,7 @@ class BeamletReconstructionPlan(StrictModule, NonTrainableState):
         singular_tolerance: float = 1e-12,
         maximum_condition: float = 1e12,
         caustic_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(space, PlaneFieldSpace):
             raise TypeError("space must be a PlaneFieldSpace.")
         coordinate = jnp.asarray(longitudinal_coordinate)
@@ -103,7 +103,7 @@ class PreparedBeamletReconstruction(StrictModule, NonTrainableState):
         *,
         point_count: int,
         tile_count: int,
-    ):
+    ) -> None:
         if not isinstance(plan, BeamletReconstructionPlan):
             raise TypeError("plan must be a BeamletReconstructionPlan.")
         points = jnp.asarray(world_point_tiles)

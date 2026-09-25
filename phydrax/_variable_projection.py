@@ -142,7 +142,7 @@ class LinearNuisancePlan(StrictModule, NonTrainableState):
         *,
         prior_precision: ArrayLike | None = None,
         prior_mean: ArrayLike | None = None,
-    ):
+    ) -> None:
         matrix = jnp.asarray(design)
         if matrix.ndim != 2 or matrix.shape[0] != layout.size or matrix.shape[1] == 0:
             raise ValueError(

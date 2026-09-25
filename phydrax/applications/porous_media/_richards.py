@@ -104,7 +104,7 @@ class RichardsPlan(StrictModule):
         derivative_policy=None,
         pressure_scale_Pa=1.0e4,
         mass_rate_scale_kg_s=1.0,
-    ):
+    ) -> None:
         if not isinstance(material, PorousMaterial) or not isinstance(
             retention, VanGenuchtenMualem
         ):

@@ -170,7 +170,7 @@ class AbstractContactTransportLaw(StrictModule, NonTrainableState):
 class FrictionlessTangentialLaw(AbstractTangentialContactLaw):
     _law_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._law_id = "frictionless-tangential-contact"
 
     @property
@@ -211,7 +211,7 @@ class FrictionlessTangentialLaw(AbstractTangentialContactLaw):
 class IdentityInterfaceEvolution(AbstractInterfaceEvolutionLaw):
     _law_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._law_id = "identity-contact-evolution"
 
     @property
@@ -255,7 +255,7 @@ class IdentityInterfaceEvolution(AbstractInterfaceEvolutionLaw):
 class NoContactTransport(AbstractContactTransportLaw):
     _law_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._law_id = "no-contact-transport"
 
     @property
@@ -305,7 +305,7 @@ class ContactClosurePlan(StrictModule, NonTrainableState):
         tangential: AbstractTangentialContactLaw | None = None,
         evolution: AbstractInterfaceEvolutionLaw | None = None,
         transport: AbstractContactTransportLaw | None = None,
-    ):
+    ) -> None:
         if not isinstance(normal, AbstractNormalContactLaw):
             raise TypeError("normal must be a contact normal law.")
         if not isinstance(material_table, ContactMaterialPairTable):

@@ -191,7 +191,7 @@ class LocallyLinearEmbeddingModel(AbstractFittedModel):
         n_neighbors: int,
         variant: LLEVariant,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         x = jnp.asarray(training_features)
         embedding = jnp.asarray(training_embedding)
         self.training_features = x
@@ -280,7 +280,7 @@ class LocallyLinearEmbeddingRecipe(AbstractRecipe):
         n_neighbors: int = 8,
         regularization: float = 1e-3,
         variant: LLEVariant = "standard",
-    ):
+    ) -> None:
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
         if int(n_neighbors) <= 0:

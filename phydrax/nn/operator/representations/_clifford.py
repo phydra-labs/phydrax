@@ -44,7 +44,7 @@ class CliffordGradeRepresentation(StrictModule, NonTrainableState):
         algebra: CliffordAlgebraSpec,
         multiplicities: Sequence[int],
         /,
-    ):
+    ) -> None:
         if not isinstance(algebra, CliffordAlgebraSpec):
             raise TypeError("algebra must be a CliffordAlgebraSpec.")
         resolved = tuple(multiplicities)

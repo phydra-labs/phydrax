@@ -23,7 +23,7 @@ class CompressibleKineticFixedStepMethod(AbstractFixedStepMethod, NonTrainableSt
     runtime: CompressibleKineticRuntimePlan
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, runtime: CompressibleKineticRuntimePlan, /):
+    def __init__(self, runtime: CompressibleKineticRuntimePlan, /) -> None:
         if not isinstance(runtime, CompressibleKineticRuntimePlan):
             raise TypeError("runtime must be CompressibleKineticRuntimePlan.")
         self.runtime = runtime

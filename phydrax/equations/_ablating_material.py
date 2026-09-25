@@ -92,7 +92,7 @@ class PorousAblatingMaterialPlan(StrictModule, NonTrainableState):
         reference_temperature: float = 300.0,
         minimum_temperature: float = 50.0,
         maximum_temperature: float = 5000.0,
-    ):
+    ) -> None:
         cp = np.asarray(component_heat_capacities, dtype=np.float64)
         conductivity = np.asarray(component_conductivities, dtype=np.float64)
         reference_energy = np.asarray(component_reference_energies, dtype=np.float64)

@@ -42,7 +42,7 @@ class EnforcementOptions(StrictModule):
         gate_linear_fraction: float = 0.5,
         num_reference: int = 3_000_000,
         sampler: str = "latin_hypercube",
-    ):
+    ) -> None:
         if gate_method not in ("auto", "global_r_equivalence", "compact"):
             raise ValueError("Unsupported enforcement gate method.")
         saturation = float(gate_saturation_fraction)

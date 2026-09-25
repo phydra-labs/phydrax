@@ -65,7 +65,7 @@ class MeanShift(AbstractRecipe):
         tolerance: float = 1e-4,
         initialization: ClusterInitialization = "first",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         resolved_merge_tolerance = (
             0.5 * jnp.asarray(bandwidth) if merge_tolerance is None else merge_tolerance
         )
@@ -220,7 +220,7 @@ class AffinityPropagation(AbstractRecipe):
         max_iterations: int = 128,
         tolerance: float = 1e-4,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if exemplar_capacity <= 0 or max_iterations <= 0:
             raise ValueError("exemplar_capacity and max_iterations must be positive.")
         self.exemplar_capacity = int(exemplar_capacity)

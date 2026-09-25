@@ -139,7 +139,7 @@ class GloballyAffineSOCPropertyLaw(StrictModule):
         quantity: str,
         value_unit: str,
         source_id: str,
-    ):
+    ) -> None:
         intercept_array = _real_array(intercept, "intercept")
         slope_array = _real_array(slope, "slope")
         if intercept_array.shape != () or slope_array.shape != ():
@@ -365,7 +365,7 @@ class ExactAffineECMEstimationPlan(StrictModule, NonTrainableState):
         hysteresis: bool = False,
         capacity_fade: bool = False,
         parameter_estimation: bool = False,
-    ):
+    ) -> None:
         if not isinstance(ecm_plan, ThermalEquivalentCircuitPlan):
             raise TypeError("ecm_plan must be a ThermalEquivalentCircuitPlan.")
         interval = _real_array(state_of_charge_interval, "state_of_charge_interval")
@@ -535,7 +535,7 @@ class PreparedExactAffineECMEstimation(StrictModule):
         process_noise_covariance_rate: Array,
         voltage_variance_squared: Array,
         prepared_id: str,
-    ):
+    ) -> None:
         self.plan = plan
         self.series_resistance_ohm = series_resistance_ohm
         self.branch_resistances_ohm = branch_resistances_ohm

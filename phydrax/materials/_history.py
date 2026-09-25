@@ -17,7 +17,7 @@ class MaterialHistory(StrictModule, NonTrainableState):
     phase_fractions: Array
     history_id: str = eqx.field(static=True)
 
-    def __init__(self, times_s, temperatures_k, phase_fractions, /):
+    def __init__(self, times_s, temperatures_k, phase_fractions, /) -> None:
         t = np.asarray(times_s, float)
         T = np.asarray(temperatures_k, float)
         p = np.asarray(phase_fractions, float)

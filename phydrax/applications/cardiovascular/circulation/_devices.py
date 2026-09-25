@@ -85,7 +85,7 @@ class HydraulicDeviceComponent(PressureFlowComponent):
         *,
         component_kind: str,
         parameters: tuple[tuple[str, float | str], ...],
-    ):
+    ) -> None:
         PressureFlowComponent.__init__(
             self,
             dae_component,
@@ -110,7 +110,7 @@ class PumpHeadFlowMap(StrictModule, NonTrainableState):
         speed_axis_rpm: ArrayLike,
         head_kPa: ArrayLike,
         /,
-    ):
+    ) -> None:
         name = str(map_name).strip()
         flow_host = np.asarray(flow_axis_mm3_per_ms, dtype=np.float64)
         speed_host = np.asarray(speed_axis_rpm, dtype=np.float64)
@@ -230,7 +230,7 @@ class PacemakerControllerPlan(StrictModule, NonTrainableState):
         pulse_width_ms: float,
         pulse_amplitude_mA: float,
         /,
-    ):
+    ) -> None:
         lower = float(lower_rate_bpm)
         upper = float(upper_rate_bpm)
         refractory = float(refractory_period_ms)
@@ -459,7 +459,7 @@ class PumpControllerPlan(StrictModule, NonTrainableState):
         minimum_integral_mm3: float,
         maximum_integral_mm3: float,
         timing_tolerance_ms: float = 1.0e-9,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -760,7 +760,7 @@ class Cannula(StrictModule, NonTrainableState):
         *,
         dynamic_viscosity_mg_per_mm_ms: float = 3.5e-3,
         quadratic_loss_kPa_ms2_per_mm6: float = 0.0,
-    ):
+    ) -> None:
         values = _validated_hydraulic_parameters(
             cannula_id,
             length_mm,
@@ -821,7 +821,7 @@ class TubingSegment(StrictModule, NonTrainableState):
         *,
         dynamic_viscosity_mg_per_mm_ms: float = 3.5e-3,
         quadratic_loss_kPa_ms2_per_mm6: float = 0.0,
-    ):
+    ) -> None:
         values = _validated_hydraulic_parameters(
             tubing_id,
             length_mm,
@@ -878,7 +878,7 @@ class HydraulicOxygenator(StrictModule, NonTrainableState):
         /,
         *,
         quadratic_loss_kPa_ms2_per_mm6: float = 0.0,
-    ):
+    ) -> None:
         identifier = str(oxygenator_id).strip()
         linear = float(linear_resistance_kPa_ms_per_mm3)
         quadratic = float(quadratic_loss_kPa_ms2_per_mm6)
@@ -1080,7 +1080,7 @@ class ECMOCircuitPlan(StrictModule, NonTrainableState):
         oxygen_model: MembraneOxygenatorModel | None = None,
         bisection_steps: int = 64,
         residual_tolerance_kPa: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(pump_map, PumpHeadFlowMap):
             raise TypeError("pump_map must be a PumpHeadFlowMap.")
         if not isinstance(drainage_cannula, Cannula) or not isinstance(

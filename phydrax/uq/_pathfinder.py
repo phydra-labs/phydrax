@@ -54,7 +54,7 @@ class PathfinderResult(StrictModule):
         approximation_duration_seconds: float,
         sampling_duration_seconds: float,
         optimization_steps: int,
-    ):
+    ) -> None:
         self.problem = problem
         self.state = state
         self.path = path

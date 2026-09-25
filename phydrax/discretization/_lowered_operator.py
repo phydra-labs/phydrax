@@ -33,7 +33,7 @@ class LoweredBufferSpec(StrictModule, NonTrainableState):
         /,
         *,
         placement: str = "device",
-    ):
+    ) -> None:
         identifier = str(name)
         shape_ = tuple(shape)
         dtype_ = str(np.dtype(dtype))
@@ -80,7 +80,7 @@ class LoweredKernel(StrictModule):
         *,
         halo_widths: Sequence[int] = (),
         implementation_id: str,
-    ):
+    ) -> None:
         identifier = str(name)
         implementation = str(implementation_id)
         reads_ = tuple(str(value) for value in reads)
@@ -130,7 +130,7 @@ class LoweredOperatorProgram(StrictModule, NonTrainableState):
         buffers: Sequence[LoweredBufferSpec],
         kernels: Sequence[LoweredKernel],
         /,
-    ):
+    ) -> None:
         buffers_ = tuple(buffers)
         kernels_ = tuple(kernels)
         if not buffers_ or any(

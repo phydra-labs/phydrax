@@ -70,7 +70,7 @@ class WaveDarkMatterStepPolicy(StrictModule, NonTrainableState):
         zero_mode_absolute_tolerance: float = 1.0e-10,
         relative_amplitude_floor: float = 1.0e-10,
         differentiability: WaveDarkMatterDifferentiability = "smooth_fixed_grid",
-    ):
+    ) -> None:
         values = (
             float(maximum_phase_radians),
             float(minimum_de_broglie_cells),
@@ -221,7 +221,7 @@ class WaveDarkMatterPlan(StrictModule, NonTrainableState):
         step_policy: WaveDarkMatterStepPolicy | None = None,
         dealiasing: AbstractDealiasingPlan | None = None,
         scale: CosmologyScaleContract = CODE_COSMOLOGY_SCALE,
-    ):
+    ) -> None:
         mass = float(boson_mass)
         gravity = float(gravitational_constant)
         hbar = float(reduced_planck_constant)
@@ -338,7 +338,7 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
         dealiasing: PreparedDealiasingPlan,
         background: FLRWBackground,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, WaveDarkMatterPlan):
             raise TypeError("plan must be WaveDarkMatterPlan.")
         if not isinstance(discretization, TensorSpectralDiscretization):

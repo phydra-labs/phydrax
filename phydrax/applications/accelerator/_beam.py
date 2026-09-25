@@ -39,7 +39,7 @@ class AcceleratorConvention(StrictModule, NonTrainableState):
         *,
         longitudinal_sign: str = "positive-late",
         momentum_normalization: str = "px-over-p0,py-over-p0,delta-p-over-p0",
-    ):
+    ) -> None:
         sign = str(longitudinal_sign).strip()
         normalization = str(momentum_normalization).strip()
         if not sign or not normalization:
@@ -84,7 +84,7 @@ class AcceleratorBunch(StrictModule, NonTrainableState):
         reference_charge: float,
         convention: AcceleratorConvention | None = None,
         bunch_id: str,
-    ):
+    ) -> None:
         coordinates_ = jnp.asarray(coordinates)
         weights_ = jnp.asarray(weights, dtype=coordinates_.dtype)
         identifiers = jnp.asarray(particle_ids, dtype=jnp.int32)
@@ -163,7 +163,7 @@ class BeamlinePlan(StrictModule, NonTrainableState):
         element_ids,
         active: ArrayLike | None = None,
         convention: AcceleratorConvention | None = None,
-    ):
+    ) -> None:
         kinds_ = np.asarray(kinds)
         lengths_ = np.asarray(lengths, dtype=np.float64)
         strengths_ = np.asarray(strengths, dtype=np.float64)

@@ -170,7 +170,7 @@ class FinitePatchDCPlan(StrictModule, NonTrainableState):
         relative_tolerance: float = 1e-9,
         absolute_tolerance: float = 1e-11,
         max_steps: int = 2000,
-    ):
+    ) -> None:
         _validate_connected_tetrahedra(mesh)
         if not isinstance(survey, ElectricalSurvey):
             raise TypeError("survey must be ElectricalSurvey.")
@@ -329,7 +329,7 @@ class PreparedDC(StrictModule, NonTrainableState):
     template: la.LinearSolveTemplate
     check_policy: la.LinearSolveCheckPolicy
 
-    def __init__(self, plan: FinitePatchDCPlan, /):
+    def __init__(self, plan: FinitePatchDCPlan, /) -> None:
         if not isinstance(plan, FinitePatchDCPlan):
             raise TypeError("plan must be FinitePatchDCPlan.")
         discretization = FiniteElementPlan(
@@ -505,7 +505,7 @@ class PreparedDCConductivity(StrictModule, NonTrainableState):
         /,
         *,
         unit: UnitDefinition = DC_CONDUCTIVITY_UNIT,
-    ):
+    ) -> None:
         if not isinstance(dc, PreparedDC):
             raise TypeError("dc must be PreparedDC.")
         tensor = _conductivity_tensor(

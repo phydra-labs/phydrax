@@ -62,7 +62,7 @@ class AtomisticRerunPlan(StrictModule):
         state_indices=None,
         chunk_size: int = 64,
         reporter=None,
-    ):
+    ) -> None:
         if not isinstance(source, AbstractAtomisticTrajectorySourcePlan):
             raise TypeError("source must be an atomistic trajectory source plan.")
         if not isinstance(

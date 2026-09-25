@@ -65,7 +65,7 @@ class DanceMapFile:
         upstream_version: str,
         reference_sequence_id: str,
         parent_case_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(source, ReferenceArtifactManifest):
             raise TypeError("source must be a ReferenceArtifactManifest.")
         path_ = str(Path(path).expanduser().resolve())
@@ -151,7 +151,7 @@ class DanceMapAdmission(StrictModule, NonTrainableState):
         files: tuple[DanceMapFile, ...],
         category_counts: tuple[int, ...],
         included_mapping_categories: tuple[str, ...],
-    ):
+    ) -> None:
         if not isinstance(batch, MutationProfileBatch):
             raise TypeError("batch must be a MutationProfileBatch.")
         if (

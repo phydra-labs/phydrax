@@ -134,7 +134,7 @@ class ProteinClosureGroup:
     target_lengths: tuple[float, ...]
     tolerance: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.kind not in ("proline-ring", "aromatic-ring") or not self.group_id:
             raise ValueError(
                 "Closure groups must identify a supported rigid protein ring."

@@ -29,7 +29,7 @@ class ProjectiveInvariantPotential(StrictModule, ParameterOwner):
         width: int = 32,
         depth: int = 2,
         potential_id: str = "projective-invariant-potential",
-    ):
+    ) -> None:
         dimension = int(homogeneous_dimension)
         if dimension < 2:
             raise ValueError("homogeneous_dimension must be at least two.")

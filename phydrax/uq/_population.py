@@ -64,7 +64,7 @@ class EventPosterior(StrictModule, NonTrainableState):
         source_effective_sample_size: ArrayLike,
         log_evidence: ArrayLike | None = None,
         evidence_kind: EvidenceKind = "omitted-constant",
-    ):
+    ) -> None:
         samples, weights, active, shape = _flatten_target(posterior)
         del samples
         if posterior.support_valid is not None and not bool(
@@ -293,7 +293,7 @@ class SelectionInjectionSet(StrictModule, NonTrainableState):
         campaign_id: str,
         parameterization_id: str,
         mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         leaves = tuple(
             jnp.asarray(value) for value in jax.tree_util.tree_leaves(parameters)
         )
@@ -451,7 +451,7 @@ class PopulationPosteriorTerm(AbstractPosteriorTerm):
         minimum_event_effective_sample_size: float = 20.0,
         include_event_evidence: bool = False,
         label: str = "population_posterior_recycling",
-    ):
+    ) -> None:
         if not isinstance(batch, PopulationSampleBatch) or not callable(
             population_log_prob
         ):
@@ -569,7 +569,7 @@ class PoissonPopulationPosteriorTerm(AbstractPosteriorTerm):
         minimum_event_effective_sample_size: float = 20.0,
         include_event_evidence: bool = False,
         label: str = "poisson_population_process",
-    ):
+    ) -> None:
         if not callable(rate) or not isinstance(selection, SelectionInjectionSet):
             raise TypeError(
                 "Poisson population term requires rate and selection contracts."

@@ -46,7 +46,7 @@ class PfaffianControlPlan(StrictModule):
         determinant_tolerance: float = 1e-8,
         minimum_magnitude: float = 1e-14,
         maximum_phase_magnitude: float = np.pi,
-    ):
+    ) -> None:
         maximum = int(maximum_dimension)
         antisymmetry = float(antisymmetry_tolerance)
         determinant = float(determinant_tolerance)
@@ -188,7 +188,7 @@ class WardIdentityPlan(StrictModule):
         absolute_tolerance: float,
         standard_error_multiplier: float = 3.0,
         maximum_samples: int = 4096,
-    ):
+    ) -> None:
         expected = float(expected_bosonic_action)
         absolute = float(absolute_tolerance)
         multiplier = float(standard_error_multiplier)

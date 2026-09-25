@@ -55,7 +55,7 @@ class PDEConditionEncoder(StrictModule):
         dimension_basis: Sequence[str],
         max_tree_depth: int = 32,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         if min(width, depth, max_tree_depth) <= 0:
             raise ValueError("PDE encoder dimensions must be positive.")
         basis = tuple(dimension_basis)

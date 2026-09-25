@@ -63,7 +63,7 @@ class ClosureField(StrictModule, NonTrainableState):
         units: str,
         schema_id: str,
         lineage_ids: tuple[str, ...],
-    ):
+    ) -> None:
         array = jnp.asarray(values)
         name_ = str(name).strip()
         units_ = str(units).strip()
@@ -144,7 +144,7 @@ class ClosureAnalysisNode(StrictModule, NonTrainableState):
         output_name: str,
         output_units: str,
         parameters: tuple[tuple[str, str], ...] = (),
-    ):
+    ) -> None:
         kind_ = str(kind).strip()
         inputs = tuple(str(value).strip() for value in input_ids)
         output = str(output_name).strip()
@@ -205,7 +205,7 @@ class ClosureAnalysisDAG(StrictModule, NonTrainableState):
         external_input_ids: tuple[str, ...],
         nodes: tuple[ClosureAnalysisNode, ...] = (),
         /,
-    ):
+    ) -> None:
         external = tuple(str(value).strip() for value in external_input_ids)
         nodes_ = tuple(nodes)
         if (
@@ -259,7 +259,7 @@ class ClosureTarget(StrictModule, NonTrainableState):
         *,
         target_kind: ClosureTargetKind,
         schema_id: str,
-    ):
+    ) -> None:
         if not isinstance(node, ClosureAnalysisNode):
             raise TypeError("node must be a ClosureAnalysisNode.")
         array = jnp.asarray(values)
@@ -319,7 +319,7 @@ class ClosureQualityReport(StrictModule, NonTrainableState):
         /,
         *,
         maximum_allowed: float | None = None,
-    ):
+    ) -> None:
         values = tuple(targets)
         if not values or any(not isinstance(value, ClosureTarget) for value in values):
             raise ValueError("Quality reports require at least one closure target.")

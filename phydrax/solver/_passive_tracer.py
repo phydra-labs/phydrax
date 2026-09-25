@@ -51,7 +51,7 @@ class MACPassiveTracerFixedStepMethod(AbstractFixedStepMethod):
         velocity_from_state: Callable[[PyTree[Array]], FaceVelocity],
         velocity_provider_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(base_method, AbstractFixedStepMethod):
             raise TypeError("base_method must implement AbstractFixedStepMethod.")
         if not isinstance(transport, PreparedMACPassiveTracerMacCormack):

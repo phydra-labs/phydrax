@@ -59,7 +59,7 @@ class LinearElasticMaterial(StrictModule, NonTrainableState):
         compression_allowable: ArrayLike | None = None,
         thermal_expansion: ArrayLike = 0.0,
         material_id: str | None = None,
-    ):
+    ) -> None:
         young = _positive_scalar("young_modulus", young_modulus)
         shear = _positive_scalar("shear_modulus", shear_modulus).astype(young.dtype)
         density_ = _positive_scalar("density", density).astype(young.dtype)
@@ -134,7 +134,7 @@ class AxialSection(StrictModule, NonTrainableState):
         cost_per_mass: ArrayLike = 0.0,
         carbon_per_mass: ArrayLike = 0.0,
         section_id: str | None = None,
-    ):
+    ) -> None:
         area_ = _positive_scalar("area", area)
         cost = jnp.asarray(cost_per_mass, dtype=area_.dtype)
         carbon = jnp.asarray(carbon_per_mass, dtype=area_.dtype)
@@ -187,7 +187,7 @@ class BeamSection(StrictModule, NonTrainableState):
         cost_per_mass: ArrayLike = 0.0,
         carbon_per_mass: ArrayLike = 0.0,
         section_id: str | None = None,
-    ):
+    ) -> None:
         area_ = _positive_scalar("area", area)
         properties = tuple(
             _positive_scalar(name, value).astype(area_.dtype)
@@ -246,7 +246,7 @@ class AbstractSectionFamily(StrictModule, NonTrainableState):
 class RectangularSectionFamily(AbstractSectionFamily):
     """Rectangular section generated from width and depth."""
 
-    def __init__(self, *, family_id: str = "section-family:rectangle"):
+    def __init__(self, *, family_id: str = "section-family:rectangle") -> None:
         self.family_id = str(family_id)
 
     def section(self, parameters: ArrayLike, /) -> BeamSection:
@@ -279,7 +279,7 @@ class RectangularSectionFamily(AbstractSectionFamily):
 class CircularSectionFamily(AbstractSectionFamily):
     """Solid circular section generated from diameter."""
 
-    def __init__(self, *, family_id: str = "section-family:circle"):
+    def __init__(self, *, family_id: str = "section-family:circle") -> None:
         self.family_id = str(family_id)
 
     def section(self, parameters: ArrayLike, /) -> BeamSection:
@@ -302,7 +302,7 @@ class CircularSectionFamily(AbstractSectionFamily):
 class TubeSectionFamily(AbstractSectionFamily):
     """Circular tube generated from outer diameter and thickness."""
 
-    def __init__(self, *, family_id: str = "section-family:tube"):
+    def __init__(self, *, family_id: str = "section-family:tube") -> None:
         self.family_id = str(family_id)
 
     def section(self, parameters: ArrayLike, /) -> BeamSection:
@@ -349,7 +349,7 @@ class MemberPropertyMap(StrictModule, NonTrainableState):
         *,
         fabrication_group: ArrayLike | None = None,
         actuator_group: ArrayLike | None = None,
-    ):
+    ) -> None:
         materials_ = tuple(materials)
         sections_ = tuple(sections)
         if not materials_ or any(
@@ -489,7 +489,7 @@ class SectionCatalog(StrictModule, NonTrainableState):
         /,
         *,
         catalog_id: str | None = None,
-    ):
+    ) -> None:
         axis = FiniteAxis(values)
         labels_ = tuple(str(value) for value in labels)
         if len(labels_) != axis.size or len(set(labels_)) != axis.size:

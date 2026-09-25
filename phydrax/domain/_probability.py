@@ -49,7 +49,7 @@ class ReferenceTransportEvidence(StrictModule, NonTrainableState):
         maximum_round_trip_residual: float = 0.0,
         orientation_preserving: bool = True,
         tail_open: bool = False,
-    ):
+    ) -> None:
         if not provider:
             raise ValueError("Reference transport provider identity must be nonempty.")
         if reference_measure not in ("uniform", "standard-normal"):
@@ -86,7 +86,7 @@ class ReferenceTransport(StrictModule, NonTrainableState):
         event_shape: tuple[int, ...] = (),
         log_abs_det_jacobian: Callable | None = None,
         evidence: ReferenceTransportEvidence | None = None,
-    ):
+    ) -> None:
         if reference_measure not in ("uniform", "standard-normal"):
             raise ValueError("reference_measure must be 'uniform' or 'standard-normal'.")
         if not callable(forward) or not callable(inverse):
@@ -242,7 +242,7 @@ class ProbabilityDomain(AbstractScalarDomain):
         *,
         label: str,
         transport: ReferenceTransport | None = None,
-    ):
+    ) -> None:
         if not isinstance(distribution, _ProbabilityLaw):
             raise TypeError(
                 "distribution must provide sample, icdf, log_prob, contains, support, and equivalent."

@@ -48,7 +48,7 @@ class ParticleConversionSensitivityPolicy(StrictModule, NonTrainableState):
         temperature_margin: float = 1.0e-6,
         phase_margin: float = 1.0e-10,
         reaction_margin: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(mode, BranchDifferentiationPolicy):
             raise TypeError("mode must be a BranchDifferentiationPolicy.")
         match mode:

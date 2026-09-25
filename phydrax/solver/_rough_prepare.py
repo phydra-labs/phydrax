@@ -40,7 +40,7 @@ class RoughEvolutionPolicy(StrictModule):
         candidate_solvers: tuple[AbstractRoughSolver, ...] = (Davie(), RoughEuler()),
         maximum_depth: int = 4,
         differentiation: Literal["fixed-route"] = "fixed-route",
-    ):
+    ) -> None:
         selected = tuple(candidate_solvers)
         if not selected or any(
             not isinstance(item, AbstractRoughSolver) for item in selected

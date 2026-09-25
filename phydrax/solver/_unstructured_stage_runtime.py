@@ -54,7 +54,7 @@ class PreparedUnstructuredSSPRK3Runtime(StrictModule, NonTrainableState):
         *,
         dynamics_id: str,
         executor_id: str,
-    ):
+    ) -> None:
         if not callable(stage_executor):
             raise TypeError("stage_executor must be callable.")
         dynamics = str(dynamics_id)

@@ -101,7 +101,7 @@ class _ExactFirstOrderGates(StrictModule, NonTrainableState):
     indices: tuple[int, ...] = eqx.field(static=True)
     substrate_id: str = eqx.field(static=True)
 
-    def __init__(self, indices: tuple[int, ...], /, *, substrate_id: str):
+    def __init__(self, indices: tuple[int, ...], /, *, substrate_id: str) -> None:
         resolved = tuple(indices)
         if not resolved or any(index < 0 for index in resolved):
             raise ValueError("Exact gate indices must be non-empty and nonnegative.")

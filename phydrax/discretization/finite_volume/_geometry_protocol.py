@@ -166,7 +166,7 @@ class FiniteVolumeStageFaceLayout(StrictModule, NonTrainableState):
         quadrature_shape: tuple[int, int],
         block_id: str,
         block_kind: str = "physical",
-    ):
+    ) -> None:
         identifier = _canonical_identifier(block_id, "block_id")
         policy_count = _validated_boundary_policy_count(boundary_policy_count)
         ids = np.asarray(face_ids)
@@ -314,7 +314,7 @@ class FiniteVolumeStageFaceBlock(StrictModule, NonTrainableState):
         quadrature_points: ArrayLike,
         quadrature_weights: ArrayLike,
         quadrature_grid_normal_velocity: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(layout, FiniteVolumeStageFaceLayout):
             raise TypeError("layout must be FiniteVolumeStageFaceLayout.")
 
@@ -453,7 +453,7 @@ class FiniteVolumeStageGeometryEvidence(StrictModule, NonTrainableState):
         status: ArrayLike,
         evidence_version: ArrayLike,
         policy_id: str,
-    ):
+    ) -> None:
         policy = _canonical_identifier(policy_id, "policy_id")
         coordinate_defect = jnp.asarray(coordinate_effective_volume_defect)
         coordinate_tolerance = jnp.asarray(coordinate_effective_volume_tolerance)
@@ -582,7 +582,7 @@ class ALEGeometryConsistencyPolicy(StrictModule, NonTrainableState):
         relative_tolerance: float = 1.0e-8,
         reduction_safety_factor: float = 0.9,
         minimum_reduction_factor: float = 0.1,
-    ):
+    ) -> None:
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
         safety = float(reduction_safety_factor)
@@ -750,7 +750,7 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
         active_cell_mask: ArrayLike,
         face_blocks: tuple[FiniteVolumeStageFaceBlock, ...],
         evidence: FiniteVolumeStageGeometryEvidence,
-    ):
+    ) -> None:
         epoch = _canonical_identifier(topology_epoch_id, "topology_epoch_id")
         family_id = _canonical_identifier(
             geometry_family_id,

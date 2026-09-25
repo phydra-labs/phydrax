@@ -105,7 +105,7 @@ class DepositBootstrapInstrument(StrictModule):
         end_time: float,
         accrual_fraction: float,
         quote_weight: float = 1.0,
-    ):
+    ) -> None:
         start = _time(start_time, "start_time")
         end = _time(end_time, "end_time")
         if end <= start:
@@ -133,7 +133,7 @@ class ZeroRateBootstrapInstrument(StrictModule):
         curve_id: str,
         maturity: float,
         quote_weight: float = 1.0,
-    ):
+    ) -> None:
         maturity_ = _positive(maturity, "maturity")
         self.instrument_id = _identifier(instrument_id, "instrument_id")
         self.curve_id = _identifier(curve_id, "curve_id")
@@ -160,7 +160,7 @@ class ForwardRateBootstrapInstrument(StrictModule):
         end_time: float,
         accrual_fraction: float,
         quote_weight: float = 1.0,
-    ):
+    ) -> None:
         start = _time(start_time, "start_time")
         end = _time(end_time, "end_time")
         if end <= start:
@@ -198,7 +198,7 @@ class ParSwapBootstrapInstrument(StrictModule):
         accrual_fractions: ArrayLike,
         valid: ArrayLike,
         quote_weight: float = 1.0,
-    ):
+    ) -> None:
         start, end, payment, accrual, mask = _schedule_arrays(
             start_times, end_times, payment_times, accrual_fractions, valid
         )
@@ -242,7 +242,7 @@ class BasisSwapBootstrapInstrument(StrictModule):
         accrual_fractions: ArrayLike,
         valid: ArrayLike,
         quote_weight: float = 1.0,
-    ):
+    ) -> None:
         start, end, payment, accrual, mask = _schedule_arrays(
             start_times, end_times, payment_times, accrual_fractions, valid
         )
@@ -279,7 +279,7 @@ class SurvivalProbabilityBootstrapInstrument(StrictModule):
         survival_curve_id: str,
         maturity: float,
         quote_weight: float = 1.0,
-    ):
+    ) -> None:
         self.instrument_id = _identifier(instrument_id, "instrument_id")
         self.survival_curve_id = _identifier(survival_curve_id, "survival_curve_id")
         self.maturity = _positive(maturity, "maturity")
@@ -301,7 +301,7 @@ class HazardRateBootstrapInstrument(StrictModule):
         survival_curve_id: str,
         maturity: float,
         quote_weight: float = 1.0,
-    ):
+    ) -> None:
         self.instrument_id = _identifier(instrument_id, "instrument_id")
         self.survival_curve_id = _identifier(survival_curve_id, "survival_curve_id")
         self.maturity = _time(maturity, "maturity")
@@ -476,7 +476,7 @@ class BootstrapSolverPolicy(StrictModule):
         repricing_tolerance: float = 1e-9,
         rank_tolerance: float = 1e-10,
         initial_damping: float = 1e-6,
-    ):
+    ) -> None:
         self.absolute_optimality = _positive(absolute_optimality, "absolute_optimality")
         self.relative_optimality = _positive(relative_optimality, "relative_optimality")
         steps = int(maximum_steps)
@@ -807,7 +807,7 @@ class SingleCurveBootstrapPlan(AbstractCurveBootstrapPlan):
         /,
         *,
         solver_policy: BootstrapSolverPolicy | None = None,
-    ):
+    ) -> None:
         policy = BootstrapSolverPolicy() if solver_policy is None else solver_policy
         definitions, instruments_, initial = _validate_plan_inputs(
             (definition,), instruments, (initial_node_values,), policy
@@ -836,7 +836,7 @@ class MultiCurveBootstrapPlan(AbstractCurveBootstrapPlan):
         /,
         *,
         solver_policy: BootstrapSolverPolicy | None = None,
-    ):
+    ) -> None:
         if len(definitions) < 2:
             raise ValueError("MultiCurveBootstrapPlan requires at least two curves.")
         policy = BootstrapSolverPolicy() if solver_policy is None else solver_policy
@@ -881,7 +881,7 @@ class CurveBootstrapResult(StrictModule):
         independent: ArrayLike,
         repriced: ArrayLike,
         successful: ArrayLike,
-    ):
+    ) -> None:
         self.plan = plan
         self.curves = curves
         self.quotes = jnp.asarray(quotes)
@@ -926,7 +926,7 @@ class CurveBootstrapReplay(StrictModule):
         plan: AbstractCurveBootstrapPlan,
         initial_raw_parameters: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, AbstractCurveBootstrapPlan):
             raise TypeError("plan must be an AbstractCurveBootstrapPlan.")
         initial = jnp.asarray(initial_raw_parameters)

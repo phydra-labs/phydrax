@@ -15,7 +15,7 @@ class ProcessSchedule:
     def create(cls, events):
         return cls(tuple(sorted(events, key=lambda x: (x.start_time_s, x.event_id))))
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         canonical = tuple(sorted(self.events, key=lambda x: (x.start_time_s, x.event_id)))
         if (
             not self.events

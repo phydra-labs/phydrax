@@ -235,7 +235,7 @@ class AffineProjectionPolicy(StrictModule):
         absolute_tolerance: Any = 1e-10,
         relative_tolerance: Any = 1e-8,
         verify_projection: bool = True,
-    ):
+    ) -> None:
         if compatibility not in ("strict", "generalized"):
             raise ValueError("compatibility must be 'strict' or 'generalized'.")
         if exactness_scope not in ("continuum", "realization"):
@@ -288,7 +288,7 @@ class LinearCorrectionEvidence(StrictModule):
         has_adjoint: bool = False,
         has_derivative: bool = False,
         solve_evidence: Any = None,
-    ):
+    ) -> None:
         identity = jnp.asarray(identity_defect)
         range_ = jnp.asarray(range_defect)
         version = int(numeric_version)
@@ -319,7 +319,7 @@ class _ConditionBlockAction(StrictModule):
     kwargs: frozendict[str, Any]
     source_name: str = eqx.field(static=True)
 
-    def __init__(self, bound, source_name, kwargs, /):
+    def __init__(self, bound, source_name, kwargs, /) -> None:
         self.bound = bound
         self.source_name = str(source_name)
         self.kwargs = frozendict(kwargs)
@@ -345,7 +345,7 @@ class _ConditionBlockTranspose(StrictModule):
     kwargs: frozendict[str, Any]
     local_name: str = eqx.field(static=True)
 
-    def __init__(self, bound, local_name, kwargs, /):
+    def __init__(self, bound, local_name, kwargs, /) -> None:
         self.bound = bound
         self.local_name = str(local_name)
         self.kwargs = frozendict(kwargs)
@@ -377,7 +377,7 @@ class AffineBlockAssembly(StrictModule):
         *,
         realizations: Mapping[str, Any] = frozendict(),
         exactness_scope: AffineExactnessScope = "continuum",
-    ):
+    ) -> None:
         conditions = tuple(bound_conditions)
         names = _field_names(correction_fields)
         if not conditions or any(
@@ -637,7 +637,7 @@ class PreparedLinearCorrection(StrictModule):
         adjoint_action: Callable | None = None,
         derivative_action: Callable | None = None,
         operator: PreparedConstraintOperator | None = None,
-    ):
+    ) -> None:
         if not callable(lift_action):
             raise TypeError("lift_action must be callable.")
         if adjoint_action is not None and not callable(adjoint_action):
@@ -753,7 +753,7 @@ class _ConstraintLift(StrictModule):
     operator: PreparedConstraintOperator
     strict: bool = eqx.field(static=True)
 
-    def __init__(self, operator, strict, /):
+    def __init__(self, operator, strict, /) -> None:
         self.operator, self.strict = operator, bool(strict)
 
     def __call__(self, residual, /):
@@ -781,7 +781,7 @@ class ConstraintLinearCorrectionProvider(AbstractLinearCorrectionProvider):
         /,
         *,
         provider_id: str | None = None,
-    ):
+    ) -> None:
         if plan is not None and not isinstance(plan, ConstraintOperatorPlan):
             raise TypeError("plan must be a ConstraintOperatorPlan or None.")
         self.plan = plan
@@ -908,7 +908,9 @@ class PreparedAffineProjector(AbstractFieldRealization):
     prepared_id: str = eqx.field(static=True)
     numeric_version: int = eqx.field(static=True)
 
-    def __init__(self, assembly, correction, provider, policy, /, *, numeric_version):
+    def __init__(
+        self, assembly, correction, provider, policy, /, *, numeric_version
+    ) -> None:
         if not isinstance(assembly, AffineBlockAssembly):
             raise TypeError("assembly must be an AffineBlockAssembly.")
         if not isinstance(correction, PreparedLinearCorrection):
@@ -1087,7 +1089,7 @@ class ExactAffineProjector(AbstractFieldRealization):
 
     prepared: PreparedAffineProjector
 
-    def __init__(self, prepared: PreparedAffineProjector, /):
+    def __init__(self, prepared: PreparedAffineProjector, /) -> None:
         if not isinstance(prepared, PreparedAffineProjector):
             raise TypeError("ExactAffineProjector requires a PreparedAffineProjector.")
         if not prepared.correction.evidence.exact:

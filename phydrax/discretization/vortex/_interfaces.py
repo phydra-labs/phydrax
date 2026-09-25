@@ -32,7 +32,7 @@ class VortexFieldRequest(StrictModule, NonTrainableState):
         velocity: bool = True,
         velocity_gradient: bool = False,
         vorticity: bool = False,
-    ):
+    ) -> None:
         velocity_ = bool(velocity)
         gradient_ = bool(velocity_gradient)
         vorticity_ = bool(vorticity)

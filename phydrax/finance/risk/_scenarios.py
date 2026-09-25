@@ -31,7 +31,7 @@ class ScenarioEvaluationAdapter(StrictModule):
         intercept: ArrayLike = 0.0,
         aggregation: Literal["node", "terminal", "sum"] = "terminal",
         adapter_id: str = "affine-scenario-evaluation",
-    ):
+    ) -> None:
         loading = jnp.asarray(factor_loading)
         if loading.ndim != 1 or loading.shape[0] == 0:
             raise ValueError("factor_loading must be a non-empty vector.")

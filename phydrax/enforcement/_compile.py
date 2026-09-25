@@ -184,7 +184,7 @@ class InteriorAnchors(StrictModule):
         space_label: str = "x",
         time_label: str = "t",
         time_interp: Literal["idw", "hermite"] = "idw",
-    ):
+    ) -> None:
         r"""Create an enforced interior data source.
 
         **Arguments:**
@@ -785,7 +785,7 @@ class _BoundaryWeightedQuotientCallable(StrictModule, DerivativeRuleProvider):
         weight_pos: tuple[tuple[int, ...], ...],
         remainder_weight_pos: tuple[int, ...] | None,
         base_pos: tuple[int, ...],
-    ):
+    ) -> None:
         self.pieces = pieces
         self.weights = weights
         self.remainder_weight = remainder_weight
@@ -857,7 +857,7 @@ class _BoundaryBlendOverlay(StrictModule):
         num_reference: int,
         sampler: str,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         if not pieces:
             raise ValueError("_BoundaryBlendOverlay requires at least one piece.")
         self.var = str(var)
@@ -1005,7 +1005,7 @@ class _InitialEnforcedOverlay(StrictModule):
         *,
         var: str,
         targets: Mapping[int, DomainFunction | ArrayLike],
-    ):
+    ) -> None:
         self.component = component
         self.var = str(var)
         self.targets = frozendict({int(k): v for k, v in targets.items()})
@@ -1075,7 +1075,7 @@ class _InteriorAnchorOverlay(StrictModule):
         gate_method: EnforcementGateMethod,
         gate_saturation_fraction: float,
         gate_linear_fraction: float,
-    ):
+    ) -> None:
         self.anchor_set = anchor_set
         self.gate_exponents = frozendict(
             {str(k): int(v) for k, v in gate_exponents.items()}
@@ -1633,7 +1633,7 @@ class _FieldEnforcementPipeline(StrictModule):
         num_reference: int = 3_000_000,
         sampler: str = "latin_hypercube",
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         r"""Build a pipeline for one field.
 
         **Arguments:**
@@ -1896,7 +1896,7 @@ class EnforcementProgram(StrictModule):
         *,
         field_order: Sequence[str],
         realization_specs: Sequence[EnforcementSpec] = (),
-    ):
+    ) -> None:
         typed = tuple(realization_specs)
         if any(spec.realization is None for spec in typed):
             raise TypeError(

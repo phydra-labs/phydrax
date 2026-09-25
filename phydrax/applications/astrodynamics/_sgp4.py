@@ -1282,7 +1282,7 @@ class SGP4Coefficients(Strict):
 
     _values: Mapping[str, object]
 
-    def __init__(self, builder: _SGP4CoefficientBuilder, /):
+    def __init__(self, builder: _SGP4CoefficientBuilder, /) -> None:
         if not isinstance(builder, _SGP4CoefficientBuilder):
             raise TypeError("builder must be an SGP4 coefficient builder.")
         self._values = MappingProxyType(vars(builder).copy())

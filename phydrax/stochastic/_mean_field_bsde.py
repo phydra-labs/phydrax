@@ -89,7 +89,7 @@ class EmpiricalMeanField(StrictModule):
         weights: ArrayLike | None = None,
         valid: ArrayLike | None = None,
         source_path_id: str | None = None,
-    ):
+    ) -> None:
         samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")
@@ -276,7 +276,7 @@ class MeanFieldBSDEControlAdapter(StrictModule):
         output_shape: Sequence[int],
         noise_shape: Sequence[int],
         adapter_id: str,
-    ):
+    ) -> None:
         for owner, value in (
             ("policy", policy),
             ("running_cost", running_cost),
@@ -370,7 +370,7 @@ class MeanFieldBSDEProblem(StrictModule):
         process_id: str,
         args: Any = None,
         control_adapter: MeanFieldBSDEControlAdapter | None = None,
-    ):
+    ) -> None:
         for owner, value in (
             ("forward_sampler", forward_sampler),
             ("drift", drift),

@@ -47,7 +47,7 @@ class ClosureOperatorCase:
     targets: Mapping[str, ClosureTarget]
     references: Mapping[str, LESAnalysisReference] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         inputs = frozendict({str(name): value for name, value in self.inputs.items()})
         targets = frozendict({str(name): value for name, value in self.targets.items()})
         references = frozendict(
@@ -453,7 +453,7 @@ class TrainedClosureOperatorPredictor(StrictModule, NonTrainableState):
         source_name: str,
         target_name: str,
         output_shape: Sequence[int] | None = None,
-    ):
+    ) -> None:
         if not isinstance(trained, TrainedOperator):
             raise TypeError("trained must be a TrainedOperator.")
         if not trained.artifact_id:

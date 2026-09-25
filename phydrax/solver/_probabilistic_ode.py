@@ -112,7 +112,7 @@ class ProbabilisticODEMethod(StrictModule):
         stiffness_threshold: float = 50.0,
         max_dense_dimension: int = 512,
         method_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(order, int) or isinstance(order, bool) or order < 1:
             raise ValueError("order must be a positive integer.")
         if order > 4:

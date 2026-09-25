@@ -192,7 +192,7 @@ class ReporterCalibration(StrictModule, NonTrainableState):
         *,
         source_manifests: Sequence[ReferenceArtifactManifest],
         requested_use: Mapping[str, bool],
-    ):
+    ) -> None:
         if not isinstance(campaign, ScientificCampaign):
             raise TypeError("campaign must be a ScientificCampaign.")
         gain_ = jnp.asarray(gain, dtype=jnp.float64)
@@ -309,7 +309,7 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
         /,
         *,
         intensity_unit_id: str = "instrument-fluorescence-unit",
-    ):
+    ) -> None:
         if not isinstance(calibration, ReporterCalibration):
             raise TypeError("calibration must be a ReporterCalibration.")
         if not isinstance(campaign, ScientificCampaign):
@@ -636,7 +636,7 @@ class EffectiveDisplacementRateModel(StrictModule, NonTrainableState):
     parameter_plan_id: str = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, fit: StrandDisplacementModelFit, /):
+    def __init__(self, fit: StrandDisplacementModelFit, /) -> None:
         if not isinstance(fit, StrandDisplacementModelFit):
             raise TypeError(
                 "Effective displacement models require a StrandDisplacementModelFit."
@@ -737,7 +737,7 @@ class MechanisticDisplacementRateModel(StrictModule, NonTrainableState):
     channel_capacity: int = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, fit: StrandDisplacementModelFit, /):
+    def __init__(self, fit: StrandDisplacementModelFit, /) -> None:
         if not isinstance(fit, StrandDisplacementModelFit):
             raise TypeError(
                 "Mechanistic displacement models require a StrandDisplacementModelFit."
@@ -902,7 +902,7 @@ class SecondaryKineticParameterPlan:
         prior_ids: Sequence[str],
         *,
         requested_use: Mapping[str, bool],
-    ):
+    ) -> None:
         names = _ordered_identifiers(parameter_names, "parameter_names")
         priors = _ordered_identifiers(prior_ids, "prior_ids")
         if len(names) != len(priors):
@@ -1100,7 +1100,7 @@ class PreparedEffectiveDisplacementInference(StrictModule, NonTrainableState):
         *,
         trace_source_manifests: Sequence[ReferenceArtifactManifest],
         trace_requested_use: Mapping[str, bool],
-    ):
+    ) -> None:
         traces_ = _validate_campaign_role_traces(traces, campaign, "calibration")
         if observation_model.campaign_id != campaign.campaign_id:
             raise ValueError(
@@ -1267,7 +1267,7 @@ class EffectiveFluorescencePosteriorTerm(AbstractPosteriorTerm):
 
     prepared: PreparedEffectiveDisplacementInference
 
-    def __init__(self, prepared: PreparedEffectiveDisplacementInference):
+    def __init__(self, prepared: PreparedEffectiveDisplacementInference) -> None:
         if not isinstance(prepared, PreparedEffectiveDisplacementInference):
             raise TypeError("prepared must be PreparedEffectiveDisplacementInference.")
         self.prepared = prepared
@@ -1323,7 +1323,7 @@ class PreparedMechanisticDisplacementInference(StrictModule, NonTrainableState):
         trace_requested_use: Mapping[str, bool],
         state_capacity: int,
         channel_capacity: int,
-    ):
+    ) -> None:
         traces_ = _validate_campaign_role_traces(traces, campaign, "calibration")
         if observation_model.campaign_id != campaign.campaign_id:
             raise ValueError(
@@ -1552,7 +1552,7 @@ class MechanisticFluorescencePosteriorTerm(AbstractPosteriorTerm):
 
     prepared: PreparedMechanisticDisplacementInference
 
-    def __init__(self, prepared: PreparedMechanisticDisplacementInference):
+    def __init__(self, prepared: PreparedMechanisticDisplacementInference) -> None:
         if not isinstance(prepared, PreparedMechanisticDisplacementInference):
             raise TypeError("prepared must be PreparedMechanisticDisplacementInference.")
         self.prepared = prepared
@@ -1737,7 +1737,7 @@ class StrandDisplacementModelFit(StrictModule, NonTrainableState):
         *,
         model_selection_source_manifests: Sequence[ReferenceArtifactManifest],
         model_selection_requested_use: Mapping[str, bool],
-    ):
+    ) -> None:
         values = tuple(candidates)
         if not values:
             raise ValueError("Model selection requires at least one posterior candidate.")

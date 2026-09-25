@@ -92,7 +92,7 @@ class GalerkinHierarchyBuilder(AbstractPreconditionerBuilder):
         refresh_mode: MultigridRefreshMode = "rebuild-all",
         pre_smoothing: int = 1,
         post_smoothing: int = 1,
-    ):
+    ) -> None:
         transfers_ = tuple(tuple(pair) for pair in transfers)
         smoothers_ = tuple(smoothers)
         if not transfers_:
@@ -389,7 +389,7 @@ class SmoothedAggregationPolicy(StrictModule):
         maximum_operator_complexity: float | None = None,
         maximum_level_storage_bytes: int | None = None,
         maximum_compatible_relaxation_factor: float | None = None,
-    ):
+    ) -> None:
         threshold = float(strength_threshold)
         levels = int(max_levels)
         coarse_size = int(minimum_coarse_size)
@@ -489,7 +489,7 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
         properties: PreconditionerProperties | None = None,
         cycle_policy: MultigridCyclePolicy | None = None,
         refresh_mode: MultigridRefreshMode = "rebuild-all",
-    ):
+    ) -> None:
         if not isinstance(policy, SmoothedAggregationPolicy):
             raise TypeError("policy must be SmoothedAggregationPolicy.")
         _validate_preconditioner_source(smoother)
@@ -1390,7 +1390,7 @@ class _MatrixFreeGalerkinOperator(AbstractLinearOperator):
 
     operator: AbstractLinearOperator
 
-    def __init__(self, operator: AbstractLinearOperator, /, *, role: str):
+    def __init__(self, operator: AbstractLinearOperator, /, *, role: str) -> None:
         self.source = operator.source
         self.target = operator.target
         self.operator = operator

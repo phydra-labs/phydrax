@@ -40,7 +40,7 @@ class UncertainVariable(StrictModule):
         *,
         role: UncertainVariableRole = "aleatoric",
         unit: str | None = None,
-    ):
+    ) -> None:
         identifier = _identifier(variable_id, "variable_id")
         if not isinstance(law, AbstractProbabilityLaw):
             raise TypeError("law must implement AbstractProbabilityLaw.")
@@ -73,7 +73,7 @@ class Experiment(StrictModule):
         conditions: dict[str, Any] | frozendict[str, Any] | None = None,
         likelihood_id: str,
         diagnostic_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         identifier = _identifier(experiment_id, "experiment_id")
         likelihood = _identifier(likelihood_id, "likelihood_id")
         observation_leaves = jax.tree_util.tree_leaves(observations)
@@ -119,7 +119,7 @@ class UQPlan:
     checkpoint_every: int | None = None
     plan_id: str = field(init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.product not in ("forward", "calibration", "robust"):
             raise ValueError("Unknown UQ product.")
         method = _identifier(self.method, "method")
@@ -186,7 +186,7 @@ class PosteriorRecord(StrictModule):
         *,
         checkpoint_id: str | None = None,
         diagnostic_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(plan, UQPlan) or plan.product != "calibration":
             raise TypeError("plan must be a calibration UQPlan.")
         if not isinstance(result, MCMCResult):

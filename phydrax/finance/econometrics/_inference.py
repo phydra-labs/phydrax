@@ -31,7 +31,7 @@ class HypothesisFamilyDefinition(StrictModule):
     hypothesis_ids: tuple[str, ...] = eqx.field(static=True)
     family_id: str = eqx.field(static=True)
 
-    def __init__(self, hypothesis_ids: Sequence[str], /):
+    def __init__(self, hypothesis_ids: Sequence[str], /) -> None:
         identifiers = tuple(str(identifier).strip() for identifier in hypothesis_ids)
         if not identifiers or any(not identifier for identifier in identifiers):
             raise ValueError(
@@ -55,7 +55,7 @@ class MultipleTestingDefinition(StrictModule):
         *,
         method: Literal["bonferroni", "holm", "benjamini-hochberg"] = "holm",
         alpha: float = 0.05,
-    ):
+    ) -> None:
         if method not in ("bonferroni", "holm", "benjamini-hochberg"):
             raise ValueError("unsupported multiple-testing method.")
         level = float(alpha)
@@ -92,7 +92,7 @@ class ForecastComparisonDefinition(StrictModule):
         hac_lags: int = 0,
         horizon: int = 1,
         alternative: Literal["two-sided", "less", "greater"] = "two-sided",
-    ):
+    ) -> None:
         lags = int(hac_lags)
         horizon_ = int(horizon)
         if lags < 0 or horizon_ < 1 or lags < horizon_ - 1:

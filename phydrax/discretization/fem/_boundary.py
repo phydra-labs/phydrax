@@ -85,7 +85,7 @@ class FiniteElementBoundaryPatch(StrictModule, NonTrainableState):
         domain: IntegrationDomain,
         boundary: AbstractConservationBoundary,
         /,
-    ):
+    ) -> None:
         patch_name = _canonical_patch_name(name)
         if not isinstance(domain, IntegrationDomain) or domain.kind != "exterior_facet":
             raise TypeError("Finite-element boundary patches require an exterior domain.")
@@ -123,7 +123,7 @@ class FiniteElementPeriodicTransform(StrictModule, NonTrainableState):
         *,
         component_matrix=None,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         matrix = np.asarray(coordinate_matrix, dtype=np.float64)
         offset = np.asarray(coordinate_offset, dtype=np.float64)
         if (
@@ -205,7 +205,7 @@ class FiniteElementPeriodicFacetPair(StrictModule, NonTrainableState):
         /,
         *,
         transform: FiniteElementPeriodicTransform | None = None,
-    ):
+    ) -> None:
         owner = _facet_id(owner_facet, "owner_facet")
         neighbor = _facet_id(neighbor_facet, "neighbor_facet")
         if owner == neighbor:
@@ -244,7 +244,7 @@ class FiniteElementBoundarySet(StrictModule, NonTrainableState):
         /,
         *,
         periodic_pairs: Sequence[FiniteElementPeriodicFacetPair] = (),
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be a FiniteElementDiscretization.")
         if not isinstance(physical, Mapping):

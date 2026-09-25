@@ -61,7 +61,7 @@ class ResetAwareCausalConv1D(StrictModule, ParameterOwner):
         use_bias: bool = True,
         dtype: Any = jnp.float32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.channels = int(channels)
         self.kernel_size = int(kernel_size)
         if self.channels <= 0 or self.kernel_size <= 0:
@@ -178,7 +178,7 @@ class SelectiveStateSpaceBlock(StrictModule, ParameterOwner):
         min_step_scale: float = 1e-4,
         dtype: Any = jnp.float32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.input_size = int(input_size)
         self.state_size = int(state_size)
         self.inner_size = 2 * self.input_size if inner_size is None else int(inner_size)

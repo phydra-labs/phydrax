@@ -44,7 +44,7 @@ class LocalCurvaturePlan(StrictModule):
         *,
         damping: float = 1.0e-4,
         max_parameters: int = 2048,
-    ):
+    ) -> None:
         damping_ = float(damping)
         maximum = int(max_parameters)
         if not math.isfinite(damping_) or damping_ <= 0.0:
@@ -72,7 +72,7 @@ class LocalCurvatureResult(StrictModule):
         gradient_norm: Array,
         step_norm: Array,
         accepted: bool,
-    ):
+    ) -> None:
         self.functions = frozendict(functions)
         self.loss = jnp.asarray(loss).reshape(())
         self.gradient_norm = jnp.asarray(gradient_norm).reshape(())
@@ -164,7 +164,7 @@ class DecompositionKFACResult(StrictModule):
         patch_ids: tuple[str, ...],
         diagnostics: Any,
         /,
-    ):
+    ) -> None:
         self.functions = frozendict(functions)
         self.patch_ids = tuple(patch_ids)
         self.approximation = (
@@ -258,7 +258,7 @@ def solve_overlap_kfac(
 class MatrixFreeGaussNewtonPlan(StrictModule):
     damping: float = eqx.field(static=True)
 
-    def __init__(self, *, damping: float = 1.0e-4):
+    def __init__(self, *, damping: float = 1.0e-4) -> None:
         damping_ = float(damping)
         if not math.isfinite(damping_) or damping_ <= 0.0:
             raise ValueError("damping must be finite and positive.")
@@ -282,7 +282,7 @@ class MatrixFreeGaussNewtonResult(StrictModule):
         final_loss: Array,
         accepted: bool,
         linear_result: Any,
-    ):
+    ) -> None:
         self.functions = frozendict(functions)
         self.initial_loss = jnp.asarray(initial_loss).reshape(())
         self.final_loss = jnp.asarray(final_loss).reshape(())

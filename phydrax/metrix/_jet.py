@@ -43,7 +43,7 @@ class MetricJet(StrictModule):
         first_derivative: Array | None,
         second_derivative: Array | None,
         order: int,
-    ):
+    ) -> None:
         self.matrix = matrix
         self.inverse = inverse
         self.determinant = determinant
@@ -62,7 +62,7 @@ class _MetricJetEvaluator(StrictModule):
     order: int = eqx.field(static=True)
     positive_definite: bool = eqx.field(static=True)
 
-    def __init__(self, metric: AbstractSemiRiemannianMetric, order: int, /):
+    def __init__(self, metric: AbstractSemiRiemannianMetric, order: int, /) -> None:
         self.metric_function = metric.matrix_function
         self.dimension = metric.chart.dimension
         self.order = int(order)

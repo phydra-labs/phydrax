@@ -421,7 +421,7 @@ class _RestartableAdaptiveController(dfx.AbstractAdaptiveStepSizeController):
 
     controller: dfx.AbstractAdaptiveStepSizeController
 
-    def __init__(self, controller: dfx.AbstractAdaptiveStepSizeController):
+    def __init__(self, controller: dfx.AbstractAdaptiveStepSizeController) -> None:
         self.controller = controller
 
     @property
@@ -486,7 +486,7 @@ class _RestartableFixedController(dfx.AbstractStepSizeController):
 
     controller: dfx.AbstractStepSizeController
 
-    def __init__(self, controller: dfx.AbstractStepSizeController):
+    def __init__(self, controller: dfx.AbstractStepSizeController) -> None:
         self.controller = controller
 
     def wrap(self, direction):

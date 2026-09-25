@@ -61,7 +61,7 @@ class MatterPowerEstimate(StrictModule):
         source_product_ids: tuple[str, ...],
         estimator_id: str,
         /,
-    ):
+    ) -> None:
         epoch = jnp.asarray(scale_factor).reshape(())
         k = jnp.asarray(wavenumbers, dtype=epoch.dtype).reshape((-1,))
         power = jnp.asarray(power_values, dtype=epoch.dtype).reshape((-1,))
@@ -197,7 +197,7 @@ class CosmologicalFieldSpectrumPlan(StrictModule, NonTrainableState):
         correction: ModeTransferCorrection | None = None,
         shot_noise: float = 0.0,
         imaginary_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         convention = str(density_convention)
         noise = float(shot_noise)
         tolerance = float(imaginary_tolerance)
@@ -386,7 +386,7 @@ class SpectralFieldDiscrepancyPlan(StrictModule, NonTrainableState):
         /,
         *,
         correction: ModeTransferCorrection | None = None,
-    ):
+    ) -> None:
         self.shells = shells
         self.correction = correction
         self.plan_id = canonical_fingerprint(

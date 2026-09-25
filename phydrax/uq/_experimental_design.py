@@ -131,7 +131,7 @@ class ExperimentalDesignCandidate(StrictModule, NonTrainableState):
         setup_cost: float = 0.0,
         diversity_group: str | None = None,
         mandatory_control: bool = False,
-    ):
+    ) -> None:
         identifier = _identifier(candidate_id, "candidate_id")
         condition = _identifier(condition_id, "condition_id")
         group = _identifier(feasibility_group, "feasibility_group")
@@ -211,7 +211,7 @@ class ExpectedUtilityResult(StrictModule):
         outer_sample_count: int = 0,
         inner_sample_count: int = 0,
         unit_id: str = "nat",
-    ):
+    ) -> None:
         candidate_values = _candidate_tuple(candidates)
         values = jnp.asarray(expected_utility, dtype=jnp.float64)
         errors = jnp.asarray(estimator_standard_error, dtype=jnp.float64)
@@ -295,7 +295,7 @@ class ExperimentalBatchConstraints(StrictModule, NonTrainableState):
         allowed_feasibility_groups: Sequence[str] = (),
         minimum_diversity_groups: int = 1,
         maximum_per_diversity_group: int | None = None,
-    ):
+    ) -> None:
         budget_value = _nonnegative_finite(budget, "budget")
         minimum_size = _positive_integer(minimum_batch_size, "minimum_batch_size")
         maximum_size = _positive_integer(maximum_batch_size, "maximum_batch_size")
@@ -398,7 +398,7 @@ class ExperimentalBatchPlan(StrictModule, NonTrainableState):
         selection_policy_id: str,
         planned_total_cost: float,
         objective_value: float,
-    ):
+    ) -> None:
         candidates = _identifiers(candidate_ids, "candidate_ids")
         contents = _identifiers(candidate_content_ids, "candidate_content_ids")
         if len(contents) != len(candidates):
@@ -548,7 +548,7 @@ class RetrospectiveDesignResult(StrictModule, NonTrainableState):
         /,
         *,
         metric_id: str,
-    ):
+    ) -> None:
         plan_values = tuple(plans)
         if len(plan_values) != len(_RETROSPECTIVE_STRATEGIES) or any(
             not isinstance(plan, ExperimentalBatchPlan) for plan in plan_values

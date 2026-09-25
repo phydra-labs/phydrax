@@ -40,7 +40,7 @@ class _MetricGradientEvaluator(StrictModule):
         field: Callable[[Array], Array],
         metric: AbstractSemiRiemannianMetric,
         /,
-    ):
+    ) -> None:
         self.field = field
         self.metric = metric
 
@@ -57,7 +57,7 @@ class _MetricGradientEvaluator(StrictModule):
 class _InverseMetricMap(StrictModule):
     metric: AbstractSemiRiemannianMetric
 
-    def __init__(self, metric: AbstractSemiRiemannianMetric, /):
+    def __init__(self, metric: AbstractSemiRiemannianMetric, /) -> None:
         self.metric = metric
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -182,7 +182,7 @@ class TimeOrientation(StrictModule):
         metric: LorentzianMetric,
         vector_field: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         if not isinstance(metric, LorentzianMetric):
             raise TypeError("TimeOrientation requires a LorentzianMetric.")
         if not callable(vector_field):

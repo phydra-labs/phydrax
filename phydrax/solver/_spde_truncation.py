@@ -44,7 +44,7 @@ class SPDEApproximationLevel(StrictModule):
         /,
         *,
         level_id: str,
-    ):
+    ) -> None:
         if not isinstance(spde, SemidiscreteSPDE):
             raise TypeError("spde must be a SemidiscreteSPDE.")
         if not isinstance(temporal_mesh, TimeGrid):
@@ -86,7 +86,7 @@ class SPDEApproximationFamily(StrictModule):
         /,
         *,
         tail_envelope: Any = None,
-    ):
+    ) -> None:
         selected = tuple(levels)
         if not selected or any(
             not isinstance(item, SPDEApproximationLevel) for item in selected

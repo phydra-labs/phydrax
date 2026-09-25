@@ -137,7 +137,7 @@ class QuantumKineticState(StrictModule):
         units: RelativisticUnitContract,
         frame: LocalRelativisticFramePlan,
         time: ArrayLike | None = None,
-    ):
+    ) -> None:
         species_ = tuple(species)
         if not species_ or any(
             not isinstance(item, DarkSectorSpeciesPlan) for item in species_
@@ -288,7 +288,7 @@ class CondensateCouplingPlan(StrictModule, NonTrainableState):
         *,
         qualification_id: str,
         model_id: str,
-    ):
+    ) -> None:
         species_index_ = int(species_index)
         momentum_index_ = int(momentum_index)
         critical = float(critical_occupancy)
@@ -388,7 +388,7 @@ class QuantumDarkKineticsPlan(StrictModule, NonTrainableState):
         *,
         condensate_coupling: CondensateCouplingPlan | None = None,
         condensation_threshold: float | None = None,
-    ):
+    ) -> None:
         species_ = tuple(species)
         if not species_ or any(
             not isinstance(item, DarkSectorSpeciesPlan) for item in species_

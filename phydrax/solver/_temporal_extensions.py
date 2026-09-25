@@ -33,7 +33,7 @@ class FixedStepTemporalResult:
 class RKCMethod:
     """First-order stabilized Runge–Kutta–Chebyshev method."""
 
-    def __init__(self, stages: int = 8, /):
+    def __init__(self, stages: int = 8, /) -> None:
         stages_ = int(stages)
         if stages_ < 2:
             raise ValueError("RKC stages must be at least two.")
@@ -79,7 +79,7 @@ _AM_COEFFICIENTS = {
 class AdamsBashforthMoultonMethod:
     """Fixed-step PECE Adams predictor-corrector of orders two through four."""
 
-    def __init__(self, order: int = 4, /):
+    def __init__(self, order: int = 4, /) -> None:
         order_ = int(order)
         if order_ not in _AB_COEFFICIENTS:
             raise ValueError("Adams Bashforth-Moulton order must be two, three, or four.")
@@ -141,7 +141,7 @@ class AdamsBashforthMoultonMethod:
 class ExponentialRosenbrockEulerMethod:
     """Second-order exponential Rosenbrock-Euler with a native phi-one action."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.method_id = "temporal:exponential-rosenbrock-euler"
         self.capabilities = TemporalMethodCapabilities(
             equation_forms=("explicit-ode",),
@@ -171,7 +171,7 @@ class RadauIIAIntegrator:
         *,
         maximum_newton_steps: int = 8,
         residual_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         tableau = RadauIIAMethod(stage_count)
         steps = int(maximum_newton_steps)
         tolerance = float(residual_tolerance)
@@ -234,7 +234,7 @@ class IMEXBDF2Integrator:
         *,
         maximum_newton_steps: int = 8,
         residual_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         self.maximum_newton_steps = int(maximum_newton_steps)
         self.residual_tolerance = float(residual_tolerance)
         if self.maximum_newton_steps <= 0 or self.residual_tolerance <= 0.0:

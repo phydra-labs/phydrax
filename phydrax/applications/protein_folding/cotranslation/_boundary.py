@@ -54,7 +54,7 @@ class RibosomeBoundaryPotential(AbstractAtomisticEnergyTerm):
         sphere_centers: ArrayLike = (),
         sphere_radii: ArrayLike = (),
         exclusion_stiffness: float = 0.0,
-    ):
+    ) -> None:
         anchor_ = np.asarray(anchor, dtype=np.float64)
         centers = np.asarray(sphere_centers, dtype=np.float64).reshape((-1, 3))
         radii = np.asarray(sphere_radii, dtype=np.float64)
@@ -130,7 +130,7 @@ class PreparedRibosomeBoundaryPotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan, system, tether_slot, /):
+    def __init__(self, plan, system, tether_slot, /) -> None:
         self.plan, self.system, self.tether_slot = plan, system, tether_slot
         self.active_slots = jnp.asarray(
             np.flatnonzero(np.asarray(system.active_mask)), dtype=jnp.int32

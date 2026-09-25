@@ -43,7 +43,7 @@ class HartreeFockExcitedResponsePlan(StrictModule, NonTrainableState):
         /,
         *,
         spin_sector: str = "singlet",
-    ):
+    ) -> None:
         if not isinstance(hartree_fock, MolecularHartreeFockPlan):
             raise TypeError("hartree_fock must be MolecularHartreeFockPlan.")
         if not isinstance(state, RestrictedMeanFieldState) or not bool(

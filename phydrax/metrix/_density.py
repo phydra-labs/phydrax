@@ -31,7 +31,7 @@ class VolumeDensity(StrictModule):
         *,
         chart: CoordinateChart,
         log_coefficient: Callable[[Array], Array] | None = None,
-    ):
+    ) -> None:
         if not callable(coefficient):
             raise TypeError("Volume density coefficient must be callable.")
         if log_coefficient is not None and not callable(log_coefficient):
@@ -77,7 +77,7 @@ class VolumeDensity(StrictModule):
 class _MetricDensityCoefficient(StrictModule):
     metric: AbstractSemiRiemannianMetric
 
-    def __init__(self, metric: AbstractSemiRiemannianMetric, /):
+    def __init__(self, metric: AbstractSemiRiemannianMetric, /) -> None:
         self.metric = metric
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -87,7 +87,7 @@ class _MetricDensityCoefficient(StrictModule):
 class _MetricLogDensityCoefficient(StrictModule):
     metric: AbstractSemiRiemannianMetric
 
-    def __init__(self, metric: AbstractSemiRiemannianMetric, /):
+    def __init__(self, metric: AbstractSemiRiemannianMetric, /) -> None:
         self.metric = metric
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -106,7 +106,7 @@ class _PullbackDensityCoefficient(StrictModule):
         /,
         *,
         logarithmic: bool,
-    ):
+    ) -> None:
         self.density = density
         self.map = map
         self.logarithmic = bool(logarithmic)
@@ -169,7 +169,7 @@ class VolumeDensityValidationReport(StrictModule):
         positive: ArrayLike,
         finite_log: ArrayLike,
         maximum_log_residual: ArrayLike,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.positive = jnp.asarray(positive, dtype=jnp.bool_)

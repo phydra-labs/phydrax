@@ -97,7 +97,7 @@ class AstrodynamicsPropagationPlan(StrictModule):
         solver_id: str | None = None,
         stepsize_controller_id: str | None = None,
         adjoint_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(force, AbstractAstrodynamicsForce):
             raise TypeError("force must be an AbstractAstrodynamicsForce.")
         times = jnp.asarray(save_times, dtype=jnp.float64)

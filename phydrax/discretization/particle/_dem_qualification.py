@@ -54,7 +54,7 @@ class DEMQualificationProfile(AbstractParticleQualificationProfile):
         maximum_overlap_fraction: float = 0.1,
         boundary_tolerance: float = 1.0e-10,
         history_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -113,7 +113,7 @@ class DEMQualificationArtifact(StrictModule):
         residuals: DEMConstraintResiduals,
         execution_successful: Array,
         /,
-    ):
+    ) -> None:
         if not isinstance(profile, DEMQualificationProfile):
             raise TypeError("profile must be a DEMQualificationProfile.")
         if not isinstance(residuals, DEMConstraintResiduals):

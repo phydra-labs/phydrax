@@ -43,7 +43,7 @@ class RamanOpticalActivityResult(StrictModule, NonTrainableState):
         successful: ArrayLike,
         provider_id: str,
         /,
-    ):
+    ) -> None:
         waves = jnp.asarray(wavenumbers)
         electric = jnp.asarray(electric_polarizability_derivatives, dtype=waves.dtype)
         magnetic = jnp.asarray(electric_magnetic_derivatives, dtype=waves.dtype)
@@ -116,7 +116,7 @@ class CallableRamanOpticalActivityProvider(AbstractRamanOpticalActivityProvider)
     evaluator: ROAEvaluator = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluator: ROAEvaluator, provider_id: str, /):
+    def __init__(self, evaluator: ROAEvaluator, provider_id: str, /) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()
@@ -159,7 +159,7 @@ class PeriodicSpectroscopyResult(StrictModule, NonTrainableState):
         successful: ArrayLike,
         provider_id: str,
         /,
-    ):
+    ) -> None:
         qpoints_ = jnp.asarray(qpoints)
         frequencies_ = jnp.asarray(frequencies, dtype=qpoints_.dtype)
         infrared = jnp.asarray(infrared_oscillator_strengths, dtype=qpoints_.dtype)
@@ -255,7 +255,7 @@ class CallablePeriodicSpectroscopyProvider(AbstractPeriodicSpectroscopyProvider)
         evaluator: PeriodicSpectroscopyEvaluator,
         provider_id: str,
         /,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()

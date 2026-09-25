@@ -80,7 +80,7 @@ class _SignedGradientCallable(StrictModule):
         differential_positions: tuple[int, ...],
         coordinate_position: int,
         /,
-    ):
+    ) -> None:
         self.differential = differential
         self.metric = metric
         self.differential_positions = differential_positions
@@ -118,7 +118,7 @@ class _DalembertianCallable(StrictModule):
         second_positions: tuple[int, ...],
         coordinate_position: int,
         /,
-    ):
+    ) -> None:
         self.differential = differential
         self.second_derivative = second_derivative
         self.metric = metric
@@ -203,7 +203,7 @@ def _domain_geometry_variable(
 class _LorentzianMetricFieldCallable(StrictModule):
     metric: LorentzianMetric
 
-    def __init__(self, metric: LorentzianMetric, /):
+    def __init__(self, metric: LorentzianMetric, /) -> None:
         self.metric = metric
 
     def __call__(self, coordinates: Any, /, *, key=None, **kwargs: Any):
@@ -214,7 +214,7 @@ class _LorentzianMetricFieldCallable(StrictModule):
 class _FieldLorentzianMetricMap(StrictModule):
     field: DomainFunction
 
-    def __init__(self, field: DomainFunction, /):
+    def __init__(self, field: DomainFunction, /) -> None:
         self.field = field
 
     def __call__(self, coordinates: Any, /):
@@ -230,7 +230,7 @@ class _LorentzianCurvatureCallable(StrictModule):
         metric: LorentzianMetric,
         operation: Literal["riemann", "ricci", "scalar", "einstein"],
         /,
-    ):
+    ) -> None:
         self.metric = metric
         self.operation = operation
 

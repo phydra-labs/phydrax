@@ -115,7 +115,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
         modal_stiffness: ArrayLike | None = None,
         modal_damping: ArrayLike | None = None,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         markers = jnp.asarray(reference_markers)
         normals = jnp.asarray(reference_normals, dtype=markers.dtype)
         weights = jnp.asarray(marker_weights, dtype=markers.dtype)
@@ -572,7 +572,7 @@ class RigidHydroelasticALEMethod(AbstractFixedStepMethod, NonTrainableState):
         fluid_method: OnePhaseFreeSurfaceALEMethod,
         body_plan: MappedRigidHydroelasticBodyPlan,
         /,
-    ):
+    ) -> None:
         self.fluid_method = fluid_method
         self.body_plan = body_plan
         self.method_id = canonical_fingerprint(

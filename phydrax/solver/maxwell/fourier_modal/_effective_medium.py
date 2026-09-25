@@ -117,7 +117,7 @@ class EquivalentSlabRetrievalPlan(StrictModule, NonTrainableState):
         grazing_tolerance: float = 1.0e-10,
         transmission_tolerance: float = 1.0e-12,
         passive_claim: bool = False,
-    ):
+    ) -> None:
         minimum, maximum = (int(value) for value in branch_window)
         if minimum > maximum:
             raise ValueError("branch_window must be ordered.")
@@ -225,7 +225,7 @@ class LocalIsotropicQualificationPolicy(StrictModule, NonTrainableState):
         commensurate_denominator_limit: int = 16,
         commensurate_tolerance: float = 1.0e-8,
         passive_claim: bool = True,
-    ):
+    ) -> None:
         tolerances = (
             parameter_relative_tolerance,
             parameter_absolute_tolerance,

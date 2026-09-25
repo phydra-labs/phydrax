@@ -45,7 +45,7 @@ class TemporalMesh(StrictModule, NonTrainableState):
         realized: bool = False,
         source_plan_id: str | None = None,
         mesh_id: str | None = None,
-    ):
+    ) -> None:
         values = np.asarray(nodes)
         if values.ndim != 1 or values.size < 2:
             raise ValueError("Temporal meshes require at least two rank-1 nodes.")
@@ -199,7 +199,7 @@ class RealizedTemporalMesh(StrictModule, NonTrainableState):
         adaptive: bool,
         source_plan_id: str,
         requested_time_id: str,
-    ):
+    ) -> None:
         initial = jnp.asarray(initial_time)
         times = jnp.asarray(accepted_times)
         mask = jnp.asarray(valid, dtype=jnp.bool_)

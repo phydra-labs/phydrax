@@ -144,7 +144,7 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
         derivative_axis: int | None = None,
         tolerance: float = 1.0e-10,
         prepared_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be FiniteElementDiscretization.")
         name = str(field_name)
@@ -385,7 +385,7 @@ class FiniteElementFieldReconstructionKernel(
         continuity: int,
         global_dof_count: int,
         field_space_id: str,
-    ):
+    ) -> None:
         if not isinstance(locator, AbstractCellLocator):
             raise TypeError("locator must be an AbstractCellLocator.")
         if not isinstance(element, FiniteElementSpec):

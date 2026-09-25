@@ -58,7 +58,7 @@ class KineticAerothermodynamicPlan(StrictModule, NonTrainableState):
         *,
         species_transport: KineticSpeciesTransportPlan | None = None,
         radiation_ablation: KineticRadiationAblationPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(runtime, CompressibleKineticRuntimePlan):
             raise TypeError("runtime must be CompressibleKineticRuntimePlan.")
         if species_transport is not None and not isinstance(

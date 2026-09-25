@@ -187,7 +187,7 @@ class StateSpaceMarginalLikelihood(AbstractPosteriorTerm):
         covariance_regularization: float = 0.0,
         temporal_method: KalmanExecutionMethod = "auto",
         label: str = "state_space",
-    ):
+    ) -> None:
         if not callable(problem):
             raise TypeError("problem must be callable.")
         _validate_method(method)

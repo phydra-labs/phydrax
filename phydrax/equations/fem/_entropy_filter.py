@@ -70,7 +70,7 @@ class EntropyFilterPlan(StrictModule, NonTrainableState):
         differentiability: BranchDifferentiationPolicy = (
             BranchDifferentiationPolicy.BRANCHWISE
         ),
-    ):
+    ) -> None:
         density = None if density_floor is None else float(density_floor)
         pressure = None if pressure_floor is None else float(pressure_floor)
         entropy = float(entropy_tolerance)
@@ -156,7 +156,7 @@ class _PreparedTensorEntropyFilter(AbstractSSPRKStageTransform):
         plan: EntropyFilterPlan,
         dynamics: PreparedDGSEMConservationDynamics,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, EntropyFilterPlan):
             raise TypeError("plan must be EntropyFilterPlan.")
         if not isinstance(dynamics, PreparedDGSEMConservationDynamics):
@@ -426,7 +426,7 @@ class _PreparedNodalEntropyFilter(AbstractSSPRKStageTransform):
         plan: EntropyFilterPlan,
         dynamics: PreparedNodalDGConservationDynamics,
         /,
-    ):
+    ) -> None:
         if dynamics.entropy_pair is None:
             raise ValueError("Nodal entropy filtering requires an entropy pair.")
         cell_by_dof = np.full((dynamics.state_space.shape[0],), -1, dtype=np.int32)
@@ -596,7 +596,7 @@ class PreparedEntropyFilter(AbstractSSPRKStageTransform):
         self,
         implementation: _PreparedTensorEntropyFilter | _PreparedNodalEntropyFilter,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             implementation, (_PreparedTensorEntropyFilter, _PreparedNodalEntropyFilter)
         ):

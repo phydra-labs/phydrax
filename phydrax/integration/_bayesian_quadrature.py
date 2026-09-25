@@ -81,7 +81,7 @@ class GaussianKernelMean(AbstractKernelMean):
         target: ProbabilityTarget,
         kernel: SquaredExponentialKernel | ScaleKernel,
         /,
-    ):
+    ) -> None:
         if not isinstance(target, ProbabilityTarget) or not target.normalized:
             raise TypeError(
                 "GaussianKernelMean requires one normalized ProbabilityTarget."
@@ -259,7 +259,7 @@ class BayesianQuadraturePlan(StrictModule):
         solve_regularization: ArrayLike = 0.0,
         solve_policy: LinearSolvePolicy | None = None,
         max_points: int = 4096,
-    ):
+    ) -> None:
         if not isinstance(kernel_mean, AbstractKernelMean):
             raise TypeError("kernel_mean must implement AbstractKernelMean.")
         if isinstance(design, PointSampling):

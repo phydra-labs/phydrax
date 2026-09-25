@@ -32,7 +32,7 @@ class SingleCrystalOrientation(StrictModule):
         /,
         *,
         orientation_id: str = "single-crystal",
-    ):
+    ) -> None:
         angles = np.asarray(euler_angles_rad, dtype=np.float64)
         if angles.shape != (3,) or np.any(~np.isfinite(angles)):
             raise ValueError("euler_angles_rad must be finite with shape (3,).")

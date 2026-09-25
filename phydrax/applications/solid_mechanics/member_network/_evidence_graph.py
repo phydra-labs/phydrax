@@ -45,7 +45,7 @@ class EvidenceGraph(StrictModule):
     nodes: tuple[EvidenceNode, ...]
     graph_id: str = eqx.field(static=True)
 
-    def __init__(self, nodes: Sequence[EvidenceNode], /):
+    def __init__(self, nodes: Sequence[EvidenceNode], /) -> None:
         nodes_ = tuple(nodes)
         identifiers = {value.evidence_id for value in nodes_}
         if len(identifiers) != len(nodes_):

@@ -48,7 +48,7 @@ class CompleteElectrodeDCPlan(StrictModule, NonTrainableState):
         /,
         *,
         unit: UnitDefinition = CONTACT_IMPEDANCE_UNIT,
-    ):
+    ) -> None:
         if not isinstance(finite_patch, FinitePatchDCPlan):
             raise TypeError(
                 "Complete electrode model requires FinitePatchDCPlan geometry/survey."
@@ -90,7 +90,7 @@ class PreparedCompleteElectrodeDC(StrictModule, NonTrainableState):
     solve_policy: la.LinearSolvePolicy
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: CompleteElectrodeDCPlan, /):
+    def __init__(self, plan: CompleteElectrodeDCPlan, /) -> None:
         if not isinstance(plan, CompleteElectrodeDCPlan):
             raise TypeError("Prepared complete electrode model requires its plan.")
         base = plan.finite_patch.prepare()

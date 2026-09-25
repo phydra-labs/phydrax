@@ -114,7 +114,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
         max_dense_dimension: int = 512,
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         search = ArmijoLineSearch() if line_search is None else line_search
         values = tuple(
             float(value) for value in (relative_step, absolute_step, regularization)

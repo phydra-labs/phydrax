@@ -40,7 +40,7 @@ class TotalDegreePolynomialFeatures(StrictModule, NonTrainableState):
         *,
         maximum_features: int = _DEFAULT_MAXIMUM_FEATURES,
         maximum_feature_bytes: int = _DEFAULT_MAXIMUM_BYTES,
-    ):
+    ) -> None:
         dimension_ = _positive_integer(dimension, "dimension")
         degree_ = _nonnegative_integer(degree, "degree")
         maximum = _positive_integer(maximum_features, "maximum_features")

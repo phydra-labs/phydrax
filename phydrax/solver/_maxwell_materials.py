@@ -61,7 +61,7 @@ class MatrixMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
         *,
         maximum_dense_dofs: int = 4096,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         electric = jnp.asarray(electric_matrix)
         magnetic = jnp.asarray(magnetic_matrix)
         if electric.ndim != 2 or electric.shape[0] != electric.shape[1]:
@@ -184,7 +184,7 @@ class PreparedMatrixMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
         cochain: CochainDiscretization,
         layout: MaxwellCochainLayout,
         /,
-    ):
+    ) -> None:
         _, electric_minimum, electric_condition = _metric_spectrum(
             "electric",
             plan.electric_matrix,
@@ -369,7 +369,7 @@ class ConductiveMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
         permeability: ArrayLike = 1.0,
         electric_conductivity: ArrayLike = 0.0,
         magnetic_conductivity: ArrayLike = 0.0,
-    ):
+    ) -> None:
         self.permittivity = jnp.asarray(permittivity)
         self.permeability = jnp.asarray(permeability)
         self.electric_conductivity = jnp.asarray(electric_conductivity)
@@ -428,7 +428,7 @@ class PreparedConductiveMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
         cochain: CochainDiscretization,
         layout: MaxwellCochainLayout,
         /,
-    ):
+    ) -> None:
         from ._maxwell import _positive_material
 
         self.permittivity = _positive_material(
@@ -607,7 +607,7 @@ class LorentzDrudeMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
         *,
         permittivity_infinity: ArrayLike = 1.0,
         permeability: ArrayLike = 1.0,
-    ):
+    ) -> None:
         frequency = jnp.asarray(resonance_frequency, dtype=jnp.float64)
         damping_ = jnp.asarray(damping, dtype=jnp.float64)
         strength = jnp.asarray(oscillator_strength, dtype=jnp.float64)
@@ -672,7 +672,7 @@ class PreparedLorentzDrudeMaxwellConstitutive(AbstractPreparedMaxwellConstitutiv
         cochain: CochainDiscretization,
         layout: MaxwellCochainLayout,
         /,
-    ):
+    ) -> None:
         from ._maxwell import _positive_material
 
         self.electric_count = layout.electric_count

@@ -36,7 +36,7 @@ class FactorRiskModel(StrictModule):
         /,
         *,
         model_id: str,
-    ):
+    ) -> None:
         assets = tuple(str(value) for value in asset_ids)
         if (
             not assets

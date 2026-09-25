@@ -21,7 +21,7 @@ class ResidueKey:
     chain_id: str
     position: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identifier(self.chain_id, "chain_id")
         if (
             isinstance(self.position, bool)
@@ -38,7 +38,7 @@ class ProteinConstruct:
     chain_ids: tuple[str, ...]
     sequences: tuple[str, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.chain_ids, tuple) or not isinstance(self.sequences, tuple):
             raise TypeError("chain_ids and sequences must be immutable tuples.")
         if not self.chain_ids or len(self.chain_ids) != len(self.sequences):
@@ -82,7 +82,7 @@ class ProteinAtomKey:
     residue: ResidueKey
     atom_name: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.residue, ResidueKey):
             raise TypeError("residue must be a ResidueKey.")
         _identifier(self.atom_name, "atom_name")

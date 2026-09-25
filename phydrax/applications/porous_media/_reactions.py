@@ -91,7 +91,7 @@ class MineralKinetics(StrictModule):
         rate_constants: ArrayLike,
         *,
         allow_nucleation: tuple[bool, ...] | None = None,
-    ):
+    ) -> None:
         if not isinstance(chemistry, MassActionSystem):
             raise TypeError("MineralKinetics requires a declared MassActionSystem.")
         if chemistry.charge_balance_component is not None:

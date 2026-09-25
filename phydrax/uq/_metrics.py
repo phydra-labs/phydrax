@@ -343,7 +343,7 @@ class GaussianScaleCalibrator(StrictModule):
 
     scale_multiplier: Array
 
-    def __init__(self, scale_multiplier: ArrayLike):
+    def __init__(self, scale_multiplier: ArrayLike) -> None:
         multiplier = jnp.asarray(scale_multiplier, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(multiplier)) or not bool(multiplier > 0.0):
             raise ValueError("scale_multiplier must be finite and positive.")

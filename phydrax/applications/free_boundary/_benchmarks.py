@@ -31,7 +31,7 @@ from ._stefan import (
 class ExactStefanFields(StrictModule, NonTrainableState):
     initial_front: float
 
-    def __init__(self, initial_front: float, /):
+    def __init__(self, initial_front: float, /) -> None:
         self.initial_front = _positive_float(initial_front, "initial_front")
 
     def temperature(self, point: Array, /) -> Array:
@@ -74,7 +74,7 @@ class ExactStefanBenchmark(StrictModule, NonTrainableState):
         final_time: float = 0.5,
         domain_length: float = 1.5,
         interface_width: float = 0.05,
-    ):
+    ) -> None:
         fields = ExactStefanFields(initial_front)
         self.parameters = OnePhaseStefanParameters(
             diffusivity=1.0,

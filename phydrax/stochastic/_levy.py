@@ -129,7 +129,7 @@ class SymmetricStableLevyProcess(AbstractLevyProcess):
         dimension: int | None = None,
         drift: ArrayLike = 0.0,
         process_id: str | None = None,
-    ):
+    ) -> None:
         stability = float(alpha)
         if not isfinite(stability) or not 0.0 < stability < 2.0:
             raise ValueError("alpha must be finite and lie strictly between 0 and 2.")
@@ -288,7 +288,7 @@ class LevyJumpSeries(StrictModule):
         process_id: str,
         realization_id: str,
         coupling_id: str,
-    ):
+    ) -> None:
         samples = _sample_shape(sample_shape)
         dimension_value = int(dimension)
         time_values = jnp.asarray(times, dtype=jnp.float64)
@@ -436,7 +436,7 @@ class LevyProcessRealization(StrictModule):
         label: str | None = None,
         coupling_id: str | None = None,
         _path_indices: Array | None = None,
-    ):
+    ) -> None:
         key = _scalar_key(root_key, owner="LevyProcessRealization")
         dimension_value = int(dimension)
         capacity = int(max_terms)

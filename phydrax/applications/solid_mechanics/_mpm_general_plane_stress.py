@@ -29,7 +29,7 @@ class MPMMaterialOrientation(StrictModule, NonTrainableState):
     rotation: Array
     orientation_id: str = eqx.field(static=True)
 
-    def __init__(self, rotation: ArrayLike, /, *, tolerance: float = 1.0e-10):
+    def __init__(self, rotation: ArrayLike, /, *, tolerance: float = 1.0e-10) -> None:
         value = np.asarray(rotation, dtype=np.float64)
         if value.shape != (3, 3) or np.any(~np.isfinite(value)):
             raise ValueError("Material orientation must be one finite 3x3 rotation.")
@@ -60,7 +60,7 @@ class OrientedMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
         base: AbstractImplicitMPMConstitutivePlan,
         orientation: MPMMaterialOrientation,
         /,
-    ):
+    ) -> None:
         if not isinstance(base, AbstractImplicitMPMConstitutivePlan):
             raise TypeError("base must be AbstractImplicitMPMConstitutivePlan.")
         if base.dimension != 3:
@@ -183,7 +183,7 @@ class GeneralPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan)
         /,
         *,
         root: VectorLocalRootPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(base, AbstractImplicitMPMConstitutivePlan):
             raise TypeError("base must be AbstractImplicitMPMConstitutivePlan.")
         if base.dimension != 3 or base.kinematics != "three_dimensional":

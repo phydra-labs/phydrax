@@ -28,7 +28,7 @@ class PassiveVortexProbes(StrictModule, NonTrainableState):
     position: Array
     probes_id: str = eqx.field(static=True)
 
-    def __init__(self, position: ArrayLike, /):
+    def __init__(self, position: ArrayLike, /) -> None:
         points = jnp.asarray(position, dtype=jnp.float64)
         if (
             points.ndim != 2
@@ -125,7 +125,7 @@ class PrescribedVortexRigidMotion(StrictModule, NonTrainableState):
 
     def __init__(
         self, law: Callable[[Array, Any], VortexRigidMotionState], law_id: str, /
-    ):
+    ) -> None:
         if not callable(law) or not str(law_id):
             raise ValueError("Prescribed motion requires callable law and stable ID.")
         self.law = law

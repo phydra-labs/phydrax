@@ -66,7 +66,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         field_transfer: Callable | None = None,
         history_transfer: Callable | None = None,
         transaction_id: str = "finite-element-topology-transaction",
-    ):
+    ) -> None:
         if not callable(certify):
             raise TypeError("certify must be callable.")
         if material_transfer is not None and not callable(material_transfer):

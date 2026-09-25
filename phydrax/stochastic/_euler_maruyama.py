@@ -175,7 +175,7 @@ class EulerMaruyamaTransitionKernel(AbstractTransitionKernel):
         noise_shape: Sequence[int],
         process_id: str,
         approximation_id: str = "euler-maruyama",
-    ):
+    ) -> None:
         from ..dynamics import ContinuousSystem
         from ..solver import WienerTerm
 
@@ -399,7 +399,7 @@ class EulerMaruyamaQuasiLikelihood(StrictModule):
         /,
         *,
         normalize_by_interval: bool = False,
-    ):
+    ) -> None:
         if not isinstance(kernel, EulerMaruyamaTransitionKernel):
             raise TypeError("kernel must be an EulerMaruyamaTransitionKernel.")
         self.kernel = kernel

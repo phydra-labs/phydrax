@@ -45,7 +45,7 @@ class PredictiveKineticRefinementPlan(StrictModule, NonTrainableState):
         refine_threshold: float,
         coarsen_threshold: float,
         prediction_steps: int = 2,
-    ):
+    ) -> None:
         if not isinstance(rule, CompressibleVelocityRule):
             raise TypeError("rule must be a CompressibleVelocityRule.")
         refine = float(refine_threshold)
@@ -162,7 +162,7 @@ class KineticAMRTransferPlan(StrictModule, NonTrainableState):
     refinement_ratio: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, refinement_ratio: int = 2, /):
+    def __init__(self, dimension: int, refinement_ratio: int = 2, /) -> None:
         dim = int(dimension)
         ratio = int(refinement_ratio)
         if dim not in (1, 2, 3) or ratio < 2:
@@ -235,7 +235,7 @@ class MappedKineticGridPlan(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, jacobian: ArrayLike, /):
+    def __init__(self, jacobian: ArrayLike, /) -> None:
         matrix = np.asarray(jacobian)
         if matrix.ndim < 2 or matrix.shape[-1] != matrix.shape[-2]:
             raise ValueError("jacobian must end in equal physical/reference dimensions.")
@@ -289,7 +289,7 @@ class MovingKineticGeometryPlan(StrictModule, NonTrainableState):
     active_shape: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, active_shape: tuple[int, ...], /):
+    def __init__(self, active_shape: tuple[int, ...], /) -> None:
         shape = tuple(int(value) for value in active_shape)
         if not shape or any(value < 1 for value in shape):
             raise ValueError("active_shape must contain positive extents.")
@@ -391,7 +391,7 @@ class KineticMultiblockInterfacePlan(StrictModule, NonTrainableState):
         source_model: PositiveCompressibleKineticPlan,
         target_model: PositiveCompressibleKineticPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             source_model, PositiveCompressibleKineticPlan
         ) or not isinstance(target_model, PositiveCompressibleKineticPlan):

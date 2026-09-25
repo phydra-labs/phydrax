@@ -101,7 +101,7 @@ class WeaklyCompressibleSPHMethodPlan(StrictModule, NonTrainableState):
         viscous_cfl: float = 0.125,
         name: str = "weakly-compressible-sph",
         method_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractSPHSmoothingKernel):
             raise TypeError("kernel must be an AbstractSPHSmoothingKernel.")
         if not isinstance(density, AbstractSPHDensityPlan):
@@ -276,7 +276,7 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
         precision: ParticlePrecisionPolicy | None = None,
         external_acceleration: ExternalParticleAcceleration | None = None,
         external_acceleration_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):

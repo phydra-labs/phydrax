@@ -79,7 +79,7 @@ class POUNDERS(AbstractLeastSquaresMethod):
         regularization: float = 1e-10,
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

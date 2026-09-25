@@ -56,7 +56,7 @@ class StateDesignCase(StrictModule):
         /,
         *,
         args: Any = None,
-    ):
+    ) -> None:
         identifier = str(case_id)
         if not identifier:
             raise ValueError("case_id must be non-empty.")
@@ -80,14 +80,14 @@ class StateDesignCase(StrictModule):
         )
 
 
-def _check_design(design, case_count):
+def _check_design(design, case_count) -> None:
     if not isinstance(design, dict) or set(design) != {"shared", "local"}:
         raise TypeError("Multipoint design must be {'shared': tree, 'local': tuple}.")
     if not isinstance(design["local"], tuple) or len(design["local"]) != case_count:
         raise ValueError("Multipoint local design must have one tuple entry per case.")
 
 
-def _check_states(state, case_count):
+def _check_states(state, case_count) -> None:
     if not isinstance(state, tuple) or len(state) != case_count:
         raise ValueError("Multipoint state must have one tuple entry per case.")
 
@@ -249,7 +249,7 @@ class _MultipointAdjointCertification(StrictModule):
 class _MultipointStateSolver(AbstractStateSolver):
     cases: tuple[StateDesignCase, ...]
 
-    def __init__(self, cases, /):
+    def __init__(self, cases, /) -> None:
         self.cases = tuple(cases)
 
     @property
@@ -354,7 +354,7 @@ class MultipointStateDesignProblem(StrictModule):
         design_bounds: Bounds | None = None,
         has_aux: bool = False,
         problem_id: str = "multipoint-state-design",
-    ):
+    ) -> None:
         cases_ = tuple(cases)
         if not cases_ or any(not isinstance(case, StateDesignCase) for case in cases_):
             raise TypeError(

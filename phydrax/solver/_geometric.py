@@ -160,7 +160,7 @@ class GeometricEuler(AbstractGeometricSolver):
         GeometricLocalInterpolation
     )
 
-    def __init__(self, geometry: AbstractStateGeometry, /):
+    def __init__(self, geometry: AbstractStateGeometry, /) -> None:
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("GeometricEuler geometry must be an AbstractStateGeometry.")
         _require_exact_differential(geometry, "GeometricEuler")
@@ -214,7 +214,7 @@ class SeparableHamiltonianVectorField(StrictModule):
         kinetic_gradient: Callable[[Array, Array, Any], Array],
         configuration_dimension: int,
         /,
-    ):
+    ) -> None:
         if not callable(potential_gradient) or not callable(kinetic_gradient):
             raise TypeError("Hamiltonian gradients must be callable.")
         if int(configuration_dimension) <= 0:
@@ -273,7 +273,7 @@ class StormerVerlet(AbstractGeometricSolver):
     )
     configuration_dimension: int = eqx.field(static=True)
 
-    def __init__(self, configuration_dimension: int, /):
+    def __init__(self, configuration_dimension: int, /) -> None:
         if int(configuration_dimension) <= 0:
             raise ValueError("configuration_dimension must be positive.")
         self.configuration_dimension = int(configuration_dimension)
@@ -351,7 +351,7 @@ class RKMK(AbstractGeometricSolver):
         /,
         *,
         method: RKMKMethod = "rk4",
-    ):
+    ) -> None:
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("RKMK geometry must be an AbstractStateGeometry.")
         _require_exact_differential(geometry, "RKMK")
@@ -439,7 +439,7 @@ class CommutatorFreeTableau(StrictModule):
         composition_coefficients: Sequence[Sequence[float]],
         order: int,
         tableau_id: str,
-    ):
+    ) -> None:
         nodes = tuple(float(value) for value in abscissae)
         stages = tuple(tuple(float(value) for value in row) for row in stage_coefficients)
         compositions = tuple(
@@ -494,7 +494,7 @@ class CommutatorFreeSolver(AbstractGeometricSolver):
         /,
         *,
         tableau: CommutatorFreeTableau | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError(
                 "CommutatorFreeSolver geometry must be an AbstractStateGeometry."
@@ -577,7 +577,7 @@ class SRKMK(AbstractGeometricSolver, dfx.AbstractStratonovichSolver):
         GeometricLocalInterpolation
     )
 
-    def __init__(self, geometry: AbstractStateGeometry, /):
+    def __init__(self, geometry: AbstractStateGeometry, /) -> None:
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("SRKMK geometry must be an AbstractStateGeometry.")
         _require_exact_differential(geometry, "SRKMK")

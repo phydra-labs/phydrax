@@ -53,7 +53,7 @@ class FiniteStrainKinematics(StrictModule):
     dimension: int = eqx.field(static=True)
     kinematics: str = eqx.field(static=True)
 
-    def __init__(self, deformation_gradient: ArrayLike, /):
+    def __init__(self, deformation_gradient: ArrayLike, /) -> None:
         deformation = jnp.asarray(deformation_gradient)
         trailing_shape = deformation.shape[-2:]
         if trailing_shape == (2, 2):
@@ -126,7 +126,7 @@ class VolumetricConstraint(StrictModule, NonTrainableState):
 
     kind: VolumetricConstraintKind = eqx.field(static=True)
 
-    def __init__(self, kind: VolumetricConstraintKind = "jacobian", /):
+    def __init__(self, kind: VolumetricConstraintKind = "jacobian", /) -> None:
         if kind not in ("jacobian", "logarithmic"):
             raise ValueError(
                 "Volumetric constraint kind must be 'jacobian' or 'logarithmic'."
@@ -356,7 +356,7 @@ class NeoHookeanParameters(StrictModule, NonTrainableState):
     shear_modulus: Array
     lame_lambda: Array
 
-    def __init__(self, shear_modulus: ArrayLike, lame_lambda: ArrayLike, /):
+    def __init__(self, shear_modulus: ArrayLike, lame_lambda: ArrayLike, /) -> None:
         shear = jnp.asarray(shear_modulus)
         lambda_ = jnp.asarray(lame_lambda)
         bulk = lambda_ + (2.0 / 3.0) * shear
@@ -639,7 +639,7 @@ class NeoHookeanLaw(HyperelasticLaw, NonTrainableState):
 
     parameters: NeoHookeanParameters
 
-    def __init__(self, parameters: NeoHookeanParameters, /):
+    def __init__(self, parameters: NeoHookeanParameters, /) -> None:
         if not isinstance(parameters, NeoHookeanParameters):
             raise TypeError("parameters must be NeoHookeanParameters.")
         self.parameters = parameters

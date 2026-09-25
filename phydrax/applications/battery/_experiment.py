@@ -122,7 +122,7 @@ class BatteryOutputPlan(StrictModule, NonTrainableState):
     names: tuple[str, ...] = eqx.field(static=True)
     output_plan_id: str = eqx.field(static=True)
 
-    def __init__(self, names: Sequence[str], /):
+    def __init__(self, names: Sequence[str], /) -> None:
         resolved = tuple(_identifier(name, "Battery output name") for name in names)
         if not resolved:
             raise ValueError("BatteryOutputPlan requires at least one selected output.")
@@ -161,7 +161,7 @@ class BatteryDiffraxSolvePlan(StrictModule, NonTrainableState):
         event_relative_tolerance: float = 1.0e-7,
         event_absolute_tolerance: float = 1.0e-9,
         maximum_steps: int = 4096,
-    ):
+    ) -> None:
         solver_ = dfx.Tsit5() if solver is None else solver
         if not isinstance(solver_, dfx.AbstractSolver):
             raise TypeError("Battery ODE solver must be a Diffrax AbstractSolver.")
@@ -270,7 +270,7 @@ class BatteryDAESolvePlan(StrictModule, NonTrainableState):
         initial_guard_policy: Literal[
             "terminate-nondifferentiable"
         ] = "terminate-nondifferentiable",
-    ):
+    ) -> None:
         resolved = DAESolvePolicy() if policy is None else policy
         if not isinstance(resolved, DAESolvePolicy):
             raise TypeError("Battery DAE policy must be DAESolvePolicy.")
@@ -346,7 +346,7 @@ class BatteryExperimentPlan(StrictModule, NonTrainableState):
         capability_profile: CapabilityProfile,
         support_tuple: SupportTuple,
         /,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractBatteryModelAdapter):
             raise TypeError("model must implement AbstractBatteryModelAdapter.")
         if not isinstance(protocol, BatteryProtocolPlan):
@@ -453,7 +453,7 @@ class BatteryRuntimeInputs(StrictModule):
         *,
         protocol_id: str,
         observation_input_policy: HeldInputPolicy,
-    ):
+    ) -> None:
         if not isinstance(input_policy, HeldInputPolicy):
             raise TypeError("input_policy must be HeldInputPolicy.")
         if input_policy.node_side != "right":
@@ -523,7 +523,7 @@ class PreparedBatteryExperiment(StrictModule, NonTrainableState):
         native_guards: tuple[HybridGuardPlan, ...],
         admission: Any,
         distribution_id: str | None,
-    ):
+    ) -> None:
         self.plan = plan
         self.prepared_model = prepared_model
         self.transition_times_s = transition_times_s

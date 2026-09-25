@@ -282,7 +282,7 @@ def _worker_main(descriptor: int) -> None:
 
 
 class _OpenDSSWorker:
-    def __init__(self):
+    def __init__(self) -> None:
         self.engine = None
 
     def open(self, config: Mapping[str, Any]) -> dict[str, Any]:
@@ -443,7 +443,7 @@ class _OpenDSSWorker:
 
 
 class _FMIWorker:
-    def __init__(self):
+    def __init__(self) -> None:
         self.fmu = None
         self.instantiated = False
         self.initialized = False
@@ -622,7 +622,7 @@ class _FMIWorker:
 
 
 class _HELICSWorker:
-    def __init__(self):
+    def __init__(self) -> None:
         self.library = None
         self.broker = None
         self.federate = None

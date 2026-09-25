@@ -43,7 +43,7 @@ class PolynomialONFlowPlan(StrictModule, NonTrainableState):
         *,
         coupling_count: int = 2,
         lpa_prime: bool = False,
-    ):
+    ) -> None:
         components = int(component_count)
         dimension_ = float(dimension)
         count = int(coupling_count)
@@ -162,7 +162,7 @@ class FixedPointSearchPlan(StrictModule, NonTrainableState):
         absolute_tolerance: float = 1.0e-9,
         relative_tolerance: float = 1.0e-8,
         damping: float = 1.0,
-    ):
+    ) -> None:
         count = int(coupling_count)
         iterations = int(maximum_iterations)
         absolute = float(absolute_tolerance)

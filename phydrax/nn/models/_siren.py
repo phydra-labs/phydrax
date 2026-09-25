@@ -45,7 +45,7 @@ class SIREN(_AbstractBaseModel):
         use_bias: bool = True,
         use_final_bias: bool = True,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         in_size_c = _canonical_size(in_size)
         out_size_c = _canonical_size(out_size)
         width = int(width_size)

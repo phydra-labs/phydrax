@@ -75,7 +75,7 @@ class EarthOrientationRecordSet(StrictModule, NonTrainableState):
         predicted: ArrayLike,
         provenance: AstrodynamicsDataProvenance,
         /,
-    ):
+    ) -> None:
         values = tuple(
             np.asarray(value, dtype=np.float64)
             for value in (
@@ -151,7 +151,9 @@ class PreparedEarthOrientation(StrictModule, NonTrainableState):
     reference_jd_utc: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, records: EarthOrientationRecordSet, reference_jd_utc: float, /):
+    def __init__(
+        self, records: EarthOrientationRecordSet, reference_jd_utc: float, /
+    ) -> None:
         if not isinstance(records, EarthOrientationRecordSet):
             raise TypeError("records must be an EarthOrientationRecordSet.")
         reference = float(reference_jd_utc)

@@ -73,7 +73,7 @@ class GaussianErfDirectVortexPlan3D(AbstractVortexVelocityPlan):
         maximum_interactions: int | None = None,
         maximum_workspace_bytes: int = 64 * 1024 * 1024,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         sources = int(maximum_sources)
         targets = sources if maximum_targets is None else int(maximum_targets)
         kernel_ = GaussianErfVortexKernel3D() if kernel is None else kernel
@@ -243,7 +243,7 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
         source_chunk_count: int,
         target_chunk_count: int,
         estimated_working_set_bytes: int,
-    ):
+    ) -> None:
         if not isinstance(compatibility, VortexVelocityCompatibility):
             raise TypeError("compatibility must be VortexVelocityCompatibility.")
         self.plan = plan

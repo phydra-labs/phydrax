@@ -60,7 +60,7 @@ class CoherentDevice(StrictModule):
     right: SemiInfiniteLead
     transverse: TransverseModes
 
-    def __init__(self, hamiltonian, left, right, *, transverse=None):
+    def __init__(self, hamiltonian, left, right, *, transverse=None) -> None:
         if (
             not isinstance(hamiltonian, ChainHamiltonian)
             or not isinstance(left, SemiInfiniteLead)

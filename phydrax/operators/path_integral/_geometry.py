@@ -38,7 +38,7 @@ class PreparedGeometryPathKernel(StrictModule):
         behavior: Literal["absorbing", "reflecting"],
         diffusion: float = 1.0,
         image_capacity: int,
-    ):
+    ) -> None:
         low = jnp.asarray(lower, dtype=jnp.float64)
         high = jnp.asarray(upper, dtype=jnp.float64)
         if low.shape != () or high.shape != ():

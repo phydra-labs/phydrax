@@ -76,7 +76,7 @@ class GraphDomain(JointFactor):
         label: str = "graph",
         measure: GraphMeasureMode = "probability",
         validate: bool = True,
-    ):
+    ) -> None:
         """Create a domain over one sparse graph.
 
         Parameters:

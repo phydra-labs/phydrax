@@ -75,7 +75,7 @@ class ChemicalExplosiveModePlan(StrictModule, NonTrainableState):
         minimum_separation: float = 1.0e-8,
         maximum_condition: float = 1.0e10,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         labels = tuple(str(value).strip() for value in contribution_labels)

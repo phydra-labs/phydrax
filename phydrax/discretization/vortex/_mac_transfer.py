@@ -54,7 +54,7 @@ class MACVortexParticleTransferPlan(StrictModule, NonTrainableState):
         /,
         *,
         degree: int = 2,
-    ):
+    ) -> None:
         if (
             not isinstance(particles, ParticleDiscretization)
             or not isinstance(dynamics, CompiledMACIncompressibleDynamics)

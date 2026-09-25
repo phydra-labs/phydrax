@@ -215,7 +215,7 @@ class HarmonicPolynomialBasis(AbstractTrefftzBasis):
         *,
         normalization: SimilarityNormalization | None = None,
         resources: TrefftzResourceBudget | None = None,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         degree_ = int(maximum_degree)
         if dimension_ < 2:
@@ -358,7 +358,7 @@ class PolyharmonicAlmansiBasis(AbstractTrefftzBasis):
         *,
         normalization: SimilarityNormalization | None = None,
         resources: TrefftzResourceBudget | None = None,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         order_ = int(order)
         if dimension_ < 2:

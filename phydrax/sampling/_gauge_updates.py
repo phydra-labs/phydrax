@@ -67,7 +67,7 @@ class GaugeUpdatePlan(StrictModule):
         rejection_attempts: int = 64,
         overrelaxation_passes: int = 1,
         su3_subgroup_passes: int = 1,
-    ):
+    ) -> None:
         beta = float(coupling)
         sweeps = int(num_sweeps)
         attempts = int(rejection_attempts)
@@ -168,7 +168,7 @@ class GaugeReplicaExchangePlan(StrictModule):
     inverse_temperatures: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, inverse_temperatures: ArrayLike, /):
+    def __init__(self, inverse_temperatures: ArrayLike, /) -> None:
         beta = jnp.asarray(inverse_temperatures, dtype=jnp.float64).reshape((-1,))
         if (
             beta.size < 2

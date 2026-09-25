@@ -45,7 +45,7 @@ class _PullbackCallable(StrictModule):
         replacements: tuple[DomainFunction | None, ...],
         replacement_positions: tuple[tuple[int, ...], ...],
         passthrough_positions: tuple[int | None, ...],
-    ):
+    ) -> None:
         self.source = source
         self.replacements = replacements
         self.replacement_positions = replacement_positions

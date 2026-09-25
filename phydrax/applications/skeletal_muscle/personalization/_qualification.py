@@ -43,7 +43,7 @@ class PhysicalRelativeForceCalibrationQualificationPlan(StrictModule, NonTrainab
     relative_scale_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, *, relative_scale_tolerance: float = 1.0e-5):
+    def __init__(self, *, relative_scale_tolerance: float = 1.0e-5) -> None:
         tolerance = float(relative_scale_tolerance)
         if not isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("relative_scale_tolerance must be positive and finite.")

@@ -64,7 +64,7 @@ class FixedWorkThermochemicalSourcePlan(StrictModule, NonTrainableState):
         newton_iterations: int = 10,
         residual_tolerance: float = 1.0e-9,
         minimum_line_fraction: float = 1.0e-8,
-    ):
+    ) -> None:
         substeps_ = int(substeps)
         iterations = int(newton_iterations)
         tolerance = float(residual_tolerance)

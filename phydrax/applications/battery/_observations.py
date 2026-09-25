@@ -265,7 +265,7 @@ class BatteryTimeSeriesRecord(StrictModule, NonTrainableState):
         segment_indices: ArrayLike,
         segments: tuple[BatteryGapSegment, ...],
         preprocessing_id: str,
-    ):
+    ) -> None:
         identifiers = tuple(
             _identifier(value, name)
             for value, name in (
@@ -515,7 +515,7 @@ class BatteryDiagnosticRecord(StrictModule, NonTrainableState):
         coordinate: ArrayLike,
         values: ArrayLike,
         valid_mask: ArrayLike,
-    ):
+    ) -> None:
         identifiers = tuple(
             _identifier(value, name)
             for value, name in (
@@ -644,7 +644,7 @@ class BatteryInterpolatedChannels(StrictModule):
         voltage_mask: Array,
         temperature_mask: Array,
         /,
-    ):
+    ) -> None:
         self.time_s = time_s
         self.current_a = current_a
         self.voltage_v = voltage_v

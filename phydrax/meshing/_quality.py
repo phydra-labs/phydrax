@@ -40,7 +40,7 @@ class CellQualityReport(StrictModule, NonTrainableState):
     worst_cell_global_ids: tuple[int, ...] = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluation: CellQualityEvaluation, /):
+    def __init__(self, evaluation: CellQualityEvaluation, /) -> None:
         if not isinstance(evaluation, CellQualityEvaluation):
             raise TypeError("evaluation must be CellQualityEvaluation.")
         measures = np.asarray(evaluation.measures, dtype=np.float64)

@@ -51,7 +51,7 @@ class CorrectedP3MPlan(StrictModule):
         /,
         *,
         query_chunk_size: int | None = None,
-    ):
+    ) -> None:
         if (
             not isinstance(mesh, PreparedPeriodicVortexInCell)
             or float(splitting_parameter) <= 0.0

@@ -85,7 +85,7 @@ class _RaggedTimeSeriesTable(StrictModule, NonTrainableState):
         interpolation: RaggedTimeSeriesHardInterpolation,
         gate: RaggedTimeSeriesHardGate,
         snap_tol: float,
-    ):
+    ) -> None:
         if interpolation not in ("linear", "cubic_hermite"):
             raise ValueError("interpolation must be either 'linear' or 'cubic_hermite'.")
         if gate not in ("sin2", "sin4"):

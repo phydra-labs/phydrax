@@ -37,7 +37,7 @@ class ModalSupportDiscoveryPlan(StrictModule, NonTrainableState):
         conjugate_signs: ArrayLike | None = None,
         omp_iterations: int = 64,
         omp_step_size: float = 1.0e-2,
-    ):
+    ) -> None:
         size = 1
         for value in candidate_layout.coefficient_shape:
             size *= int(value)
@@ -325,7 +325,7 @@ class MissingModeRecoveryPolicy(StrictModule, NonTrainableState):
         regularization: float = 1.0e-6,
         iterations: int = 256,
         step_size: float = 1.0e-2,
-    ):
+    ) -> None:
         if regularization < 0.0 or iterations <= 0 or step_size <= 0.0:
             raise ValueError("Missing-mode recovery policy values are invalid.")
         self.regularization = float(regularization)
@@ -349,7 +349,7 @@ class MissingModeRecoveryProblem(StrictModule):
         *,
         held_out_measurement: ArrayLike | None = None,
         held_out_observations: ArrayLike | None = None,
-    ):
+    ) -> None:
         matrix = jnp.asarray(measurement)
         values = jnp.asarray(observations)
         if matrix.ndim != 2 or values.shape[-1] != matrix.shape[0]:

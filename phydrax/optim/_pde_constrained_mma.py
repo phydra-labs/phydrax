@@ -74,7 +74,7 @@ class ReducedMMA(AbstractStateDesignMethod):
         *,
         policy: MMAPolicy | None = None,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         policy_ = MMAPolicy() if policy is None else policy
         linear_policy_ = (
             _default_adjoint_policy() if linear_policy is None else linear_policy

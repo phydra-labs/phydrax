@@ -37,7 +37,7 @@ class AdaptiveTopologyEvidence(StrictModule, NonTrainableState):
         maximum_transfer_error: float,
         coverage_verified: bool,
         accepted: bool,
-    ):
+    ) -> None:
         self.old_cover_id = str(old_cover_id)
         self.new_cover_id = str(new_cover_id)
         self.maximum_transfer_error = float(maximum_transfer_error)
@@ -60,7 +60,7 @@ class AdaptiveTopologyTransaction(StrictModule):
         transferred: LocalFieldFamily,
         evidence: AdaptiveTopologyEvidence,
         /,
-    ):
+    ) -> None:
         self.source = source
         self.candidate_cover = candidate_cover
         self.transferred = transferred
@@ -81,7 +81,7 @@ class AdaptiveRefinementPlan(StrictModule, NonTrainableState):
         *,
         transfer_tolerance: float = 1.0e-8,
         maximum_patches: int = 1024,
-    ):
+    ) -> None:
         tolerance = float(transfer_tolerance)
         maximum = int(maximum_patches)
         if not math.isfinite(tolerance) or tolerance < 0.0:
@@ -204,7 +204,7 @@ class TrainablePartitionEvidence(StrictModule, NonTrainableState):
     monotone: bool = eqx.field(static=True)
     verified: bool = eqx.field(static=True)
 
-    def __init__(self, *, minimum_width: float, monotone: bool):
+    def __init__(self, *, minimum_width: float, monotone: bool) -> None:
         self.minimum_width = float(minimum_width)
         self.monotone = bool(monotone)
         self.verified = self.monotone and self.minimum_width > 0.0
@@ -226,7 +226,7 @@ class TrainableAxisPartition(StrictModule):
         /,
         *,
         minimum_fraction: float = 1.0e-3,
-    ):
+    ) -> None:
         if not isinstance(partition, AxisPartition):
             raise TypeError("partition must be an AxisPartition.")
         minimum = float(minimum_fraction)

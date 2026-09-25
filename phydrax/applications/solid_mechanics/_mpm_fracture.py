@@ -34,7 +34,7 @@ class MPMPhaseFieldParameters(StrictModule, NonTrainableState):
         length_scale: ArrayLike,
         residual_stiffness: ArrayLike = 1.0e-6,
         /,
-    ):
+    ) -> None:
         if not isinstance(material, NeoHookeanParameters):
             raise TypeError("material must be NeoHookeanParameters.")
         values = tuple(
@@ -69,7 +69,7 @@ class PhaseFieldNeoHookeanMPMConstitutivePlan(
     capabilities: MPMConstitutiveCapabilities
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (2, 3):
             raise ValueError("Phase-field MPM supports plane strain and 3-D.")

@@ -71,7 +71,7 @@ class Shorten2007FiberReaction(AbstractFiberReaction):
     model: ShortenFastTwitchModel
     kinematic_policy: str = eqx.field(static=True)
 
-    def __init__(self, model: ShortenFastTwitchModel, /):
+    def __init__(self, model: ShortenFastTwitchModel, /) -> None:
         if not isinstance(model, ShortenFastTwitchModel):
             raise TypeError("model must be ShortenFastTwitchModel.")
         self.model = model

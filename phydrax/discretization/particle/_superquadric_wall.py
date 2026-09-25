@@ -45,7 +45,7 @@ class SuperquadricTriangleContactPlan(StrictModule, NonTrainableState):
         edge_rounding_radius: float = 0.0,
         vertex_rounding_radius: float = 0.0,
         interaction_range: float = 0.0,
-    ):
+    ) -> None:
         count = int(iterations)
         relax = float(relaxation)
         tolerance = float(residual_tolerance)

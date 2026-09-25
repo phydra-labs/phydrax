@@ -62,7 +62,7 @@ class CosmologicalKDKPlan(StrictModule, NonTrainableState):
         /,
         *,
         scale: CosmologyScaleContract = CODE_COSMOLOGY_SCALE,
-    ):
+    ) -> None:
         lengths = tuple(float(value) for value in box_size)
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")

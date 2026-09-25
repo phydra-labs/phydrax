@@ -44,7 +44,7 @@ class StructuredComputationAwareGaussianProcessFactor(StrictModule):
         *,
         residual: ArrayLike | None = None,
         max_factorization_bytes: int = 64 * 1024 * 1024,
-    ):
+    ) -> None:
         matrix = jnp.asarray(covariance)
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1] or matrix.shape[0] <= 0:
             raise ValueError("Structured GP covariance must be nonempty and square.")

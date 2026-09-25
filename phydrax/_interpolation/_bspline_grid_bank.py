@@ -28,7 +28,7 @@ class BSplineGridBank(StrictModule, NonTrainableState):
     coefficient_count: int = eqx.field(static=True)
     positive_span_count: int = eqx.field(static=True)
 
-    def __init__(self, knots: ArrayLike, degree: int, /):
+    def __init__(self, knots: ArrayLike, degree: int, /) -> None:
         knots_ = jnp.asarray(knots)
         if knots_.ndim != 2 or knots_.shape[0] == 0:
             raise ValueError(
@@ -123,7 +123,7 @@ class TrainableBSplineGridBank(StrictModule):
         *,
         intervals: ArrayLike,
         minimum_spans: ArrayLike | None = None,
-    ):
+    ) -> None:
         if isinstance(degree, bool) or not isinstance(degree, Integral):
             raise TypeError("Trainable B-spline grid-bank degree must be an integer.")
         degree_ = int(degree)

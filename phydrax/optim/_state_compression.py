@@ -54,7 +54,7 @@ class OptimizerStateCompressionPolicy(StrictModule):
         exact_roles: Sequence[str] = (),
         overflow: Literal["error", "saturate"] = "error",
         differentiation: Literal["none"] = "none",
-    ):
+    ) -> None:
         if isinstance(format, MicroscalingFormat):
             format_ = format
         else:

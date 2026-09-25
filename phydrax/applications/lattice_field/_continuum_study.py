@@ -65,7 +65,7 @@ class ScaleSettingCondition(StrictModule, NonTrainableState):
         scheme: str,
         physical_reference_uncertainty: float = 0.0,
         minimum_signal_to_noise: float = 3.0,
-    ):
+    ) -> None:
         reference = _finite_positive(physical_reference, "physical_reference")
         uncertainty = float(physical_reference_uncertainty)
         signal = _finite_positive(minimum_signal_to_noise, "minimum_signal_to_noise")
@@ -98,7 +98,7 @@ class RenormalizationCondition(StrictModule, NonTrainableState):
     scale: str = eqx.field(static=True)
     condition_id: str = eqx.field(static=True)
 
-    def __init__(self, *, scheme: str, scale: str, power: float = 1.0):
+    def __init__(self, *, scheme: str, scale: str, power: float = 1.0) -> None:
         scheme_id = _identifier(scheme, "scheme")
         scale_id = _identifier(scale, "scale")
         power_ = float(power)
@@ -142,7 +142,7 @@ class CorrelatedContinuumData(StrictModule, NonTrainableState):
         covariance_id: str,
         maximum_data_points: int = 4096,
         symmetry_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         observable = np.asarray(bare_observable, dtype=np.float64).reshape((-1,))
         inverse = np.asarray(inverse_scale, dtype=np.float64).reshape((-1,))
         renormalization = np.asarray(renormalization_factor, dtype=np.float64).reshape(
@@ -233,7 +233,7 @@ class ContinuumSystematicVariation(StrictModule, NonTrainableState):
         maximum_lattice_spacing: float | None = None,
         minimum_physical_extent: float | None = None,
         variation_id: str | None = None,
-    ):
+    ) -> None:
         cutoff = _finite_positive(cutoff_power, "cutoff_power")
         volume = (
             None
@@ -295,7 +295,7 @@ class ContinuumStudyPlan(StrictModule, NonTrainableState):
         minimum_degrees_of_freedom: int = 1,
         maximum_matrix_entries: int = 1_000_000,
         maximum_matrix_bytes: int = 64 * 1024 * 1024,
-    ):
+    ) -> None:
         if not isinstance(scale_setting, ScaleSettingCondition):
             raise TypeError("scale_setting must be ScaleSettingCondition.")
         if not isinstance(renormalization, RenormalizationCondition):

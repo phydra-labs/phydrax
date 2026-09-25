@@ -45,7 +45,7 @@ class PartialAssemblyOperator(StrictModule, NonTrainableState):
         *,
         valid: ArrayLike | None = None,
         properties: OperatorProperties | None = None,
-    ):
+    ) -> None:
         basis = jnp.asarray(basis_values)
         weights = jnp.asarray(quadrature_weights)
         coefficient = jnp.asarray(quadrature_coefficient)
@@ -148,7 +148,7 @@ class FiniteElementMassPolicy(StrictModule, NonTrainableState):
     kind: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: str = "exact", /):
+    def __init__(self, kind: str = "exact", /) -> None:
         kind_ = str(kind)
         if kind_ not in ("exact", "collocated_diagonal", "lumped"):
             raise ValueError("Unknown finite-element mass policy.")
@@ -177,7 +177,7 @@ class FiniteElementDiagonalData(StrictModule, NonTrainableState):
         /,
         *,
         numeric_version: ArrayLike = 0,
-    ):
+    ) -> None:
         method_ = str(method)
         operator = str(operator_id)
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
@@ -222,7 +222,7 @@ class FiniteElementPreconditionerData(StrictModule, NonTrainableState):
         block_graph: tuple[tuple[bool, ...], ...],
         workset_ids: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         graph = tuple(tuple(bool(value) for value in row) for row in block_graph)
         identifiers = tuple(str(value) for value in workset_ids)
         if not graph or any(len(row) != len(graph) for row in graph):
@@ -266,7 +266,7 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
         action_kind: TensorProductAction,
         valid: ArrayLike | None = None,
         properties: OperatorProperties | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, SumFactorizationPlan):
             raise TypeError("plan must be SumFactorizationPlan.")
         kind = str(action_kind)
@@ -445,7 +445,7 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
         /,
         *,
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         metric = jnp.asarray(weighted_metric)
         mass = jnp.asarray(weighted_mass)
         routes = jnp.asarray(gathers, dtype=jnp.int32)

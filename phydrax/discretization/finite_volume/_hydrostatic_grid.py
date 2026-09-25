@@ -461,7 +461,7 @@ class TensorZHydrostaticGridPlan(StrictModule, NonTrainableState):
         vertical_coordinate: VerticalCoordinate = "zstar",
         wet_depth: float = 1.0e-6,
         minimum_partial_fraction: float = 0.2,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteVolumeDiscretization):
             raise TypeError("discretization must be FiniteVolumeDiscretization.")
         if len(discretization.cell_shape) != 3:
@@ -572,7 +572,7 @@ class LatitudeLongitudeHydrostaticGridPlan(StrictModule, NonTrainableState):
         radius: float = 6_371_000.0,
         rotation_rate: float = 7.292115e-5,
         wet_depth: float = 1.0e-6,
-    ):
+    ) -> None:
         lon = jnp.asarray(longitude_faces, dtype=jnp.float64)
         lat = jnp.asarray(latitude_faces, dtype=jnp.float64)
         z = jnp.asarray(vertical_faces, dtype=jnp.float64)

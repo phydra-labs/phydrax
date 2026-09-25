@@ -77,7 +77,7 @@ class DryGradientWindReference(StrictModule, NonTrainableState):
         rotation_rate=7.292115e-5,
         gas_constant=287.05,
         heat_capacity=1004.0,
-    ):
+    ) -> None:
         parameters = dict(
             speed=float(speed),
             shear=float(shear),

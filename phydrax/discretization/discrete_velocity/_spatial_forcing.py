@@ -274,7 +274,7 @@ class ZeroSmoothCompressibleD2VForcingPlan(StrictModule):
     method: SmoothCompressibleD2VKineticMethod
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, method: SmoothCompressibleD2VKineticMethod, /):
+    def __init__(self, method: SmoothCompressibleD2VKineticMethod, /) -> None:
         _validate_method(method)
         self.method = method
         self.plan_id = canonical_fingerprint(
@@ -317,7 +317,7 @@ class SmoothCompressibleD2VBodyForcingPlan(StrictModule):
         *,
         acceleration: Sequence[float] = (0.0, 0.0),
         volumetric_heating: float = 0.0,
-    ):
+    ) -> None:
         _validate_method(method)
         acceleration_value = tuple(float(value) for value in acceleration)
         heating_value = float(volumetric_heating)

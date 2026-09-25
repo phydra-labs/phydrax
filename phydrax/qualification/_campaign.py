@@ -192,7 +192,7 @@ class ScientificCampaign(StrictModule, NonTrainableState):
         *,
         preprocessing_source_ids: Sequence[str] = (),
         criteria_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(cases, Sequence) or isinstance(cases, str) or not cases:
             raise TypeError("cases must be a non-empty sequence of ScientificCase.")
         if any(not isinstance(case, ScientificCase) for case in cases):

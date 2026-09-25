@@ -86,7 +86,7 @@ class LinearReductionSchema(StrictModule):
         event_shape: tuple[int, ...] | None = None,
         event_dtype: str | None = None,
         output_suffix_policy: str = "dynamic-positional-event-suffix",
-    ):
+    ) -> None:
         target_id_ = str(target_id)
         reduced = tuple(reduced_axes)
         retained = tuple(retained_axes)

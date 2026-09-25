@@ -39,7 +39,7 @@ class PFormLatticePlan(StrictModule):
         /,
         *,
         maximum_field_elements: int = 10_000_000,
-    ):
+    ) -> None:
         shape = tuple(lattice_shape)
         degree_ = int(degree)
         maximum = int(maximum_field_elements)
@@ -99,7 +99,7 @@ class ComplexifiedPFormField(StrictModule):
         /,
         *,
         orientation: str = "forward",
-    ):
+    ) -> None:
         if not isinstance(plan, PFormLatticePlan):
             raise TypeError("plan must be PFormLatticePlan.")
         if orientation not in ("forward", "reverse"):

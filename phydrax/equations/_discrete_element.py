@@ -59,7 +59,7 @@ class DiscreteElementProblemIR(StrictModule, NonTrainableState):
         external_load: ExternalDEMLoad | None = None,
         external_load_id: str | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Discrete-element problem name must be nonempty.")
@@ -117,7 +117,7 @@ class CompiledDiscreteElementProblem(StrictModule, NonTrainableState):
         dynamics: PreparedSoftSphereDEMDynamics,
         discretization_bundle: DiscretizationBundle,
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, DiscreteElementProblemIR):
             raise TypeError("problem must be a DiscreteElementProblemIR.")
         if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):

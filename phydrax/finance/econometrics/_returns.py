@@ -55,7 +55,7 @@ class CorporateActionBinding(StrictModule):
         /,
         *,
         tie_policy: QuoteTiePolicy = QuoteTiePolicy.REJECT,
-    ):
+    ) -> None:
         if not isinstance(quote_key_id, str) or not quote_key_id.strip():
             raise ValueError("quote_key_id must be nonempty.")
         if not isinstance(series, CorporateActionSeries):
@@ -179,7 +179,9 @@ class ReturnDefinition(StrictModule):
     maximum_gap_ns: int | None = eqx.field(static=True)
     definition_id: str = eqx.field(static=True)
 
-    def __init__(self, *, kind: ReturnKind = "simple", maximum_gap_ns: int | None = None):
+    def __init__(
+        self, *, kind: ReturnKind = "simple", maximum_gap_ns: int | None = None
+    ) -> None:
         if kind not in ("simple", "log"):
             raise ValueError("kind must be 'simple' or 'log'.")
         gap = None if maximum_gap_ns is None else int(maximum_gap_ns)
@@ -315,7 +317,7 @@ class RealizedMeasureDefinition(StrictModule):
         kind: RealizedMeasureKind = "variance",
         window: int,
         annualization: float = 1.0,
-    ):
+    ) -> None:
         if kind not in ("variance", "volatility", "bipower-variation"):
             raise ValueError("unsupported realized-measure kind.")
         window_ = int(window)

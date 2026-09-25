@@ -96,7 +96,7 @@ class SampledSeriesReconstruction(StrictModule):
         node_side: NodeSide = "right",
         snap_tolerance: float = 0.0,
         fill_value: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(series, SampledSeries):
             raise TypeError("series must be a SampledSeries.")
         if interpolation not in (

@@ -49,7 +49,7 @@ class MPSQuantumProgramPolicy(StrictModule):
         unitarity_tolerance: float = 1e-6,
         norm_tolerance: float = 1e-6,
         maximum_discarded_weight: float = 1e-6,
-    ):
+    ) -> None:
         integers = (
             int(maximum_bond_dimension),
             int(maximum_window_sites),

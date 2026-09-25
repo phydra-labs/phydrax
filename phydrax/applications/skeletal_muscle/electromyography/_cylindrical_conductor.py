@@ -160,7 +160,7 @@ class Farina2004CylindricalConductorPlan(StrictModule):
         material_source_id: str,
         electrode_source_id: str,
         residual_tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         radii = jnp.asarray(layer_radii_m, dtype=jnp.float64)
         sigma = jnp.asarray(conductivity_S_per_m, dtype=radii.dtype)
         centers = jnp.asarray(electrode_centers, dtype=radii.dtype)
@@ -290,7 +290,7 @@ class PreparedFarina2004CylindricalConductor(StrictModule):
         source: PreparedFiberCurrent,
         coordinate_frame_id: str,
         /,
-    ):
+    ) -> None:
         if coordinate_frame_id != plan.coordinate_frame_id:
             raise ValueError(
                 "The committed source and cylinder must use the same registered frame."

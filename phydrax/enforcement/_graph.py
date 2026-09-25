@@ -231,7 +231,7 @@ class GraphRestrictionEvidence(StrictModule):
         component_kind: str,
         topology_id: str,
         orientation_id: str | None,
-    ):
+    ) -> None:
         self.action_id = str(action_id)
         self.provider_id = str(provider_id)
         self.graph_label = str(graph_label)
@@ -296,7 +296,7 @@ class GraphRestriction(AbstractConditionOperator):
         /,
         *,
         graph_label: str | None = None,
-    ):
+    ) -> None:
         field_ = str(field)
         if not field_:
             raise ValueError("Graph restriction field name must be non-empty.")
@@ -446,7 +446,7 @@ class CochainAction(AbstractConditionOperator):
         /,
         *,
         graph_label: str | None = None,
-    ):
+    ) -> None:
         label = _graph_label_for_component(component, graph_label)
         if not isinstance(component.spec.selection_for(label), CochainCells):
             raise TypeError("CochainAction requires a CochainCells component.")
@@ -574,7 +574,7 @@ class GraphRestrictionCorrectionAction(StrictModule):
     evidence: GraphRestrictionEvidence
     field_names: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, restriction: GraphRestriction | CochainAction, /):
+    def __init__(self, restriction: GraphRestriction | CochainAction, /) -> None:
         provider_id = canonical_fingerprint(
             {
                 "kind": "graph-restriction-correction",
@@ -653,7 +653,7 @@ class GraphRestrictionCorrectionProvider(StrictModule):
 
     action: GraphRestrictionCorrectionAction
 
-    def __init__(self, restriction: GraphRestriction, /):
+    def __init__(self, restriction: GraphRestriction, /) -> None:
         if type(restriction) is not GraphRestriction:
             raise TypeError(
                 "GraphRestrictionCorrectionProvider requires GraphRestriction; "
@@ -678,7 +678,7 @@ class CochainCorrectionProvider(StrictModule):
 
     action: GraphRestrictionCorrectionAction
 
-    def __init__(self, restriction: CochainAction, /):
+    def __init__(self, restriction: CochainAction, /) -> None:
         if not isinstance(restriction, CochainAction):
             raise TypeError("CochainCorrectionProvider requires CochainAction.")
         self.action = GraphRestrictionCorrectionAction(restriction)

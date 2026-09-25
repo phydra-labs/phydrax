@@ -52,7 +52,7 @@ class GammaPoissonStatistics(StrictModule):
         log_base_measure: ArrayLike,
         num_observations: ArrayLike,
         valid: ArrayLike,
-    ):
+    ) -> None:
         arrays = tuple(
             jnp.asarray(value)
             for value in (
@@ -121,7 +121,7 @@ class GammaPoissonUpdate(StrictModule):
         statistics: GammaPoissonStatistics,
         log_evidence: Array,
         valid: Array,
-    ):
+    ) -> None:
         self.family = family
         self.prior_natural = prior_natural
         self.posterior_natural = posterior_natural
@@ -217,7 +217,7 @@ class GammaPoissonConjugacy(StrictModule):
         rate: ArrayLike,
         *,
         family: GammaFamily | None = None,
-    ):
+    ) -> None:
         selected_family = GammaFamily() if family is None else family
         if not isinstance(selected_family, GammaFamily):
             raise TypeError("family must be a GammaFamily.")
@@ -378,7 +378,7 @@ class DirichletCategoricalStatistics(StrictModule):
         category_counts: ArrayLike,
         num_observations: ArrayLike,
         valid: ArrayLike,
-    ):
+    ) -> None:
         counts = jnp.asarray(category_counts)
         observations = jnp.asarray(num_observations)
         if counts.ndim == 0 or counts.shape[-1] < 2:
@@ -443,7 +443,7 @@ class DirichletCategoricalUpdate(StrictModule):
         statistics: DirichletCategoricalStatistics,
         log_evidence: Array,
         valid: Array,
-    ):
+    ) -> None:
         self.dirichlet_family = dirichlet_family
         self.categorical_family = categorical_family
         self.prior_natural = prior_natural
@@ -514,7 +514,7 @@ class DirichletCategoricalConjugacy(StrictModule):
         concentration: ArrayLike,
         *,
         family: DirichletFamily | None = None,
-    ):
+    ) -> None:
         concentration_array = jnp.asarray(concentration)
         if concentration_array.ndim == 0:
             raise ValueError("Dirichlet concentration must have a category axis.")

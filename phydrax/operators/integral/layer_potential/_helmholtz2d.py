@@ -25,7 +25,7 @@ class HelmholtzLayerKernel2D(AbstractLayerKernel):
     wavenumber: float = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, wavenumber: float):
+    def __init__(self, wavenumber: float) -> None:
         value = float(wavenumber)
         if not jnp.isfinite(value) or value <= 0.0:
             raise ValueError("Helmholtz wavenumber must be finite and positive.")
@@ -105,7 +105,7 @@ class HelmholtzLayerPotential2D(_AbstractTrialSpaceField):
         *,
         kind: Literal["single", "double"] = "single",
         density: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(panelization, BoundaryPanelization2D):
             raise TypeError("panelization must be BoundaryPanelization2D.")
         if kind not in ("single", "double"):
@@ -234,7 +234,7 @@ class HelmholtzCombinedField2D(_AbstractTrialSpaceField):
         /,
         *,
         eta: float,
-    ):
+    ) -> None:
         kernel = HelmholtzLayerKernel2D(wavenumber)
         density_ = jnp.asarray(density, dtype=jnp.complex128)
         if density_.shape != (panelization.node_count,):

@@ -49,7 +49,7 @@ class BlockTensorTrainEigenPlan(StrictModule):
         orthogonality_tolerance: float,
         inverse_shift: float,
         max_dense_entries: int,
-    ):
+    ) -> None:
         raw_modes = tuple(mode_sizes)
         integer_fields = raw_modes + (
             block_size,
@@ -135,7 +135,7 @@ class BlockTensorTrainEigenEvidence(StrictModule):
         /,
         *,
         iteration_count: int,
-    ):
+    ) -> None:
         residuals = jnp.asarray(true_residual_norms)
         relative = jnp.asarray(relative_residual_norms)
         gram = jnp.asarray(gram_matrix)
@@ -176,7 +176,7 @@ class BlockTensorTrainEigenResult(StrictModule):
         evidence: BlockTensorTrainEigenEvidence,
         converged: Array,
         /,
-    ):
+    ) -> None:
         values = jnp.asarray(eigenvalues)
         vectors = tuple(eigenvectors)
         if values.shape != (len(vectors),):

@@ -74,7 +74,7 @@ class OceanBoussinesqSSPRK33Method(AbstractFixedStepMethod, NonTrainableState):
     ocean: PreparedCartesianBoussinesqOcean
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, ocean: PreparedCartesianBoussinesqOcean, /):
+    def __init__(self, ocean: PreparedCartesianBoussinesqOcean, /) -> None:
         if not isinstance(ocean, PreparedCartesianBoussinesqOcean):
             raise TypeError("ocean must be PreparedCartesianBoussinesqOcean.")
         self.ocean = ocean

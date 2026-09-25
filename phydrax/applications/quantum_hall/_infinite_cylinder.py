@@ -50,7 +50,7 @@ class InfiniteHallCylinderPlan(StrictModule, NonTrainableState):
         /,
         *,
         charge_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         numerator = int(filling_numerator)
         denominator = int(filling_denominator)
         circumference = float(circumference_in_magnetic_lengths)

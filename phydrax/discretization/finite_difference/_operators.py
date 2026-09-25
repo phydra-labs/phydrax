@@ -239,7 +239,7 @@ class PreparedStencilOperator(AbstractLinearOperator):
         /,
         *,
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(stencil_set, BoundaryStencilSet):
             raise TypeError("stencil_set must be a BoundaryStencilSet.")
         if not isinstance(source, DiscreteFieldSpace) or not isinstance(

@@ -89,7 +89,7 @@ class DiagonalNormalLaw(AbstractProbabilityLaw):
         /,
         *,
         event_shape,
-    ):
+    ) -> None:
         events = _positive_shape(event_shape, owner="event_shape")
         raw_location = jnp.asarray(location)
         raw_scale = jnp.asarray(scale)

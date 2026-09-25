@@ -26,7 +26,7 @@ class _CrossEvaluator(StrictModule):
         left_positions: tuple[int, ...],
         right_positions: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         self.left = left
         self.right = right
         self.left_positions = left_positions

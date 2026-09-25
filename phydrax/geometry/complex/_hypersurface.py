@@ -32,7 +32,7 @@ class ProjectiveHypersurface(StrictModule):
         /,
         *,
         hypersurface_id: str,
-    ):
+    ) -> None:
         if not callable(polynomial):
             raise TypeError("polynomial must be callable.")
         dimension = int(projective_dimension)

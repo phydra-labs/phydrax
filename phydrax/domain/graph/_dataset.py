@@ -153,7 +153,7 @@ class GraphDatasetDomain(JointFactor):
         measure: GraphDatasetMeasureMode = "probability",
         layout: LayoutPlan | None = None,
         validate: bool = True,
-    ):
+    ) -> None:
         """Create a finite graph-family domain.
 
         Parameters:

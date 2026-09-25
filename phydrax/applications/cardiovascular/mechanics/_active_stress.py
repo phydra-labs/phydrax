@@ -26,7 +26,7 @@ class ActiveStressState(StrictModule):
     tension: Array
     cauchy_stress: Array
 
-    def __init__(self, tension: ArrayLike, cauchy_stress: ArrayLike, /):
+    def __init__(self, tension: ArrayLike, cauchy_stress: ArrayLike, /) -> None:
         tension_ = jnp.asarray(tension)
         stress = jnp.asarray(cauchy_stress, dtype=tension_.dtype)
         if stress.shape != (*tension_.shape, 3, 3):
@@ -67,7 +67,7 @@ class ActiveStressPlan(StrictModule, NonTrainableState):
     formulation_id: str = eqx.field(static=True, default="fiber-sheet-active-stress")
     stress_unit: str = eqx.field(static=True, default="kPa")
 
-    def __init__(self, /, *, sheet_tension_fraction: float = 0.0):
+    def __init__(self, /, *, sheet_tension_fraction: float = 0.0) -> None:
         fraction = float(sheet_tension_fraction)
         if not isfinite(fraction) or fraction < 0.0:
             raise ValueError("sheet_tension_fraction must be finite and non-negative.")
@@ -104,7 +104,7 @@ class PreparedActiveStress(StrictModule, NonTrainableState):
         reference_fiber: ArrayLike,
         reference_sheet: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ActiveStressPlan):
             raise TypeError("Active stress preparation requires ActiveStressPlan.")
         fiber = jnp.asarray(reference_fiber)

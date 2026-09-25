@@ -75,7 +75,7 @@ class DiagonalCovariance(AbstractCovariance):
 
     variance: PyTree[Array]
 
-    def __init__(self, variance: PyTree[ArrayLike], /):
+    def __init__(self, variance: PyTree[ArrayLike], /) -> None:
         arrays = jax.tree_util.tree_map(jnp.asarray, variance)
         leaves = jax.tree_util.tree_leaves(arrays)
         if not leaves or any(not eqx.is_inexact_array(leaf) for leaf in leaves):
@@ -102,7 +102,7 @@ class DenseCovariance(AbstractCovariance):
 
     matrix: Array
 
-    def __init__(self, matrix: ArrayLike, /):
+    def __init__(self, matrix: ArrayLike, /) -> None:
         value = jnp.asarray(matrix)
         if not eqx.is_inexact_array(value):
             raise TypeError("Dense covariance must be an inexact array.")
@@ -136,7 +136,7 @@ class FactorCovariance(AbstractCovariance):
     factors: PyTree[Array]
     rank: int = eqx.field(static=True)
 
-    def __init__(self, factors: PyTree[ArrayLike], /):
+    def __init__(self, factors: PyTree[ArrayLike], /) -> None:
         arrays = jax.tree_util.tree_map(jnp.asarray, factors)
         leaves = jax.tree_util.tree_leaves(arrays)
         if not leaves or any(not eqx.is_inexact_array(leaf) for leaf in leaves):
@@ -168,7 +168,7 @@ class CovarianceOperator(AbstractCovariance):
 
     matvec_fn: Callable[[PyTree[Array]], PyTree[Array]] = eqx.field(static=True)
 
-    def __init__(self, matvec: Callable[[PyTree[Array]], PyTree[Array]], /):
+    def __init__(self, matvec: Callable[[PyTree[Array]], PyTree[Array]], /) -> None:
         if not callable(matvec):
             raise TypeError("CovarianceOperator matvec must be callable.")
         self.matvec_fn = matvec

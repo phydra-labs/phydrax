@@ -74,7 +74,7 @@ class SpheroidalAngularPlan(StrictModule, NonTrainableState):
         isolation_tolerance: float = 1.0e-8,
         minimum_target_overlap: float = 1.0e-6,
         maximum_condition: float = 1.0e10,
-    ):
+    ) -> None:
         if not isinstance(mode, SeparatedMode):
             raise TypeError("mode must be a SeparatedMode.")
         if isinstance(maximum_ell, bool) or not isinstance(maximum_ell, Integral):

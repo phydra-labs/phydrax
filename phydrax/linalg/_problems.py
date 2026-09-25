@@ -45,7 +45,7 @@ class LinearSystem(AbstractLinearProblem):
         *,
         nullspace_policy: NullspacePolicy | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.source.size != operator.target.size:
@@ -81,7 +81,7 @@ class LeastSquaresProblem(AbstractLinearProblem):
         regularizer: AbstractLinearOperator | None = None,
         nullspace_policy: NullspacePolicy | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if weights is None:
@@ -145,7 +145,7 @@ class MinimumNormProblem(AbstractLinearProblem):
         *,
         problem_id: str | None = None,
         nullspace_policy: NullspacePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.source.size < operator.target.size:

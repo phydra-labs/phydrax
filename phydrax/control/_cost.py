@@ -63,7 +63,7 @@ class SampledControlLoss(StrictModule):
         case_shape: tuple[int, ...],
         num_steps: int,
         method_id: str,
-    ):
+    ) -> None:
         samples = jnp.asarray(running_samples)
         integral = jnp.asarray(running_integral)
         terminal_ = jnp.asarray(terminal)

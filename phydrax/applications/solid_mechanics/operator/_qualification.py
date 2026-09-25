@@ -50,7 +50,7 @@ class MechanicsSupportEvidence:
     realization_fingerprint: str
     geometry_fingerprint: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.status not in ("supported", "out_of_support", "invalid_case"):
             raise ValueError("Unknown mechanics support status.")
         if not self.reason or not self.case_id or not self.parameter_spec_fingerprint:
@@ -82,7 +82,7 @@ class MechanicsQualificationMetric(StrictModule, NonTrainableState):
         unit: str,
         metric_id: str,
         expected_measure_id: str | None = None,
-    ):
+    ) -> None:
         resolved_name = str(name)
         resolved_query = str(query_name)
         resolved_unit = str(unit)
@@ -185,7 +185,7 @@ class MechanicsOperatorQualification(StrictModule, NonTrainableState):
         required_metadata: Mapping[str, str],
         qualification_id: str,
         support_spec: MechanicsParameterSpec | None = None,
-    ):
+    ) -> None:
         if not isinstance(training_distribution, MechanicsParameterDistribution):
             raise TypeError(
                 "training_distribution must be a MechanicsParameterDistribution."

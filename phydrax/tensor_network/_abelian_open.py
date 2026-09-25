@@ -36,7 +36,7 @@ class AbelianKrausOperator(StrictModule):
         routes: Sequence[tuple[int, int]],
         blocks: Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         if not isinstance(input_leg, AbelianLeg) or not isinstance(
             output_leg, AbelianLeg
         ):
@@ -95,7 +95,7 @@ class ChargeCovariantKrausMap(StrictModule):
         *,
         completeness_tolerance: float = 1e-10,
         require_trace_preserving: bool = True,
-    ):
+    ) -> None:
         tolerance = float(completeness_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("completeness_tolerance must be finite and non-negative.")
@@ -169,7 +169,7 @@ class AbelianLPDO(StrictModule):
         /,
         *,
         normalize: bool = False,
-    ):
+    ) -> None:
         if not isinstance(physical_leg, AbelianLeg) or physical_leg.orientation != 1:
             raise TypeError("LPDO physical_leg must be an outward AbelianLeg.")
         capacities = tuple(purification_capacities)
@@ -327,7 +327,7 @@ class AbelianLindbladian(StrictModule):
         hamiltonian_blocks: Sequence[ArrayLike],
         jumps: Sequence[AbelianKrausOperator],
         /,
-    ):
+    ) -> None:
         if not isinstance(physical_leg, AbelianLeg):
             raise TypeError("physical_leg must be AbelianLeg.")
         blocks = tuple(jnp.asarray(value) for value in hamiltonian_blocks)
@@ -416,7 +416,7 @@ class AbelianOpenProcess(StrictModule):
     routes: tuple[ChargeCovariantKrausMap, ...]
     process_id: str = eqx.field(static=True)
 
-    def __init__(self, routes: Sequence[ChargeCovariantKrausMap], /):
+    def __init__(self, routes: Sequence[ChargeCovariantKrausMap], /) -> None:
         values = tuple(routes)
         if not values or any(
             not isinstance(value, ChargeCovariantKrausMap) for value in values

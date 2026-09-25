@@ -24,7 +24,7 @@ class ReverseCheckpointSchedule(StrictModule, NonTrainableState):
     checkpoint_indices: tuple[int, ...] = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, step_count: int, checkpoint_budget: int, /):
+    def __init__(self, step_count: int, checkpoint_budget: int, /) -> None:
         steps = int(step_count)
         budget = int(checkpoint_budget)
         if steps <= 0 or budget <= 0:
@@ -66,7 +66,7 @@ class AcceptedStepAdjointRecord(StrictModule, NonTrainableState):
         /,
         *,
         valid: bool = True,
-    ):
+    ) -> None:
         if not callable(pullback) or int(step_index) < 0 or not str(decision_id):
             raise ValueError("Accepted-step adjoint record is invalid.")
         self.pullback = pullback
@@ -99,7 +99,7 @@ class TopologyAdjointEvent(StrictModule, NonTrainableState):
         *,
         policy: BranchDifferentiationPolicy,
         event_id: str,
-    ):
+    ) -> None:
         source = tuple(source_shape)
         target = tuple(target_shape)
         if not isinstance(policy, BranchDifferentiationPolicy):
@@ -163,7 +163,7 @@ class ReverseTimeTopologyTape(StrictModule, NonTrainableState):
         self,
         records: Sequence[AcceptedStepAdjointRecord | TopologyAdjointEvent] = (),
         /,
-    ):
+    ) -> None:
         values = tuple(records)
         if any(
             not isinstance(value, (AcceptedStepAdjointRecord, TopologyAdjointEvent))

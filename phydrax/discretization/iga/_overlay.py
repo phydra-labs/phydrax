@@ -33,7 +33,7 @@ class IntegrationOverlay(StrictModule, NonTrainableState):
         /,
         *,
         name: str = "overlay",
-    ):
+    ) -> None:
         if not isinstance(atlas, PatchAtlas):
             raise TypeError("atlas must be a PatchAtlas.")
         name_ = str(name)

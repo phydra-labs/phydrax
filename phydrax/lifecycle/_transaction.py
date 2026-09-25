@@ -36,7 +36,7 @@ class TransactionalCandidate(StrictModule, NonTrainableState, Generic[State, Evi
         accepted: Any,
         source_id: str,
         /,
-    ):
+    ) -> None:
         identifier = str(source_id).strip()
         if not identifier:
             raise ValueError("source_id must be non-empty.")

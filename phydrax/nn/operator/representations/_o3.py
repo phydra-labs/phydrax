@@ -72,7 +72,7 @@ class O3Representation(StrictModule, NonTrainableState):
         pseudovectors: int = 0,
         tensors: int = 0,
         pseudotensors: int = 0,
-    ):
+    ) -> None:
         counts = tuple(
             (
                 scalars,

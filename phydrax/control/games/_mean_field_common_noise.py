@@ -145,7 +145,7 @@ class CommonNoiseMeanFieldProblem(StrictModule):
         induced_flow_id: str,
         law_distance_id: str,
         problem_id: str,
-    ):
+    ) -> None:
         flows = tuple(initial_conditional_flows)
         if not flows or any(not isinstance(flow, EmpiricalMeanField) for flow in flows):
             raise TypeError(
@@ -258,7 +258,7 @@ class CommonNoiseMeanFieldPlan(StrictModule):
         minimum_effective_sample_size: float = 2.0,
         minimum_independent_clusters: int = 2,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(maximum_iterations, int) or maximum_iterations <= 0:
             raise ValueError("maximum_iterations must be a positive integer.")
         tolerance = float(consistency_tolerance)

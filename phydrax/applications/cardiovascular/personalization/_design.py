@@ -83,7 +83,7 @@ class SensitivitySVDPlan(StrictModule, NonTrainableState):
         *,
         relative_rank_tolerance: float = 1.0e-8,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(forward):
             raise TypeError("forward must be callable.")
         parameter = jax.lax.stop_gradient(
@@ -366,7 +366,7 @@ class ProfileLikelihoodPlan(StrictModule, NonTrainableState):
         method: AbstractMinimizationMethod | None = None,
         termination: OptimizationTermination | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(objective):
             raise TypeError("objective must be callable.")
         index = int(parameter_index)
@@ -569,7 +569,7 @@ class ForwardAdjointEvidence(StrictModule):
         fixed_topology: ArrayLike,
         derivative_finite: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value, dtype=jnp.bool_)
             for value in (
@@ -630,7 +630,7 @@ class ExperimentDesignCandidate(StrictModule, NonTrainableState):
         /,
         *,
         cost: float = 1.0,
-    ):
+    ) -> None:
         identifier = str(candidate_id)
         if not identifier or identifier != identifier.strip():
             raise ValueError("candidate_id must be non-empty and canonical.")
@@ -707,7 +707,7 @@ class ExperimentDesignPlan(StrictModule, NonTrainableState):
         integer_hull_policy: IntegerHullPolicy | None = None,
         maximum_experiments: int = 1,
         budget: float = math.inf,
-    ):
+    ) -> None:
         resolved = tuple(candidates)
         if not resolved:
             raise ValueError("ExperimentDesignPlan requires candidates.")
@@ -836,7 +836,7 @@ class PreparedExperimentDesign(StrictModule, NonTrainableState):
     plan: ExperimentDesignPlan
     runtime_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ExperimentDesignPlan, /):
+    def __init__(self, plan: ExperimentDesignPlan, /) -> None:
         if not isinstance(plan, ExperimentDesignPlan):
             raise TypeError("plan must be an ExperimentDesignPlan.")
         self.plan = plan

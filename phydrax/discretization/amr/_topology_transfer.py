@@ -76,7 +76,7 @@ class BlockCellOverlapRoutes(StrictModule, NonTrainableState):
         source_count: int,
         target_count: int,
         /,
-    ):
+    ) -> None:
         source = np.asarray(source_indices, dtype=np.int32)
         target = np.asarray(target_indices, dtype=np.int32)
         weights = np.asarray(target_weights, dtype=np.float64)
@@ -454,7 +454,7 @@ class BlockFieldTopologyTransition(StrictModule, NonTrainableState):
         *,
         component_shape: Sequence[int] = (),
         dtype=jnp.float64,
-    ):
+    ) -> None:
         if not isinstance(source, BlockHierarchyTopology) or not isinstance(
             target, BlockHierarchyTopology
         ):

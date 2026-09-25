@@ -36,7 +36,7 @@ class StructuralImperfection(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str = "structural-imperfection",
-    ):
+    ) -> None:
         shape_ = jnp.asarray(shape)
         norm = jnp.sqrt(jnp.sum(shape_ * shape_))
         if bool(~jnp.isfinite(norm) | (norm <= 0.0)):

@@ -64,7 +64,7 @@ class PreparedQCEngineCalculation(AbstractPreparedElectronicCalculation):
         local_options: Mapping[str, Any],
         provider_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(capabilities, ElectronicProviderCapabilities):
             raise TypeError("capabilities must be ElectronicProviderCapabilities.")
         self.calculation = calculation
@@ -133,7 +133,7 @@ class QCEngineProvider(AbstractElectronicProvider):
         keywords: Mapping[str, Any] | None = None,
         model_chemistry_id: str,
         local_options: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         program_ = str(program).strip()
         if not program_:
             raise ValueError("QCEngine program must be non-empty.")

@@ -51,7 +51,7 @@ class MonteCarloPathBatch(StrictModule):
 
     def __init__(
         self, times: ArrayLike, values: ArrayLike, valid: ArrayLike, /, *, path_id: str
-    ):
+    ) -> None:
         times_ = jnp.asarray(times, dtype=jnp.float64)
         values_ = jnp.asarray(values, dtype=jnp.float64)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
@@ -101,7 +101,9 @@ class MonteCarloValuationPlan(StrictModule):
     minimum_paths: int = eqx.field(static=True)
     confidence_level: float = eqx.field(static=True)
 
-    def __init__(self, *, minimum_paths: int = 32, confidence_level: float = 0.95):
+    def __init__(
+        self, *, minimum_paths: int = 32, confidence_level: float = 0.95
+    ) -> None:
         if (
             isinstance(minimum_paths, bool)
             or not isinstance(minimum_paths, int)
@@ -138,7 +140,7 @@ class PreparedQMCValuation(StrictModule):
 class MLMCValuationPlan(StrictModule):
     minimum_samples_per_level: int = eqx.field(static=True)
 
-    def __init__(self, *, minimum_samples_per_level: int = 2):
+    def __init__(self, *, minimum_samples_per_level: int = 2) -> None:
         if (
             isinstance(minimum_samples_per_level, bool)
             or not isinstance(minimum_samples_per_level, int)

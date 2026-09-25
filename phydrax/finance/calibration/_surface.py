@@ -54,7 +54,7 @@ class SVIParameters(StrictModule):
         center: ArrayLike,
         width: ArrayLike,
         /,
-    ):
+    ) -> None:
         level, slope, correlation, center, width = tuple(
             _scalar(value, name)
             for value, name in zip(
@@ -106,7 +106,7 @@ class SVISlice(StrictModule):
     expiry: Array
     parameters: SVIParameters
 
-    def __init__(self, expiry: ArrayLike, parameters: SVIParameters, /):
+    def __init__(self, expiry: ArrayLike, parameters: SVIParameters, /) -> None:
         if not isinstance(parameters, SVIParameters):
             raise TypeError("parameters must be SVIParameters.")
         expiry_ = _scalar(expiry, "expiry")
@@ -127,7 +127,7 @@ class SVISurface(StrictModule):
     expiries: Array
     slice_count: int = eqx.field(static=True)
 
-    def __init__(self, slices: Sequence[SVISlice], /):
+    def __init__(self, slices: Sequence[SVISlice], /) -> None:
         slices_ = tuple(slices)
         if not slices_ or any(not isinstance(value, SVISlice) for value in slices_):
             raise TypeError("slices must contain at least one SVISlice.")
@@ -189,7 +189,7 @@ class ESSVISurface(StrictModule):
         eta: ArrayLike,
         gamma: ArrayLike,
         /,
-    ):
+    ) -> None:
         expiries_ = _ordered(expiries, "expiries", positive=True)
         theta = jnp.asarray(atm_total_variances, dtype=jnp.float64)
         rho = jnp.asarray(correlations, dtype=jnp.float64)
@@ -269,7 +269,7 @@ class VolatilityObservationSet(StrictModule):
         *,
         weights: ArrayLike | None = None,
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         expiries_, k, volatility = tuple(
             jnp.asarray(value, dtype=jnp.float64)
             for value in (expiries, log_moneyness, implied_volatilities)

@@ -79,7 +79,7 @@ class _NormalContract(StrictModule):
         flux: DomainFunction,
         normal: DomainFunction,
         deps: tuple[str, ...],
-    ):
+    ) -> None:
         by_label = {label: index for index, label in enumerate(deps)}
         self.flux = flux
         self.normal = normal
@@ -137,7 +137,7 @@ class SubdomainValueJump(AbstractResidualCondition):
         *,
         target: DomainFunction | ArrayLike = 0.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(pairing, PairedSupport):
             raise TypeError("pairing must be a PairedSupport.")
         self.fields = _field_names(left_field, right_field)
@@ -178,7 +178,7 @@ class SubdomainFluxJump(AbstractResidualCondition):
         *,
         target: DomainFunction | ArrayLike = 0.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(pairing, PairedSupport):
             raise TypeError("pairing must be a PairedSupport.")
         if pairing.normal is None:
@@ -234,7 +234,7 @@ class SubdomainTransmission(AbstractResidualCondition):
         /,
         *,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(pairing, PairedSupport):
             raise TypeError("pairing must be a PairedSupport.")
         if not callable(operator):
@@ -281,7 +281,7 @@ class LocalizedResidual(AbstractResidualCondition):
         *,
         on: DomainComponent | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(condition, AbstractResidualCondition):
             raise TypeError("condition must be an AbstractResidualCondition.")
         if not isinstance(patch, SubdomainPatch):

@@ -44,7 +44,7 @@ class _DensityDivergenceEvaluator(StrictModule):
         self,
         field: Callable[[Array], Array],
         density: VolumeDensity,
-    ):
+    ) -> None:
         self.field = field
         self.density = density
 
@@ -90,7 +90,7 @@ class _CovariantSymbolEvaluator(StrictModule):
         symbol: Callable[[Array], Array],
         connection: AbstractAffineConnection,
         drift: Callable[[Array], Array] | None,
-    ):
+    ) -> None:
         self.field = field
         self.symbol = symbol
         self.connection = connection

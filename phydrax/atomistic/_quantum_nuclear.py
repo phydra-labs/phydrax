@@ -24,7 +24,7 @@ class RingPolymerNormalModePlan(StrictModule, NonTrainableState):
     transform: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, bead_count: int, spring_frequency: float, /):
+    def __init__(self, bead_count: int, spring_frequency: float, /) -> None:
         count = int(bead_count)
         if count <= 0 or float(spring_frequency) <= 0.0:
             raise ValueError(
@@ -91,7 +91,7 @@ class StagingCoordinatePlan(StrictModule, NonTrainableState):
     bead_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, bead_count: int, /):
+    def __init__(self, bead_count: int, /) -> None:
         if int(bead_count) <= 0:
             raise ValueError("Staging bead count must be positive.")
         self.bead_count = int(bead_count)
@@ -202,7 +202,9 @@ class ThermostattedRPMDPlan(StrictModule, NonTrainableState):
     friction: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, normal_modes: RingPolymerNormalModePlan, friction: ArrayLike, /):
+    def __init__(
+        self, normal_modes: RingPolymerNormalModePlan, friction: ArrayLike, /
+    ) -> None:
         values = jnp.asarray(friction, dtype=jnp.float64).reshape((-1,))
         if values.shape != (normal_modes.bead_count,) or bool(jnp.any(values < 0.0)):
             raise ValueError("TRPMD friction must align with ring-polymer modes.")
@@ -283,7 +285,7 @@ class ConstantPressureRingPolymerPlan(StrictModule, NonTrainableState):
     barostat_mass: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, target_pressure: float, barostat_mass: float, /):
+    def __init__(self, target_pressure: float, barostat_mass: float, /) -> None:
         values = float(target_pressure), float(barostat_mass)
         if not all(jnp.isfinite(jnp.asarray(values))) or values[1] <= 0.0:
             raise ValueError("Ring-polymer barostat parameters are invalid.")
@@ -351,7 +353,7 @@ class PIGLETPlan(StrictModule, NonTrainableState):
         thermostats: tuple[GeneralizedLangevinPlan, ...],
         normal_modes: RingPolymerNormalModePlan,
         /,
-    ):
+    ) -> None:
         values = tuple(thermostats)
         if (
             len(values) != normal_modes.bead_count

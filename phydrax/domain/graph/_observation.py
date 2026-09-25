@@ -383,7 +383,9 @@ class _GraphTargetCallable(StrictModule, BatchEvaluator, NonTrainableState):
     offsets: Array
     kind: GraphComponentKind
 
-    def __init__(self, *, values: Array, offsets: Array, kind: GraphComponentKind):
+    def __init__(
+        self, *, values: Array, offsets: Array, kind: GraphComponentKind
+    ) -> None:
         self.values = jax.lax.stop_gradient(jnp.asarray(values, dtype=jnp.float64))
         self.offsets = jnp.asarray(offsets, dtype=jnp.int32)
         self.kind = kind
@@ -432,7 +434,7 @@ class _GraphTrajectorySignalCallable(StrictModule, BatchEvaluator, NonTrainableS
         entity_sizes: Array,
         kind: GraphComponentKind,
         interpolation: GraphTargetInterpolation,
-    ):
+    ) -> None:
         self.domain = domain
         self.values = jax.lax.stop_gradient(jnp.asarray(values, dtype=jnp.float64))
         self.offsets = jnp.asarray(offsets, dtype=jnp.int32)
@@ -593,7 +595,9 @@ class _GraphClassificationTargetCallable(StrictModule, BatchEvaluator, NonTraina
     offsets: Array
     kind: GraphComponentKind
 
-    def __init__(self, *, values: Array, offsets: Array, kind: GraphComponentKind):
+    def __init__(
+        self, *, values: Array, offsets: Array, kind: GraphComponentKind
+    ) -> None:
         self.values = jax.lax.stop_gradient(jnp.asarray(values))
         self.offsets = jnp.asarray(offsets, dtype=jnp.int32)
         self.kind = kind
@@ -646,7 +650,7 @@ class _GraphTrajectoryClassificationSignalCallable(
         kind: GraphComponentKind,
         interpolation: GraphTargetInterpolation,
         logical_interpolation: bool = False,
-    ):
+    ) -> None:
         self.domain = domain
         self.values = jax.lax.stop_gradient(jnp.asarray(values))
         self.offsets = jnp.asarray(offsets, dtype=jnp.int32)

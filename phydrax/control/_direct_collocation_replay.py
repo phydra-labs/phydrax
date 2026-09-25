@@ -61,7 +61,7 @@ class DirectCollocationReplayPolicy(StrictModule):
         algebraic_constraint_tolerance: float = 1.0e-6,
         failure_mode: DirectCollocationReplayFailureMode = "record",
         policy_id: str = "control:direct-collocation:dae-replay",
-    ):
+    ) -> None:
         dae = DAESolvePolicy() if dae_policy is None else dae_policy
         if not isinstance(dae, DAESolvePolicy):
             raise TypeError("dae_policy must be DAESolvePolicy or None.")

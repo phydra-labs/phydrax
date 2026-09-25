@@ -82,7 +82,7 @@ class PorousMaterial(StrictModule):
         permeability_unit: UnitDefinition = SQUARE_METER,
         density_unit: UnitDefinition = DENSITY_UNIT,
         viscosity_unit: UnitDefinition = VISCOSITY_UNIT,
-    ):
+    ) -> None:
         phi = _finite(porosity, "porosity", positive=True)
         self.porosity = eqx.error_if(
             phi, jnp.any(phi >= 1), "porosity must be less than one."

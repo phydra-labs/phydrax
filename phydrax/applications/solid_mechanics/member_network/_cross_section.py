@@ -36,7 +36,7 @@ class ThinWalledSection(StrictModule, NonTrainableState):
         free_edge_nodes: ArrayLike | None = None,
         closed_cells: tuple[tuple[int, ...], ...] = (),
         section_id: str | None = None,
-    ):
+    ) -> None:
         nodes_ = jnp.asarray(nodes)
         segments_ = jnp.asarray(segments, dtype=jnp.int32)
         thickness_ = jnp.asarray(thickness, dtype=nodes_.dtype)

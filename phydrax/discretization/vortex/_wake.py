@@ -67,7 +67,9 @@ class VortexWakePlan(StrictModule, NonTrainableState):
     core_radius: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, segment_capacity: int, source_count: int, core_radius: float, /):
+    def __init__(
+        self, segment_capacity: int, source_count: int, core_radius: float, /
+    ) -> None:
         capacity = int(segment_capacity)
         sources = int(source_count)
         core = float(core_radius)

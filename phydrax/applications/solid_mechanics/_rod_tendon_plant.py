@@ -85,7 +85,7 @@ class TendonDrivenRodPlantStatus(IntEnum):
 class TendonActuatorStateBank(StrictModule):
     states: tuple[TendonActuatorState, ...]
 
-    def __init__(self, states: Sequence[TendonActuatorState], /):
+    def __init__(self, states: Sequence[TendonActuatorState], /) -> None:
         values = tuple(states)
         if not values or any(
             not isinstance(value, TendonActuatorState) for value in values
@@ -107,7 +107,7 @@ class TendonDrivenRodPlantState(StrictModule):
 class TendonDrivenRodPlantParameters(StrictModule):
     values: Array
 
-    def __init__(self, values: ArrayLike, /):
+    def __init__(self, values: ArrayLike, /) -> None:
         result = jnp.asarray(values)
         if result.shape != (0,):
             raise ValueError("Tendon plant parameters must have shape (0,).")
@@ -127,7 +127,7 @@ class TendonDrivenRodPlantCommand(StrictModule):
         tendon_commands: Sequence[TendonPayoutCommand],
         external_effort: ArrayLike,
         /,
-    ):
+    ) -> None:
         commands = tuple(tendon_commands)
         if not commands or any(
             not isinstance(value, TendonPayoutCommand) for value in commands
@@ -354,7 +354,7 @@ class PreparedTendonDrivenRodPlant(AbstractDiscretePlant, NonTrainableState):
         external_effort_bounds: tuple[ArrayLike, ArrayLike] | None = None,
         observation_plan: PreparedSoftObservationPlan | None = None,
         initial_sensor_state: SoftSensorState | None = None,
-    ):
+    ) -> None:
         from ..robotics._soft_observations import (
             PreparedSoftObservationPlan,
         )

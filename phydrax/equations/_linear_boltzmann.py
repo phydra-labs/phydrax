@@ -37,7 +37,7 @@ class SlabTransportBoundaryPlan(StrictModule, NonTrainableState):
         right_kind: TransportBoundaryKind = "vacuum",
         left_incident: ArrayLike | None = None,
         right_incident: ArrayLike | None = None,
-    ):
+    ) -> None:
         groups = int(group_count)
         if left_kind not in ("vacuum", "incident", "reflecting") or right_kind not in (
             "vacuum",
@@ -112,7 +112,7 @@ class MultigroupSlabTransportProblem(StrictModule, NonTrainableState):
         /,
         *,
         group_sets: tuple[tuple[int, ...], ...] | None = None,
-    ):
+    ) -> None:
         edges = np.asarray(cell_edges, dtype=np.float64)
         total = np.asarray(total_cross_section, dtype=np.float64)
         scattering = np.asarray(scattering_cross_section, dtype=np.float64)

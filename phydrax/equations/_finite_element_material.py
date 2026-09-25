@@ -55,7 +55,7 @@ class MaterialSiteId(StrictModule, NonTrainableState):
     key: str = eqx.field(static=True)
     site_id: str = eqx.field(static=True)
 
-    def __init__(self, key: str, /):
+    def __init__(self, key: str, /) -> None:
         key_ = str(key).strip()
         if not key_:
             raise ValueError("Material site key must be non-empty.")
@@ -93,7 +93,7 @@ class ConstitutiveResponse(StrictModule):
         header: AdmissibilityHeader | None = None,
         diagnostic: Diagnostic | None = None,
         diagnostics: Mapping[str, ArrayLike] | None = None,
-    ):
+    ) -> None:
         response_ = _inexact_array(response)
         trial = _inexact_array(trial_state)
         tangent = (
@@ -268,7 +268,7 @@ class ConstitutiveModel(AbstractConstitutiveModel, NonTrainableState):
         state_shape: tuple[int, ...],
         response_shape: tuple[int, ...],
         model_id: str,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         state = tuple(state_shape)
@@ -439,7 +439,7 @@ class LearnedConstitutiveModel(AbstractConstitutiveModel):
         model_id: str,
         state_port: ValuePort | None = None,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         site = "LearnedConstitutiveModel"
         inputs = (
             (kinematics_port,) if state_port is None else (kinematics_port, state_port)
@@ -604,7 +604,7 @@ class MaterialState(StrictModule, NonTrainableState):
         *,
         trial: ArrayLike | None = None,
         state_version: int = 0,
-    ):
+    ) -> None:
         if not isinstance(site_id, MaterialSiteId):
             raise TypeError("site_id must be a MaterialSiteId.")
         model = str(model_id).strip()
@@ -670,7 +670,7 @@ class MaterialTransaction(StrictModule, NonTrainableState):
     layout_id: str = eqx.field(static=True)
     transaction_id: str = eqx.field(static=True)
 
-    def __init__(self, states: Sequence[MaterialState], /):
+    def __init__(self, states: Sequence[MaterialState], /) -> None:
         states_ = tuple(states)
         if not states_ or not all(isinstance(state, MaterialState) for state in states_):
             raise TypeError("states must contain one or more MaterialState values.")
@@ -745,7 +745,7 @@ class MaterialCheckpointPayload(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(state, MaterialTransaction):
             raise TypeError("state must be a MaterialTransaction.")
         plan = None if plan_id is None else str(plan_id).strip()
@@ -782,7 +782,7 @@ class MaterialIntegrationPlan(StrictModule):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         entries = tuple(sites)
         if not entries:
             raise ValueError("Material integration plan requires one or more sites.")

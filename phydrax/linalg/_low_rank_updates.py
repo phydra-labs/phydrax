@@ -65,7 +65,7 @@ class LowRankResourcePolicy(StrictModule):
         max_rank: int = 4096,
         max_storage_bytes: int = 512 * 1024 * 1024,
         max_workspace_bytes: int = 512 * 1024 * 1024,
-    ):
+    ) -> None:
         values = tuple(
             (
                 max_rank,
@@ -95,7 +95,7 @@ class LowRankSolvePolicy(StrictModule):
         base_nonsingularity: BaseNonsingularity = "certified",
         failure: FailurePolicy | None = None,
         resources: LowRankResourcePolicy | None = None,
-    ):
+    ) -> None:
         base_ = LinearSolvePolicy() if base is None else base
         failure_ = FailurePolicy("error") if failure is None else failure
         resources_ = LowRankResourcePolicy() if resources is None else resources
@@ -126,7 +126,7 @@ class LowRankCostEstimate(StrictModule):
     preparation_workspace_bytes: int = eqx.field(static=True)
     solve_workspace_bytes_per_rhs: int = eqx.field(static=True)
 
-    def __init__(self, dimension: int, rank: int, itemsize: int, /):
+    def __init__(self, dimension: int, rank: int, itemsize: int, /) -> None:
         n, r, size = int(dimension), int(rank), int(itemsize)
         self.dimension = n
         self.rank = r
@@ -154,7 +154,7 @@ class LowRankSolvePlan(StrictModule):
         policy: LowRankSolvePolicy,
         base_template: LinearSolveTemplate,
         cost: LowRankCostEstimate,
-    ):
+    ) -> None:
         self.policy = policy
         self.base_template = base_template
         self.cost = cost
@@ -208,7 +208,7 @@ class PreparedLowRankSolve(StrictModule):
         correction_pivots: Array,
         correction_condition: Array,
         numeric_version: Any,
-    ):
+    ) -> None:
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
         if version.ndim != 0:
             raise ValueError("numeric_version must be scalar.")
@@ -252,7 +252,7 @@ class LowRankSolveDiagnostics(StrictModule):
         base_matvec_count: Array,
         correction_condition: Array,
         rank: int,
-    ):
+    ) -> None:
         self.residual_norm = jnp.asarray(residual_norm)
         self.relative_residual = jnp.asarray(relative_residual)
         self.base_status = jnp.asarray(base_status, dtype=jnp.int32)
@@ -274,7 +274,7 @@ class LowRankSolveProvenance(StrictModule):
     operator_numeric_version: Array
     base_numeric_version: Array
 
-    def __init__(self, prepared: PreparedLowRankSolve, /):
+    def __init__(self, prepared: PreparedLowRankSolve, /) -> None:
         self.plan_id = prepared.plan.plan_id
         self.prepared_id = prepared.prepared_id
         self.operator_id = prepared.operator.operator_id
@@ -302,7 +302,7 @@ class LowRankSolveResult(StrictModule):
         provenance: LowRankSolveProvenance,
         base_result: LinearSolveResult,
         /,
-    ):
+    ) -> None:
         self.value = value
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.diagnostics = diagnostics
@@ -362,7 +362,7 @@ class LowRankUpdate(StrictModule):
         *,
         dimension: int,
         route: LowRankUpdateRoute,
-    ):
+    ) -> None:
         left = jnp.asarray(left_factor)
         right = jnp.asarray(right_factor)
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
@@ -475,7 +475,7 @@ class PreparedLowRankSequence(StrictModule):
         log_abs_determinant_ratio: Any = 0,
         status: Any = LowRankDeterminantStatus.SUCCESS,
         base_lineage: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedLowRankSolve):
             raise TypeError("prepared must be a PreparedLowRankSolve.")
         active = jnp.asarray(active_rank, dtype=jnp.int32)
@@ -605,7 +605,7 @@ class LowRankDeterminantProvenance(StrictModule):
         sequence: PreparedLowRankSequence,
         update: LowRankUpdate,
         /,
-    ):
+    ) -> None:
         self.solve = LowRankSolveProvenance(sequence.prepared)
         self.sequence_id = sequence.sequence_id
         self.update_id = update.update_id
@@ -650,7 +650,7 @@ class LowRankDeterminantResult(StrictModule):
         current_solved_left_factor: ArrayLike,
         base_result: LinearSolveResult,
         provenance: LowRankDeterminantProvenance,
-    ):
+    ) -> None:
         self.value = jnp.asarray(value)
         self.sign = jnp.asarray(sign)
         self.log_abs = jnp.asarray(log_abs)
@@ -716,7 +716,7 @@ class LowRankPfaffianResult(StrictModule):
         status: ArrayLike,
         determinant: LowRankDeterminantResult,
         compact_pfaffian: PfaffianResult,
-    ):
+    ) -> None:
         self.value = jnp.asarray(value)
         self.sign = jnp.asarray(sign)
         self.log_abs = jnp.asarray(log_abs)

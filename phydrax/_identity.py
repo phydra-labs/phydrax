@@ -482,7 +482,7 @@ class SemanticProvenance(StrictModule):
         /,
         *,
         resource_ids: Mapping[str, str] | Sequence[tuple[str, str]] = (),
-    ):
+    ) -> None:
         content_ = _static_payload(content, "semantic_content")
         resources = tuple(
             (name, _identifier(identifier, f"resource_ids[{name!r}]"))
@@ -517,7 +517,7 @@ class NumericRevision(StrictModule):
         semantic: SemanticProvenance | str,
         content: Any,
         /,
-    ):
+    ) -> None:
         semantic_id = (
             semantic.semantic_id
             if isinstance(semantic, SemanticProvenance)
@@ -630,7 +630,7 @@ class ExecutableSignature(StrictModule):
         algorithm_facts: RecordInput = (),
         backend_facts: RecordInput = (),
         static_callables: RecordInput = (),
-    ):
+    ) -> None:
         """Build the signature from static facts.
 
         `static_callables` names callables compiled into the executable. Each is
@@ -693,7 +693,7 @@ class ArtifactBindingIdentity(StrictModule):
         numeric_revision: NumericRevision | str,
         executable_signature: ExecutableSignature | str,
         /,
-    ):
+    ) -> None:
         semantic_id = (
             semantic.semantic_id
             if isinstance(semantic, SemanticProvenance)

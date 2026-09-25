@@ -101,7 +101,7 @@ class AlpertMultiwaveletTransform(StrictModule, NonTrainableState):
         order: int = 3,
         levels: int = 3,
         boundary: WaveletBoundary = "periodization",
-    ):
+    ) -> None:
         order_value = int(order)
         level_count = int(levels)
         if min(order_value, level_count) <= 0:

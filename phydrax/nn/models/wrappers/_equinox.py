@@ -191,7 +191,7 @@ class EquinoxModel(_AbstractBaseModel):
         in_size: SizeLike,
         out_size: SizeLike,
         layout: _Layout = "value",
-    ):
+    ) -> None:
         self.module = _stateless_module(module, wrapper=type(self).__name__)
         self.in_size = _canonical_size(in_size)
         self.out_size = _canonical_size(out_size)
@@ -238,7 +238,7 @@ class EquinoxStructuredModel(_AbstractStructuredInputModel):
         in_size: SizeLike,
         out_size: SizeLike,
         layout: _Layout = "passthrough",
-    ):
+    ) -> None:
         self.module = _stateless_module(module, wrapper=type(self).__name__)
         self.in_size = _canonical_size(in_size)
         self.out_size = _canonical_size(out_size)
@@ -323,7 +323,7 @@ class FunctionalJAXAdapter(_AbstractBaseModel):
         in_size: SizeLike,
         out_size: SizeLike,
         inference: bool,
-    ):
+    ) -> None:
         if not callable(apply):
             raise TypeError("apply must be callable.")
         if not isinstance(inference, bool):

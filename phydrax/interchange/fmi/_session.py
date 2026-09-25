@@ -269,7 +269,7 @@ class FMICoSimulationSession:
         max_archive_bytes: int = 64 * 1024 * 1024,
         max_unpacked_bytes: int = 256 * 1024 * 1024,
         max_files: int = 4096,
-    ):
+    ) -> None:
         _host_only(start_time, stop_time, start_values)
         if not license_id.strip():
             raise ValueError("An explicit FMU license_id is required.")

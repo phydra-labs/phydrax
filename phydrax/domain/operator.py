@@ -64,7 +64,7 @@ class OperatorDomainLayout(StrictModule, NonTrainableState):
         /,
         *,
         gather_indices: Any | None = None,
-    ):
+    ) -> None:
         name = str(query_name)
         if not name:
             raise ValueError("Operator domain query names must be non-empty.")
@@ -126,7 +126,7 @@ class OperatorDomainView(StrictModule, NonTrainableState):
         /,
         *,
         kind: OperatorDomainKind,
-    ):
+    ) -> None:
         if not isinstance(batch, OperatorBatch):
             raise TypeError("OperatorDomainView requires an OperatorBatch.")
         if kind not in (

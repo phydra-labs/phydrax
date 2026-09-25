@@ -28,7 +28,7 @@ class LiftingFrame3D(StrictModule):
         *,
         linear_velocity: ArrayLike | None = None,
         angular_velocity: ArrayLike | None = None,
-    ):
+    ) -> None:
         rotation_ = jnp.asarray(rotation, dtype=jnp.float64)
         translation_ = jnp.asarray(translation, dtype=jnp.float64)
         linear = (
@@ -85,7 +85,7 @@ class LiftingComponentPlan(StrictModule, NonTrainableState):
         *,
         body_id: int = 0,
         flap_fraction: ArrayLike | None = None,
-    ):
+    ) -> None:
         if (
             not str(name)
             or not isinstance(surface, LiftingSurfacePlan)
@@ -141,7 +141,7 @@ class MultiLiftingSurfacePlan(StrictModule, NonTrainableState):
     components: tuple[LiftingComponentPlan, ...]
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, components: tuple[LiftingComponentPlan, ...], /):
+    def __init__(self, components: tuple[LiftingComponentPlan, ...], /) -> None:
         if not components or any(
             not isinstance(component, LiftingComponentPlan) for component in components
         ):

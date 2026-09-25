@@ -184,7 +184,7 @@ class CochainResidualInput:
     kind: Literal["prediction", "source"]
     field: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.kind not in ("prediction", "source"):
             raise ValueError(
                 "Cochain residual input kind must be 'prediction' or 'source'."
@@ -268,7 +268,7 @@ class CochainResidualLoss(AbstractOperatorLossTerm):
     reduction: CochainMetricReduction = "graph_mean"
     topology_fingerprint: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("Cochain residual loss names must be non-empty.")
         if not isinstance(self.program, CochainResidualProgram):
@@ -508,7 +508,7 @@ class OperatorLossTerm(AbstractOperatorLossTerm):
     space: Literal["execution", "physical"] = "physical"
     case_reduction: Literal["scalar", "per_case"] = "scalar"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("Operator loss term names must be non-empty.")
         if not callable(self.fn):
@@ -610,7 +610,7 @@ class SupervisedOperatorLoss(AbstractOperatorLossTerm):
     epsilon: float = 1e-12
     space: Literal["execution", "physical"] = "physical"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("Operator loss term names must be non-empty.")
         if not jnp.isfinite(self.weight):
@@ -715,7 +715,7 @@ class SupervisedOperatorRolloutLoss(AbstractOperatorLossTerm):
     reduction: Literal["mean"] = "mean"
     accumulation_kind: ClassVar[OperatorAccumulationKind] = "case_mean"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         fields = tuple(str(field) for field in self.target_fields)
         weights = tuple(float(value) for value in self.time_weights)
         if not self.name:
@@ -789,7 +789,7 @@ class ResidualOperatorRolloutLoss(AbstractOperatorLossTerm):
     def accumulation_kind(self) -> OperatorAccumulationKind:
         return self.residual_term.accumulation_kind
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         weights = tuple(float(value) for value in self.time_weights)
         if not self.name:
             raise ValueError("Operator rollout loss names must be non-empty.")

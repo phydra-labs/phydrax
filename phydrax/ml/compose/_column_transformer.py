@@ -217,7 +217,7 @@ class FittedColumnTransformer(AbstractFittedModel):
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
         derivative_contract: DerivativeContract,
-    ):
+    ) -> None:
         transformers_ = tuple(transformers)
         results = tuple(fit_results)
         input_schemas = tuple(branch_input_schemas)
@@ -315,7 +315,7 @@ class ColumnTransformer(AbstractRecipe):
         /,
         *,
         remainder: Literal["drop", "passthrough"] = "drop",
-    ):
+    ) -> None:
         if remainder not in ("drop", "passthrough"):
             raise ValueError("remainder must be 'drop' or 'passthrough'.")
         self.transformers = _normalize_transformers(transformers)

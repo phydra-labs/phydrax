@@ -37,7 +37,7 @@ class MirrorStepMetrics(StrictModule):
         dual_displacement_norm: Array,
         bregman_step: Array,
         constraint_residual: Array,
-    ):
+    ) -> None:
         self.learning_rate = jnp.asarray(learning_rate)
         self.coordinate_gradient_norm = jnp.asarray(coordinate_gradient_norm)
         self.dual_displacement_norm = jnp.asarray(dual_displacement_norm)
@@ -49,7 +49,7 @@ class MirrorDescentState(StrictModule):
     step: Array
     metrics: MirrorStepMetrics
 
-    def __init__(self, step: Array, metrics: MirrorStepMetrics):
+    def __init__(self, step: Array, metrics: MirrorStepMetrics) -> None:
         if not isinstance(metrics, MirrorStepMetrics):
             raise TypeError("metrics must be MirrorStepMetrics.")
         self.step = jnp.asarray(step, dtype=jnp.int32)
@@ -94,7 +94,7 @@ class MirrorDescent(AbstractMirrorOptimizer):
         /,
         *,
         learning_rate: MirrorLearningRate = 1e-2,
-    ):
+    ) -> None:
         if not isinstance(parameter_geometry, ParameterMirrorGeometry):
             raise TypeError("parameter_geometry must be a ParameterMirrorGeometry.")
         if isinstance(learning_rate, (int, float)):

@@ -56,7 +56,7 @@ class FLIPProblemIR(StrictModule, NonTrainableState):
         /,
         *,
         solid_geometry_source_id: str | None = None,
-    ):
+    ) -> None:
         identifier = str(name)
         density = float(reference_density)
         force = jnp.asarray(acceleration)

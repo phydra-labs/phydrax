@@ -63,7 +63,7 @@ class FittedCircuitFeatureTransform(AbstractFittedModel):
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
         /,
-    ):
+    ) -> None:
         if not isinstance(model, DenseCircuitExpectationModel):
             raise TypeError("model must be DenseCircuitExpectationModel.")
         if len(input_schema.names) != model.in_size:
@@ -127,7 +127,7 @@ class CircuitFeatureTransformRecipe(AbstractRecipe):
         *,
         output_names: Sequence[str] = (),
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if not isinstance(model, DenseCircuitExpectationModel):
             raise TypeError("model must be DenseCircuitExpectationModel.")
         names = tuple(str(name) for name in output_names)
@@ -237,7 +237,7 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
         max_iterations: int = 100,
         tolerance: float = 1e-6,
         l2_strength: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(feature_model, DenseCircuitExpectationModel):
             raise TypeError("feature_model must be DenseCircuitExpectationModel.")
         labels = (float(class_labels[0]), float(class_labels[1]))

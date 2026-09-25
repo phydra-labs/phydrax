@@ -99,7 +99,7 @@ class PrecisionRewriteRule:
         accumulator_dtype: Any,
         output_dtype: Any,
         precision: Literal["default", "high", "highest"] = "high",
-    ):
+    ) -> None:
         if primitive not in (
             "dot_general",
             "conv_general_dilated",
@@ -127,7 +127,7 @@ class PrecisionRewritePolicy:
         self,
         rules: Sequence[PrecisionRewriteRule],
         unsupported: Literal["error", "recorded-pass-through"] = "error",
-    ):
+    ) -> None:
         rules_ = tuple(rules)
         if not rules_ or not all(
             isinstance(rule, PrecisionRewriteRule) for rule in rules_
@@ -188,7 +188,7 @@ class PrecisionSelectionPolicy:
         absolute_tolerance: float = 1e-6,
         warmups: int = 1,
         repeats: int = 3,
-    ):
+    ) -> None:
         candidates_ = tuple(candidates)
         if mode not in ("compatible", "calibrated"):
             raise ValueError("Selection mode must be compatible or calibrated.")
@@ -483,7 +483,7 @@ def _execute_jaxpr(
             raise TypeError("Precision JAXPR inputs must be Literal or Var atoms.")
         return environment[variable]
 
-    def write(variable, value):
+    def write(variable, value) -> None:
         if type(variable) is jax_core.Var:
             environment[variable] = value
         elif not isinstance(variable, jax_core.Var):

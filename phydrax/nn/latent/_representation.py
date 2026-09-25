@@ -67,7 +67,7 @@ class CallableLatentRepresentation(AbstractLatentRepresentation):
         latent_event_shape,
         representation_id: str,
         density_capability: str = "decoder-likelihood",
-    ):
+    ) -> None:
         if not callable(encoder) or not callable(decoder):
             raise TypeError("encoder and decoder must be callable.")
         data_shape = tuple(data_event_shape)
@@ -146,7 +146,7 @@ class LatentDiffusion(StrictModule):
         *,
         latent_sampler_id: str,
         model_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(representation, AbstractLatentRepresentation):
             raise TypeError("representation must implement AbstractLatentRepresentation.")
         if not callable(latent_sampler) or not latent_sampler_id:

@@ -128,7 +128,7 @@ class Residual(AbstractResidualCondition):
         /,
         *,
         label: str | None = None,
-    ):
+    ) -> None:
         if not callable(operator):
             raise TypeError("Residual condition operator must be callable.")
         self.fields = _fields(fields)
@@ -167,7 +167,7 @@ class Moment(AbstractMomentCondition):
         *,
         target: ArrayLike = 0.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not callable(operator):
             raise TypeError("Moment condition operator must be callable.")
         self.fields = _fields(fields)
@@ -207,7 +207,7 @@ class Observation(AbstractResidualCondition):
         *,
         operator: Callable[..., DomainFunction] | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         resolved_fields = _fields(fields)
         if not isinstance(target, DomainFunction):
             raise TypeError("Observation target must be a DomainFunction.")

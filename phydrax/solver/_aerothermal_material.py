@@ -46,7 +46,7 @@ class ConjugateAerothermalInterfacePlan(StrictModule, NonTrainableState):
         material_face_to_cell: ArrayLike,
         material_cell_volumes: ArrayLike,
         /,
-    ):
+    ) -> None:
         fluid = np.asarray(fluid_to_mortar, dtype=np.float64)
         material = np.asarray(material_to_mortar, dtype=np.float64)
         measures = np.asarray(mortar_measures, dtype=np.float64)
@@ -174,7 +174,7 @@ class FixedConnectivityRecessionPlan(StrictModule, NonTrainableState):
     minimum_edge_length: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, *, minimum_edge_length: float = 1.0e-10):
+    def __init__(self, *, minimum_edge_length: float = 1.0e-10) -> None:
         minimum = float(minimum_edge_length)
         if not np.isfinite(minimum) or minimum <= 0.0:
             raise ValueError("Minimum recession edge length must be positive.")
@@ -235,7 +235,7 @@ class ConservativeRecessionRemapPlan(StrictModule, NonTrainableState):
     material_overlap: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, gas_overlap: ArrayLike, material_overlap: ArrayLike, /):
+    def __init__(self, gas_overlap: ArrayLike, material_overlap: ArrayLike, /) -> None:
         gas = np.asarray(gas_overlap, dtype=np.float64)
         material = np.asarray(material_overlap, dtype=np.float64)
         if (

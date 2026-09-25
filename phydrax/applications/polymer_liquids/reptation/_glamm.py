@@ -43,7 +43,7 @@ class GLAMMPlan(StrictModule, NonTrainableState):
         convective_constraint_release: float = 0.0,
         maximum_stability_number: float = 0.25,
         incompressibility_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if int(contour_nodes) < 3:
             raise ValueError("contour_nodes must be at least three.")
         positive = (time_step, plateau_modulus, disengagement_time, rouse_time)

@@ -56,7 +56,7 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
         /,
         *,
         coefficient_dtype: Any = np.complex128,
-    ):
+    ) -> None:
         if not isinstance(surface, OrientedTriangleSurfaceComplex3D):
             raise TypeError("surface must be OrientedTriangleSurfaceComplex3D.")
         dtype = np.dtype(coefficient_dtype)

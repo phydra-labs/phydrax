@@ -540,7 +540,7 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
         constraint: VirtualElementDirichletConstraint | None = None,
         dirichlet_values=None,
         execution_policy: VirtualElementExecutionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(form, VirtualElementForm):
             raise TypeError("form must be VirtualElementForm.")
         if not isinstance(discretization, VirtualElementDiscretization):

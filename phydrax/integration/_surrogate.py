@@ -77,7 +77,7 @@ class SmolyakProbabilityInputSampler(StrictModule):
         /,
         *,
         axis_labels: Sequence[str],
-    ):
+    ) -> None:
         values = tuple(factors)
         labels = tuple(str(label) for label in axis_labels)
         if not values or any(
@@ -158,7 +158,7 @@ class SmolyakSurrogateHierarchyAdapter(StrictModule):
         fine_approximation_id: str,
         input_sampler: SmolyakInputSampler | None = None,
         surrogate_expectation: ArrayLike | None = None,
-    ):
+    ) -> None:
         interpolant = _smolyak_interpolant(surrogate)
         if not callable(fine_model):
             raise TypeError("fine_model must be callable.")

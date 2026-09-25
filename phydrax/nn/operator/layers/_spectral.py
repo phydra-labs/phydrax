@@ -41,7 +41,7 @@ class BasisSpectralConvND(StrictModule):
         n_modes: int | Sequence[int],
         bases: ModalTransformKind | Sequence[ModalTransformKind],
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
         modes = (int(n_modes),) if isinstance(n_modes, int) else tuple(n_modes)

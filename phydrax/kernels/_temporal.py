@@ -40,7 +40,7 @@ class SHOKernel(AbstractPositiveDefiniteKernel):
         frequency: ArrayLike,
         quality_factor: ArrayLike,
         variance: ArrayLike = 1.0,
-    ):
+    ) -> None:
         omega = _positive_scalar(frequency, name="frequency")
         quality = _positive_scalar(quality_factor, name="quality_factor")
         variance_array = _nonnegative_scalar(variance, name="variance")
@@ -133,7 +133,7 @@ class CARMAKernel(AbstractPositiveDefiniteKernel):
         /,
         *,
         stability_margin: float = 1e-8,
-    ):
+    ) -> None:
         ar = _coefficient_vector(ar_coefficients, name="ar_coefficients")
         ma = _coefficient_vector(ma_coefficients, name="ma_coefficients")
         order = ar.shape[0]

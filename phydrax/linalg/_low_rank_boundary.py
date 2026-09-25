@@ -31,7 +31,7 @@ class LowRankBoundaryCorrectionPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_construction_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         matrix = np.asarray(operator)
         indices = np.asarray(boundary_indices, dtype=np.int32).reshape((-1,))
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1] or matrix.shape[0] == 0:

@@ -119,7 +119,7 @@ class InvariantFilterBasis(StrictModule, NonTrainableState):
         rank_tolerance: float = 1e-10,
         equivariance_tolerance: float = 1e-10,
         max_construction_bytes: int = 256 * 1024**2,
-    ):
+    ) -> None:
         if not isinstance(group, FiniteOrthogonalGroup):
             raise TypeError("group must be a FiniteOrthogonalGroup.")
         if not isinstance(input_layout, TensorFieldLayout) or not isinstance(
@@ -275,7 +275,7 @@ class LatticeEquivariantConvND(StrictModule):
         epsilon: float = 1e-12,
         dtype: Any = jnp.float32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(invariant_basis, InvariantFilterBasis):
             raise TypeError("invariant_basis must be an InvariantFilterBasis.")
         resolved_dtype = jnp.dtype(dtype)
@@ -425,7 +425,7 @@ class TensorPointwiseLinear(StrictModule):
         use_bias: bool = True,
         dtype: Any = jnp.float32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         basis = InvariantFilterBasis(
             group,
             input_layout,
@@ -481,7 +481,7 @@ class TensorNormActivation(StrictModule):
         /,
         *,
         epsilon: float = 1e-12,
-    ):
+    ) -> None:
         if not isinstance(layout, TensorFieldLayout):
             raise TypeError("layout must be a TensorFieldLayout.")
         if not callable(activation):
@@ -527,7 +527,7 @@ class TensorRMSNorm(StrictModule):
         *,
         epsilon: float = 1e-6,
         dtype: Any = jnp.float32,
-    ):
+    ) -> None:
         if not isinstance(layout, TensorFieldLayout):
             raise TypeError("layout must be a TensorFieldLayout.")
         epsilon_value = float(epsilon)

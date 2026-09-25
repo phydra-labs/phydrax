@@ -46,7 +46,7 @@ class ScalarBubblePlan(StrictModule, NonTrainableState):
         renormalization_scale_squared: float = 1.0,
         epsilon: float = 1.0e-15,
         max_points: int = 256,
-    ):
+    ) -> None:
         order_ = int(order)
         maximum = int(max_points)
         scale = float(renormalization_scale_squared)
@@ -146,7 +146,7 @@ class RealVirtualSubtractionPlan(StrictModule, NonTrainableState):
         cutoff: float = 1.0e-6,
         order: int = 128,
         max_points: int = 256,
-    ):
+    ) -> None:
         cutoff_ = float(cutoff)
         order_ = int(order)
         maximum = int(max_points)

@@ -41,7 +41,7 @@ class AMREntityTransferReport(StrictModule, NonTrainableState):
         conservation_residual: float | None,
         declared_order: int,
         transfer_id: str,
-    ):
+    ) -> None:
         constant = float(constant_residual)
         conservation = (
             None if conservation_residual is None else float(conservation_residual)
@@ -76,7 +76,7 @@ class AMREntityTransferPlan(StrictModule, NonTrainableState):
         axis_entities: Sequence[AMRAxisEntity],
         refinement_ratio: int = 2,
         /,
-    ):
+    ) -> None:
         entities = tuple(axis_entities)
         ratio = int(refinement_ratio)
         if (

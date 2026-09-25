@@ -70,7 +70,7 @@ class SimulationCalibrationCase(StrictModule, NonTrainableState):
         analysis_id: str,
         valid: bool = True,
         status: str = "success",
-    ):
+    ) -> None:
         if not isinstance(posterior, WeightedSampleTarget):
             raise TypeError("posterior must be WeightedSampleTarget.")
         truth_ = jax.tree_util.tree_map(jnp.asarray, truth)
@@ -106,7 +106,7 @@ class SimulationCalibrationPlan(StrictModule):
         minimum_valid_cases: int = 20,
         multiple_testing_method: MultipleTestingMethod = "holm",
         alpha: float = 0.05,
-    ):
+    ) -> None:
         paths = tuple(str(value).strip() for value in parameter_paths)
         bins = int(num_bins)
         minimum = int(minimum_valid_cases)

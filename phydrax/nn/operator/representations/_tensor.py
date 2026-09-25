@@ -34,7 +34,7 @@ class TensorType(StrictModule):
         *,
         parity: TensorParity = 1,
         dimension: int,
-    ):
+    ) -> None:
         resolved_variance = tuple(variance)
         if any(
             value not in ("contravariant", "covariant") for value in resolved_variance
@@ -141,7 +141,9 @@ class TensorFieldBlock(StrictModule):
     tensor_type: TensorType
     multiplicity: int
 
-    def __init__(self, name: str, tensor_type: TensorType, /, *, multiplicity: int = 1):
+    def __init__(
+        self, name: str, tensor_type: TensorType, /, *, multiplicity: int = 1
+    ) -> None:
         resolved_name = str(name)
         if not resolved_name:
             raise ValueError("Tensor block names must be non-empty.")
@@ -183,7 +185,7 @@ class TensorFieldLayout(StrictModule):
 
     blocks: tuple[TensorFieldBlock, ...]
 
-    def __init__(self, blocks: Sequence[TensorFieldBlock], /):
+    def __init__(self, blocks: Sequence[TensorFieldBlock], /) -> None:
         resolved = tuple(blocks)
         if not resolved or any(
             not isinstance(block, TensorFieldBlock) for block in resolved

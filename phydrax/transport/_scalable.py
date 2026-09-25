@@ -71,7 +71,7 @@ class PositiveKernelApproximationDiagnostics(StrictModule):
         zero_source_rows: ArrayLike,
         zero_target_rows: ArrayLike,
         finite_features: ArrayLike,
-    ):
+    ) -> None:
         status_ = jnp.asarray(status, dtype=jnp.int32)
         rank_ = jnp.asarray(rank, dtype=jnp.int32)
         num_probes_ = jnp.asarray(num_probes, dtype=jnp.int32)
@@ -189,7 +189,7 @@ class PositiveKernelFactors(StrictModule):
         epsilon: ArrayLike,
         diagnostics: PositiveKernelApproximationDiagnostics,
         factorization_id: str,
-    ):
+    ) -> None:
         source = jnp.asarray(source_factors, dtype=jnp.float64)
         target = jnp.asarray(target_factors, dtype=jnp.float64)
         if source.ndim != 2 or target.ndim != 2:
@@ -342,7 +342,7 @@ class GaussianPositiveFeatures(StrictModule):
         *,
         num_probes: int = 32,
         probe_tolerance: ArrayLike = jnp.inf,
-    ):
+    ) -> None:
         feature_rank = int(rank)
         probes = int(num_probes)
         if feature_rank < 1:
@@ -624,7 +624,7 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
         early_stop: bool = False,
         store_history: bool = False,
         statistic_block_size: int = 256,
-    ):
+    ) -> None:
         if not isinstance(feature_map, GaussianPositiveFeatures):
             raise TypeError("feature_map must be GaussianPositiveFeatures.")
         maximum = int(max_iterations)

@@ -50,7 +50,7 @@ class AdaptiveMultilevelSplittingPlan(StrictModule):
         kill_count: int | None = None,
         max_rounds: int = 256,
         target_level: float = 0.0,
-    ):
+    ) -> None:
         population = int(population_size)
         if population < 2:
             raise ValueError("population_size must be at least two.")
@@ -89,7 +89,7 @@ class AdaptiveSplittingBranchRequest(StrictModule):
         *,
         level: float,
         round_index: int,
-    ):
+    ) -> None:
         killed = jnp.asarray(killed_indices, dtype=jnp.int32).reshape((-1,))
         parents = jnp.asarray(parent_indices, dtype=jnp.int32).reshape((-1,))
         branches = jnp.asarray(branch_indices, dtype=jnp.int32).reshape((-1,))
@@ -139,7 +139,7 @@ class AdaptiveSplittingDiagnostics(StrictModule):
         *,
         initial_trajectory_ids: tuple[str, ...],
         population_trajectory_ids: tuple[tuple[str, ...], ...],
-    ):
+    ) -> None:
         level_values = jnp.asarray(levels, dtype=jnp.float64).reshape((-1,))
         survival = jnp.asarray(survival_probabilities, dtype=jnp.float64).reshape((-1,))
         counts = jnp.asarray(killed_counts, dtype=jnp.int32).reshape((-1,))
@@ -203,7 +203,7 @@ class AdaptiveMultilevelSplittingResult(StrictModule):
         event_result: PathEventResult,
         diagnostics: AdaptiveSplittingDiagnostics,
         /,
-    ):
+    ) -> None:
         self.probability = jnp.asarray(probability, dtype=jnp.float64).reshape(())
         self.log_probability = jnp.asarray(log_probability, dtype=jnp.float64).reshape(())
         self.status = jnp.asarray(status, dtype=jnp.int32).reshape(())
@@ -241,7 +241,7 @@ class AdaptiveSplittingEnsembleResult(StrictModule):
         self,
         results: tuple[AdaptiveMultilevelSplittingResult, ...],
         /,
-    ):
+    ) -> None:
         if not results:
             raise ValueError(
                 "An adaptive splitting ensemble requires at least one result."

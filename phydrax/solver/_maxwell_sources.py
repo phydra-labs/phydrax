@@ -96,7 +96,7 @@ class PreparedMaxwellSource(StrictModule):
         magnetic_closedness_preserving: bool,
         source_id: str,
         layout_id: str,
-    ):
+    ) -> None:
         e_indices = jnp.asarray(electric_indices, dtype=jnp.int32)
         m_indices = jnp.asarray(magnetic_indices, dtype=jnp.int32)
         e_profile = jnp.asarray(electric_profile)
@@ -232,7 +232,7 @@ class MaxwellElectricCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableSt
         envelope: Callable[[Array, Any], ArrayLike] | None = None,
         envelope_semantic_id: str | None = None,
         envelope_numeric_id: str | None = None,
-    ):
+    ) -> None:
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
         profile_ = jnp.asarray(profile)
         if indices_.ndim != 1 or profile_.shape != indices_.shape:
@@ -324,7 +324,7 @@ class MaxwellPairedCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableStat
         envelope_numeric_id: str | None = None,
         magnetic_closedness_preserving: bool = False,
         source_id: str | None = None,
-    ):
+    ) -> None:
         e_indices = jnp.asarray(electric_indices, dtype=jnp.int32)
         m_indices = jnp.asarray(magnetic_indices, dtype=jnp.int32)
         e_profile = jnp.asarray(electric_profile)

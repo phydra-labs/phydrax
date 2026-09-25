@@ -54,7 +54,7 @@ class MeshingComplianceReport(StrictModule, NonTrainableState):
         issues: tuple[str, ...] = (),
         requested: tuple[tuple[str, float], ...] = (),
         achieved: tuple[tuple[str, float], ...] = (),
-    ):
+    ) -> None:
         specification = str(specification_id).strip()
         if not specification:
             raise ValueError("Compliance specification_id must be non-empty.")
@@ -96,7 +96,7 @@ class MeshingRuntimeInfo(StrictModule, NonTrainableState):
         deterministic: bool,
         enforced_limits: tuple[str, ...] = (),
         unenforced_limits: tuple[str, ...] = (),
-    ):
+    ) -> None:
         provider = str(provider_id).strip()
         version = str(actual_version).strip()
         if not provider or not version:
@@ -165,7 +165,7 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         attributes: tuple[MeshAttribute, ...] = (),
         associations: tuple[GeometryAssociation, ...] = (),
         adapter_reports: tuple[AdapterReport, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be CellMesh.")
         if not isinstance(geometry, CellGeometrySpec):

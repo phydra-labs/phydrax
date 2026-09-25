@@ -45,7 +45,9 @@ class SphericalHarmonicGravityPlan(StrictModule, NonTrainableState):
     maximum_degree: int = eqx.field(static=True)
     normalization: Normalization = eqx.field(static=True)
 
-    def __init__(self, model: ICGEMGravityModel, /, *, maximum_degree: int | None = None):
+    def __init__(
+        self, model: ICGEMGravityModel, /, *, maximum_degree: int | None = None
+    ) -> None:
         if not isinstance(model, ICGEMGravityModel):
             raise TypeError("Spherical gravity requires ICGEMGravityModel.")
         maximum = model.maximum_degree if maximum_degree is None else int(maximum_degree)
@@ -108,7 +110,7 @@ class SphericalHarmonicMagneticPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, model: GeomagneticHarmonicModel, /, *, maximum_degree: int | None = None
-    ):
+    ) -> None:
         if not isinstance(model, GeomagneticHarmonicModel):
             raise TypeError("Spherical magnetics requires GeomagneticHarmonicModel.")
         maximum = model.maximum_degree if maximum_degree is None else int(maximum_degree)

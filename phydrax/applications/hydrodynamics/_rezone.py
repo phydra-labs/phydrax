@@ -79,7 +79,7 @@ class FreeSurfaceRezonePlan(StrictModule, NonTrainableState):
         /,
         *,
         minimum_quality_improvement: float = 0.0,
-    ):
+    ) -> None:
         exponent = float(stretching_exponent)
         improvement = float(minimum_quality_improvement)
         if (
@@ -346,7 +346,7 @@ class GraphShorelineEventPlan(StrictModule, NonTrainableState):
         rezone_height: float = 0.05,
         dry_height: float = 0.005,
         two_phase_slope: float = 0.8,
-    ):
+    ) -> None:
         values = tuple(float(v) for v in (rezone_height, dry_height, two_phase_slope))
         if any(not np.isfinite(v) or v <= 0.0 for v in values) or values[1] >= values[0]:
             raise ValueError("Invalid graph shoreline event thresholds.")

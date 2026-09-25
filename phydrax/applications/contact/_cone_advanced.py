@@ -33,7 +33,7 @@ class SAPContactSolverPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 300,
         tolerance: float = 1.0e-10,
         acceleration: bool = True,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         tolerance_ = float(tolerance)
         if iterations <= 0 or tolerance_ <= 0.0:
@@ -77,7 +77,7 @@ class SemismoothContactSolverPlan(StrictModule, NonTrainableState):
         maximum_linear_iterations: int = 200,
         tolerance: float = 1.0e-10,
         regularization: float = 1.0e-10,
-    ):
+    ) -> None:
         nonlinear = int(maximum_iterations)
         linear = int(maximum_linear_iterations)
         tolerance_ = float(tolerance)
@@ -131,7 +131,7 @@ class PrimalDualContactSolverPlan(StrictModule, NonTrainableState):
         barrier_reduction: float = 0.2,
         tolerance: float = 1.0e-10,
         regularization: float = 1.0e-10,
-    ):
+    ) -> None:
         outer = int(outer_iterations)
         inner = int(inner_iterations)
         linear = int(maximum_linear_iterations)

@@ -54,7 +54,7 @@ class LandauLevelMixingVMCPlan(StrictModule, NonTrainableState):
         hidden_dimension: int = 32,
         layer_count: int = 2,
         determinant_count: int = 4,
-    ):
+    ) -> None:
         if not isinstance(sphere, HaldaneSpherePlan):
             raise TypeError("sphere must be HaldaneSpherePlan.")
         if sphere.statistics != "fermion":

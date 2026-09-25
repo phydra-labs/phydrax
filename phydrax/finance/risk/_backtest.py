@@ -28,7 +28,7 @@ class WalkForwardPlan(StrictModule):
         step: int | None = None,
         embargo: int = 0,
         anchored: bool = False,
-    ):
+    ) -> None:
         raw_step = test_window if step is None else step
         if any(
             isinstance(value, bool)
@@ -58,7 +58,7 @@ class WalkForwardSplit(StrictModule):
 
     def __init__(
         self, train_start: int, train_stop: int, test_start: int, test_stop: int, /
-    ):
+    ) -> None:
         values = tuple((train_start, train_stop, test_start, test_stop))
         if values[0] < 0 or not values[0] < values[1] <= values[2] < values[3]:
             raise ValueError(
@@ -71,7 +71,7 @@ class BacktestDecisions(StrictModule):
     weights: Array
     information_end_indices: Array
 
-    def __init__(self, weights: ArrayLike, information_end_indices: ArrayLike, /):
+    def __init__(self, weights: ArrayLike, information_end_indices: ArrayLike, /) -> None:
         weights_ = jnp.asarray(weights)
         information = jnp.asarray(information_end_indices)
         if weights_.ndim != 2 or 0 in weights_.shape:
@@ -101,7 +101,7 @@ class NestedBacktestPlan(StrictModule):
     outer: WalkForwardPlan
     inner: WalkForwardPlan
 
-    def __init__(self, outer: WalkForwardPlan, inner: WalkForwardPlan, /):
+    def __init__(self, outer: WalkForwardPlan, inner: WalkForwardPlan, /) -> None:
         if not isinstance(outer, WalkForwardPlan) or not isinstance(
             inner, WalkForwardPlan
         ):
@@ -129,7 +129,7 @@ class NestedBacktestDecisions(StrictModule):
         outer_candidate_weights: ArrayLike,
         outer_information_end_indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         inner = jnp.asarray(inner_weights)
         inner_information = jnp.asarray(inner_information_end_indices)
         outer = jnp.asarray(outer_candidate_weights, dtype=inner.dtype)

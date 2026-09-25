@@ -41,7 +41,7 @@ class QuadratureAccuracyPolicy(StrictModule, NonTrainableState):
         *,
         overintegration_factor: float = 1.5,
         explicit_degree: int | None = None,
-    ):
+    ) -> None:
         kind_ = str(kind)
         factor = float(overintegration_factor)
         degree = None if explicit_degree is None else int(explicit_degree)
@@ -127,7 +127,7 @@ class QuadratureEvidence(StrictModule, NonTrainableState):
         *,
         exact: bool,
         aliasing_status: str,
-    ):
+    ) -> None:
         if role not in (
             "volume",
             "interior-facet",

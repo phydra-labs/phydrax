@@ -154,7 +154,7 @@ class PolynomialActionEvidence(StrictModule, NonTrainableState):
         exact_relations: bool,
         complex_valued: bool,
         reductivity: Literal["not-applicable", "declared"] = "not-applicable",
-    ):
+    ) -> None:
         if kind not in ("finite", "declared-reductive", "scaling"):
             raise ValueError("Unknown polynomial action kind.")
         if reductivity not in ("not-applicable", "declared"):
@@ -223,7 +223,7 @@ class FinitePolynomialAction(StrictModule, NonTrainableState):
         element_labels: Sequence[str] = (),
         verification_tolerance: float = 1e-10,
         rejection_tolerance: float = 1e-7,
-    ):
+    ) -> None:
         if not isinstance(support, SparsePolynomialSupport):
             raise TypeError("support must be a SparsePolynomialSupport.")
         variable_input = _numeric_array(variable_actions, "variable_actions", ndim=3)
@@ -366,7 +366,7 @@ class DeclaredReductivePolynomialAction(StrictModule, NonTrainableState):
         generator_labels: Sequence[str] = (),
         verification_tolerance: float = 1e-10,
         rejection_tolerance: float = 1e-7,
-    ):
+    ) -> None:
         if not isinstance(support, SparsePolynomialSupport):
             raise TypeError("support must be a SparsePolynomialSupport.")
         variable_input = _numeric_array(
@@ -500,7 +500,7 @@ class PolynomialScalingAction(StrictModule, NonTrainableState):
         support: SparsePolynomialSupport,
         scaling: PolynomialScaling,
         /,
-    ):
+    ) -> None:
         if not isinstance(support, SparsePolynomialSupport):
             raise TypeError("support must be a SparsePolynomialSupport.")
         if not isinstance(scaling, PolynomialScaling):
@@ -709,7 +709,7 @@ class PolynomialActionConstraints(StrictModule, NonTrainableState):
         ambient_metric_weights: ArrayLike,
         action_count: int,
         exact: bool,
-    ):
+    ) -> None:
         matrix_ = jnp.asarray(matrix)
         equations = jnp.asarray(ambient_equation_indices, dtype=jnp.int32)
         exponents = jnp.asarray(ambient_exponents, dtype=jnp.int32)
@@ -865,7 +865,7 @@ class PolynomialSubspaceEvidence(StrictModule, NonTrainableState):
         method: str,
         method_evidence_id: str,
         candidate_isotypic: bool = False,
-    ):
+    ) -> None:
         if kind not in ("invariant", "equivariant", "casimir-spectral-block"):
             raise ValueError("Unknown polynomial subspace kind.")
         if status not in ("verified", "ambiguous"):
@@ -938,7 +938,7 @@ class PolynomialSubspaceBasis(StrictModule, NonTrainableState):
         metric_weights: ArrayLike,
         evidence: PolynomialSubspaceEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(support, SparsePolynomialSupport):
             raise TypeError("support must be a SparsePolynomialSupport.")
         if not isinstance(evidence, PolynomialSubspaceEvidence):

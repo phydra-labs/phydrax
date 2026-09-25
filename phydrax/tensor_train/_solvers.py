@@ -53,7 +53,7 @@ class TensorTrainSolvePlan(StrictModule, NonTrainableState):
         local_regularization: float,
         max_dense_entries: int,
         max_local_unknowns: int,
-    ):
+    ) -> None:
         raw_modes = tuple(mode_sizes)
         integer_fields = raw_modes + (
             max_rank,
@@ -141,7 +141,7 @@ class PreparedTensorTrainSolve(StrictModule, NonTrainableState):
         /,
         *,
         numeric_version: ArrayLike = 0,
-    ):
+    ) -> None:
         if (
             operator.input_mode_sizes != plan.mode_sizes
             or operator.output_mode_sizes != plan.mode_sizes
@@ -180,7 +180,7 @@ class TensorTrainSolveEvidence(StrictModule):
         *,
         local_solve_count: int,
         sweep_count: int,
-    ):
+    ) -> None:
         residuals = jnp.asarray(true_global_residual_norms)
         relative = jnp.asarray(relative_global_residual_norms)
         bounds = jnp.asarray(enrichment_frobenius_bounds)
@@ -209,7 +209,7 @@ class TensorTrainSolveResult(StrictModule):
         evidence: TensorTrainSolveEvidence,
         converged: bool,
         /,
-    ):
+    ) -> None:
         self.solution = solution
         self.evidence = evidence
         self.converged = bool(converged)

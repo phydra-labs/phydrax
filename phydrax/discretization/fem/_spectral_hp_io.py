@@ -36,7 +36,7 @@ from ._reference import lagrange_element
 class PersistentSemanticCache(StrictModule, NonTrainableState):
     directory: str = eqx.field(static=True)
 
-    def __init__(self, directory: str | Path, /):
+    def __init__(self, directory: str | Path, /) -> None:
         path = Path(directory)
         path.mkdir(parents=True, exist_ok=True)
         self.directory = str(path)
@@ -100,7 +100,7 @@ class FusedMortarAction(StrictModule, NonTrainableState):
 class FusedTensorTransfer(StrictModule, NonTrainableState):
     factors: tuple[Array, ...]
 
-    def __init__(self, factors: Sequence[ArrayLike], /):
+    def __init__(self, factors: Sequence[ArrayLike], /) -> None:
         factors_ = tuple(jnp.asarray(value) for value in factors)
         if not factors_ or any(value.ndim != 2 for value in factors_):
             raise ValueError("Fused tensor transfers require rank-2 axis factors.")
@@ -130,7 +130,7 @@ class HPMixedPrecisionPolicy(StrictModule, NonTrainableState):
 
     def __init__(
         self, storage_dtype: str, compute_dtype: str, accumulation_dtype: str, /
-    ):
+    ) -> None:
         dtypes = tuple(
             np.dtype(value)
             for value in (storage_dtype, compute_dtype, accumulation_dtype)
@@ -161,7 +161,7 @@ class HPWorksetMemoryPlan(StrictModule, NonTrainableState):
         dtype: str,
         maximum_bytes: int,
         /,
-    ):
+    ) -> None:
         widths = tuple(local_widths)
         components = int(component_count)
         budget = int(maximum_bytes)
@@ -381,7 +381,7 @@ class FiniteElementMeshImportReport(StrictModule, NonTrainableState):
         source_entity_counts: Mapping[str, int] | Sequence[tuple[str, int]] = (),
         imported_entity_counts: Mapping[str, int] | Sequence[tuple[str, int]] = (),
         dropped_entity_counts: Mapping[str, int] | Sequence[tuple[str, int]] = (),
-    ):
+    ) -> None:
         names = tuple(str(value) for value in block_names)
         kinds = tuple(str(value) for value in cell_kinds)
         orders = tuple(geometry_orders)
@@ -474,7 +474,7 @@ class FiniteElementMeshImport(StrictModule, NonTrainableState):
         /,
         *,
         volume_groups: Mapping[str, Sequence[int]] | None = None,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be CellMesh.")
         if not isinstance(coordinate_spec, CellGeometrySpec):

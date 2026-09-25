@@ -159,7 +159,7 @@ class QuantumCapacitance(StrictModule):
 
     cell_terminal: Array
 
-    def __init__(self, cell_terminal):
+    def __init__(self, cell_terminal) -> None:
         c = _array(cell_terminal, "cell-to-electrode capacitance")
         if (
             c.ndim != 2

@@ -47,7 +47,7 @@ class CellFiltration(StrictModule, NonTrainableState):
         *,
         direction: FiltrationDirection = "sublevel",
         source_id: str,
-    ):
+    ) -> None:
         if not isinstance(complex, CellSubcomplex):
             raise TypeError("Cell filtrations require a CellSubcomplex.")
         if direction not in ("sublevel", "superlevel"):
@@ -188,7 +188,7 @@ class PreparedVertexFiltration(StrictModule, NonTrainableState):
         /,
         *,
         direction: FiltrationDirection,
-    ):
+    ) -> None:
         if not isinstance(complex, CellSubcomplex):
             raise TypeError("Prepared vertex filtrations require a CellSubcomplex.")
         if not isinstance(support, CellVertexSupport):

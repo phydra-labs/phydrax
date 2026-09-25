@@ -143,7 +143,7 @@ class RodContactWitnessBatch(StrictModule, NonTrainableState):
         capacity: int,
         finite: ArrayLike | None = None,
         batch_id: str | None = None,
-    ):
+    ) -> None:
         count = int(capacity)
         if count <= 0:
             raise ValueError("Rod contact witness capacity must be positive.")
@@ -373,7 +373,7 @@ class RodContactSearchPlan(StrictModule, NonTrainableState):
         route: str | RodContactSearchRoute = "dense",
         maximum_tree_depth: int = 64,
         maximum_traversal_visits: int = 1_000_000,
-    ):
+    ) -> None:
         capacity_ = int(capacity)
         plane_capacity_ = int(plane_capacity)
         activation = float(activation_distance)
@@ -452,7 +452,7 @@ class PreparedRodContactSearch(StrictModule, NonTrainableState):
         geometry: PreparedRodCapsuleGeometry | CollisionSurfacePlan,
         planes: Sequence[PlaneContactGeometry],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, RodContactSearchPlan):
             raise TypeError("plan must be RodContactSearchPlan.")
         if isinstance(geometry, PreparedRodCapsuleGeometry):
@@ -567,7 +567,7 @@ class _BVHNode:
         edge: int = -1,
         count: int = 1,
         depth: int = 1,
-    ):
+    ) -> None:
         self.lower = lower
         self.upper = upper
         self.left = left
@@ -1460,7 +1460,7 @@ class RodContactManifoldState(StrictModule, NonTrainableState):
         *,
         capacity: int,
         tangent_dimension: int = 2,
-    ):
+    ) -> None:
         count = int(capacity)
         tangent = int(tangent_dimension)
         if count <= 0 or tangent != 2:
@@ -1690,7 +1690,7 @@ class _HistoryRecord:
         age: int,
         retention: int,
         revision: int,
-    ):
+    ) -> None:
         self.key = key
         self.active = active
         self.left = left
@@ -2003,7 +2003,7 @@ class RodContactCCDPlan(StrictModule, NonTrainableState):
         distance_tolerance: float = 1.0e-9,
         safety_fraction: float = 0.9,
         minimum_progress: float = 1.0e-12,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         tolerance = float(distance_tolerance)
         safety = float(safety_fraction)
@@ -2308,7 +2308,7 @@ class CompositeContactParticipantBlock(StrictModule, NonTrainableState):
         /,
         *,
         block_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(velocity_operator, AbstractLinearOperator):
             raise TypeError("velocity_operator must be AbstractLinearOperator.")
         if not isinstance(inverse_mass_operator, AbstractLinearOperator):
@@ -2626,7 +2626,7 @@ class CompositeContactResponse(StrictModule, NonTrainableState):
         compliance: ArrayLike = 0.0,
         normal_bias: ArrayLike = 0.0,
         solver: ContactConeSolverPlan | None = None,
-    ):
+    ) -> None:
         values = tuple(blocks)
         if not values or not all(
             isinstance(value, CompositeContactParticipantBlock) for value in values

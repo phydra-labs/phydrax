@@ -36,7 +36,7 @@ class AdaptiveResidual(StrictModule, ParameterOwner):
         *,
         channel_size: int | None = None,
         initial_alpha: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not callable(branch):
             raise TypeError("branch must be callable.")
         if channel_size is not None and int(channel_size) <= 0:

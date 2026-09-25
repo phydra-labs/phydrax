@@ -148,7 +148,7 @@ class MinkowskiInitialData(StrictModule, NonTrainableState):
 
     data_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.data_id = canonical_fingerprint({"kind": "minkowski-adm-initial-data"})
 
     def __call__(self, coordinates: ArrayLike, /) -> ADMInitialData:
@@ -186,7 +186,7 @@ class IsotropicSchwarzschildInitialData(StrictModule, NonTrainableState):
         *,
         center: ArrayLike = (0.0, 0.0, 0.0),
         excision_radius: float = 0.0,
-    ):
+    ) -> None:
         mass_host = float(np.asarray(mass))
         center_host = np.asarray(center, dtype=np.float64)
         excision = float(excision_radius)
@@ -258,7 +258,7 @@ class KerrSchildInitialData(StrictModule, NonTrainableState):
         *,
         center: ArrayLike = (0.0, 0.0, 0.0),
         excision_radius: float = 0.0,
-    ):
+    ) -> None:
         mass_host = float(np.asarray(mass))
         spin_host = np.asarray(spin, dtype=np.float64)
         if spin_host.shape == ():

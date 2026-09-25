@@ -63,7 +63,7 @@ class HolomorphicPolynomialPotential(StrictModule, ParameterOwner):
         normalization: ComplexAffineNormalization | None = None,
         initial_scale: float = 0.0,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         branches_ = int(branches)
         degree = int(maximum_degree)
         scale = float(initial_scale)

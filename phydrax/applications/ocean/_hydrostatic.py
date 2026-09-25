@@ -104,7 +104,7 @@ class LinearHydrostaticEOS(StrictModule, NonTrainableState):
         reference_temperature: float = 10.0,
         alpha: float = 2.0e-4,
         beta: float = 7.6e-4,
-    ):
+    ) -> None:
         values = tuple(
             float(v)
             for v in (
@@ -179,7 +179,7 @@ class NonlinearSeawaterPolynomialEOS(StrictModule, NonTrainableState):
             2.5e-8,
             -1.5e-8,
         ),
-    ):
+    ) -> None:
         values = tuple(float(v) for v in coefficients)
         if len(values) != 7 or any(not np.isfinite(v) for v in values):
             raise ValueError("Nonlinear seawater EOS requires seven finite coefficients.")
@@ -267,7 +267,7 @@ class FreshwaterVolumeFluxPlan(StrictModule, NonTrainableState):
         *,
         absolute_salinity: float = 0.0,
         conservative_temperature: float = 10.0,
-    ):
+    ) -> None:
         rate_ = jnp.asarray(rate)
         if bool(jnp.any(~jnp.isfinite(rate_))):
             raise ValueError("Freshwater volume flux must be finite.")
@@ -321,7 +321,7 @@ class HydrostaticOpenBoundary(StrictModule, NonTrainableState):
         target_transport: float = 0.0,
         absolute_salinity: float = 35.0,
         conservative_temperature: float = 10.0,
-    ):
+    ) -> None:
         axis_ = int(axis)
         if axis_ not in (0, 1) or side not in ("lower", "upper"):
             raise ValueError("Hydrostatic boundaries require horizontal axis and side.")
@@ -389,7 +389,7 @@ class HydrostaticMixingPlan(StrictModule, NonTrainableState):
         redi_coefficient: float = 0.0,
         gm_coefficient: float = 0.0,
         tke_coefficient: float = 0.1,
-    ):
+    ) -> None:
         if kind not in ("prescribed", "ri", "kpp", "tke", "redi-gm"):
             raise ValueError("Unknown hydrostatic mixing kind.")
         values = tuple(
@@ -506,7 +506,7 @@ class HydrostaticPrimitiveEquationPlan(StrictModule, NonTrainableState):
         wetting_and_drying: bool = False,
         wet_depth: float = 1.0e-6,
         subcycle_policy: ExternalModeSubcyclePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, PreparedHydrostaticGrid):
             raise TypeError("geometry must be PreparedHydrostaticGrid.")
         from ._teos10 import TEOS10GSW75EOS
@@ -593,7 +593,7 @@ class PreparedHydrostaticOcean(StrictModule):
         plan: HydrostaticPrimitiveEquationPlan,
         free_surface: LinearImplicitFreeSurfacePlan,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.free_surface = free_surface
         self.prepared_id = canonical_fingerprint(

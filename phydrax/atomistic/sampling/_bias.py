@@ -90,7 +90,7 @@ class AtomisticBiasPlan(AbstractAtomisticBiasPlan, NonTrainableState):
         grid_minimum: ArrayLike = 0.0,
         grid_maximum: ArrayLike = 1.0,
         grid_bins: int = 64,
-    ):
+    ) -> None:
         if not isinstance(kind, BiasKind) or not isinstance(
             variables, AbstractCollectiveVariableProgram
         ):
@@ -233,7 +233,9 @@ class PreparedAtomisticBias(AbstractPreparedAtomisticBias):
     dynamics: PreparedAtomisticDynamics
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: AtomisticBiasPlan, dynamics: PreparedAtomisticDynamics, /):
+    def __init__(
+        self, plan: AtomisticBiasPlan, dynamics: PreparedAtomisticDynamics, /
+    ) -> None:
         self.plan = plan
         self.dynamics = dynamics
         self.prepared_id = canonical_fingerprint(
@@ -450,7 +452,7 @@ class PreparedBiasedDynamics(StrictModule):
         bias: AbstractPreparedAtomisticBias,
         thermodynamic_states: PreparedThermodynamicStateTable,
         /,
-    ):
+    ) -> None:
         if not isinstance(bias, AbstractPreparedAtomisticBias):
             raise TypeError("bias must implement AbstractPreparedAtomisticBias.")
         if not isinstance(thermodynamic_states, PreparedThermodynamicStateTable):
@@ -631,7 +633,7 @@ class BiasedDynamicsCheckpointPlan(StrictModule, NonTrainableState):
     dynamics: PreparedBiasedDynamics
     checkpoint_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: PreparedBiasedDynamics, /):
+    def __init__(self, dynamics: PreparedBiasedDynamics, /) -> None:
         if not isinstance(dynamics, PreparedBiasedDynamics):
             raise TypeError("dynamics must be PreparedBiasedDynamics.")
         self.dynamics = dynamics

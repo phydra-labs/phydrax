@@ -50,7 +50,7 @@ class GrayLinearRadiationDiffusionPlan(StrictModule, NonTrainableState):
         absorption_coefficient: float,
         reduced_light_speed: float = 1.0,
         eddington_factor: float = 1.0 / 3.0,
-    ):
+    ) -> None:
         transport = float(transport_extinction)
         absorption = float(absorption_coefficient)
         speed = float(reduced_light_speed)

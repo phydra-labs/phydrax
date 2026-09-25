@@ -41,7 +41,7 @@ class AlgebraProductEvidence(StrictModule, NonTrainableState):
         backend: AlgebraProductBackend,
         term_count: int,
         resource_evidence: AlgebraResourceEvidence,
-    ):
+    ) -> None:
         if backend not in ("sparse", "dense"):
             raise ValueError("Unknown algebra product backend.")
         if not algebra_id or not layout_id:
@@ -86,7 +86,7 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
         *,
         layout: AlgebraElementLayout | None = None,
         backend: Literal["auto", "sparse", "dense"] = "auto",
-    ):
+    ) -> None:
         if not isinstance(algebra, AbstractFiniteRealAlgebraSpec):
             raise TypeError("algebra must implement AbstractFiniteRealAlgebraSpec.")
         layout_ = AlgebraElementLayout(algebra) if layout is None else layout

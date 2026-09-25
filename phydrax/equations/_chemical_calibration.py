@@ -49,7 +49,7 @@ class ChemicalCalibrationParameter(StrictModule, NonTrainableState):
         direction: str = "forward",
         lower: ArrayLike = -jnp.inf,
         upper: ArrayLike = jnp.inf,
-    ):
+    ) -> None:
         name_ = str(name)
         index = int(reaction_index)
         field = str(field_name)
@@ -117,7 +117,7 @@ class ChemicalCalibrationPlan(StrictModule, NonTrainableState):
     parameters: tuple[ChemicalCalibrationParameter, ...]
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, mechanism: PreparedChemicalMechanism, parameters, /):
+    def __init__(self, mechanism: PreparedChemicalMechanism, parameters, /) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         values = tuple(parameters)

@@ -30,7 +30,7 @@ class _ExecutionCurve:
         geometry: ContinuationGeometry,
         args: Any,
         /,
-    ):
+    ) -> None:
         self.problem = problem
         self.geometry = geometry
         self.args = args
@@ -73,7 +73,7 @@ class NormalFormPolicy(StrictModule):
         spectral_residual_tolerance: float = 1e-7,
         overlap_tolerance: float = 1e-8,
         maximum_condition: float = 1e8,
-    ):
+    ) -> None:
         residual = float(linear_residual_tolerance)
         spectral_residual = float(spectral_residual_tolerance)
         overlap = float(overlap_tolerance)
@@ -115,7 +115,7 @@ class NormalFormLinearSolveResult(StrictModule):
         successful: Any,
         source_status: Any,
         solver_id: str,
-    ):
+    ) -> None:
         identifier = str(solver_id)
         if not identifier:
             raise ValueError("solver_id must be non-empty.")
@@ -163,7 +163,7 @@ class CallableNormalFormLinearSolver(AbstractNormalFormLinearSolver):
         /,
         *,
         solver_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         identifier = str(solver_id)
@@ -209,7 +209,7 @@ class NormalFormDiagnostics(StrictModule):
         linear_condition_estimates: Any,
         derivative_evaluations: Any,
         finite: Any,
-    ):
+    ) -> None:
         spectral_residuals_ = jnp.asarray(spectral_residuals)
         residuals = jnp.asarray(linear_residuals)
         conditions = jnp.asarray(linear_condition_estimates)
@@ -250,7 +250,7 @@ class NormalFormProvenance(StrictModule):
         formula_id: str,
         derivative_id: str = "jax-nested-jvp",
         linear_solver_id: str = "",
-    ):
+    ) -> None:
         identifiers = tuple(
             str(value) for value in (problem_id, formula_id, derivative_id)
         )

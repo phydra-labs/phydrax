@@ -196,7 +196,7 @@ class OnePhaseFreeSurfaceALEPlan(StrictModule, NonTrainableState):
         wave: WaveForcingPlan | None = None,
         coupling_iterations: int = 6,
         coupling_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(surface_plan, GraphSurfaceALEPlan):
             raise TypeError("surface_plan must be GraphSurfaceALEPlan.")
         boundary_ = FreeSurfaceBoundaryPlan() if boundary is None else boundary
@@ -282,7 +282,7 @@ class PreparedOnePhaseFreeSurfaceALE(StrictModule):
         capillarity: GraphCapillarityPlan,
         wave: WaveForcingPlan | None,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.surface = surface
         self.projection = projection
@@ -394,7 +394,7 @@ class OnePhaseFreeSurfaceALEMethod(AbstractFixedStepMethod, NonTrainableState):
     hydrodynamics: PreparedOnePhaseFreeSurfaceALE
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, hydrodynamics: PreparedOnePhaseFreeSurfaceALE, /):
+    def __init__(self, hydrodynamics: PreparedOnePhaseFreeSurfaceALE, /) -> None:
         if not isinstance(hydrodynamics, PreparedOnePhaseFreeSurfaceALE):
             raise TypeError("hydrodynamics must be PreparedOnePhaseFreeSurfaceALE.")
         self.hydrodynamics = hydrodynamics

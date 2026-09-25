@@ -133,7 +133,7 @@ class DelayedRamanResponsePlan(AbstractCarrierResolvedResponse):
         *,
         provenance_id: str,
         maximum_workspace_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         strength = _real_finite_array("delayed_third_order", delayed_third_order, ())
         frequency = _positive_finite_scalar(
             "oscillator_angular_frequency", oscillator_angular_frequency
@@ -223,7 +223,7 @@ class PreparedDelayedRamanResponse(PreparedCarrierResolvedResponse):
         workspace_real_elements: int,
         workspace_bytes: int,
         prepared_id: str,
-    ):
+    ) -> None:
         self.plan = plan
         self._time_space = time_space
         self._positive_frequency_mask = positive_frequency_mask
@@ -397,7 +397,7 @@ class MultiphotonIonizationRatePlan(StrictModule, NonTrainableState):
         /,
         *,
         provenance_id: str,
-    ):
+    ) -> None:
         coefficient = _nonnegative_finite_scalar("rate_coefficient", rate_coefficient)
         if isinstance(photon_order, bool) or not isinstance(photon_order, Integral):
             raise TypeError("photon_order must be an integer.")
@@ -456,7 +456,7 @@ class DrudePlasmaResponsePlan(StrictModule, NonTrainableState):
         electron_charge_magnitude: ArrayLike = _ELEMENTARY_CHARGE,
         electron_mass: ArrayLike = _ELECTRON_MASS,
         maximum_workspace_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         collision = _nonnegative_finite_scalar(
             "collision_angular_frequency", collision_angular_frequency
         )
@@ -539,7 +539,7 @@ class PreparedDrudePlasmaResponse(StrictModule, NonTrainableState):
         workspace_real_elements: int,
         workspace_bytes: int,
         prepared_id: str,
-    ):
+    ) -> None:
         self.plan = plan
         self.time_space = time_space
         self.field_shape = field_shape
@@ -644,7 +644,7 @@ class IonizingDrudeResponsePlan(AbstractCarrierResolvedResponse):
         /,
         *,
         maximum_workspace_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         if not isinstance(ionization, MultiphotonIonizationRatePlan):
             raise TypeError("ionization must be MultiphotonIonizationRatePlan.")
         if not isinstance(drude, DrudePlasmaResponsePlan):
@@ -749,7 +749,7 @@ class PreparedIonizingDrudeResponse(PreparedCarrierResolvedResponse):
         workspace_real_elements: int,
         workspace_bytes: int,
         prepared_id: str,
-    ):
+    ) -> None:
         self.plan = plan
         self.drude = drude
         self._time_space = time_space

@@ -35,7 +35,7 @@ class CmbIngressEvidence(StrictModule):
 class CmbIngressPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
 
-    def __init__(self, *, tolerance: float = 1.0e-10):
+    def __init__(self, *, tolerance: float = 1.0e-10) -> None:
         value = float(tolerance)
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError("CMB ingress tolerance must be finite and positive.")
@@ -87,7 +87,7 @@ class HarmonicSkySynthesisPlan(StrictModule, NonTrainableState):
         lmax: int,
         pixelization: str,
         artifact: ScientificArtifactEnvelope,
-    ):
+    ) -> None:
         matrix = jax.lax.stop_gradient(jnp.asarray(synthesis_matrix))
         cholesky = jax.lax.stop_gradient(
             jnp.asarray(harmonic_cholesky, dtype=matrix.dtype)
@@ -154,7 +154,7 @@ class CmbBeamProduct(StrictModule, NonTrainableState):
     channel: str = eqx.field(static=True)
     beam_id: str = eqx.field(static=True)
 
-    def __init__(self, full_width_half_max_radians: float, channel: str, /):
+    def __init__(self, full_width_half_max_radians: float, channel: str, /) -> None:
         width = float(full_width_half_max_radians)
         channel_ = str(channel).strip()
         if not np.isfinite(width) or width <= 0.0 or not channel_:
@@ -183,7 +183,7 @@ class CmbPointingProduct(StrictModule, NonTrainableState):
         /,
         *,
         pixel_count: int,
-    ):
+    ) -> None:
         pixels = jax.lax.stop_gradient(jnp.asarray(pixel_indices, dtype=jnp.int32))
         angles = jax.lax.stop_gradient(jnp.asarray(polarization_angles))
         flags_ = jax.lax.stop_gradient(jnp.asarray(flags, dtype=jnp.bool_))
@@ -243,7 +243,7 @@ class CmbTodSimulationPlan(StrictModule, NonTrainableState):
         net_microkelvin_sqrt_second: float = 50.0,
         sample_interval_seconds: float = 0.1,
         gain: float = 1.0,
-    ):
+    ) -> None:
         net = float(net_microkelvin_sqrt_second)
         interval = float(sample_interval_seconds)
         gain_ = float(gain)
@@ -316,7 +316,9 @@ class CmbMapmakingPlan(StrictModule, NonTrainableState):
     pixel_count: int = eqx.field(static=True)
     determinant_tolerance: float = eqx.field(static=True)
 
-    def __init__(self, pixel_count: int, /, *, determinant_tolerance: float = 1.0e-10):
+    def __init__(
+        self, pixel_count: int, /, *, determinant_tolerance: float = 1.0e-10
+    ) -> None:
         count = int(pixel_count)
         tolerance = float(determinant_tolerance)
         if count <= 0 or not np.isfinite(tolerance) or tolerance <= 0.0:
@@ -391,7 +393,7 @@ class CmbBandpowerHandoff(StrictModule):
         binned_layout: CoordinateLayout,
         parent_product_id: str,
         /,
-    ):
+    ) -> None:
         theory = TheoryVector(raw_values, raw_layout, parent_product_id)
         observation = LinearObservationPlan(binning_matrix, raw_layout, binned_layout)
         binned = observation.apply(theory)

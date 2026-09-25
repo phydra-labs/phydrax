@@ -67,7 +67,7 @@ class ProgressiveLinearRefinementPolicy(StrictModule, NonTrainableState):
         stop_relative_improvement: float = 1e-4,
         minimum_validations: int = 6,
         coarse_relative_residual: float = 1.0,
-    ):
+    ) -> None:
         initial = int(initial_steps)
         increment = int(step_increment)
         maximum = int(maximum_steps)

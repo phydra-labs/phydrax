@@ -97,7 +97,7 @@ class HbtHeronsSidecar(StrictModule, NonTrainableState):
         source_particle_mask: Array,
         snapshot_index: int,
         /,
-    ):
+    ) -> None:
         names = tuple(str(name).strip() for name in field_names)
         values = tuple(
             jax.lax.stop_gradient(jnp.asarray(value)) for value in field_values
@@ -166,7 +166,7 @@ class HbtHeronsCatalogImport(StrictModule, NonTrainableState):
         source: ReferenceArtifactManifest,
         report: AdapterReport,
         /,
-    ):
+    ) -> None:
         if not isinstance(lineage, HaloLineageProduct):
             raise TypeError("lineage must be HaloLineageProduct.")
         if not isinstance(sidecar, HbtHeronsSidecar):

@@ -30,7 +30,7 @@ class ContactStateTransferPlan(StrictModule, NonTrainableState):
         /,
         *,
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         keys = np.asarray(new_route_keys)
         parents = np.asarray(parent_route_slots)
         weights = np.asarray(parent_weights, dtype=np.float64)

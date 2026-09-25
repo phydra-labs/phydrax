@@ -55,7 +55,7 @@ class FrozenRealization(AbstractArrayModel):
         /,
         *,
         realization_id: str,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("FrozenRealization requires an AbstractArrayModel.")
         self.model = model

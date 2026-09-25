@@ -62,7 +62,7 @@ class ImmersedMarkerQuadraturePlan(StrictModule, NonTrainableState):
         /,
         *,
         active_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         ids = np.asarray(marker_ids)
         charts = np.asarray(chart_indices)
         reference = np.asarray(reference_coordinates)

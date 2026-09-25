@@ -59,7 +59,7 @@ class PulseChaseSchedule:
         *,
         rate_unit: UnitDefinition,
         time_unit: UnitDefinition = SECOND,
-    ):
+    ) -> None:
         raw_boundaries = np.asarray(boundaries, dtype=np.float64)
         raw_rates = np.asarray(rates)
         fractions = np.asarray(label_fractions, dtype=np.float64)
@@ -230,7 +230,7 @@ class PulseChasePrediction:
         fit_observation_ids: tuple[str, ...],
         fit_culture_ids: tuple[str, ...],
         fit_plate_ids: tuple[str, ...],
-    ):
+    ) -> None:
         means = np.asarray(latent_means, dtype=np.float64)
         covariance = np.asarray(latent_covariance, dtype=np.float64)
         expected_covariance_shape = (*means.shape[:-1], 4, 4)

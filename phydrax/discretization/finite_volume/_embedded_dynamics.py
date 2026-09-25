@@ -38,7 +38,7 @@ class UnstructuredEmbeddedBoundarySet(StrictModule, NonTrainableState):
         self,
         boundaries: Mapping[int, AbstractConservationBoundary],
         /,
-    ):
+    ) -> None:
         if not isinstance(boundaries, Mapping):
             raise TypeError("boundaries must map embedded body tags to policies.")
         normalized: dict[int, AbstractConservationBoundary] = {}

@@ -48,7 +48,7 @@ class CoupledMultiphysicsEpochIdentity(StrictModule, NonTrainableState):
         electrostatic_topology_id: str,
         partition_id: str,
         event_realization_id: str,
-    ):
+    ) -> None:
         values = tuple(
             str(value)
             for value in (
@@ -103,7 +103,7 @@ class CoupledMultiphysicsProductionCase(StrictModule, NonTrainableState):
         topology_id: str,
         geometry_layout_id: str,
         dtype: str,
-    ):
+    ) -> None:
         identifier = str(name)
         if not identifier or not isinstance(initial_state, CoupledMultiphysicsState):
             raise ValueError("Coupled production case is invalid.")
@@ -136,7 +136,7 @@ class CoupledMultiphysicsFixedStepMethod(AbstractFixedStepMethod, NonTrainableSt
     plan: CoupledMultiphysicsPlan
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: CoupledMultiphysicsPlan, /):
+    def __init__(self, plan: CoupledMultiphysicsPlan, /) -> None:
         if not isinstance(plan, CoupledMultiphysicsPlan):
             raise TypeError("plan must be CoupledMultiphysicsPlan.")
         self.plan = plan

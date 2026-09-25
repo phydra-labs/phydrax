@@ -48,7 +48,7 @@ class StatelessIndexPermutation:
     _half_mask: int = field(init=False, repr=False)
     _round_keys: tuple[int, ...] = field(init=False, repr=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         population = int(self.population)
         seed = int(self.seed)
         epoch = int(self.epoch)

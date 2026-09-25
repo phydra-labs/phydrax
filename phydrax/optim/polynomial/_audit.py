@@ -49,7 +49,7 @@ class PolynomialAuditTolerance(StrictModule):
         psd: float = 1e-7,
         rank: float = 1e-7,
         bound_gap: float = 1e-6,
-    ):
+    ) -> None:
         values = tuple(float(value) for value in (feasibility, psd, rank, bound_gap))
         if any(not np.isfinite(value) or value <= 0.0 for value in values):
             raise ValueError("Polynomial audit tolerances must be finite and positive.")

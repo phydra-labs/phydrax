@@ -37,7 +37,7 @@ class FiniteStrainJ2Parameters(StrictModule, NonTrainableState):
         yield_stress: ArrayLike,
         hardening_modulus: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -74,7 +74,7 @@ class FiniteStrainJ2MPMConstitutivePlan(
     yield_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, *, yield_tolerance: float = 1.0e-10):
+    def __init__(self, *, yield_tolerance: float = 1.0e-10) -> None:
         tolerance = float(yield_tolerance)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("yield_tolerance must be finite and positive.")

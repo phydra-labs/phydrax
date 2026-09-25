@@ -46,7 +46,7 @@ class DetectorCalibrationPayload(StrictModule, NonTrainableState):
         conditions_snapshot_id: str,
         authority: CalibrationAuthority,
         source_id: str,
-    ):
+    ) -> None:
         channels = np.asarray(channel_ids)
         gains_ = np.asarray(gains, dtype=np.float64)
         offsets_ = np.asarray(offsets, dtype=np.float64)

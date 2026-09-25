@@ -64,7 +64,7 @@ class WeakObservableEstimate(StrictModule):
         /,
         *,
         confidence_level: float = 0.95,
-    ):
+    ) -> None:
         resolved_name = str(name)
         values = (float(estimate), float(reference), float(standard_error))
         if not resolved_name:
@@ -113,7 +113,7 @@ class SPDEErrorBudget(StrictModule):
         spatial: float = 0.0,
         noise: float = 0.0,
         sampling: float = 0.0,
-    ):
+    ) -> None:
         values = tuple(float(value) for value in (temporal, spatial, noise, sampling))
         if any(not isfinite(value) or value < 0.0 for value in values):
             raise ValueError(
@@ -167,7 +167,7 @@ class SPDEConvergenceLevel(StrictModule):
         realization_id: str | None = None,
         coupling_id: str | None = None,
         provenance: Mapping[str, str] | None = None,
-    ):
+    ) -> None:
         scale = float(resolution)
         cost = float(work)
         if not isfinite(scale) or scale <= 0.0:
@@ -249,7 +249,7 @@ class SPDEConvergenceStudy(StrictModule):
         /,
         *,
         reference_id: str,
-    ):
+    ) -> None:
         if refined_axis not in ("time", "space", "noise_rank", "ensemble"):
             raise ValueError(f"Unknown SPDE refinement axis {refined_axis!r}.")
         values = tuple(levels)
@@ -442,7 +442,7 @@ class NoiseTruncationLevel(StrictModule):
         stationary_solution_residual: float | None,
         strong_rms_error: float,
         weak_observable_residuals: Mapping[str, float] | None = None,
-    ):
+    ) -> None:
         retained = int(rank)
         if retained < 0:
             raise ValueError("rank must be non-negative.")
@@ -499,7 +499,7 @@ class NoiseTruncationStudy(StrictModule):
         horizon: float,
         operator_id: str,
         basis_id: str,
-    ):
+    ) -> None:
         values = tuple(levels)
         if not values or any(
             not isinstance(value, NoiseTruncationLevel) for value in values

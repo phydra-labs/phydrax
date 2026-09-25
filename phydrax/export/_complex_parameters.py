@@ -124,7 +124,7 @@ class ComplexInterchangeEntry(StrictModule, NonTrainableState):
         role: str,
         component_dtype: str | None = None,
         trainable: bool,
-    ):
+    ) -> None:
         name_ = _entry_name(name)
         role_ = str(role)
         if not role_:
@@ -171,7 +171,7 @@ class ComplexInterchangeState(StrictModule, NonTrainableState):
         /,
         *,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if semantics not in _SEMANTICS:
             raise ValueError("Unknown complex interchange semantics.")
         provider = str(provider_kind)
@@ -290,7 +290,7 @@ class ComplexImportPolicy(StrictModule, NonTrainableState):
         *,
         allow_precision_loss: bool = False,
         preserve_sharding: bool = True,
-    ):
+    ) -> None:
         self.allow_precision_loss = bool(allow_precision_loss)
         self.preserve_sharding = bool(preserve_sharding)
 

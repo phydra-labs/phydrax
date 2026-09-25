@@ -35,7 +35,7 @@ class _NormalizedWeight(StrictModule, NonTrainableState):
         fields: tuple[DomainFunction, ...],
         deps: tuple[str, ...],
         index: int,
-    ):
+    ) -> None:
         by_label = {label: position for position, label in enumerate(deps)}
         self.fields = fields
         self.positions = tuple(
@@ -73,7 +73,7 @@ class IntegrationOwnershipEvidence(StrictModule, NonTrainableState):
         maximum_sum_defect: float,
         minimum_weight: float,
         verified: bool,
-    ):
+    ) -> None:
         self.cover_id = str(cover_id)
         self.maximum_sum_defect = float(maximum_sum_defect)
         self.minimum_weight = float(minimum_weight)
@@ -94,7 +94,7 @@ class IntegrationOwnership(StrictModule, NonTrainableState):
         /,
         *,
         kind: Literal["window", "support"],
-    ):
+    ) -> None:
         if not isinstance(cover, SubdomainCover):
             raise TypeError("cover must be a SubdomainCover.")
         weights_ = tuple(weights)

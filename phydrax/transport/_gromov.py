@@ -184,7 +184,7 @@ class GromovWasserstein(StrictModule):
         inner_solver: AbstractBalancedTransportSolver | None = None,
         block_size: int | None = None,
         differentiation: str = "fixed-iterations",
-    ):
+    ) -> None:
         iterations = int(max_outer_iterations)
         threshold = float(tolerance)
         if iterations <= 0 or not isfinite(threshold) or threshold < 0.0:

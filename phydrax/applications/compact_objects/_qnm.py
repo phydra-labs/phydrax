@@ -90,7 +90,7 @@ class BoundedContinuedFractionPlan(StrictModule, NonTrainableState):
         absolute_tolerance: float,
         relative_tolerance: float,
         /,
-    ):
+    ) -> None:
         depths = (comparison_depth, maximum_depth, inversion_index)
         if any(
             isinstance(value, bool) or not isinstance(value, Integral) for value in depths
@@ -167,7 +167,7 @@ class QnmReferenceMode(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         if not isinstance(mode, SeparatedMode):
             raise TypeError("mode must be a SeparatedMode.")
         spin = _real_scalar(dimensionless_spin, "dimensionless_spin")
@@ -257,7 +257,7 @@ class QnmSolvePlan(StrictModule, NonTrainableState):
         /,
         *,
         branch_id: str,
-    ):
+    ) -> None:
         if not isinstance(mode, SeparatedMode):
             raise TypeError("mode must be a SeparatedMode.")
         if mode.family != "qnm":

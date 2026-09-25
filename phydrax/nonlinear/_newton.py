@@ -216,7 +216,7 @@ class RootLineSearch(StrictModule):
         sufficient_decrease: float = 1e-4,
         minimum_rate: float = 1e-12,
         maximum_steps: int = 24,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -267,7 +267,7 @@ class RootTrustRegion(StrictModule):
         shrink: float = 0.25,
         growth: float = 2.0,
         maximum_attempts: int = 12,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -330,7 +330,7 @@ class NewtonForcingPolicy(StrictModule):
         maximum: float = 0.9,
         gamma: float = 0.9,
         exponent: float = 1.5,
-    ):
+    ) -> None:
         if strategy not in ("constant", "eisenstat-walker"):
             raise ValueError("Unknown inexact-Newton forcing strategy.")
         values = tuple(
@@ -385,7 +385,7 @@ class JacobianRefreshPolicy(StrictModule):
         *,
         period: int = 1,
         residual_reduction: float = 0.5,
-    ):
+    ) -> None:
         if strategy not in ("every-step", "periodic", "stagnation", "rejection"):
             raise ValueError("Unknown Jacobian refresh strategy.")
         period_ = int(period)
@@ -1572,7 +1572,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
         forcing_policy: NewtonForcingPolicy | None = None,
         jacobian_refresh: JacobianRefreshPolicy | None = None,
         line_search: RootLineSearch | None = None,
-    ):
+    ) -> None:
         self.jacobian_policy = (
             JacobianPolicy() if jacobian_policy is None else jacobian_policy
         )
@@ -2033,7 +2033,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
         forcing_policy: NewtonForcingPolicy | None = None,
         jacobian_refresh: JacobianRefreshPolicy | None = None,
         trust_region: RootTrustRegion | None = None,
-    ):
+    ) -> None:
         self.jacobian_policy = (
             JacobianPolicy() if jacobian_policy is None else jacobian_policy
         )

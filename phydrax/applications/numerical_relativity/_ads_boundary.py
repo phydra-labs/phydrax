@@ -58,7 +58,7 @@ class AdSConformalBoundaryPlan(StrictModule):
         radiation_tolerance: float = 1e-8,
         corner_tolerance: float = 1e-8,
         require_corner_compatibility: bool = True,
-    ):
+    ) -> None:
         axis = int(spatial_axis)
         side_value = str(side)
         policy = str(radiation_policy)

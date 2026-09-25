@@ -54,7 +54,7 @@ class JacobianPolicy(StrictModule):
         sparse_plan: SparseDerivativePlan | None = None,
         operator: Callable[[PyTree[Any], Any], AbstractLinearOperator] | None = None,
         finite_difference_step: float = 1e-6,
-    ):
+    ) -> None:
         if mode not in (
             "autodiff",
             "sparse",
@@ -103,7 +103,7 @@ class PreparedJacobian(StrictModule):
         sparse_derivative: PreparedSparseDerivative | None = None,
         derivative_id: str,
         residual_evaluations: int = 1,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if sparse_derivative is not None and not isinstance(
@@ -130,7 +130,7 @@ class _CoordinateRebasedLinearOperator(AbstractLinearOperator):
     operator: AbstractLinearOperator
     coordinate_space: ArraySpace
 
-    def __init__(self, operator: AbstractLinearOperator, /):
+    def __init__(self, operator: AbstractLinearOperator, /) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:

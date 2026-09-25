@@ -45,7 +45,7 @@ class MovingCutCellState(StrictModule):
         time: ArrayLike,
         revision: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(complex_, MultivaluedCutCellComplex):
             raise TypeError("Moving cut-cell state requires MultivaluedCutCellComplex.")
         value = jnp.asarray(content)
@@ -125,7 +125,7 @@ class MovingCutCellStepEvidence(StrictModule, NonTrainableState):
         topology_changed: bool,
         topology_event_count: int,
         tolerance: float,
-    ):
+    ) -> None:
         source = jnp.asarray(source_volume)
         target = jnp.asarray(target_volume)
         overlap = jnp.asarray(overlap_volume)
@@ -223,7 +223,7 @@ class MovingTopologyLocalizationPlan(StrictModule, NonTrainableState):
         probe_count: int = 16,
         bisection_iterations: int = 32,
         minimum_event_separation: float = 1.0e-10,
-    ):
+    ) -> None:
         probes = int(probe_count)
         iterations = int(bisection_iterations)
         separation = float(minimum_event_separation)
@@ -325,7 +325,7 @@ class MovingMultivaluedCutCellPlan(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         tolerance_ = float(tolerance)
         if not isinstance(cut_plan, MultivaluedCutCellPlan):
             raise TypeError("Moving cut-cell plan requires MultivaluedCutCellPlan.")

@@ -91,7 +91,7 @@ class FunctionalTimeWindowPlan(StrictModule):
         | None = None,
         transfer_optimizer_state: bool = False,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(schedule, CausalTimeSlabSchedule):
             raise TypeError("schedule must be a CausalTimeSlabSchedule.")
         if not isinstance(adapter, FunctionalWindowAdapter):
@@ -154,7 +154,7 @@ class FunctionalTimeWindowResult(StrictModule):
         /,
         *,
         plan_id: str,
-    ):
+    ) -> None:
         solvers_ = tuple(solvers)
         terminals = tuple(frozendict(value) for value in terminal_fields)
         seams = tuple(frozendict(value) for value in seam_metrics)

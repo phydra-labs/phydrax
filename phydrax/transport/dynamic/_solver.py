@@ -124,7 +124,7 @@ class SchrodingerBridgeSolver(StrictModule):
     max_iterations: int = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
 
-    def __init__(self, *, max_iterations: int = 500, tolerance: float = 1e-9):
+    def __init__(self, *, max_iterations: int = 500, tolerance: float = 1e-9) -> None:
         iterations = int(max_iterations)
         tolerance = float(tolerance)
         if iterations <= 0:

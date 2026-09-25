@@ -56,7 +56,7 @@ class CompactU1GaugeMeasure(AbstractIncrementalLatticeAction):
         /,
         *,
         beta: float,
-    ):
+    ) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("topology must be CellComplexTopology.")
         if topology.dimension < 2:

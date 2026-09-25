@@ -30,7 +30,9 @@ class PhaseDefinition(StrictModule, NonTrainableState):
     dynamics: PreparedWeaklyCompressibleSPHDynamics
     phase_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, dynamics: PreparedWeaklyCompressibleSPHDynamics, /):
+    def __init__(
+        self, name: str, dynamics: PreparedWeaklyCompressibleSPHDynamics, /
+    ) -> None:
         name_ = str(name)
         if not name_ or not isinstance(dynamics, PreparedWeaklyCompressibleSPHDynamics):
             raise ValueError("PhaseDefinition requires a name and WCSPH dynamics.")
@@ -45,7 +47,7 @@ class MultiphaseWCSPHPlan(StrictModule, NonTrainableState):
     surface_tension: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, *, surface_tension: float = 0.0):
+    def __init__(self, *, surface_tension: float = 0.0) -> None:
         tension = float(surface_tension)
         if not np.isfinite(tension) or tension < 0.0:
             raise ValueError("surface_tension must be finite and non-negative.")
@@ -193,7 +195,7 @@ class PreparedMultiphaseWCSPHDynamics(StrictModule, NonTrainableState):
         /,
         *,
         box: ParticleBox | None = None,
-    ):
+    ) -> None:
         self.target = target
         self.source = source
         self.interaction_plan = interaction_plan

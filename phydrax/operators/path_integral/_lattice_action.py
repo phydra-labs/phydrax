@@ -44,7 +44,7 @@ class LatticeActionEvidence(StrictModule):
         normalizable: bool,
         additive_constant: float,
         evidence_id: str,
-    ):
+    ) -> None:
         if reference_measure not in ("lebesgue", "flat-torus", "product-haar"):
             raise ValueError("Unknown lattice reference measure.")
         constant = float(additive_constant)

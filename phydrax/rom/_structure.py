@@ -29,7 +29,7 @@ class SymplecticReduction(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         values = jnp.asarray(basis)
         form = jnp.asarray(symplectic_form)
         if (
@@ -93,7 +93,7 @@ class PortHamiltonianReduction(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         inter = jnp.asarray(interconnection)
         dissip = jnp.asarray(dissipation)
         energy = jnp.asarray(energy_metric)
@@ -172,7 +172,7 @@ class DissipativeStructureEvidence(StrictModule, NonTrainableState):
         *,
         structure_id: str,
         tolerance: float,
-    ):
+    ) -> None:
         change = jnp.asarray(energy_change)
         defect = jnp.asarray(invariant_defect)
         identifier = str(structure_id)

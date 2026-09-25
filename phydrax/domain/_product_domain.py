@@ -17,7 +17,7 @@ class ProductDomain(Domain):
 
     _factors: tuple[JointFactor, ...]
 
-    def __init__(self, *domains: Domain):
+    def __init__(self, *domains: Domain) -> None:
         if not domains:
             raise ValueError("ProductDomain requires at least one domain factor.")
 

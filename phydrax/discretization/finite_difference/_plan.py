@@ -74,7 +74,7 @@ class FiniteDifferencePlan(AbstractDiscretizationPlan):
         key: DiscretizationKey | None = None,
         precision: FDExecutionPrecisionPolicy | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("grid must be a PreparedTensorGrid.")
         requests_ = tuple(requests)
@@ -180,7 +180,7 @@ class PreparedFiniteDifferenceDiscretization(AbstractStrongFormDiscretization):
         /,
         *,
         numeric_version: str = "0",
-    ):
+    ) -> None:
         if not isinstance(plan, FiniteDifferencePlan):
             raise TypeError("plan must be a FiniteDifferencePlan.")
         location_by_id: dict[str, GridLocation] = {}

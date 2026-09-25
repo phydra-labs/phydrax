@@ -55,7 +55,7 @@ class ParameterizedStateSpaceProblem(StrictModule):
         *,
         initial_log_prob: Callable[[PyTree[Any], Array], Array] | None = None,
         parameterization_id: str = "parameterized-state-space",
-    ):
+    ) -> None:
         if not isinstance(problem, StateSpaceProblem):
             raise TypeError("problem must be a StateSpaceProblem.")
         if not isinstance(parameter_space, ParameterSpace):

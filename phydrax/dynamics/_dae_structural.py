@@ -73,7 +73,7 @@ class DAEDerivativeIncidence(StrictModule, NonTrainableState):
     variable_name: str = eqx.field(static=True)
     derivative_order: int = eqx.field(static=True)
 
-    def __init__(self, variable_name: str, derivative_order: int = 0, /):
+    def __init__(self, variable_name: str, derivative_order: int = 0, /) -> None:
         if not isinstance(derivative_order, int) or isinstance(derivative_order, bool):
             raise TypeError("derivative_order must be an integer.")
         if derivative_order < 0:
@@ -98,7 +98,7 @@ class DAEVariableBlock(StrictModule, NonTrainableState):
         *,
         state_scale: ArrayLike = 1.0,
         rate_scale: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(maximum_derivative_order, int) or isinstance(
             maximum_derivative_order, bool
         ):
@@ -141,7 +141,7 @@ class DAEJet(StrictModule):
 
     def __init__(
         self, variable_names: Sequence[str], derivatives: Sequence[Sequence[ArrayLike]], /
-    ):
+    ) -> None:
         names = tuple(variable_names)
         values = tuple(tuple(jnp.asarray(value) for value in jet) for jet in derivatives)
         if len(names) != len(values) or len(set(names)) != len(names):
@@ -193,7 +193,7 @@ class DAEEquationBlock(StrictModule, NonTrainableState):
         residual_semantic_id: str | None = None,
         residual_numeric_id: str | None = None,
         residual_scale: ArrayLike = 1.0,
-    ):
+    ) -> None:
         edges = tuple(incidence)
         if not callable(residual):
             raise TypeError("DAEEquationBlock residual must be callable.")
@@ -224,7 +224,9 @@ class DAEPort(StrictModule, NonTrainableState):
     potentials: tuple[str, ...] = eqx.field(static=True)
     flows: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, name: str, potentials: Sequence[str], flows: Sequence[str], /):
+    def __init__(
+        self, name: str, potentials: Sequence[str], flows: Sequence[str], /
+    ) -> None:
         potentials_ = tuple(_identifier(value, "potential") for value in potentials)
         flows_ = tuple(_identifier(value, "flow") for value in flows)
         if not potentials_ and not flows_:
@@ -242,7 +244,7 @@ class DAEConnection(StrictModule, NonTrainableState):
     port_ids: tuple[str, ...] = eqx.field(static=True)
     orientations: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, port_ids: Sequence[str], orientations: Sequence[int], /):
+    def __init__(self, port_ids: Sequence[str], orientations: Sequence[int], /) -> None:
         ports = tuple(_identifier(value, "port_id") for value in port_ids)
         signs = tuple(orientations)
         if len(ports) < 2 or len(ports) != len(signs) or len(set(ports)) != len(ports):
@@ -266,7 +268,7 @@ class DAEComponent(StrictModule, NonTrainableState):
         equations: Sequence[DAEEquationBlock],
         ports: Sequence[DAEPort] = (),
         /,
-    ):
+    ) -> None:
         variables_ = tuple(variables)
         equations_ = tuple(equations)
         ports_ = tuple(ports)
@@ -329,7 +331,7 @@ class AcausalDAESource(StrictModule, NonTrainableState):
         /,
         *,
         input_layout: InputLayout | None = None,
-    ):
+    ) -> None:
         components_ = tuple(components)
         connections_ = tuple(connections)
         if not components_ or any(
@@ -432,7 +434,7 @@ class DAEStructuralPolicy(StrictModule, NonTrainableState):
         *,
         tearing: DAETearingPolicy = "none",
         declared_tears: Sequence[str] = (),
-    ):
+    ) -> None:
         if any(
             not isinstance(value, int) or isinstance(value, bool)
             for value in (maximum_differentiations, maximum_tears)

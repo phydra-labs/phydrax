@@ -71,7 +71,7 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
         lower: ArrayLike | None = None,
         upper: ArrayLike | None = None,
         antithetic: bool = True,
-    ):
+    ) -> None:
         if (
             not isinstance(velocity, AbstractPreparedVortexVelocity)
             or not isfinite(viscosity)

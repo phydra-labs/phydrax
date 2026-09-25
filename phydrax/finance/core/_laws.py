@@ -28,7 +28,7 @@ class PhysicalLaw(StrictModule):
         factor_layout_id: str,
         filtration_id: str,
         /,
-    ):
+    ) -> None:
         self.law_id = _token(law_id, "physical law_id")
         self.provenance = _canonical_text(provenance, "physical law provenance")
         self.factor_layout_id = _token(factor_layout_id, "factor_layout_id")
@@ -56,7 +56,7 @@ class PricingLaw(StrictModule):
         numeraire_id: str,
         collateral_convention_id: str,
         /,
-    ):
+    ) -> None:
         self.law_id = _token(law_id, "pricing law_id")
         self.provenance = _canonical_text(provenance, "pricing law provenance")
         self.factor_layout_id = _token(factor_layout_id, "factor_layout_id")
@@ -83,7 +83,7 @@ class StressLaw(StrictModule):
         factor_layout_id: str,
         filtration_id: str,
         /,
-    ):
+    ) -> None:
         self.law_id = _token(law_id, "stress law_id")
         self.provenance = _canonical_text(provenance, "stress law provenance")
         self.factor_layout_id = _token(factor_layout_id, "factor_layout_id")
@@ -162,7 +162,7 @@ class FinancialScenarioSet(StrictModule):
         semantic_id: str,
         numeric_id: str,
         /,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         if values_.ndim != 3 or any(size <= 0 for size in values_.shape):
             raise ValueError(

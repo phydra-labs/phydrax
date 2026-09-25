@@ -56,7 +56,7 @@ class ContinuousTransportSample(StrictModule):
         evolution_id: str,
         approximation_id: str,
         transport_id: str,
-    ):
+    ) -> None:
         samples = _sample_shape(sample_shape)
         events = tuple(event_shape)
         source = jnp.asarray(source_states)
@@ -128,7 +128,7 @@ class ContinuousTransport(StrictModule):
         target_coordinate: ArrayLike = 1.0,
         args: Any = None,
         transport_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(source_law, AbstractProbabilityLaw):
             raise TypeError("source_law must implement AbstractProbabilityLaw.")
         if not isinstance(evolution, AbstractEvolution):

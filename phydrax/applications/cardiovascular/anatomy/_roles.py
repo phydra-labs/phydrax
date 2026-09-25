@@ -87,7 +87,7 @@ class BoundaryRoleAssignment(StrictModule, NonTrainableState):
     face_indices: Array
     assignment_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, face_indices: ArrayLike, /):
+    def __init__(self, name: str, face_indices: ArrayLike, /) -> None:
         role_name = _name(name, "Boundary role name")
         indices = np.asarray(face_indices, dtype=np.int32)
         if indices.ndim != 1 or indices.size == 0:
@@ -134,7 +134,7 @@ class CardiacBoundaryProfile(StrictModule, NonTrainableState):
         disjoint_closure_pairs: Sequence[Sequence[str]] = (),
         shared_closure_pairs: Sequence[Sequence[str]] = (),
         exhaustive: bool = False,
-    ):
+    ) -> None:
         profile_name = _name(name, "Boundary profile name")
         required = tuple(_name(role, "Required role") for role in required_roles)
         connected = tuple(_name(role, "Connected role") for role in connected_roles)
@@ -193,7 +193,7 @@ class BoundaryRoleEvidence(StrictModule, NonTrainableState):
         unassigned_face_count: ArrayLike,
         successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.role_component_counts = jnp.asarray(role_component_counts, dtype=jnp.int32)
         self.shared_closure_component_counts = jnp.asarray(
             shared_closure_component_counts, dtype=jnp.int32
@@ -223,7 +223,7 @@ class CardiacBoundaryRoles(StrictModule, NonTrainableState):
         /,
         *,
         profile: CardiacBoundaryProfile,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         if mesh.topological_dimension != 3 or not all(

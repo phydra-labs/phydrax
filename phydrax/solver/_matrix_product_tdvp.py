@@ -66,7 +66,7 @@ class FiniteTDVPProblem(StrictModule):
         /,
         *,
         problem_id: str = "finite-matrix-product-tdvp",
-    ):
+    ) -> None:
         if not isinstance(initial_state, MatrixProductState):
             raise TypeError("initial_state must be a MatrixProductState.")
         if not isinstance(
@@ -132,7 +132,7 @@ class FiniteTDVPPolicy(StrictModule):
         maximum_local_elements: int = 10_000_000,
         maximum_history_elements: int = 10_000_000,
         integrator: MatrixFunctionPolicy | None = None,
-    ):
+    ) -> None:
         if mode not in ("real-time", "imaginary-time"):
             raise ValueError("Unknown finite TDVP mode.")
         if algorithm not in ("one-site", "two-site"):

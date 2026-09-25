@@ -62,7 +62,7 @@ class MappedLatticeBoltzmannPlan(StrictModule, NonTrainableState):
         *,
         source_id: str,
         metric_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(reference, LatticeBoltzmannDiscretization):
             raise TypeError("reference must be LatticeBoltzmannDiscretization.")
         if not isinstance(mapped_grid, PreparedMappedTensorGrid):

@@ -46,7 +46,7 @@ class MACOperatorPlan(StrictModule, NonTrainableState):
     discretization: FiniteVolumeDiscretization
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, discretization: FiniteVolumeDiscretization, /):
+    def __init__(self, discretization: FiniteVolumeDiscretization, /) -> None:
         if not isinstance(discretization, FiniteVolumeDiscretization):
             raise TypeError("discretization must be a FiniteVolumeDiscretization.")
         self.discretization = discretization
@@ -71,7 +71,7 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
     report: MACOperatorReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MACOperatorPlan, /):
+    def __init__(self, plan: MACOperatorPlan, /) -> None:
         if not isinstance(plan, MACOperatorPlan):
             raise TypeError("plan must be a MACOperatorPlan.")
         discretization = plan.discretization

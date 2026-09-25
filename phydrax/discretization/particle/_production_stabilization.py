@@ -33,7 +33,7 @@ class ShockViscositySensorPlan(StrictModule, NonTrainableState):
         maximum_alpha: float = 1.0,
         decay_time: float = 0.1,
         trigger_scale: float = 1.0,
-    ):
+    ) -> None:
         if (
             not 0.0 <= minimum_alpha <= maximum_alpha
             or decay_time <= 0.0
@@ -212,7 +212,7 @@ class ParticleShiftingPlan(StrictModule, NonTrainableState):
         target_spacing: float,
         maximum_shift: float,
         /,
-    ):
+    ) -> None:
         if velocity_scale < 0.0 or target_spacing <= 0.0 or maximum_shift <= 0.0:
             raise ValueError("Particle shifting parameters are invalid.")
         self.velocity_scale = float(velocity_scale)

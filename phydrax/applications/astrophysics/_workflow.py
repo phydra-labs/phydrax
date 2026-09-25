@@ -43,7 +43,7 @@ class AstrophysicalMultiphysicsApplicationPlan(StrictModule, NonTrainableState):
         /,
         *,
         observation_id: str,
-    ):
+    ) -> None:
         if (
             not isinstance(rollout, AdaptiveBalanceLawRolloutPlan)
             or not callable(observation)

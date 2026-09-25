@@ -32,7 +32,7 @@ class MultipleTestingPlan(StrictModule):
         *,
         alpha: float = 0.05,
         method: MultipleTestingMethod = "holm",
-    ):
+    ) -> None:
         level = float(alpha)
         if not math.isfinite(level) or not 0.0 < level < 1.0:
             raise ValueError("alpha must be finite and strictly between zero and one.")

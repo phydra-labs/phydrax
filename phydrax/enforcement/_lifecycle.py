@@ -68,7 +68,7 @@ class RealizationFailure(StrictModule):
         accepted_step: int,
         attempt: int,
         evidence: Any = None,
-    ):
+    ) -> None:
         if status.successful:
             raise ValueError("A realization failure requires a failure status.")
         message_ = str(message)
@@ -101,7 +101,7 @@ class RealizationSourceStamp(StrictModule):
         accepted_step: int,
         parameter_revision: int,
         generation: int,
-    ):
+    ) -> None:
         name_ = str(name)
         step = int(accepted_step)
         parameter_revision_ = int(parameter_revision)
@@ -122,7 +122,7 @@ class _SourceResolution(StrictModule):
     value: Any
     message: str = eqx.field(static=True)
 
-    def __init__(self, available: bool, value: Any = None, message: str = ""):
+    def __init__(self, available: bool, value: Any = None, message: str = "") -> None:
         available_ = bool(available)
         message_ = str(message)
         if not available_ and not message_:
@@ -179,7 +179,7 @@ class FixedRealizationSource(AbstractRealizationSource):
     value: Any
     kind: RealizationSourceKind = eqx.field(static=True)
 
-    def __init__(self, name: str, value: Any, /):
+    def __init__(self, name: str, value: Any, /) -> None:
         self.name = _source_name(name)
         self.value = value
         self.kind = RealizationSourceKind.FIXED
@@ -208,7 +208,7 @@ class CallerRealizationSource(AbstractRealizationSource):
         required: bool = True,
         default: Any = None,
         has_default: bool = False,
-    ):
+    ) -> None:
         required_ = bool(required)
         has_default_ = bool(has_default)
         if required_ and has_default_:
@@ -242,7 +242,7 @@ class PerStepRealizationSource(AbstractRealizationSource):
     provider: SourceProvider = eqx.field(static=True)
     kind: RealizationSourceKind = eqx.field(static=True)
 
-    def __init__(self, name: str, provider: SourceProvider, /):
+    def __init__(self, name: str, provider: SourceProvider, /) -> None:
         if not callable(provider):
             raise TypeError("A per-step realization source provider must be callable.")
         self.name = _source_name(name)
@@ -262,7 +262,7 @@ class AdaptiveRealizationSource(AbstractRealizationSource):
     provider: SourceProvider = eqx.field(static=True)
     kind: RealizationSourceKind = eqx.field(static=True)
 
-    def __init__(self, name: str, provider: SourceProvider, /):
+    def __init__(self, name: str, provider: SourceProvider, /) -> None:
         if not callable(provider):
             raise TypeError("An adaptive realization source provider must be callable.")
         self.name = _source_name(name)
@@ -282,7 +282,7 @@ class ParameterizedRealizationSource(AbstractRealizationSource):
     provider: SourceProvider = eqx.field(static=True)
     kind: RealizationSourceKind = eqx.field(static=True)
 
-    def __init__(self, name: str, provider: SourceProvider, /):
+    def __init__(self, name: str, provider: SourceProvider, /) -> None:
         if not callable(provider):
             raise TypeError(
                 "A parameterized realization source provider must be callable."
@@ -318,7 +318,9 @@ class RandomizedRealizationSource(AbstractRealizationSource):
     stream: int = eqx.field(static=True)
     kind: RealizationSourceKind = eqx.field(static=True)
 
-    def __init__(self, name: str, provider: SourceProvider, /, *, stream: int = 0):
+    def __init__(
+        self, name: str, provider: SourceProvider, /, *, stream: int = 0
+    ) -> None:
         stream_ = int(stream)
         if not callable(provider):
             raise TypeError("A randomized realization source provider must be callable.")
@@ -380,7 +382,7 @@ class RealizationLifecycleState(StrictModule):
         source_stamps: Mapping[str, RealizationSourceStamp] = frozendict(),
         realization_stamp: ConditionRealizationStamp | None = None,
         last_failure: RealizationFailure | None = None,
-    ):
+    ) -> None:
         generation_ = int(generation)
         step = int(accepted_step)
         revision = int(parameter_revision)
@@ -434,7 +436,7 @@ class RefreshProposal(StrictModule):
         source_stamps: Mapping[str, RealizationSourceStamp] | None,
         refreshed: Sequence[str] = (),
         message: str = "",
-    ):
+    ) -> None:
         successful = status is not RefreshProposalStatus.FAILED
         if successful and (values is None or source_stamps is None):
             raise ValueError(
@@ -477,7 +479,7 @@ class RefreshValidation(StrictModule):
         *,
         message: str = "",
         evidence: Any = None,
-    ):
+    ) -> None:
         message_ = str(message)
         if not status.successful and not message_:
             raise ValueError("A rejected refresh requires a message.")
@@ -725,7 +727,7 @@ class EnforcementState(StrictModule):
         accepted_step: int = 0,
         generation: int = 0,
         last_failure: RealizationFailure | None = None,
-    ):
+    ) -> None:
         step = int(accepted_step)
         generation_ = int(generation)
         if step < 0 or generation_ < 0:
@@ -765,7 +767,7 @@ class PreparedEnforcementStep(StrictModule):
         realizations: Mapping[str, RealizationLifecycleState] | None,
         results: Mapping[str, FieldRealizationResult] = frozendict(),
         message: str = "",
-    ):
+    ) -> None:
         successful = status.successful
         base_generation_ = int(base_generation)
         accepted_step_ = int(accepted_step)

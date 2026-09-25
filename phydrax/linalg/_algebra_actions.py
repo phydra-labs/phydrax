@@ -25,7 +25,9 @@ class _BoundAlgebraAction(StrictModule):
     multiplier: Array
     side: AlgebraActionSide = eqx.field(static=True)
 
-    def __init__(self, product: Any, multiplier: Array, side: AlgebraActionSide, /):
+    def __init__(
+        self, product: Any, multiplier: Array, side: AlgebraActionSide, /
+    ) -> None:
         self.product = product
         self.multiplier = multiplier
         self.side = side

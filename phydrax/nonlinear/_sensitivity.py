@@ -81,7 +81,7 @@ class SensitivityPolicy(StrictModule):
         primal_residual_tolerance: float = 1e-8,
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if mode not in (
             "implicit-forward",
             "implicit-reverse",
@@ -149,7 +149,7 @@ class SensitivityEvidence(StrictModule):
         primal_residual_tolerance: Any = jnp.nan,
         primal_valid: Any = True,
         linear_status: Any = -1,
-    ):
+    ) -> None:
         if precision_evidence is not None and not isinstance(
             precision_evidence,
             PrecisionEvidenceEnvelope,

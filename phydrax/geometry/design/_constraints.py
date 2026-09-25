@@ -34,7 +34,7 @@ class AbstractDesignConstraint(StrictModule):
 
     weight: Array
 
-    def __init__(self, weight: float = 1.0):
+    def __init__(self, weight: float = 1.0) -> None:
         if not np.isfinite(weight) or weight <= 0.0:
             raise ValueError("constraint weight must be finite and positive.")
         self.weight = jnp.asarray(weight, dtype=jnp.float64).reshape(())
@@ -65,7 +65,7 @@ class ParameterTarget(AbstractDesignConstraint):
         *,
         scale: float = 1.0,
         weight: float = 1.0,
-    ):
+    ) -> None:
         super().__init__(weight)
         if not isinstance(parameter_id, ParameterId):
             raise TypeError("parameter_id must be a ParameterId.")
@@ -93,7 +93,7 @@ class ParameterEquality(AbstractDesignConstraint):
         *,
         scale: float = 1.0,
         weight: float = 1.0,
-    ):
+    ) -> None:
         super().__init__(weight)
         if not isinstance(first, ParameterId) or not isinstance(second, ParameterId):
             raise TypeError("first and second must be ParameterId objects.")
@@ -120,7 +120,7 @@ class MeasureTarget(AbstractDesignConstraint):
         *,
         scale: float = 1.0,
         weight: float = 1.0,
-    ):
+    ) -> None:
         super().__init__(weight)
         if not np.isfinite(target):
             raise ValueError("target must be finite.")
@@ -148,7 +148,7 @@ class BoundaryMeasureTarget(AbstractDesignConstraint):
         *,
         scale: float = 1.0,
         weight: float = 1.0,
-    ):
+    ) -> None:
         super().__init__(weight)
         if not np.isfinite(target):
             raise ValueError("target must be finite.")
@@ -176,7 +176,7 @@ class BoundaryPoints(AbstractDesignConstraint):
         *,
         scale: float = 1.0,
         weight: float = 1.0,
-    ):
+    ) -> None:
         super().__init__(weight)
         points_ = jnp.asarray(points, dtype=jnp.float64)
         if points_.ndim != 2:
@@ -203,7 +203,7 @@ class InteriorClearance(AbstractDesignConstraint):
         *,
         scale: float = 1.0,
         weight: float = 1.0,
-    ):
+    ) -> None:
         super().__init__(weight)
         points_ = jnp.asarray(points, dtype=jnp.float64)
         if points_.ndim != 2:
@@ -234,7 +234,7 @@ class ExteriorClearance(AbstractDesignConstraint):
         *,
         scale: float = 1.0,
         weight: float = 1.0,
-    ):
+    ) -> None:
         super().__init__(weight)
         points_ = jnp.asarray(points, dtype=jnp.float64)
         if points_.ndim != 2:
@@ -256,7 +256,7 @@ class ExteriorClearance(AbstractDesignConstraint):
 class BRepSeamCompatibility(AbstractDesignConstraint):
     tolerance: Array
 
-    def __init__(self, tolerance: float = 1e-8, *, weight: float = 1.0):
+    def __init__(self, tolerance: float = 1e-8, *, weight: float = 1.0) -> None:
         super().__init__(weight)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("tolerance must be finite and positive.")
@@ -286,7 +286,7 @@ class ConstraintSolveResult(StrictModule):
         residual_norm,
         converged,
         iterations,
-    ):
+    ) -> None:
         self.state = state
         self.residual = jnp.asarray(residual, dtype=jnp.float64)
         self.residual_norm = jnp.asarray(residual_norm, dtype=jnp.float64).reshape(())
@@ -308,7 +308,7 @@ class DesignConstraintSystem(StrictModule):
         self,
         geometry: CompiledGeometry,
         constraints: Sequence[AbstractDesignConstraint],
-    ):
+    ) -> None:
         if not isinstance(geometry, CompiledGeometry):
             raise TypeError("geometry must be a CompiledGeometry.")
         constraints_ = tuple(constraints)
@@ -343,7 +343,7 @@ class DesignConstraintSystem(StrictModule):
         self.upper_bounds = jnp.asarray(np.concatenate(upper), dtype=jnp.float64)
 
     @staticmethod
-    def _validate_constraints(geometry, constraints):
+    def _validate_constraints(geometry, constraints) -> None:
         schema = geometry.schema
         for constraint in constraints:
             if isinstance(constraint, ParameterTarget):

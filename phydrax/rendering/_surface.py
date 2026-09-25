@@ -70,7 +70,7 @@ class SurfaceImagePlan(StrictModule, NonTrainableState):
         field_association: FieldAssociation = "vertex",
         leaf_size: int = 8,
         traversal_stack_capacity: int = 64,
-    ):
+    ) -> None:
         if not isinstance(realization, SurfaceRealization):
             raise TypeError("realization must be SurfaceRealization.")
         if not isinstance(support, ImagePlaneSupport):

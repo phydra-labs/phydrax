@@ -37,7 +37,7 @@ class HilbertRegisterLayout(StrictModule):
         wire_ids: Sequence[str],
         local_dimensions: Sequence[int],
         /,
-    ):
+    ) -> None:
         ids = tuple(str(wire_id) for wire_id in wire_ids)
         dimensions = tuple(local_dimensions)
         if not ids:

@@ -36,7 +36,7 @@ class KernelHerding(StrictModule):
         kernel: AbstractPositiveDefiniteKernel | None = None,
         block_size: int = 256,
         unique: bool = True,
-    ):
+    ) -> None:
         count = int(num_points)
         block = int(block_size)
         if count <= 0:

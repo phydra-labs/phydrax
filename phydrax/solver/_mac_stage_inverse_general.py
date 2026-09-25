@@ -62,7 +62,7 @@ class MACVariableDensityStageInverseMomentum(StrictModule, NonTrainableState):
         /,
         *,
         stage_id: str,
-    ):
+    ) -> None:
         density = operators.validate_velocity(face_density)
         coefficient = jnp.asarray(stage_coefficient)
         inverse = tuple(
@@ -142,7 +142,7 @@ class MACOperatorStageInverseMomentum(StrictModule, NonTrainableState):
         stage_coefficient: ArrayLike = 0.0,
         linear_policy: LinearSolvePolicy | None = None,
         stage_id: str,
-    ):
+    ) -> None:
         if not momentum_operator.source.compatible(operators.velocity_space) or not (
             momentum_operator.target.compatible(operators.velocity_space)
         ):
@@ -334,7 +334,7 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
         viscosity_action: PreparedMACVariationalViscosityAction | None = None,
         face_resistance: FaceVelocity | None = None,
         stage_id: str,
-    ):
+    ) -> None:
         if not isinstance(momentum, PreparedMACMomentumOperators):
             raise TypeError("momentum must be PreparedMACMomentumOperators.")
         operators = momentum.operators

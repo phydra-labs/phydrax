@@ -102,7 +102,7 @@ class CartesianBoussinesqOceanPlan(StrictModule, NonTrainableState):
         surface_stress_id: str | None = None,
         temperature_surface_flux: MACScalarBoundaryCondition | None = None,
         salinity_surface_flux: MACScalarBoundaryCondition | None = None,
-    ):
+    ) -> None:
         if not isinstance(axes, OceanAxisConvention):
             raise TypeError("axes must be OceanAxisConvention.")
         if not isinstance(reference, LinearSeawaterReference):
@@ -376,7 +376,7 @@ class PreparedCartesianBoussinesqOcean(StrictModule):
         dynamics: CompiledMACScalarBuoyancyDynamics,
         boundaries: PreparedMACBoundaryPlan,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.operators = operators
         self.momentum = momentum

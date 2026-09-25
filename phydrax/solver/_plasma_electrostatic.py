@@ -55,7 +55,7 @@ class ElectrostaticPlasmaCouplingPlan(StrictModule):
         edge_to_cell_vector: ArrayLike,
         cell_shape: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(
             system,
             (

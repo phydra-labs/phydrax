@@ -348,7 +348,7 @@ def _optional_edge_weight_data(
 class _GraphDegreeCallable(StrictModule, BatchEvaluator):
     mode: Literal["in", "out", "total"]
 
-    def __init__(self, mode: Literal["in", "out", "total"]):
+    def __init__(self, mode: Literal["in", "out", "total"]) -> None:
         self.mode = mode
 
     def __call_batch__(
@@ -389,7 +389,7 @@ class _NeighborAggregateCallable(StrictModule, BatchEvaluator):
         *,
         reduce: GraphReduce,
         flow: Literal["source_to_target", "target_to_source"],
-    ):
+    ) -> None:
         self.u = u
         self.reduce = reduce
         self.flow = flow
@@ -427,7 +427,7 @@ class _GraphLaplacianCallable(StrictModule, BatchEvaluator):
     u: DomainFunction
     normalize: bool
 
-    def __init__(self, u: DomainFunction, *, normalize: bool):
+    def __init__(self, u: DomainFunction, *, normalize: bool) -> None:
         self.u = u
         self.normalize = bool(normalize)
 
@@ -477,7 +477,7 @@ class _GraphGradientCallable(StrictModule, BatchEvaluator):
         *,
         weight: DomainFunction | ArrayLike | None,
         flow: GraphFlow,
-    ):
+    ) -> None:
         self.u = u
         self.weight = weight
         self.flow = flow
@@ -526,7 +526,7 @@ class _GraphDivergenceCallable(StrictModule, BatchEvaluator):
         flux: DomainFunction,
         *,
         sign: GraphDivergenceSign,
-    ):
+    ) -> None:
         self.flux = flux
         self.sign = sign
 

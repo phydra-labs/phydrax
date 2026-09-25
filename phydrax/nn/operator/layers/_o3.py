@@ -27,7 +27,7 @@ class RadialBasis(StrictModule, NonTrainableState):
     width: float = eqx.field(static=True)
     count: int = eqx.field(static=True)
 
-    def __init__(self, count: int, radius: float, /):
+    def __init__(self, count: int, radius: float, /) -> None:
         self.count = int(count)
         self.radius = float(radius)
         if self.count <= 0 or self.radius <= 0.0:
@@ -62,7 +62,7 @@ class RadialMap(StrictModule):
         /,
         *,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         self.in_multiplicity = int(in_multiplicity)
         self.out_multiplicity = int(out_multiplicity)
         scale = 1.0 / sqrt(float(int(basis_count) * self.in_multiplicity))
@@ -165,7 +165,7 @@ class EquivariantIntegralLayer(StrictModule):
         radius: float,
         radial_basis_size: int = 16,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_representation = in_representation
         self.out_representation = out_representation
         self.radial_basis = RadialBasis(radial_basis_size, radius)
@@ -485,7 +485,7 @@ class O3PointwiseLinear(StrictModule):
         *,
         use_scalar_bias: bool = True,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_representation = in_representation
         self.out_representation = out_representation
         keys = iter(jr.split(key, 7))

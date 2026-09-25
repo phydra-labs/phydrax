@@ -59,7 +59,7 @@ class MaxwellCPMLPlan(StrictModule, NonTrainableState):
         sigma_order: int = 3,
         kappa_max: float = 5.0,
         alpha_max: float = 0.05,
-    ):
+    ) -> None:
         values = (int(widths),) if isinstance(widths, int) else tuple(widths)
         reflection, order = float(target_reflection), int(sigma_order)
         kappa, alpha = float(kappa_max), float(alpha_max)
@@ -112,7 +112,7 @@ class PreparedMaxwellCPMLTerm(StrictModule, NonTrainableState):
         axis: int,
         output_size: int,
         term_id: str,
-    ):
+    ) -> None:
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
         sigma_, kappa_, alpha_ = (
             jnp.asarray(sigma),
@@ -256,7 +256,7 @@ class PreparedMaxwellCPML(StrictModule):
 
     def __init__(
         self, plan: MaxwellCPMLPlan, bridge: StructuredCochainBridge, layout: Any, /
-    ):
+    ) -> None:
         widths = plan.widths * bridge.dimension if len(plan.widths) == 1 else plan.widths
         if len(widths) != bridge.dimension:
             raise ValueError("CPML requires one width per structured axis.")

@@ -68,7 +68,7 @@ class GARCHModel(StrictModule):
         *,
         gamma: ArrayLike = 0.0,
         kind: ConditionalVolatilityKind = "garch",
-    ):
+    ) -> None:
         if kind not in ("garch", "gjr-garch", "egarch"):
             raise ValueError("kind must be 'garch', 'gjr-garch', or 'egarch'.")
         dtype = inexact_result_type(omega, alpha, beta, gamma)

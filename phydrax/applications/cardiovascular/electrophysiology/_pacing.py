@@ -62,7 +62,7 @@ class PMJExchangePlan(StrictModule, NonTrainableState):
         purkinje_plan: PurkinjeNetworkPlan,
         tissue_node_count: int,
         event_capacity: int,
-    ):
+    ) -> None:
         identifiers = np.asarray(junction_ids, dtype=np.int64)
         purkinje = np.asarray(purkinje_node_indices, dtype=np.int32)
         tissue = np.asarray(tissue_node_indices, dtype=np.int32)
@@ -394,7 +394,7 @@ class TissuePacingTarget(StrictModule, NonTrainableState):
     site_indices: Array
     target_id: str = eqx.field(static=True)
 
-    def __init__(self, node_count: int, site_indices: ArrayLike, /):
+    def __init__(self, node_count: int, site_indices: ArrayLike, /) -> None:
         count = int(node_count)
         sites = np.asarray(site_indices, dtype=np.int32)
         if count <= 0 or sites.ndim != 1:
@@ -422,7 +422,7 @@ class PurkinjePacingTarget(StrictModule, NonTrainableState):
     site_indices: Array
     target_id: str = eqx.field(static=True)
 
-    def __init__(self, node_count: int, site_indices: ArrayLike, /):
+    def __init__(self, node_count: int, site_indices: ArrayLike, /) -> None:
         count = int(node_count)
         sites = np.asarray(site_indices, dtype=np.int32)
         if count <= 0 or sites.ndim != 1:
@@ -464,7 +464,7 @@ class PacingProtocol(StrictModule, NonTrainableState):
         duration_ms: ArrayLike,
         amplitude_uA_per_mm3: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(target, (TissuePacingTarget, PurkinjePacingTarget)):
             raise TypeError("target must be a tissue or Purkinje pacing target.")
         identifiers = np.asarray(pulse_ids, dtype=np.int64)
@@ -608,7 +608,7 @@ class DemandPacingControllerPlan(StrictModule, NonTrainableState):
         feedback_gain: float,
         duration_ms: float,
         amplitude_uA_per_mm3: float,
-    ):
+    ) -> None:
         site = int(site_index)
         values = (
             float(escape_interval_ms),

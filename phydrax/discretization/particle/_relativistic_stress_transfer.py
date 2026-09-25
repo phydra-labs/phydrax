@@ -94,7 +94,7 @@ class RelativisticParticleState(StrictModule):
         frame_id: str,
         topology_id: str,
         frame_lineage_id: str,
-    ):
+    ) -> None:
         particle_ids_ = _integer(particle_ids, "particle_ids", dtype=jnp.int64)
         if particle_ids_.ndim != 1 or particle_ids_.size == 0:
             raise ValueError("particle_ids must be a non-empty rank-one array.")
@@ -293,7 +293,7 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
         mass_shell_relative_tolerance: float = 1.0e-8,
         conservation_tolerance: float = 1.0e-8,
         frame_momentum_relative_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(transfer, PreparedParticleGridSplat):
             raise TypeError("transfer must be a PreparedParticleGridSplat.")
         if not isinstance(units, RelativisticUnitContract):

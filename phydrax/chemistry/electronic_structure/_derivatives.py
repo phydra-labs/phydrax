@@ -49,7 +49,7 @@ class MolecularHessianResult(StrictModule, NonTrainableState):
         source_result_ids: tuple[str, ...],
         plan_id: str,
         /,
-    ):
+    ) -> None:
         raw = jnp.asarray(raw_hessian)
         symmetric = jnp.asarray(hessian, dtype=raw.dtype)
         if raw.ndim != 4 or raw.shape != symmetric.shape or raw.shape[1::2] != (3, 3):
@@ -112,7 +112,7 @@ class MolecularHessianPlan(StrictModule, NonTrainableState):
         *,
         displacement: float = 1.0e-3,
         antisymmetry_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         if not isinstance(surface, AbstractPreparedPotentialEnergySurface):

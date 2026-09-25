@@ -42,7 +42,7 @@ class CardiacTransferConfiguration(StrictModule, NonTrainableState):
         *,
         component_axes: Sequence[str] = (),
         configuration_id: str | None = None,
-    ):
+    ) -> None:
         identifiers = tuple(
             str(value)
             for value in (
@@ -128,7 +128,7 @@ class CardiacTransferEpoch(StrictModule, NonTrainableState):
         source_reference: int | ArrayLike,
         target_reference: int | ArrayLike,
         /,
-    ):
+    ) -> None:
         host_values = tuple(
             np.asarray(value)
             for value in (
@@ -212,7 +212,7 @@ class CardiacFieldTransfer(StrictModule, NonTrainableState):
         constant_tolerance: float = 1.0e-7,
         adjoint_tolerance: float = 1.0e-7,
         cardiac_transfer_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(transfer, FieldTransfer):
             raise TypeError("transfer must be a FieldTransfer.")
         if not isinstance(configuration, CardiacTransferConfiguration):

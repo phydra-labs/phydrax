@@ -64,7 +64,7 @@ class MACVariableDensityFlowProblem(StrictModule):
         body_acceleration: Any = None,
         body_acceleration_id: str | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if isinstance(spatial_dimension, bool):
             raise TypeError("spatial_dimension must be an integer.")
         dimension = index(spatial_dimension)
@@ -233,7 +233,7 @@ class CompiledMACVariableDensityDynamics(StrictModule):
         /,
         *,
         compilation_id: str,
-    ):
+    ) -> None:
         discretization = variable_density.operators.discretization
         residual_key = DiscretizationKey(
             "mac_variable_density_form",

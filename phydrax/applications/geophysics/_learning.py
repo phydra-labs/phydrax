@@ -75,7 +75,7 @@ class ColumnClosureBinding:
     vertical_id: str
     interval_seconds: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         object.__setattr__(self, "quantities", tuple(self.quantities))
         object.__setattr__(self, "state_fields", tuple(self.state_fields))
         object.__setattr__(self, "target_fields", tuple(self.target_fields))
@@ -240,7 +240,7 @@ class GeophysicalLearningExperiment:
     split: OperatorDatasetSplit
     temporal_bounds: tuple[str, str] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         partitions = (self.split.train, self.split.validation, self.split.test)
         policy = self.split.policy
         records = tuple(record for part in partitions for record in part.provenance)
@@ -595,7 +595,7 @@ class GeophysicalForcingSchedule:
     bounds: tuple[tuple[float, float], ...]
     samples: tuple[FunctionSamples, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         object.__setattr__(
             self, "bounds", tuple(tuple(float(v) for v in pair) for pair in self.bounds)
         )
@@ -652,7 +652,7 @@ class GeophysicalForecastRequest:
     member_ids: tuple[str, ...]
     experiment_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         object.__setattr__(self, "member_ids", tuple(self.member_ids))
         if not isinstance(self.steps, int) or self.steps <= 0:
             raise ValueError("Forecast requests require a positive integer horizon.")
@@ -724,7 +724,7 @@ class NativeGeophysicalForecast:
         quantities: Mapping[str, GeophysicalQuantity],
         routes: Sequence[OperatorRolloutRoute],
         forcing: Sequence[GeophysicalForcingSchedule] = (),
-    ):
+    ) -> None:
         if not isinstance(trained, TrainedOperator):
             raise TypeError("Forecast execution accepts only a native TrainedOperator.")
         if (

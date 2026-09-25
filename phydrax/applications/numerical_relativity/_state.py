@@ -49,7 +49,7 @@ class Z4cState(StrictModule):
     values: Array
     grid_id: str = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, /, *, grid_id: str):
+    def __init__(self, values: ArrayLike, /, *, grid_id: str) -> None:
         value = jnp.asarray(values)
         identifier = str(grid_id)
         if value.ndim != 4 or value.shape[0] != Z4C_CHANNEL_COUNT:

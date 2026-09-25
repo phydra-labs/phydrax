@@ -56,7 +56,7 @@ class PolymerReactionTemplate(StrictModule, NonTrainableState):
         reaction_kind: PolymerReactionKind = PolymerReactionKind.CURE,
         bond_type_id: int = 0,
         allow_intramolecular: bool = False,
-    ):
+    ) -> None:
         identifier = str(template_id).strip()
         left = str(left_compatibility_class).strip()
         right = str(right_compatibility_class).strip()
@@ -109,7 +109,7 @@ class PolymerReactionEvent(StrictModule, NonTrainableState):
         image_shift: tuple[int, ...],
         status: PolymerReactionStatus,
         /,
-    ):
+    ) -> None:
         self.event_index = int(event_index)
         self.template_id = str(template_id)
         self.reaction_kind = PolymerReactionKind(reaction_kind)
@@ -152,7 +152,7 @@ class PolymerReactionState(StrictModule, NonTrainableState):
         image_counts: ArrayLike,
         initial_port_capacity: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         port_values = tuple(ports)

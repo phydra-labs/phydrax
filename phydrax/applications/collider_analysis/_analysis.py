@@ -25,7 +25,7 @@ class HistogramPlan(StrictModule, NonTrainableState):
     bin_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, edges: ArrayLike, /, *, observable_id: str, unit_id: str):
+    def __init__(self, edges: ArrayLike, /, *, observable_id: str, unit_id: str) -> None:
         edges_ = np.asarray(edges, dtype=np.float64)
         observable = str(observable_id).strip()
         unit = str(unit_id).strip()

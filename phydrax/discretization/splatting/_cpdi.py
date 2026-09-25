@@ -30,7 +30,7 @@ from ._assignment import (
 class CPDIAssignmentInput(StrictModule):
     current_edges: Array
 
-    def __init__(self, current_edges: ArrayLike, /):
+    def __init__(self, current_edges: ArrayLike, /) -> None:
         value = jnp.asarray(current_edges)
         if value.ndim != 3 or value.shape[-1] != value.shape[-2]:
             raise ValueError("CPDI edge matrices must have shape (particles, d, d).")
@@ -48,7 +48,7 @@ class CPDI2AssignmentInput(StrictModule):
         center: ArrayLike,
         deformation_gradient: ArrayLike,
         /,
-    ):
+    ) -> None:
         corners_ = jnp.asarray(corners)
         center_ = jnp.asarray(center)
         deformation = jnp.asarray(deformation_gradient)
@@ -203,7 +203,7 @@ class _AbstractBaseCPDIAssignment(AbstractStructuredSplatAssignment):
     def route_width(self, dimension: int, /) -> int:
         return 4 ** int(dimension)
 
-    def validate(self, layout, axes, /):
+    def validate(self, layout, axes, /) -> None:
         if tuple(layout.axis_entities) != ("point",) * len(axes):
             raise ValueError("CPDI requires a nodal tensor-grid target.")
         for coordinates, axis in zip(layout.coordinates_by_axis, axes, strict=True):
@@ -238,7 +238,7 @@ class AffineCPDISplatAssignment(_AbstractBaseCPDIAssignment):
         *,
         maximum_extent_cells: float = 2.0,
         maximum_condition: float = 1.0e6,
-    ):
+    ) -> None:
         edges = np.asarray(reference_edges, dtype=np.float64)
         if edges.ndim != 3 or edges.shape[-1] != edges.shape[-2]:
             raise ValueError("CPDI reference edges must have shape (particles, d, d).")
@@ -267,7 +267,7 @@ class AffineCPDISplatAssignment(_AbstractBaseCPDIAssignment):
             }
         )
 
-    def validate_input(self, assignment_input, source_count, dimension, /):
+    def validate_input(self, assignment_input, source_count, dimension, /) -> None:
         if self.reference_edges.shape != (source_count, dimension, dimension):
             raise ValueError("CPDI reference edges differ from prepared particles.")
         if not isinstance(assignment_input, CPDIAssignmentInput):
@@ -329,7 +329,7 @@ class CPDI2SplatAssignment(_AbstractBaseCPDIAssignment):
         *,
         maximum_extent_cells: float = 2.0,
         maximum_condition: float = 1.0e6,
-    ):
+    ) -> None:
         offsets = np.asarray(reference_corner_offsets, dtype=np.float64)
         if offsets.ndim != 3 or offsets.shape[1] != 2 ** offsets.shape[2]:
             raise ValueError("CPDI2 reference corners must contain all tensor corners.")
@@ -358,7 +358,7 @@ class CPDI2SplatAssignment(_AbstractBaseCPDIAssignment):
             }
         )
 
-    def validate_input(self, assignment_input, source_count, dimension, /):
+    def validate_input(self, assignment_input, source_count, dimension, /) -> None:
         expected = (source_count, 2**dimension, dimension)
         if self.reference_corner_offsets.shape != expected:
             raise ValueError("CPDI2 reference corners differ from prepared particles.")

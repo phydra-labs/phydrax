@@ -88,7 +88,7 @@ class EquilibriumShockPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-8,
         maximum_steps: int = 12,
         difference_step: float = 1.0e-4,
-    ):
+    ) -> None:
         if (
             not isinstance(equilibrium, ChemicalEquilibriumPlan)
             or equilibrium.ensemble is not ChemicalEquilibriumEnsemble.TP
@@ -264,7 +264,7 @@ class DetonationJumpPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-8,
         maximum_steps: int = 16,
         difference_step: float = 1.0e-4,
-    ):
+    ) -> None:
         ratio = float(drive_ratio)
         if not isfinite(ratio) or ratio <= 0.0:
             raise ValueError("drive_ratio must be finite and positive.")

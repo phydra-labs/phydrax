@@ -37,21 +37,21 @@ SUPPORTED_DESIGNS: tuple[DesignName, ...] = (
 class IIDDesign(StrictModule):
     """Independent random points in a unit cube."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
 
 class LatinHypercubeDesign(StrictModule):
     """Randomized Latin-hypercube stratification in a unit cube."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
 
 class HammersleyDesign(StrictModule):
     """Deterministic count-dependent Hammersley point set."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
 
@@ -60,7 +60,7 @@ class HaltonDesign(StrictModule):
 
     scrambled: bool = eqx.field(static=True)
 
-    def __init__(self, *, scrambled: bool = False):
+    def __init__(self, *, scrambled: bool = False) -> None:
         self.scrambled = bool(scrambled)
 
 
@@ -69,7 +69,7 @@ class SobolDesign(StrictModule):
 
     scrambled: bool = eqx.field(static=True)
 
-    def __init__(self, *, scrambled: bool = False):
+    def __init__(self, *, scrambled: bool = False) -> None:
         self.scrambled = bool(scrambled)
 
 
@@ -88,7 +88,7 @@ class RandomizedQMCDesign(StrictModule):
         scrambled: bool = True,
         num_replicates: int = 8,
         allow_arbitrary_count: bool = False,
-    ):
+    ) -> None:
         if sequence not in ("sobol", "halton"):
             raise ValueError("QMC sequence must be 'sobol' or 'halton'.")
         replicas = int(num_replicates)
@@ -108,7 +108,9 @@ class AntitheticDesign(StrictModule):
     base: Any
     involution: Any
 
-    def __init__(self, base: Any | None = None, *, involution: Callable | None = None):
+    def __init__(
+        self, base: Any | None = None, *, involution: Callable | None = None
+    ) -> None:
         base_ = IIDDesign() if base is None else base
         if not isinstance(base_, (IIDDesign, LatinHypercubeDesign)):
             raise TypeError(
@@ -148,7 +150,7 @@ class DesignCapabilities(StrictModule):
         random_access: bool,
         factorwise_composable: bool,
         jax_native: bool,
-    ):
+    ) -> None:
         self.randomized = bool(randomized)
         self.count_dependent = bool(count_dependent)
         self.prefix_stable = bool(prefix_stable)

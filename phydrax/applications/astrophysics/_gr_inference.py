@@ -79,7 +79,7 @@ class FixedBranchRayInferencePlan(StrictModule, NonTrainableState):
         observation_id: str,
         prior_log_density: Callable[[Array], ArrayLike] | None = None,
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(adapter, FixedBranchInverseAdapter):
             raise TypeError("adapter must be a FixedBranchInverseAdapter.")
         if adapter.model_kind != "gr-ray":
@@ -286,7 +286,7 @@ class GRPosteriorPrediction(StrictModule, NonTrainableState):
         binding_id: str,
         chain_count: int,
         draw_count: int,
-    ):
+    ) -> None:
         leaves = [
             leaf for leaf in jax.tree_util.tree_leaves(values) if eqx.is_array(leaf)
         ]
@@ -342,7 +342,7 @@ class GRPosteriorRealizationBinding(StrictModule, NonTrainableState):
         *,
         chain_count: int,
         draw_count: int,
-    ):
+    ) -> None:
         posterior = _identifier(posterior_id, "posterior_id")
         inference = _identifier(inference_plan_id, "inference_plan_id")
         realization = _identifier(forward_realization_id, "forward_realization_id")

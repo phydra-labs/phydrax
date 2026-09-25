@@ -51,7 +51,7 @@ class MetricDomainEvidence(StrictModule, NonTrainableState):
         *,
         chart: CoordinateChart,
         domain_id: str,
-    ):
+    ) -> None:
         if not isinstance(chart, CoordinateChart):
             raise TypeError("chart must be a CoordinateChart.")
         if (

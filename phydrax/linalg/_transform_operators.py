@@ -50,7 +50,7 @@ class TransformDiagonalLinearOperator(AbstractLinearOperator):
         spectral_property: SpectralProperty = "general",
         nonsingular: bool = False,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         spectrum_ = jnp.asarray(spectrum)
         if spectrum_.ndim < 1 or not jnp.issubdtype(spectrum_.dtype, jnp.inexact):
             raise TypeError("spectrum must be a non-scalar inexact array.")

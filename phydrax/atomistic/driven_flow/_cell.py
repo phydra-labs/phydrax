@@ -72,7 +72,7 @@ class EvolvingFlowCellPlan(StrictModule, NonTrainableState):
         maximum_condition_number: float = 1.0e4,
         maximum_relative_volume_error: float = 1.0e-9,
         incompressibility_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if (
             not isinstance(cell, PeriodicCell)
             or not cell.fully_periodic
@@ -304,7 +304,7 @@ class LeesEdwardsRemapPlan(StrictModule, NonTrainableState):
         flow_axis: int = 0,
         gradient_axis: int = 1,
         maximum_reduced_tilt: float = 0.5,
-    ):
+    ) -> None:
         if not isinstance(cell_plan, EvolvingFlowCellPlan):
             raise TypeError("cell_plan must be EvolvingFlowCellPlan.")
         flow = int(flow_axis)
@@ -387,7 +387,7 @@ class GeneralizedKraynikReineltPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
         maximum_condition_number: float = 7.0,
-    ):
+    ) -> None:
         vectors = np.asarray(reference_vectors, dtype=np.float64)
         gradient = np.asarray(velocity_gradient, dtype=np.float64)
         matrix = np.asarray(remap_matrix, dtype=np.int64)
@@ -564,7 +564,7 @@ class PlanarKraynikReineltPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
         maximum_condition_number: float = 7.0,
-    ):
+    ) -> None:
         rate = float(extensional_rate)
         area = float(planar_area)
         length = float(transverse_length)

@@ -34,7 +34,7 @@ class ChemicalMappingCondition:
     exposure: float | None
     exposure_unit: UnitDefinition = SECOND
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         conversion_factor(self.exposure_unit, SECOND)
         if (
             not self.condition_id
@@ -92,7 +92,7 @@ class ChemicalMappingObservation(StrictModule):
         observed=None,
         covariance_lower=None,
         requested_use=None,
-    ):
+    ) -> None:
         if not isinstance(source, ReferenceArtifactManifest):
             raise TypeError(
                 "Chemical mapping requires source rights and uncertainty provenance."
@@ -243,7 +243,7 @@ class AccessibilityReactivityModel(StrictModule):
         baseline_groups,
         condition_features,
         condition_names=(),
-    ):
+    ) -> None:
         observations, accessibility, groups = (
             tuple(observations),
             tuple(accessibility),

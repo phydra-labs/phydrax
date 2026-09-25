@@ -59,7 +59,7 @@ class IGATraceProjection(StrictModule, NonTrainableState):
         require_constant_reproduction: bool = True,
         constant_tolerance: float = 1.0e-12,
         projection_id: str | None = None,
-    ):
+    ) -> None:
         values = np.asarray(matrix, dtype=np.float64)
         tolerance = float(constant_tolerance)
         if values.ndim != 2 or 0 in values.shape:
@@ -183,7 +183,7 @@ class CertifiedSplinePatchProxyPlan(StrictModule, NonTrainableState):
         *,
         convex_hull_certified: bool,
         geometry_certificate_id: str,
-    ):
+    ) -> None:
         if not isinstance(atlas, PatchAtlas):
             raise TypeError("atlas must be PatchAtlas.")
         if not isinstance(topology, CollisionSurfacePlan):
@@ -588,7 +588,7 @@ class IGACommonRefinementMortarPlan(StrictModule, NonTrainableState):
         plus_participant: str,
         minus_participant: str,
         coverage_certified: bool,
-    ):
+    ) -> None:
         if not isinstance(overlay, IntegrationOverlay):
             raise TypeError("overlay must be IntegrationOverlay.")
         if not isinstance(plus_projection, IGATraceProjection) or not isinstance(

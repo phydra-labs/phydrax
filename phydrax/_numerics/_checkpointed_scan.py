@@ -37,7 +37,7 @@ class AdaptiveReplayPreparationPolicy(StrictModule, NonTrainableState):
         /,
         *,
         cost_model: ReplayCostModel = "uniform",
-    ):
+    ) -> None:
         checkpoint_bytes = int(maximum_checkpoint_bytes)
         operations = int(maximum_schedule_operations)
         if checkpoint_bytes < 1 or operations < 1:

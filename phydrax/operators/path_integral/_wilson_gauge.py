@@ -60,7 +60,7 @@ class WilsonGaugeAction(AbstractIncrementalLatticeAction):
         /,
         *,
         plaquette_couplings: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(link_space, MatrixGaugeLinkSpace):
             raise TypeError("link_space must be MatrixGaugeLinkSpace.")
         if not isinstance(boundaries, CellBoundaryPathPlan):

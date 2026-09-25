@@ -48,7 +48,7 @@ class ContactConeProgram(StrictModule, NonTrainableState):
         static_friction: ArrayLike | None = None,
         restitution: ArrayLike | None = None,
         mechanical_available: ArrayLike | None = None,
-    ):
+    ) -> None:
         free = jnp.asarray(free_velocity)
         effective = jnp.asarray(effective_mass, dtype=free.dtype)
         compliance_ = jnp.asarray(compliance, dtype=free.dtype)
@@ -131,7 +131,7 @@ class ContactConeSolverPlan(StrictModule, NonTrainableState):
         absolute_tolerance: float = 1.0e-10,
         relative_tolerance: float = 1.0e-8,
         relaxation: float = 1.0,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
@@ -213,7 +213,7 @@ class ContactConeEvidence(StrictModule):
         certificate_tolerance=0.0,
         dissipative=True,
         numeric_revision: ContactConeNumericRevision | None = None,
-    ):
+    ) -> None:
         self.converged = jnp.asarray(converged, dtype=jnp.bool_)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
         self.projected_residual = jnp.asarray(projected_residual)
@@ -255,7 +255,7 @@ class ContactConeResult(StrictModule):
         candidate_post_relative_velocity=None,
         contact_law_velocity=None,
         candidate_contact_law_velocity=None,
-    ):
+    ) -> None:
         accepted = jnp.asarray(impulse)
         post = jnp.asarray(post_relative_velocity, dtype=accepted.dtype)
         if not isinstance(evidence, ContactConeEvidence):

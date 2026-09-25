@@ -75,7 +75,7 @@ class ConditionEvaluationContext(StrictModule):
         adaptive_sources: frozenset[str] = frozenset(),
         prng_key: Any = None,
         exact_required: bool = False,
-    ):
+    ) -> None:
         step = int(accepted_step)
         attempt_ = int(attempt)
         revision = int(parameter_revision)
@@ -128,7 +128,7 @@ class FieldRealizationResult(StrictModule):
         stamp: ConditionRealizationStamp | None = None,
         evidence: Any = None,
         message: str = "",
-    ):
+    ) -> None:
         if not isinstance(status, RealizationStatus):
             raise TypeError("Field realization status must be a RealizationStatus.")
         successful = status.successful

@@ -129,7 +129,7 @@ class ValuePort(StrictModule, NonTrainableState):
         normalization_id: str | None = None,
         axis_keys: Iterable[AxisKey] | None = None,
         variance: PortVariance = "neutral",
-    ):
+    ) -> None:
         semantic_id_ = _identifier(semantic_id, "semantic_id")
         shape = _event_shape(event_shape)
         components = _component_ids(component_ids, shape, semantic_id_)
@@ -290,7 +290,9 @@ class ModelPorts(StrictModule, NonTrainableState):
     outputs: tuple[ValuePort, ...]
     ports_id: str = eqx.field(static=True)
 
-    def __init__(self, *, inputs: Iterable[ValuePort], outputs: Iterable[ValuePort]):
+    def __init__(
+        self, *, inputs: Iterable[ValuePort], outputs: Iterable[ValuePort]
+    ) -> None:
         inputs_ = _port_tuple(inputs, "inputs")
         outputs_ = _port_tuple(outputs, "outputs")
         self.inputs = inputs_
@@ -341,7 +343,7 @@ class PortMapping(StrictModule, NonTrainableState):
         *,
         inputs: Iterable[tuple[str, str]] = (),
         outputs: Iterable[tuple[str, str]] = (),
-    ):
+    ) -> None:
         inputs_ = tuple(sorted(_pairs(inputs, "inputs")))
         outputs_ = tuple(sorted(_pairs(outputs, "outputs")))
         self.inputs = inputs_
@@ -369,7 +371,7 @@ class PortBindingEvidence(StrictModule, NonTrainableState):
         inputs: Iterable[tuple[str, str]],
         outputs: Iterable[tuple[str, str]],
         unverified: Iterable[tuple[str, str, str]],
-    ):
+    ) -> None:
         inputs_ = _pairs(inputs, "inputs")
         outputs_ = _pairs(outputs, "outputs")
         bound = {

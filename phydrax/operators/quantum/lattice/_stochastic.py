@@ -41,7 +41,7 @@ class SignFreeStochasticCandidatePlan(StrictModule):
         sign_tolerance: float,
         maximum_raw_bytes: int,
         method_id: str,
-    ):
+    ) -> None:
         chains = int(chain_count)
         draws = int(draw_count)
         state_width = int(chain_state_width)

@@ -113,7 +113,7 @@ class GeometricRoughPath(AbstractRoughControl):
         sample_shape: Sequence[int] = (),
         realization: FractionalGaussianRealization | None = None,
         driver_id: str | None = None,
-    ):
+    ) -> None:
         nodes = jnp.asarray(times, dtype=jnp.float64)
         if nodes.ndim != 1 or nodes.size < 2:
             raise ValueError("times must contain at least two partition nodes.")

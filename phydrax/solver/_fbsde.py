@@ -76,7 +76,7 @@ class CoupledFBSDEProblem(StrictModule):
         wiener_tolerance: float = 1e-3,
         time_label: str = "t",
         state_label: str = "x",
-    ):
+    ) -> None:
         for owner, value in (
             ("forward_drift", forward_drift),
             ("forward_diffusion", forward_diffusion),

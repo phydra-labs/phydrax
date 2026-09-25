@@ -72,7 +72,7 @@ class ProteinFreeEnergyWorkflow:
         default_factory=FreeEnergySelectionPlan
     )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         states = tuple(self.state_ids)
         biases = (None,) * len(states) if not self.bias_ids else tuple(self.bias_ids)
         if len(states) < 2 or len(set(states)) != len(states):

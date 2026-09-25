@@ -76,7 +76,7 @@ class MechanicsCaseFunctional(StrictModule, NonTrainableState):
         expected_measure_id: str | None = None,
         scale: float = 1.0,
         validity: Callable | None = None,
-    ):
+    ) -> None:
         resolved_name = str(name)
         resolved_query = str(query_name)
         identifier = str(functional_id)
@@ -443,7 +443,7 @@ class ConservativeMechanicsOperatorProblem(_MechanicsProblemView):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         problem = _MechanicsOperatorProblem.create(
             case_builder,
             (trial_fields,),
@@ -469,7 +469,7 @@ class MechanicsResidualOperatorProblem(_MechanicsProblemView):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         problem = _MechanicsOperatorProblem.create(
             case_builder,
             (trial_fields,),
@@ -497,7 +497,7 @@ class MixedMechanicsOperatorProblem(_MechanicsProblemView):
         *,
         problem_id: str,
         gauge_blocks: Sequence[MechanicsCaseFunctional] = (),
-    ):
+    ) -> None:
         problem = _MechanicsOperatorProblem.create(
             case_builder,
             (primal_fields, dual_fields),
@@ -541,7 +541,7 @@ class _MechanicsLossBase(AbstractOperatorLossTerm):
     weight: float
     expected_formulation: MechanicsOperatorFormulation
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         resolved = _unwrap_problem(self.problem)
         if resolved.formulation != self.expected_formulation:
             raise TypeError(
@@ -652,7 +652,7 @@ class ExpectedMechanicsEnergyLoss(_MechanicsLossBase):
         *,
         name: str = "expected_mechanics_energy",
         weight: float = 1.0,
-    ):
+    ) -> None:
         _initialize_loss(
             self,
             problem,
@@ -675,7 +675,7 @@ class MechanicsResidualLoss(_MechanicsLossBase):
         *,
         name: str = "mechanics_residual",
         weight: float = 1.0,
-    ):
+    ) -> None:
         _initialize_loss(
             self,
             problem,
@@ -698,7 +698,7 @@ class MixedMechanicsLoss(_MechanicsLossBase):
         *,
         name: str = "mixed_mechanics",
         weight: float = 1.0,
-    ):
+    ) -> None:
         _initialize_loss(
             self,
             problem,

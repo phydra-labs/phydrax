@@ -70,7 +70,7 @@ class Almonacid2024MaterialParameters(StrictModule):
         fat_c1_Pa: ArrayLike,
         fat_fraction: ArrayLike,
         base_coefficients: ArrayLike,
-    ):
+    ) -> None:
         self.maximum_fiber_stress_Pa = _real(
             maximum_fiber_stress_Pa, (), "maximum_fiber_stress_Pa"
         )

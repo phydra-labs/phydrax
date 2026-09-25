@@ -42,7 +42,7 @@ class BarycenterProblemProvenance(StrictModule):
         support: str,
         cost: str,
         /,
-    ):
+    ) -> None:
         self.measures = tuple(str(item) for item in measures)
         self.support = str(support)
         self.cost = str(cost)
@@ -82,7 +82,7 @@ class FixedSupportBarycenterProblem(StrictModule):
         encoders: tuple[EventEncoder | None, ...] | None = None,
         support_encoder: EventEncoder | None = None,
         mass_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(measures, tuple) or not measures:
             raise TypeError(
                 "measures must be a nonempty tuple of finite integration measures."
@@ -368,7 +368,7 @@ class SinkhornBarycenter(StrictModule):
         stagnation_tolerance: ArrayLike = 1e-5,
         early_stop: bool = False,
         store_history: bool = False,
-    ):
+    ) -> None:
         maximum = int(max_iterations)
         minimum = int(min_iterations)
         interval = int(check_every)
@@ -900,7 +900,7 @@ class FreeSupportBarycenter(StrictModule):
         collapse_tolerance: ArrayLike = 1e-10,
         stagnation_patience: int = 0,
         stagnation_tolerance: ArrayLike = 1e-6,
-    ):
+    ) -> None:
         if not isinstance(inner_solver, SinkhornBarycenter):
             raise TypeError("inner_solver must be a SinkhornBarycenter.")
         maximum = int(max_iterations)

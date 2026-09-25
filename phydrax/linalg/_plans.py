@@ -130,7 +130,7 @@ class LinearSolvePlan(StrictModule):
         reason: str,
         rejected: tuple[str, ...] = (),
         candidates: tuple[LinearCostEstimate, ...] = (),
-    ):
+    ) -> None:
         if backend not in (
             "jax-structured",
             "jax-dense",

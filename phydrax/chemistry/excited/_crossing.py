@@ -46,7 +46,7 @@ class TwoStateSurfaceEvaluation(StrictModule, NonTrainableState):
         state_ids: tuple[str, str],
         provider_id: str,
         /,
-    ):
+    ) -> None:
         energy = jnp.asarray(energies)
         gradient = jnp.asarray(gradients, dtype=energy.dtype)
         coupling = jnp.asarray(energy_weighted_coupling, dtype=energy.dtype)
@@ -106,7 +106,7 @@ class CallableTwoStateSurfaceProvider(AbstractTwoStateSurfaceProvider):
     evaluator: TwoStateEvaluator = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluator: TwoStateEvaluator, provider_id: str, /):
+    def __init__(self, evaluator: TwoStateEvaluator, provider_id: str, /) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()
@@ -200,7 +200,7 @@ class CrossingOptimizationResult(StrictModule, NonTrainableState):
         plan_id,
         provider_id,
         /,
-    ):
+    ) -> None:
         position = jnp.asarray(positions)
         energy = jnp.asarray(energies, dtype=position.dtype)
         trajectory_ = jnp.asarray(trajectory, dtype=position.dtype)
@@ -257,7 +257,7 @@ class MinimumEnergyCrossingPlan(StrictModule, NonTrainableState):
         geometry_step: float = 0.05,
         gap_step: float = 0.5,
         maximum_iterations: int = 200,
-    ):
+    ) -> None:
         if not isinstance(kind, CrossingKind) or not isinstance(
             provider, AbstractTwoStateSurfaceProvider
         ):

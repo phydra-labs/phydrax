@@ -227,7 +227,7 @@ class StructuredFiberResponsePlan(StrictModule, NonTrainableState):
         diffusion_tolerance: float = 1.0e-8,
         pivot_tolerance: float = 1.0e-14,
         minimum_segment_length_mm: float = 1.0e-10,
-    ):
+    ) -> None:
         ids = tuple(str(value).strip() for value in fiber_ids)
         if not ids or any(not value for value in ids) or len(set(ids)) != len(ids):
             raise ValueError("fiber_ids must be nonempty and unique.")
@@ -361,7 +361,7 @@ class PreparedStructuredFiberResponse(StrictModule):
     numeric_revision_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, reaction, diffusivity_mm2_per_ms, /):
+    def __init__(self, plan, reaction, diffusivity_mm2_per_ms, /) -> None:
         if not isinstance(plan, StructuredFiberResponsePlan):
             raise TypeError("plan must be StructuredFiberResponsePlan.")
         if not isinstance(reaction, AbstractFiberReaction):

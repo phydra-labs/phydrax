@@ -70,7 +70,7 @@ class PreparedMACVariationalViscosityAction(StrictModule, NonTrainableState):
     restriction_supported: bool = eqx.field(static=True)
     action_id: str = eqx.field(static=True)
 
-    def __init__(self, momentum: PreparedMACMomentumOperators, /):
+    def __init__(self, momentum: PreparedMACMomentumOperators, /) -> None:
         if not isinstance(momentum, PreparedMACMomentumOperators):
             raise TypeError("momentum must be PreparedMACMomentumOperators.")
         axes = momentum.operators.discretization.grid.structured_axes
@@ -472,7 +472,7 @@ class FrozenMACVariationalViscosityAction(StrictModule, NonTrainableState):
         cell_viscosity: ArrayLike,
         boundary_stage: MACBoundaryStageData,
         /,
-    ):
+    ) -> None:
         if not isinstance(prepared_action, PreparedMACVariationalViscosityAction):
             raise TypeError(
                 "prepared_action must be PreparedMACVariationalViscosityAction."

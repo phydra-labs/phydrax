@@ -44,7 +44,7 @@ class MarketPointProcessDefinition(StrictModule):
         *,
         tie_policy: Literal["simultaneous", "ordered"] = "simultaneous",
         require_stable: bool = True,
-    ):
+    ) -> None:
         start = int(start_time_ns)
         end = int(end_time_ns)
         if end <= start:
@@ -83,7 +83,7 @@ class HawkesDefinition(StrictModule):
         /,
         *,
         maximum_steps: int = 128,
-    ):
+    ) -> None:
         process = ExponentialHawkesProcess(baseline, excitation, decay)
         steps = int(maximum_steps)
         if steps < 1:

@@ -113,7 +113,7 @@ class ChemicalEquilibriumPlan(StrictModule):
         *,
         tolerance: float = 1.0e-9,
         maximum_steps: int = 200,
-    ):
+    ) -> None:
         if not isinstance(thermodynamics, HomogeneousHelmholtzPlan):
             raise TypeError("thermodynamics must be HomogeneousHelmholtzPlan.")
         if not isinstance(thermodynamics.residual, ZeroResidualHelmholtzTerm):

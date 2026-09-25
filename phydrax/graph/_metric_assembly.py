@@ -38,7 +38,7 @@ class MetricCochainAssembly(StrictModule):
         dual_measures: tuple[Array, ...],
         hodge_stars: tuple[Array, ...],
         /,
-    ):
+    ) -> None:
         self.complex = complex
         self.primal_measures = primal_measures
         self.dual_measures = dual_measures

@@ -48,7 +48,7 @@ class QuantumCarrier(StrictModule):
         angular_rate: ArrayLike = 0.0,
         phase: ArrayLike = 0.0,
         delay: ArrayLike = 0.0,
-    ):
+    ) -> None:
         self.angular_rate = _finite_scalar(angular_rate, "angular_rate")
         self.phase = _finite_scalar(phase, "phase")
         self.delay = _finite_scalar(delay, "delay")
@@ -78,7 +78,7 @@ class QuantumControlLine(StrictModule):
         support_start: ArrayLike,
         support_stop: ArrayLike,
         line_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(parameterization, AbstractControlParameterization):
             raise TypeError(
                 "parameterization must be an AbstractControlParameterization."
@@ -155,7 +155,7 @@ class LinearQuantumControlTransfer(StrictModule):
         /,
         *,
         transfer_id: str | None = None,
-    ):
+    ) -> None:
         value = jnp.asarray(matrix)
         if value.ndim != 2 or value.shape[0] == 0 or value.shape[1] == 0:
             raise ValueError("matrix must be one nonempty line-by-term matrix.")
@@ -201,7 +201,7 @@ class QuantumControlSchedule(StrictModule):
         /,
         *,
         schedule_id: str | None = None,
-    ):
+    ) -> None:
         selected = tuple(lines)
         if not selected or not all(
             isinstance(line, QuantumControlLine) for line in selected

@@ -49,7 +49,7 @@ class BatchedBeliefPropagationState(StrictModule):
         *,
         structure_id: str,
         step_index: ArrayLike | int = 0,
-    ):
+    ) -> None:
         message_values = jnp.asarray(messages)
         evidence_values = jnp.asarray(evidence)
         if message_values.ndim != 2 or evidence_values.ndim != 2:
@@ -105,7 +105,7 @@ class FactorGraphShardingPolicy(StrictModule):
         /,
         *,
         device_count: int = 1,
-    ):
+    ) -> None:
         if axis not in ("case", "chain", "graph", "replicated"):
             raise ValueError("Unknown factor-graph sharding axis.")
         count = int(device_count)

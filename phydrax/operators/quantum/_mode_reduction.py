@@ -42,7 +42,7 @@ class NamedModeOperator(StrictModule):
         *,
         hermitian: bool = False,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("name must be nonempty.")
@@ -85,7 +85,7 @@ class ModeReductionProblem(StrictModule):
         *,
         hbar: ArrayLike = 1.0,
         problem_id: str = "quantum-mode-reduction",
-    ):
+    ) -> None:
         matrix = jnp.asarray(hamiltonian)
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1] or matrix.shape[0] == 0:
             raise ValueError("hamiltonian must be one nonempty square matrix.")
@@ -154,7 +154,7 @@ class ModeReductionPolicy(StrictModule):
         minimum_boundary_gap: float = 0.0,
         precision: HermitianPrecisionPolicy | None = None,
         tracking: HermitianEigenspaceTrackingPolicy | None = None,
-    ):
+    ) -> None:
         for name, value in (
             ("retained_dimension", retained_dimension),
             ("maximum_raw_dimension", maximum_raw_dimension),
@@ -260,7 +260,7 @@ class ModeResolutionPolicy(StrictModule):
         energy_relative: float = 1e-6,
         operator_absolute: float = 1e-6,
         minimum_subspace_overlap: float = 1.0 - 1e-6,
-    ):
+    ) -> None:
         values = (
             energy_absolute,
             energy_relative,

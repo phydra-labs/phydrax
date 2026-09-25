@@ -41,7 +41,7 @@ class ReferenceBodyContract(StrictModule, NonTrainableState):
         *,
         gravity_model_id: str | None = None,
         magnetic_model_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name).strip()
         gm, major, minor, rotation, epoch = (
             float(gravitational_parameter_m3_s2),
@@ -112,7 +112,7 @@ class PlanetaryCoordinateContract(StrictModule, NonTrainableState):
         latitude_kind: Literal["planetocentric", "planetographic"],
         longitude_positive: Literal["east", "west"] = "east",
         frame: Literal["body-fixed", "inertial"] = "body-fixed",
-    ):
+    ) -> None:
         if not isinstance(body, ReferenceBodyContract) or not isinstance(
             geospatial, GeospatialContract
         ):

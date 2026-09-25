@@ -35,7 +35,7 @@ class LikelihoodApproximationPolicy(StrictModule, NonTrainableState):
         self,
         maximum_absolute_log_probability_error: float = 0.1,
         maximum_rms_log_probability_error: float = 0.05,
-    ):
+    ) -> None:
         maximum = float(maximum_absolute_log_probability_error)
         rms = float(maximum_rms_log_probability_error)
         if (
@@ -104,7 +104,7 @@ class LinearQuadraticCompressedLikelihood(AbstractGravitationalWaveLikelihood):
         /,
         *,
         approximation_id: str,
-    ):
+    ) -> None:
         if not isinstance(base, GravitationalWaveLikelihoodPlan):
             raise TypeError("base must be the exact GravitationalWaveLikelihoodPlan.")
         if base.calibration_fn is not None:
@@ -243,7 +243,7 @@ class QualifiedGravitationalWaveLikelihood(AbstractGravitationalWaveLikelihood):
         candidate: AbstractGravitationalWaveLikelihood,
         qualification: LikelihoodApproximationReport,
         /,
-    ):
+    ) -> None:
         if not isinstance(candidate, AbstractGravitationalWaveLikelihood):
             raise TypeError(
                 "candidate must implement AbstractGravitationalWaveLikelihood."

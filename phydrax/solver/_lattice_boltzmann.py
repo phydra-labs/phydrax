@@ -22,7 +22,7 @@ class LatticeBoltzmannFixedStepMethod(AbstractFixedStepMethod, NonTrainableState
     dynamics: PreparedLatticeBoltzmannDynamics
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: PreparedLatticeBoltzmannDynamics, /):
+    def __init__(self, dynamics: PreparedLatticeBoltzmannDynamics, /) -> None:
         if not isinstance(dynamics, PreparedLatticeBoltzmannDynamics):
             raise TypeError("dynamics must be PreparedLatticeBoltzmannDynamics.")
         self.dynamics = dynamics

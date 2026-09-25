@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 import equinox as eqx
 import jax
@@ -89,7 +89,7 @@ class Superquadric(GeometrySource):
         first_blockiness: Any = 2.0,
         second_blockiness: Any = 2.0,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         center_ = np.asarray(center, dtype=np.float64)
         axes = np.asarray(semi_axes, dtype=np.float64)
         quaternion = np.asarray(orientation, dtype=np.float64)
@@ -178,7 +178,7 @@ class _SuperquadricKernel(GeometryKernel):
         second_blockiness,
         *,
         source_id,
-    ):
+    ) -> None:
         self.center = center
         self.semi_axes = semi_axes
         self.orientation = orientation
@@ -344,7 +344,7 @@ class _SuperquadricKernel(GeometryKernel):
         )
         return 2.0 * jnp.prod(axes) * jnp.exp(log_area_factor + log_integral)
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state, /) -> NoReturn:
         del state
         raise NotImplementedError(
             "Superquadric boundary measure requires an explicit cubature plan."

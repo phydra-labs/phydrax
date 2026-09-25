@@ -88,7 +88,7 @@ class TwoPhaseMaterialPlan(StrictModule, NonTrainableState):
         gas_viscosity: float = 1.8e-5,
         surface_tension: float = 0.0,
         contact_angle: float = 0.5 * np.pi,
-    ):
+    ) -> None:
         values = tuple(
             float(v)
             for v in (
@@ -142,7 +142,7 @@ class IncompressibleTwoPhaseVOFPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
         geometry: QualifiedSharpGeometry | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteVolumeDiscretization):
             raise TypeError("discretization must be FiniteVolumeDiscretization.")
         if len(discretization.cell_shape) not in (2, 3):
@@ -220,7 +220,9 @@ class PreparedIncompressibleTwoPhaseVOF(StrictModule):
     geometry: QualifiedSharpGeometry | None
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, operators, boundaries, projection, sharp_projection, /):
+    def __init__(
+        self, plan, operators, boundaries, projection, sharp_projection, /
+    ) -> None:
         self.plan = plan
         self.operators = operators
         self.boundaries = boundaries

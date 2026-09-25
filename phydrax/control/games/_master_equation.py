@@ -132,7 +132,7 @@ class FinitePopulationSimplexLattice(StrictModule):
     num_neighbor_transfers: int = eqx.field(static=True)
     lattice_id: str = eqx.field(static=True)
 
-    def __init__(self, num_states: int, population_size: int):
+    def __init__(self, num_states: int, population_size: int) -> None:
         if (
             isinstance(num_states, bool)
             or not isinstance(num_states, int)
@@ -290,7 +290,7 @@ class FiniteStateMasterEquationProblem(StrictModule):
         ]
         | None = None,
         aggregate_law_transition_id: str | None = None,
-    ):
+    ) -> None:
         state_symbols = _symbols(states, "states")
         action_symbols = _symbols(actions, "actions")
         if isinstance(horizon, bool) or not isinstance(horizon, int) or horizon < 0:
@@ -385,7 +385,7 @@ class FiniteStateMasterEquationEvidence(StrictModule):
         law_simplex_probability_residuals: ArrayLike,
         neighbor_transfer_differences: ArrayLike,
         lattice: FinitePopulationSimplexLattice,
-    ):
+    ) -> None:
         bellman = jnp.asarray(bellman_residuals)
         minimum = jnp.asarray(action_minimum_residuals)
         terminal = jnp.asarray(terminal_residuals)
@@ -471,7 +471,7 @@ class FiniteStateMasterEquationResult(StrictModule):
         status: FiniteStateMasterEquationStatus,
         termination_detail: str,
         /,
-    ):
+    ) -> None:
         self.problem = problem
         self.lattice = problem.lattice
         self.values = jnp.asarray(values)

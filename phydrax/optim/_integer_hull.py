@@ -67,7 +67,7 @@ class ConvexObjectiveEvidence(StrictModule, NonTrainableState):
         kind: ConvexObjectiveEvidenceKind,
         evidence_id: str,
         /,
-    ):
+    ) -> None:
         if kind not in ("construction", "verified", "asserted"):
             raise ValueError("Unknown convex objective evidence kind.")
         identifier = str(evidence_id)
@@ -96,7 +96,7 @@ class IntegerHullProblem(StrictModule):
         args: Any = None,
         convexity: ConvexObjectiveEvidence,
         problem_id: str = "integer-hull-convex-program",
-    ):
+    ) -> None:
         if not isinstance(objective, MinimizationProblem):
             raise TypeError("objective must be a MinimizationProblem.")
         if objective.bounds is not None or objective.constraints:
@@ -162,7 +162,7 @@ class IntegerHullPolicy(StrictModule):
         integrality_tolerance: float = 1e-7,
         maximum_backtracks: int = 20,
         armijo: float = 1e-4,
-    ):
+    ) -> None:
         if not isinstance(oracle, AbstractBoundableLinearCombinatorialMethod):
             raise TypeError(
                 "oracle must be an AbstractBoundableLinearCombinatorialMethod."
@@ -393,7 +393,7 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
     fw_steps: list[int]
     active_maximum: list[int]
 
-    def __init__(self, problem: IntegerHullProblem, policy: IntegerHullPolicy, /):
+    def __init__(self, problem: IntegerHullProblem, policy: IntegerHullPolicy, /) -> None:
         self.problem = problem
         self.policy = policy
         self.oracle_calls = [0]

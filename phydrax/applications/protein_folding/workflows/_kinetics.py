@@ -31,7 +31,7 @@ class ProteinBasinDefinitions:
     regions: tuple[StateRegionPlan, ...]
     source_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identifier(self.source_id, "independent basin source")
         if (
             len(self.names) < 2
@@ -80,7 +80,7 @@ class ProteinKineticWorkflow:
     source_kind: str = "physical-dynamics"
     configuration_bias_id: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.data, TrajectoryData):
             raise TypeError(
                 "Kinetic consumers require native reset-aware TrajectoryData."

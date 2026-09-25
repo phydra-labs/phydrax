@@ -28,7 +28,7 @@ class SemiconductorStateLayout(StrictModule):
         carrier_energy=False,
         interfaces=(),
         traps=(),
-    ):
+    ) -> None:
         if (
             isinstance(node_count, bool)
             or not isinstance(node_count, (int, np.integer))

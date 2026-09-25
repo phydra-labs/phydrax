@@ -71,7 +71,7 @@ class PreparedPySCFCalculation(AbstractPreparedElectronicCalculation):
         provider_version: str,
         provider_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(capabilities, ElectronicProviderCapabilities):
             raise TypeError("capabilities must be ElectronicProviderCapabilities.")
         self.calculation = calculation
@@ -236,7 +236,7 @@ class PySCFProvider(AbstractElectronicProvider):
         *,
         convergence_tolerance: float = 1.0e-10,
         maximum_cycles: int = 100,
-    ):
+    ) -> None:
         tolerance = float(convergence_tolerance)
         cycles = int(maximum_cycles)
         if not np.isfinite(tolerance) or tolerance <= 0.0:

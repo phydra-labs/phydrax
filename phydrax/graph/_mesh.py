@@ -266,7 +266,7 @@ class MeshCotangentLaplacian(StrictModule):
         input_key: str | None = None,
         output_key: str | None = None,
         normalize_by_mass: bool = True,
-    ):
+    ) -> None:
         if sign not in ("neighbor_minus_self", "self_minus_neighbor"):
             raise ValueError(
                 "MeshCotangentLaplacian sign must be 'neighbor_minus_self' or 'self_minus_neighbor'."

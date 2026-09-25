@@ -156,7 +156,7 @@ class ProjectedGradient(AbstractMinimizationMethod):
         *,
         line_search: ArmijoLineSearch | None = None,
         project_initial: bool = True,
-    ):
+    ) -> None:
         search = ArmijoLineSearch() if line_search is None else line_search
         if not isinstance(search, ArmijoLineSearch):
             raise TypeError("line_search must be an ArmijoLineSearch or None.")
@@ -204,7 +204,7 @@ class ActiveSetNewton(AbstractMinimizationMethod):
         line_search: ArmijoLineSearch | None = None,
         active_tolerance: float = 1e-10,
         project_initial: bool = True,
-    ):
+    ) -> None:
         policy = (
             _default_active_set_linear_policy()
             if linear_policy is None
@@ -278,7 +278,7 @@ class BoundedNewtonTrustRegion(AbstractMinimizationMethod):
         expansion_factor: float = 2.0,
         active_tolerance: float = 1e-10,
         project_initial: bool = True,
-    ):
+    ) -> None:
         subproblem_ = SteihaugToint() if subproblem is None else subproblem
         if not isinstance(subproblem_, SteihaugToint):
             raise TypeError("subproblem must be SteihaugToint or None.")
@@ -365,7 +365,7 @@ class ProjectedLBFGS(AbstractMinimizationMethod):
         curvature_tolerance: float = 1e-10,
         active_tolerance: float = 1e-10,
         project_initial: bool = True,
-    ):
+    ) -> None:
         search = ArmijoLineSearch() if line_search is None else line_search
         history = int(history_size)
         curvature = float(curvature_tolerance)

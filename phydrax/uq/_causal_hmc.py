@@ -60,7 +60,7 @@ class CausalHMCConfig(StrictModule):
         initial_damping: float = 1e-3,
         maximum_dense_dimension: int = 512,
         failure_policy: CausalHMCFailurePolicy = "raise",
-    ):
+    ) -> None:
         block_size = int(trajectory_block_size)
         probes = int(probe_count)
         iterations = int(maximum_outer_iterations)
@@ -123,7 +123,7 @@ class CausalNUTSConfig(StrictModule):
         max_num_doublings: int = 10,
         max_trajectory_capacity: int | None = None,
         recurrence: CausalHMCConfig | None = None,
-    ):
+    ) -> None:
         doublings = int(max_num_doublings)
         if doublings <= 0:
             raise ValueError("max_num_doublings must be positive.")

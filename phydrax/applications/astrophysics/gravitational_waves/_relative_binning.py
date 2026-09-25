@@ -54,7 +54,7 @@ class _RelativeBinningLikelihood(AbstractGravitationalWaveLikelihood):
         /,
         *,
         num_bins: int,
-    ):
+    ) -> None:
         if not isinstance(base, GravitationalWaveLikelihoodPlan):
             raise TypeError("base must be GravitationalWaveLikelihoodPlan.")
         if not base.waveform.capabilities.arbitrary_frequencies:

@@ -127,7 +127,7 @@ class BatteryExecutionAdmission:
         _verify_admission(self, int(time.time()) if at_time is None else at_time)
         self.envelope.require_production_bounds()
 
-        def check_tree(tree, declared, group):
+        def check_tree(tree, declared, group) -> None:
             bounds = {name: (lower, upper) for name, lower, upper in declared}
             actual = {}
             for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
@@ -521,7 +521,7 @@ def load_battery_execution_admission(
     )
 
 
-def _validate_ecm_run(prepared_model, parameters, initial, protocol, values):
+def _validate_ecm_run(prepared_model, parameters, initial, protocol, values) -> None:
     import numpy as np
 
     from ._circuit_ecm import PreparedCircuitConnectedEcm

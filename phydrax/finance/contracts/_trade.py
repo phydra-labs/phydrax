@@ -56,7 +56,7 @@ class Trade(StrictModule, NonTrainableState):
         *,
         settlement: SettlementTerms,
         transaction_price: CurrencyAmount | None = None,
-    ):
+    ) -> None:
         identifier = _identifier(trade_id, "trade_id")
         if not isinstance(contract, AbstractContract):
             raise TypeError("contract must be an unresolved AbstractContract definition.")
@@ -145,7 +145,7 @@ class Position(StrictModule, NonTrainableState):
         /,
         *,
         account_id: str,
-    ):
+    ) -> None:
         identifier = _identifier(position_id, "position_id")
         account = _identifier(account_id, "account_id")
         if not isinstance(contract, AbstractResolvedContract):

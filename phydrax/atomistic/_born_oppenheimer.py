@@ -40,7 +40,7 @@ class CallableBornOppenheimerProvider(AbstractExternalAtomisticProvider):
         *,
         conservative: bool = True,
         differentiable: bool = False,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         identifier = str(provider_id).strip()
@@ -105,7 +105,7 @@ class BornOppenheimerVelocityVerletPlan(StrictModule, NonTrainableState):
         provider: AbstractExternalAtomisticProvider,
         step_size: float,
         /,
-    ):
+    ) -> None:
         if not isinstance(system, PreparedAtomisticSystem):
             raise TypeError("system must be PreparedAtomisticSystem.")
         if not isinstance(provider, AbstractExternalAtomisticProvider):

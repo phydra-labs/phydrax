@@ -68,7 +68,7 @@ class LinearRecurrentUnit(StrictModule, ParameterOwner):
         max_initial_radius: float = 0.99,
         dtype: Any = jnp.float32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.input_size = int(input_size)
         self.state_size = int(state_size)
         self.output_size = self.input_size if output_size is None else int(output_size)

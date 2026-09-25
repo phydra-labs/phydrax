@@ -26,7 +26,7 @@ class GaussianProcessLikelihoodState(StrictModule):
         kernel: AbstractPositiveDefiniteKernel | None = None,
         noise_scale: ArrayLike,
         jitter: ArrayLike = 1e-8,
-    ):
+    ) -> None:
         if kernel is not None and not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be an AbstractPositiveDefiniteKernel or None.")
         noise = jnp.asarray(noise_scale, dtype=jnp.float64)

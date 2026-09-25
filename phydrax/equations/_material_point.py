@@ -69,7 +69,7 @@ class MPMConstitutiveCapabilities(StrictModule, NonTrainableState):
         has_dissipation: bool,
         has_tension_compression_split: bool = False,
         supports_implicit: bool,
-    ):
+    ) -> None:
         values = {
             "stateful": bool(stateful),
             "has_free_energy": bool(has_free_energy),
@@ -117,7 +117,7 @@ class MPMConstitutiveResponse(StrictModule):
         successful: ArrayLike,
         admissible: ArrayLike,
         diagnostics: Mapping[str, ArrayLike] | None = None,
-    ):
+    ) -> None:
         stress = jnp.asarray(first_piola)
         history = jnp.asarray(trial_state)
         energy = jnp.asarray(reference_energy_density)
@@ -223,7 +223,9 @@ class MaterialPointArguments(StrictModule):
     material_parameters: Any
     external_arguments: Any
 
-    def __init__(self, material_parameters: Any, external_arguments: Any = None, /):
+    def __init__(
+        self, material_parameters: Any, external_arguments: Any = None, /
+    ) -> None:
         self.material_parameters = material_parameters
         self.external_arguments = external_arguments
 
@@ -250,7 +252,7 @@ class MaterialPointProblemIR(StrictModule):
         intended_use: MPMIntendedUse | None = None,
         claim: MPMClaimTuple | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Material-point problem name must be non-empty.")
@@ -311,7 +313,7 @@ class CompiledMaterialPointProblem(StrictModule):
         /,
         *,
         support_decision: MPMSupportDecision | None = None,
-    ):
+    ) -> None:
         if not isinstance(problem, MaterialPointProblemIR):
             raise TypeError("problem must be MaterialPointProblemIR.")
         if not isinstance(dynamics, PreparedMPMDynamics):

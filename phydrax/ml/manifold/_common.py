@@ -79,7 +79,7 @@ class NeighborhoodGraph(StrictModule):
         maximum_degree: ArrayLike,
         *,
         metric: str,
-    ):
+    ) -> None:
         self.relation = relation
         self.distances = jnp.asarray(distances)
         self.adjacency = jnp.asarray(adjacency, dtype=jnp.bool_)
@@ -124,7 +124,7 @@ class ManifoldDiagnostics(StrictModule):
         maximum_degree: Any = 0,
         converged: Any = True,
         method: str,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)

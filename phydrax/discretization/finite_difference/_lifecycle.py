@@ -86,7 +86,7 @@ class FDCheckpointPlan(StrictModule, NonTrainableState):
         amr_trace_id: str | None = None,
         partition_id: str | None = None,
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         discretizations = tuple(str(value) for value in discretization_ids)
         integrator = str(integrator_id)
         precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
@@ -143,7 +143,7 @@ class FDCheckpoint(StrictModule):
         plan_id: str,
         checkpoint_id: str,
         /,
-    ):
+    ) -> None:
         field_names = tuple(sorted(fields))
         auxiliary_names = tuple(sorted(auxiliary))
         if (

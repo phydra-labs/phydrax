@@ -35,7 +35,7 @@ class NeuralBOLDDrive(StrictModule):
         /,
         *,
         gain: ArrayLike = 1.0,
-    ):
+    ) -> None:
         weights = jnp.asarray(component_weights)
         reference = jnp.asarray(baseline)
         for value in (weights, reference):
@@ -100,7 +100,7 @@ class BalloonWindkessel(StrictModule):
         k1: ArrayLike | None = None,
         k2: ArrayLike = 2.0,
         k3: ArrayLike | None = None,
-    ):
+    ) -> None:
         self.kappa_per_s = _parameter(kappa_per_s, "kappa_per_s", positive=True)
         self.gamma_per_s2 = _parameter(gamma_per_s2, "gamma_per_s2", positive=True)
         self.transit_s = _parameter(transit_s, "transit_s", positive=True)

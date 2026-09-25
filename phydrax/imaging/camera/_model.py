@@ -66,7 +66,7 @@ class CameraIntrinsics(StrictModule):
         *,
         image_shape: tuple[int, int] | None = None,
         skew: Any = 0.0,
-    ):
+    ) -> None:
         focal_host = np.asarray(focal_length, dtype=np.float64)
         principal_host = np.asarray(principal_point, dtype=np.float64)
         skew_host = np.asarray(skew, dtype=np.float64)
@@ -104,7 +104,7 @@ class BrownConradyDistortion(StrictModule):
         self,
         radial: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         tangential: ArrayLike | tuple[float, float] = (0.0, 0.0),
-    ):
+    ) -> None:
         radial_host = np.asarray(radial, dtype=np.float64)
         tangential_host = np.asarray(tangential, dtype=np.float64)
         if radial_host.shape != (3,) or tangential_host.shape != (2,):
@@ -122,7 +122,7 @@ class CameraPose(StrictModule):
 
     frame: RigidFrame
 
-    def __init__(self, frame: RigidFrame):
+    def __init__(self, frame: RigidFrame) -> None:
         if not isinstance(frame, RigidFrame) or frame.dimension != 3:
             raise TypeError("frame must be a three-dimensional RigidFrame.")
         self.frame = frame
@@ -141,7 +141,7 @@ class CameraModel(StrictModule):
         pose: CameraPose | None = None,
         distortion: BrownConradyDistortion | None = None,
         refractive_stack: PlanarRefractiveStack | None = None,
-    ):
+    ) -> None:
         if not isinstance(intrinsics, CameraIntrinsics):
             raise TypeError("intrinsics must be CameraIntrinsics.")
         pose_ = CameraPose(RigidFrame.identity(3)) if pose is None else pose

@@ -129,7 +129,7 @@ class GAOT(AbstractOperatorModel):
         query_chunk_size: int | None = 256,
         assume_uniform_measure: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if int(coord_dim) not in (2, 3):
             raise ValueError("GAOT supports coord_dim 2 or 3.")
         shape = tuple(latent_shape)

@@ -65,7 +65,7 @@ class FTetWildOptions:
     skip_simplify: bool = False
     coarsen: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not np.isfinite(self.envelope_distance) or self.envelope_distance <= 0:
             raise ValueError("envelope_distance must be positive and finite.")
         if not np.isfinite(self.stop_quality) or self.stop_quality <= 0:
@@ -83,7 +83,7 @@ class FTetWildMeshingPlan:
     support: ProviderSupportReport
     plan_id: str = field(init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.options, FTetWildOptions):
             raise TypeError("options must be FTetWildOptions.")
         if not isinstance(self.audit_policy, CellMeshAuditPolicy):
@@ -158,7 +158,7 @@ class FTetWildProvider:
     using the backend's input-surface winding-number filter.
     """
 
-    def __init__(self, options: FTetWildOptions | None = None, /):
+    def __init__(self, options: FTetWildOptions | None = None, /) -> None:
         self.options = FTetWildOptions() if options is None else options
         if not isinstance(self.options, FTetWildOptions):
             raise TypeError("options must be FTetWildOptions or None.")

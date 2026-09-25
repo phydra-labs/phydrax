@@ -70,7 +70,7 @@ class MultilinearGridInterpolation(StrictModule, NonTrainableState):
 
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.policy_id = canonical_fingerprint({"kind": "multilinear-grid-interpolation"})
 
 
@@ -88,7 +88,7 @@ class BSplineGridInterpolation(StrictModule, NonTrainableState):
     condition_limit: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, degree: int, /, *, condition_limit: float = 1.0e12):
+    def __init__(self, degree: int, /, *, condition_limit: float = 1.0e12) -> None:
         if isinstance(degree, bool) or not isinstance(degree, Integral):
             raise TypeError("B-spline interpolation degree must be an int.")
         if degree < 2:
@@ -179,7 +179,7 @@ class FiniteDifferenceFieldReconstructionKernel(
         /,
         *,
         field_space_id: str,
-    ):
+    ) -> None:
         axes = tuple(np.asarray(values, dtype=np.float64) for values in nodes)
         knots: tuple[np.ndarray, ...] = ()
         collocation: tuple[PreparedFactorization, ...] = ()

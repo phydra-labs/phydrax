@@ -48,7 +48,7 @@ class NestedQuadratureResult(StrictModule):
         information: Array,
         posterior_effective_sample_size: Array,
         valid: Array,
-    ):
+    ) -> None:
         self.particles = particles
         self.sort_indices = jnp.asarray(sort_indices, dtype=jnp.int32)
         self.log_prior_volume = jnp.asarray(log_prior_volume)

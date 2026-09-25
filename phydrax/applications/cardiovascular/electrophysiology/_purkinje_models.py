@@ -150,7 +150,7 @@ class StewartPurkinjeParameters(StrictModule, NonTrainableState):
         sr_release_rate: float = 0.20,
         sr_volume_ratio: float = 10.0,
         cytosolic_buffer_factor: float = 0.12,
-    ):
+    ) -> None:
         values = {
             "rtf_mV": _positive(rtf_mV, "rtf_mV"),
             "sodium_i_mM": _positive(sodium_i_mM, "sodium_i_mM"),
@@ -238,7 +238,7 @@ class PurkinjeStateLayout(StrictModule, NonTrainableState):
     state_size: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         names = (
             "voltage_mV",
             "m",
@@ -351,7 +351,7 @@ class StewartPurkinjeModel(StrictModule, NonTrainableState):
     layout: PurkinjeStateLayout
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, parameters: StewartPurkinjeParameters, /):
+    def __init__(self, parameters: StewartPurkinjeParameters, /) -> None:
         if not isinstance(parameters, StewartPurkinjeParameters):
             raise TypeError("parameters must be StewartPurkinjeParameters.")
         layout = PurkinjeStateLayout()

@@ -225,7 +225,7 @@ class ContinuumPositionTask(StrictModule, NonTrainableState):
         weight: ArrayLike = 1.0,
         bounds: Bounds | None = None,
         tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         index, station = _query_index(reconstruction, arc_length)
         dtype = reconstruction.reduced.coefficient_space.dtype
         target = _finite_real_array(target_position, (3,), "target_position")
@@ -271,7 +271,7 @@ class ContinuumOrientationTask(StrictModule, NonTrainableState):
         weight: ArrayLike = 1.0,
         bounds: Bounds | None = None,
         tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         index, station = _query_index(reconstruction, arc_length)
         dtype = reconstruction.reduced.coefficient_space.dtype
         target = _canonical_quaternion(target_orientation, "target_orientation")
@@ -320,7 +320,7 @@ class ContinuumPoseTask(StrictModule, NonTrainableState):
         orientation_weight: ArrayLike = 1.0,
         bounds: Bounds | None = None,
         tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         index, station = _query_index(reconstruction, arc_length)
         dtype = reconstruction.reduced.coefficient_space.dtype
         position = _finite_real_array(target_position, (3,), "target_position")
@@ -372,7 +372,7 @@ class ContinuumShapeTask(StrictModule, NonTrainableState):
         weight: ArrayLike = 1.0,
         bounds: Bounds | None = None,
         tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if not isinstance(reconstruction, PreparedRodReconstruction):
             raise TypeError("reconstruction must be a PreparedRodReconstruction.")
         count = reconstruction.plan.queries.query_count
@@ -416,7 +416,7 @@ class ContinuumPostureTask(StrictModule, NonTrainableState):
         weight: ArrayLike = 1.0,
         bounds: Bounds | None = None,
         tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if not isinstance(reconstruction, PreparedRodReconstruction):
             raise TypeError("reconstruction must be a PreparedRodReconstruction.")
         space = reconstruction.reduced.coefficient_space
@@ -593,7 +593,7 @@ class ContinuumInverseKinematicsPlan(StrictModule, NonTrainableState):
         /,
         *,
         rotation_chart_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if not isinstance(reconstruction, PreparedRodReconstruction):
             raise TypeError("reconstruction must be a PreparedRodReconstruction.")
         tasks_ = tuple(tasks)
@@ -1086,7 +1086,7 @@ class ContinuumDifferentialIKPlan(StrictModule, NonTrainableState):
         correction_gain: float = 1.0,
         velocity_regularization: ArrayLike = 1.0e-8,
         time_step: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(inverse_kinematics, ContinuumInverseKinematicsPlan):
             raise TypeError(
                 "inverse_kinematics must be a ContinuumInverseKinematicsPlan."
@@ -1507,7 +1507,7 @@ class SmoothReducedRodTrajectoryPlan(StrictModule, NonTrainableState):
         control_codec: ControlVectorCodec | None = None,
         profile: Literal["passive", "tendon"],
         running_control_weight: float = 1.0e-6,
-    ):
+    ) -> None:
         if not isinstance(plant, AbstractDiscretePlant):
             raise TypeError("plant must be an AbstractDiscretePlant.")
         if not isinstance(state_codec, PlantStateVectorCodec):

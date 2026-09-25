@@ -33,7 +33,7 @@ class ScaledMonomialBasis(StrictModule, NonTrainableState):
         /,
         *,
         maximum_features: int = 4096,
-    ):
+    ) -> None:
         indices = total_degree_multiindices(dimension, degree)
         if len(indices) > int(maximum_features):
             raise ValueError("Scaled monomial feature budget exceeded.")

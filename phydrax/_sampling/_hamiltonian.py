@@ -79,7 +79,7 @@ class HamiltonianAdaptationPlan(StrictModule):
         adaptation_rate: float = 0.05,
         minimum_step_size: float = 1e-5,
         maximum_step_size: float = 1.0,
-    ):
+    ) -> None:
         warmup = int(warmup_steps)
         target, rate = float(target_acceptance), float(adaptation_rate)
         lower, upper = float(minimum_step_size), float(maximum_step_size)

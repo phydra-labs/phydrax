@@ -66,7 +66,7 @@ class ConicDensityFilterPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_connections: int = _DEFAULT_MAXIMUM_CONNECTIONS,
-    ):
+    ) -> None:
         points_value = np.asarray(coordinates)
         if not (
             np.issubdtype(points_value.dtype, np.number)
@@ -143,7 +143,7 @@ class PreparedConicDensityFilter(StrictModule, NonTrainableState):
     plan: ConicDensityFilterPlan
     operator: SparseLinearMap
 
-    def __init__(self, plan: ConicDensityFilterPlan, /):
+    def __init__(self, plan: ConicDensityFilterPlan, /) -> None:
         if not isinstance(plan, ConicDensityFilterPlan):
             raise TypeError("plan must be a ConicDensityFilterPlan.")
         points = np.asarray(plan.coordinates, dtype=np.float64)
@@ -242,7 +242,7 @@ class TanhDensityProjectionPlan(StrictModule, NonTrainableState):
 
     eta: Array
 
-    def __init__(self, eta: ArrayLike, /):
+    def __init__(self, eta: ArrayLike, /) -> None:
         eta_value = np.asarray(eta)
         if eta_value.shape != ():
             raise ValueError("eta must be a scalar array.")
@@ -291,7 +291,7 @@ class DensityTransformPlan(StrictModule, NonTrainableState):
         filter: ConicDensityFilterPlan,
         projection: TanhDensityProjectionPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(filter, ConicDensityFilterPlan):
             raise TypeError("filter must be a ConicDensityFilterPlan.")
         if not isinstance(projection, TanhDensityProjectionPlan):
@@ -315,7 +315,7 @@ class PreparedDensityTransform(StrictModule, NonTrainableState):
         plan: DensityTransformPlan,
         filter: PreparedConicDensityFilter,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, DensityTransformPlan):
             raise TypeError("plan must be a DensityTransformPlan.")
         if not isinstance(filter, PreparedConicDensityFilter):

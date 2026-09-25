@@ -235,7 +235,7 @@ class PlantModeSidecar(StrictModule):
         schema_id: str,
         executable_signature_id: str,
         codec_id: str,
-    ):
+    ) -> None:
         paths_ = tuple(str(path) for path in paths)
         if len(set(paths_)) != len(paths_) or any(not path for path in paths_):
             raise ValueError("Dynamic mode sidecar paths must be unique and non-empty.")
@@ -333,7 +333,7 @@ class EncodedPlantState(StrictModule):
         executable_signature_id: str,
         codec_id: str,
         mode_sidecar: PlantModeSidecar | None = None,
-    ):
+    ) -> None:
         binding = {
             "semantic_id": _identifier(semantic_id, "semantic_id"),
             "numeric_revision_id": _identifier(
@@ -408,7 +408,7 @@ class EncodedPlantVector(StrictModule):
         executable_signature_id: str,
         codec_id: str,
         mode_sidecar: PlantModeSidecar | None = None,
-    ):
+    ) -> None:
         if role not in _PLANT_VECTOR_ROLES:
             raise ValueError("Unknown encoded plant vector role.")
         binding = {
@@ -484,7 +484,7 @@ class EncodedControl(StrictModule):
         schema_id: str,
         executable_signature_id: str,
         codec_id: str,
-    ):
+    ) -> None:
         self.vector = _array(vector, "Encoded control")
         self.semantic_id = _identifier(semantic_id, "semantic_id")
         self.numeric_revision_id = _identifier(numeric_revision_id, "numeric_revision_id")
@@ -549,7 +549,7 @@ class PlantStateVectorCodec(StrictModule):
         semantic_provenance: SemanticProvenance,
         numeric_revision: NumericRevision,
         executable_signature: ExecutableSignature,
-    ):
+    ) -> None:
         if not isinstance(schema, ArrayPyTreeSchema):
             raise TypeError("schema must be an ArrayPyTreeSchema.")
         if not isinstance(layout, StateLayout):
@@ -1186,7 +1186,7 @@ class ControlVectorCodec(StrictModule):
         semantic_provenance: SemanticProvenance,
         numeric_revision: NumericRevision,
         executable_signature: ExecutableSignature,
-    ):
+    ) -> None:
         if not isinstance(schema, ArrayPyTreeSchema):
             raise TypeError("schema must be an ArrayPyTreeSchema.")
         _identity_objects(semantic_provenance, numeric_revision, executable_signature)

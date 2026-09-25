@@ -41,7 +41,7 @@ class GeneralizedTauPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_augmented_dimension: int = 1024,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape or operator.source.size != operator.target.size:
@@ -141,7 +141,7 @@ class PreparedTauSystem(StrictModule, NonTrainableState):
         operator: BlockLinearOperator,
         factorization: PreparedFactorization,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.operator = operator
         self.factorization = factorization
@@ -190,7 +190,7 @@ class TauSolveResult(StrictModule):
         tau: ArrayLike,
         linear_result: LinearSolveResult,
         prepared_id: str,
-    ):
+    ) -> None:
         if not isinstance(linear_result, LinearSolveResult):
             raise TypeError("linear_result must be a LinearSolveResult.")
         self.field = field

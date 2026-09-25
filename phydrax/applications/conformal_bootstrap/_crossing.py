@@ -41,7 +41,7 @@ class CrossingSectorPlan(StrictModule):
         basis_gauge_id: str,
         tolerance: float = 1e-10,
         maximum_matrix_entries: int = 1_000_000,
-    ):
+    ) -> None:
         if not isinstance(data, ConformalDataPlan):
             raise TypeError("data must be ConformalDataPlan.")
         labels = tuple(str(value) for value in component_labels)

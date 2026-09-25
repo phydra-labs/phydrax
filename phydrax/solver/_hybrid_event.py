@@ -39,7 +39,7 @@ class HybridGuardPlan(StrictModule, NonTrainableState):
         priority: int = 0,
         terminal: bool = False,
         guard_id: str,
-    ):
+    ) -> None:
         if not callable(guard):
             raise TypeError("Hybrid guard must be callable.")
         if direction not in (-1, 0, 1):
@@ -96,7 +96,7 @@ class HybridEventPlan(StrictModule, NonTrainableState):
         dense_diagnostics: bool = False,
         max_dense_dimension: int = 32,
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(guard_plan, HybridGuardPlan):
             raise TypeError("guard_plan must be a HybridGuardPlan.")
         callables = (reset, vector_field_before, vector_field_after)
@@ -166,7 +166,7 @@ class HybridReplayPolicy(StrictModule, NonTrainableState):
         simultaneous_tolerance: float = 1.0e-10,
         event_tolerance: float = 1.0e-10,
         failure: int = -1,
-    ):
+    ) -> None:
         if not isinstance(maximum_events, int) or isinstance(maximum_events, bool):
             raise TypeError("maximum_events must be an integer.")
         if maximum_events < 0:

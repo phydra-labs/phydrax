@@ -27,7 +27,7 @@ class SITActivityModel(StrictModule):
         *,
         debye_a: ArrayLike = 0.509,
         maximum_ionic_strength_mol_kg: ArrayLike = 4.0,
-    ):
+    ) -> None:
         charges_ = jnp.asarray(charges)
         interaction = jnp.asarray(interaction_kg_mol)
         if charges_.ndim != 1 or interaction.shape != (charges_.size, charges_.size):
@@ -96,7 +96,7 @@ class PitzerInteractionModel(StrictModule):
         alpha_kg_sqrt_mol: ArrayLike = 2.0,
         debye_a_phi: ArrayLike = 0.392,
         maximum_ionic_strength_mol_kg: ArrayLike = 12.0,
-    ):
+    ) -> None:
         charges_ = jnp.asarray(charges)
         matrices = tuple(
             jnp.asarray(value) for value in (beta0_kg_mol, beta1_kg_mol, cphi_kg2_mol2)
@@ -165,7 +165,9 @@ class RedoxEquilibrium(StrictModule):
     electron_count: Array
     standard_potential_V: Array
 
-    def __init__(self, electron_count: ArrayLike, standard_potential_V: ArrayLike, /):
+    def __init__(
+        self, electron_count: ArrayLike, standard_potential_V: ArrayLike, /
+    ) -> None:
         electrons, potential = jnp.broadcast_arrays(
             jnp.asarray(electron_count), jnp.asarray(standard_potential_V)
         )
@@ -209,7 +211,7 @@ class RedoxEquilibrium(StrictModule):
 class HenryGasEquilibrium(StrictModule):
     henry_mol_m3_Pa: Array
 
-    def __init__(self, henry_mol_m3_Pa: ArrayLike, /):
+    def __init__(self, henry_mol_m3_Pa: ArrayLike, /) -> None:
         value = jnp.asarray(henry_mol_m3_Pa)
         self.henry_mol_m3_Pa = eqx.error_if(
             value,
@@ -231,7 +233,7 @@ class IonExchangeEquilibrium(StrictModule):
     selectivity: Array
     charges: Array
 
-    def __init__(self, selectivity: ArrayLike, charges: ArrayLike, /):
+    def __init__(self, selectivity: ArrayLike, charges: ArrayLike, /) -> None:
         selectivity, charges_ = jnp.broadcast_arrays(
             jnp.asarray(selectivity), jnp.asarray(charges)
         )

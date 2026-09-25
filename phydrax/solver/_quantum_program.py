@@ -70,7 +70,7 @@ class DenseQuantumProgramPolicy(StrictModule):
         hermiticity_tolerance: float = 1e-6,
         positivity_tolerance: float = 1e-8,
         density_positivity_audit: DensityPositivityAudit = "full",
-    ):
+    ) -> None:
         limits = (
             int(maximum_state_bytes),
             int(maximum_operation_bytes),

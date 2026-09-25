@@ -46,7 +46,7 @@ class InteriorStencilKernel(StrictModule, NonTrainableState):
         stencil_id: str,
         accumulation_dtype: str,
         output_dtype: str,
-    ):
+    ) -> None:
         weights_ = jnp.asarray(weights)
         start = int(target_start)
         stop = int(target_stop)
@@ -134,7 +134,7 @@ class ClosureStencilKernel(StrictModule, NonTrainableState):
         stencil_id: str,
         accumulation_dtype: str,
         output_dtype: str,
-    ):
+    ) -> None:
         targets = jnp.asarray(target_indices, dtype=jnp.int32)
         sources = jnp.asarray(source_indices, dtype=jnp.int32)
         weights_ = jnp.asarray(weights)
@@ -210,7 +210,7 @@ class StencilExecutionReport(StrictModule, NonTrainableState):
         lowered_metadata_bytes: int,
         maximum_parity_residual: float,
         stencil_id: str,
-    ):
+    ) -> None:
         residual = float(maximum_parity_residual)
         self.interior_rows = int(interior_rows)
         self.closure_rows = int(closure_rows)
@@ -242,7 +242,7 @@ class StencilExecutionPlan(StrictModule, NonTrainableState):
     report: StencilExecutionReport
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, operator: PreparedStencilOperator, /):
+    def __init__(self, operator: PreparedStencilOperator, /) -> None:
         if not isinstance(operator, PreparedStencilOperator):
             raise TypeError(
                 "Stencil execution lowering requires PreparedStencilOperator."
@@ -394,7 +394,7 @@ class PreparedStencilExecutionOperator(AbstractLinearOperator):
     target: ArraySpace
     execution: StencilExecutionPlan
 
-    def __init__(self, execution: StencilExecutionPlan, /):
+    def __init__(self, execution: StencilExecutionPlan, /) -> None:
         if not isinstance(execution, StencilExecutionPlan):
             raise TypeError("execution must be a StencilExecutionPlan.")
         reference = execution.reference_operator

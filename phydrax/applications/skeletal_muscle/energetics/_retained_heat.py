@@ -60,7 +60,7 @@ class RetainedHeatLedger(StrictModule, NonTrainableState):
         chemical_export_power_W: ArrayLike,
         basal_evidence_id: str | None = None,
         source_successful: ArrayLike = True,
-    ):
+    ) -> None:
         ids = tuple(source_ids)
         if not ids or len(set(ids)) != len(ids) or any(not x.strip() for x in ids):
             raise ValueError("Heat source IDs must be unique and nonempty.")

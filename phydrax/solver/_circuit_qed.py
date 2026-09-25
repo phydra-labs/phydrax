@@ -97,7 +97,7 @@ class CircuitModePlacement(StrictModule):
         /,
         *,
         placement_id: str | None = None,
-    ):
+    ) -> None:
         wire = str(wire_id)
         if not wire:
             raise ValueError("wire_id must be nonempty.")
@@ -156,7 +156,7 @@ class CircuitInteraction(StrictModule):
         /,
         *,
         interaction_id: str | None = None,
-    ):
+    ) -> None:
         targets = tuple(target_indices)
         names = tuple(str(name) for name in operator_names)
         if (
@@ -208,7 +208,7 @@ class CircuitDrivePort(StrictModule):
         /,
         *,
         port_id: str | None = None,
-    ):
+    ) -> None:
         for name, value in (("mode_index", mode_index), ("scale_index", scale_index)):
             if isinstance(value, bool) or not isinstance(value, Integral):
                 raise TypeError(f"{name} must be a non-negative integer.")
@@ -260,7 +260,7 @@ class CircuitQEDDeviceSpec(StrictModule):
         drive_ports: Sequence[CircuitDrivePort] = (),
         hbar: ArrayLike = 1.0,
         spec_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(topology, GraphIR):
             raise TypeError("topology must be a GraphIR.")
         topology.validate()
@@ -371,7 +371,7 @@ class CircuitQEDDeviceParameters(StrictModule):
         *,
         interaction_strengths: ArrayLike = (),
         drive_scales: ArrayLike = (),
-    ):
+    ) -> None:
         modes = tuple(mode_parameters)
         if not modes or not all(
             isinstance(
@@ -413,7 +413,7 @@ class CircuitQEDDevicePolicy(StrictModule):
         maximum_hilbert_dimension: int = 1 << 28,
         maximum_dense_entries: int = 1 << 26,
         maximum_prepared_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         self.maximum_hilbert_dimension = _positive_integer(
             maximum_hilbert_dimension, "maximum_hilbert_dimension"
         )

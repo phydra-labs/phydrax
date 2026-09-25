@@ -43,7 +43,7 @@ class PolynomialDefectPotential(StrictModule):
         system: SparsePolynomialSystem,
         source_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(system, SparsePolynomialSystem):
             raise TypeError("system must be SparsePolynomialSystem.")
         source = str(source_id).strip()
@@ -125,7 +125,7 @@ class MappedInfiniteDefectPlan(StrictModule):
         residual_tolerance: float = 1e-10,
         maximum_iterations: int = 40,
         backtracking_steps: int = 12,
-    ):
+    ) -> None:
         if not isinstance(potential, PolynomialDefectPotential):
             raise TypeError("potential must be PolynomialDefectPotential.")
         gradient = np.asarray(gradient_matrix, dtype=np.float64)
@@ -377,7 +377,7 @@ class RadialDefectPlan(StrictModule):
         maximum_radius: float,
         radial_points: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(base, MappedInfiniteDefectPlan):
             raise TypeError("base must be MappedInfiniteDefectPlan.")
         dimension = int(spatial_dimension)
@@ -559,7 +559,7 @@ class DefectScatteringPlan(StrictModule):
         steps: int,
         boundary_damping: float = 1.0,
         damping_fraction: float = 0.1,
-    ):
+    ) -> None:
         if not isinstance(potential, PolynomialDefectPotential):
             raise TypeError("potential must be PolynomialDefectPotential.")
         gradient = np.asarray(gradient_matrix, dtype=np.float64)

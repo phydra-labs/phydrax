@@ -37,7 +37,7 @@ class ImplicitStageArguments(StrictModule):
         fallback_state: ArrayLike,
         active: ArrayLike,
         model_args: Any,
-    ):
+    ) -> None:
         time_ = jnp.asarray(time)
         shift_ = jnp.asarray(shift)
         offset = jnp.asarray(rate_offset)
@@ -94,7 +94,7 @@ class ImplicitStageResidual(StrictModule):
         system: DifferentialAlgebraicSystem,
         input_policy: AbstractInputPolicy | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(system, DifferentialAlgebraicSystem):
             raise TypeError("ImplicitStageResidual requires DifferentialAlgebraicSystem.")
         if input_policy is not None and not isinstance(input_policy, AbstractInputPolicy):

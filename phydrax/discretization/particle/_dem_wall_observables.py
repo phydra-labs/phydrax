@@ -171,7 +171,7 @@ class FinnieWearPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         coefficient = np.asarray(wear_coefficient)
         hardness_ = np.asarray(hardness)
         if (

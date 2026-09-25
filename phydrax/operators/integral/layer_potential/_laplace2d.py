@@ -31,7 +31,7 @@ class LaplaceLayerKernel2D(AbstractLayerKernel):
 
     _kernel_id: str
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._kernel_id = canonical_fingerprint(
             {
                 "kind": "laplace-layer-kernel-2d",
@@ -99,7 +99,7 @@ class LaplaceLayerPotential2D(_AbstractTrialSpaceField):
         *,
         kind: Literal["single", "double"] = "double",
         density: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(panelization, BoundaryPanelization2D):
             raise TypeError("panelization must be BoundaryPanelization2D.")
         if kind not in ("single", "double"):

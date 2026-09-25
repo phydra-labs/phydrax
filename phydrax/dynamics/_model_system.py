@@ -110,7 +110,7 @@ class ContinuousModelVectorField(StrictModule):
         state_layout: StateLayout,
         input_layout: InputLayout | None = None,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
         if not isinstance(state_layout, StateLayout):
@@ -207,7 +207,7 @@ class DiscreteModelTransition(StrictModule):
         step_atol: float = 1e-12,
         input_mode: Literal["fixed", "duration", "interval"] = "fixed",
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
         if not isinstance(state_layout, StateLayout):

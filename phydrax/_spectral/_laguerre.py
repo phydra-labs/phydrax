@@ -61,7 +61,7 @@ class RadialLaguerrePlan(StrictModule, NonTrainableState):
         *,
         tau: float = 1.0,
         max_precompute_bytes: int = _DEFAULT_PRECOMPUTE_BYTES,
-    ):
+    ) -> None:
         selected_bandlimit = int(radial_bandlimit)
         selected_tau = float(tau)
         selected_limit = int(max_precompute_bytes)

@@ -49,7 +49,7 @@ class SectionOrientationField(StrictModule, NonTrainableState):
         *,
         continuity_group: ArrayLike | None = None,
         orientation_id: str = "section-orientation-field",
-    ):
+    ) -> None:
         frames_ = jnp.asarray(frames)
         sources_ = jnp.asarray(sources, dtype=jnp.int32)
         if frames_.ndim != 3 or frames_.shape[-2:] != (3, 3):

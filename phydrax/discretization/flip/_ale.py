@@ -35,7 +35,7 @@ class ALEFLIPPlan(StrictModule, NonTrainableState):
         /,
         *,
         gcl_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(splat, PreparedMeshParticleGridSplat):
             raise TypeError("splat must be PreparedMeshParticleGridSplat.")
         if not isinstance(cell_map, PreparedFiniteElementCellMap):

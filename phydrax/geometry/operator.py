@@ -71,7 +71,7 @@ class TensorGridLatentGeometry(StrictModule, NonTrainableState):
         axis_names: Sequence[str] | None = None,
         periodic: bool | Sequence[bool] = False,
         margin: float = 0.0,
-    ):
+    ) -> None:
         shape_ = _shape_tuple(shape)
         coord_dim = len(shape_)
         if bounds_policy not in ("global", "case_bbox"):
@@ -249,7 +249,7 @@ class RegionalPointLatentGeometry(StrictModule, NonTrainableState):
         *,
         mode: RegionalGeometryMode = "farthest_point",
         fixed_points: Any | None = None,
-    ):
+    ) -> None:
         count = int(point_count)
         dimension = int(coord_dim)
         if count <= 0 or dimension <= 0:

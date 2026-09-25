@@ -34,7 +34,7 @@ class PRISMClosurePlan(StrictModule, NonTrainableState):
         /,
         *,
         hard_core_diameters: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(kind, PRISMClosureKind):
             raise TypeError("kind must be PRISMClosureKind.")
         diameters = None

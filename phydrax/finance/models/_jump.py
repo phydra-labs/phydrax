@@ -40,7 +40,7 @@ class MertonJumpDiffusionModel(StrictModule):
         jump_mean: ArrayLike,
         jump_volatility: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.diffusion_volatility = _scalar(
             diffusion_volatility, "diffusion_volatility", positive=True
         )
@@ -81,7 +81,7 @@ class KouJumpDiffusionModel(StrictModule):
         upward_rate: ArrayLike,
         downward_rate: ArrayLike,
         /,
-    ):
+    ) -> None:
         probability = _scalar(upward_probability, "upward_probability")
         probability = eqx.error_if(
             probability,
@@ -134,7 +134,7 @@ class VarianceGammaModel(StrictModule):
 
     def __init__(
         self, volatility: ArrayLike, skew: ArrayLike, variance_rate: ArrayLike, /
-    ):
+    ) -> None:
         volatility = _scalar(volatility, "volatility", positive=True)
         skew = _scalar(skew, "skew")
         rate = _scalar(variance_rate, "variance_rate", positive=True)
@@ -178,7 +178,7 @@ class NormalInverseGaussianModel(StrictModule):
     skew: Array
     scale: Array
 
-    def __init__(self, tail: ArrayLike, skew: ArrayLike, scale: ArrayLike, /):
+    def __init__(self, tail: ArrayLike, skew: ArrayLike, scale: ArrayLike, /) -> None:
         tail = _scalar(tail, "tail", positive=True)
         skew = _scalar(skew, "skew")
         tail = eqx.error_if(
@@ -221,7 +221,7 @@ class CGMYModel(StrictModule):
         right_rate: ArrayLike,
         activity: ArrayLike,
         /,
-    ):
+    ) -> None:
         activity_ = _scalar(activity, "activity")
         activity_ = eqx.error_if(
             activity_,
@@ -276,7 +276,7 @@ class BatesModel(StrictModule):
         jump_mean: ArrayLike,
         jump_volatility: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(heston, HestonModel):
             raise TypeError("heston must be a HestonModel.")
         self.heston = heston

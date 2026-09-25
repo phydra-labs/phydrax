@@ -308,7 +308,7 @@ class GraphLaplacianOperator(StrictModule):
         output_key: str | None = None,
         flow: GraphFlow = "source_to_target",
         normalization: GraphLaplacianNormalization = "symmetric",
-    ):
+    ) -> None:
         self.weight = weight
         self.weight_key = weight_key
         self.input_key = input_key
@@ -355,7 +355,7 @@ class GraphPolynomialFilter(StrictModule):
         operator: GraphFilterOperator = "laplacian",
         flow: GraphFlow = "source_to_target",
         normalization: GraphLaplacianNormalization = "symmetric",
-    ):
+    ) -> None:
         coeff_leaves = jtu.tree_leaves(coefficients)
         if not coeff_leaves:
             raise ValueError("GraphPolynomialFilter coefficients must be non-empty.")
@@ -422,7 +422,7 @@ class GraphChebyshevFilter(StrictModule):
         flow: GraphFlow = "source_to_target",
         normalization: GraphLaplacianNormalization = "symmetric",
         lambda_max: float = 2.0,
-    ):
+    ) -> None:
         coeff_leaves = jtu.tree_leaves(coefficients)
         if not coeff_leaves:
             raise ValueError("GraphChebyshevFilter coefficients must be non-empty.")

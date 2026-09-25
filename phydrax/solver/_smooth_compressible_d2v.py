@@ -26,7 +26,9 @@ class OracleSmoothCompressibleD2V17FixedStepMethod(AbstractFixedStepMethod):
     dynamics: PreparedSmoothCompressibleD2V17SpatialDynamics
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: PreparedSmoothCompressibleD2V17SpatialDynamics, /):
+    def __init__(
+        self, dynamics: PreparedSmoothCompressibleD2V17SpatialDynamics, /
+    ) -> None:
         if not isinstance(dynamics, PreparedSmoothCompressibleD2V17SpatialDynamics):
             raise TypeError(
                 "dynamics must be PreparedSmoothCompressibleD2V17SpatialDynamics."

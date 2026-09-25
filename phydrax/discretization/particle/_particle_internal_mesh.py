@@ -69,7 +69,7 @@ class RadialShellMeshPlan(AbstractParticleInternalMeshPlan):
         reference_faces: ArrayLike | None = None,
         transverse_measure: float = 1.0,
         mesh_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, ParticleInternalGeometry):
             raise TypeError("geometry must be a ParticleInternalGeometry.")
         count = int(cell_count)
@@ -121,7 +121,7 @@ class PreparedRadialShellMesh(AbstractPreparedParticleInternalMesh):
     geometry_exponent: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: RadialShellMeshPlan, /):
+    def __init__(self, plan: RadialShellMeshPlan, /) -> None:
         if not isinstance(plan, RadialShellMeshPlan):
             raise TypeError("plan must be a RadialShellMeshPlan.")
         exponent = {
@@ -200,7 +200,7 @@ class ParticleInternalBatchPlan(StrictModule, NonTrainableState):
         *,
         front_count: int = 0,
         batch_id: str | None = None,
-    ):
+    ) -> None:
         owners = np.asarray(owner_indices)
         species = int(species_count)
         fronts = int(front_count)
@@ -249,7 +249,7 @@ class PreparedParticleInternalBatch(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: ParticleInternalBatchPlan, particles: ParticleDiscretization, /
-    ):
+    ) -> None:
         if not isinstance(plan, ParticleInternalBatchPlan):
             raise TypeError("plan must be a ParticleInternalBatchPlan.")
         if not isinstance(particles, ParticleDiscretization):

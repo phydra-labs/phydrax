@@ -136,7 +136,7 @@ class WENOReconstructionPlan(StrictModule, NonTrainableState):
         *,
         epsilon: float = 1e-6,
         power: int = 2,
-    ):
+    ) -> None:
         if order not in (3, 5):
             raise ValueError("WENO order must be 3 or 5.")
         epsilon_ = float(epsilon)

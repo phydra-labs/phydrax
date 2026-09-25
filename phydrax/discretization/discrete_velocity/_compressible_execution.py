@@ -45,7 +45,7 @@ class CompressibleKineticPrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: str = "float64",
         dual_dtype: str = "float64",
         block_size: int = 256,
-    ):
+    ) -> None:
         supported = ("float16", "bfloat16", "float32", "float64")
         if storage_dtype not in supported or dual_dtype not in supported:
             raise ValueError("Unsupported kinetic storage or dual dtype.")
@@ -118,7 +118,7 @@ class KineticStoragePlan(StrictModule, NonTrainableState):
         /,
         *,
         q_block_size: int = 16,
-    ):
+    ) -> None:
         if layout not in ("double-buffer-aos", "double-buffer-soa", "q-blocked", "aa"):
             raise ValueError(f"Unknown kinetic storage layout {layout!r}.")
         block = int(q_block_size)
@@ -140,7 +140,9 @@ class KineticWorksetPlan(StrictModule, NonTrainableState):
     maximum_scratch_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, cell_batch_size: int = 4096, maximum_scratch_bytes: int = 1 << 30):
+    def __init__(
+        self, cell_batch_size: int = 4096, maximum_scratch_bytes: int = 1 << 30
+    ) -> None:
         batch = int(cell_batch_size)
         scratch = int(maximum_scratch_bytes)
         if batch < 1 or scratch < 1:
@@ -191,7 +193,7 @@ class IntegerLatticeTransportPlan(StrictModule, NonTrainableState):
         *,
         periodic_axes: tuple[bool, ...] | None = None,
         storage: KineticStoragePlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(rule, CompressibleVelocityRule):
             raise TypeError("rule must be a CompressibleVelocityRule.")
         if not rule.exact_streaming:
@@ -312,7 +314,7 @@ class KineticVelocityPartitionPlan(StrictModule, NonTrainableState):
     shard_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, rule: CompressibleVelocityRule, shard_count: int, /):
+    def __init__(self, rule: CompressibleVelocityRule, shard_count: int, /) -> None:
         if not isinstance(rule, CompressibleVelocityRule):
             raise TypeError("rule must be a CompressibleVelocityRule.")
         count = int(shard_count)

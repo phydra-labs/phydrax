@@ -70,7 +70,7 @@ class PeriodicSpectrumResult(StrictModule, NonTrainableState):
         basis_id: str,
         support_id: str,
         pencil_id: str,
-    ):
+    ) -> None:
         points = jnp.asarray(fractional_points)
         weight = jnp.asarray(weights, dtype=points.dtype)
         distance = jnp.asarray(distances, dtype=points.dtype)
@@ -148,7 +148,7 @@ class PeriodicSpectrumPlan(StrictModule, NonTrainableState):
         band_count: int | None = None,
         residual_tolerance: float = 1.0e-9,
         maximum_eigenpairs: int = 1_000_000,
-    ):
+    ) -> None:
         if not isinstance(pencil, PreparedPeriodicOrbitalPencil):
             raise TypeError("pencil must be PreparedPeriodicOrbitalPencil.")
         if not isinstance(support, (ReciprocalMeshPlan, ReciprocalPathPlan)):
@@ -289,7 +289,7 @@ class ChebyshevMomentPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_operator_applications: int = 1_000_000,
-    ):
+    ) -> None:
         if not isinstance(pencil, PreparedPeriodicOrbitalPencil) or not isinstance(
             mesh, ReciprocalMeshPlan
         ):

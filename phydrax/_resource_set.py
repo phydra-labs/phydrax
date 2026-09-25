@@ -32,7 +32,7 @@ class ResourceSetReadError(ValueError):
 
     reason: _ResourceSetFailure
 
-    def __init__(self, reason: _ResourceSetFailure, message: str, /):
+    def __init__(self, reason: _ResourceSetFailure, message: str, /) -> None:
         self.reason = reason
         super().__init__(str(message))
 

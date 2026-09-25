@@ -116,7 +116,7 @@ class FullDarkSectorDifferentiationPolicy(StrictModule, NonTrainableState):
         provider_ids: Sequence[str],
         external_artifact_ids: Sequence[str],
         differentiable_parameters: Sequence[str],
-    ):
+    ) -> None:
         profiles = _named_identities(profile_ids, "profile_ids")
         revisions = _named_identities(revision_ids, "revision_ids")
         providers = _identifiers(provider_ids, "provider_id")
@@ -206,7 +206,7 @@ class FixedProfileEvaluation(StrictModule):
         external_artifacts_constant: ArrayLike,
         fixed_profile_id: str,
         product_id: str,
-    ):
+    ) -> None:
         value = jnp.asarray(values).reshape((-1,))
         if value.size == 0 or not eqx.is_inexact_array(value):
             raise TypeError("Fixed-profile values must be a nonempty inexact vector.")
@@ -288,7 +288,7 @@ class FixedProfileSmoothSensitivityPlan(StrictModule, NonTrainableState):
         product_id: str,
         absolute_tolerance: float = 1.0e-7,
         relative_tolerance: float = 1.0e-4,
-    ):
+    ) -> None:
         if not isinstance(policy, FullDarkSectorDifferentiationPolicy):
             raise TypeError("policy must be FullDarkSectorDifferentiationPolicy.")
         policy.require_target("fixed-profile-parameters")
@@ -412,7 +412,7 @@ class FullPathProbabilityLaw(StrictModule):
         *,
         component_names: Sequence[str],
         fixed_profile_id: str,
-    ):
+    ) -> None:
         log_probability = jnp.asarray(component_log_probabilities)
         if (
             log_probability.ndim != 2
@@ -493,7 +493,7 @@ class FullPathSampleBatch(StrictModule):
         *,
         successful: ArrayLike,
         product_id: str,
-    ):
+    ) -> None:
         if not isinstance(law, FullPathProbabilityLaw):
             raise TypeError("law must be FullPathProbabilityLaw.")
         value = jnp.asarray(values)
@@ -592,7 +592,7 @@ class FullPathScoreCRNPlan(StrictModule, NonTrainableState):
         product_id: str,
         bias_absolute_tolerance: float = 0.0,
         bias_standard_error_multiplier: float = 2.0,
-    ):
+    ) -> None:
         if not isinstance(policy, FullDarkSectorDifferentiationPolicy):
             raise TypeError("policy must be FullDarkSectorDifferentiationPolicy.")
         policy.require_target("full-path-probability")

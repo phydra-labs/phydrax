@@ -35,7 +35,7 @@ class HEPColumnProfile(StrictModule, NonTrainableState):
         /,
         *,
         unit_qualifiers: Mapping[str, str],
-    ):
+    ) -> None:
         format_name_ = str(format_name).strip()
         fields = tuple(
             sorted(

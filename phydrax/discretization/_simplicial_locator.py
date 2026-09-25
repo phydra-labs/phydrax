@@ -50,7 +50,7 @@ class SimplicialLocationPolicy(StrictModule, NonTrainableState):
         residual_tolerance: float = 1.0e-10,
         reference_tolerance: float = 1.0e-10,
         trust_radius: float = 0.5,
-    ):
+    ) -> None:
         capacities = (
             int(maximum_candidates),
             int(maximum_iterations),
@@ -149,7 +149,7 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         coordinates: ArrayLike,
         policy: SimplicialLocationPolicy,
         /,
-    ):
+    ) -> None:
         if not isinstance(cell_map, PreparedFiniteElementCellMap):
             raise TypeError("cell_map must be PreparedFiniteElementCellMap.")
         if cell_map.coordinate_element.cell_kind not in ("triangle", "tetrahedron"):

@@ -102,7 +102,7 @@ class LowRankUpdate(StrictModule, ParameterOwner):
         stddev: float = 0.01,
         key: Key[Array, ""] = DOC_KEY0,
         _factors: tuple[Array, Array] | None = None,
-    ):
+    ) -> None:
         value = jnp.asarray(base)
         if not eqx.is_inexact_array(value):
             raise TypeError("Low-rank base weights must be inexact JAX arrays.")

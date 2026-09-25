@@ -53,7 +53,7 @@ class KKTRegularizationPolicy(StrictModule):
         maximum_primal: float = 1e8,
         maximum_dual: float = 1e8,
         maximum_corrections: int = 16,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

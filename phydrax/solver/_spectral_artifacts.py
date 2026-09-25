@@ -58,7 +58,7 @@ class SpectralStateArtifact(StrictModule):
         stored_state_bytes: int | None = None,
         fixed_coordinate_count: int | None = None,
         conjugate_pair_count: int | None = None,
-    ):
+    ) -> None:
         state_ = jnp.asarray(state)
         raw_time = jnp.asarray(time)
         raw_step = jnp.asarray(step)

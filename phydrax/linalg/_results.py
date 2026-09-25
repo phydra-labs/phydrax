@@ -101,7 +101,7 @@ class LinearSolveDiagnostics(StrictModule):
         effective_block_rank: Any = -1,
         deflated_rhs_count: Any = 0,
         refinement_steps: Any = 0,
-    ):
+    ) -> None:
         self.residual_norm = jnp.asarray(residual_norm)
         self.relative_residual = jnp.asarray(relative_residual)
         self.normal_residual_norm = jnp.asarray(normal_residual_norm)
@@ -153,7 +153,7 @@ class LinearIterationMetrics(StrictModule):
         adjoint_matvec_count=0,
         condition_estimate=jnp.nan,
         breakdown_status=0,
-    ):
+    ) -> None:
         self.residual_norm = jnp.asarray(residual_norm)
         self.relative_residual = jnp.asarray(relative_residual)
         self.normal_residual_norm = jnp.asarray(normal_residual_norm)
@@ -188,7 +188,7 @@ class InitialGuessDiagnostics(StrictModule):
         proposal_valid: Any,
         accepted: Any,
         provider_id: str,
-    ):
+    ) -> None:
         identifier = str(provider_id)
         if not identifier:
             raise ValueError("provider_id must be non-empty.")
@@ -222,7 +222,7 @@ class LinearPrecisionEvidence(StrictModule):
         accumulation_dtype: str,
         condition_limit: float | None,
         maximum_refinement_steps: int,
-    ):
+    ) -> None:
         if not operator_dtype or not residual_dtype or not accumulation_dtype:
             raise ValueError(
                 "Effective operator, residual, and accumulation dtypes must be non-empty."
@@ -310,7 +310,7 @@ class LinearSolveProvenance(StrictModule):
         recycling_update_count: Any = 0,
         requested_precision: MixedPrecisionPolicy | None = None,
         effective_precision: LinearPrecisionEvidence | None = None,
-    ):
+    ) -> None:
         values = (
             str(backend),
             str(method),
@@ -500,7 +500,7 @@ class LinearSolveResult(StrictModule):
         differentiation: DifferentiationPolicy,
         iteration_evidence: IterationEvidence | None = None,
         initial_guess: InitialGuessDiagnostics | None = None,
-    ):
+    ) -> None:
         if not isinstance(diagnostics, LinearSolveDiagnostics):
             raise TypeError("diagnostics must be LinearSolveDiagnostics.")
         if not isinstance(provenance, LinearSolveProvenance):
@@ -567,7 +567,7 @@ class MatrixInversionResult(StrictModule):
         provenance: LinearSolveProvenance,
         operation: MatrixInversionKind,
         /,
-    ):
+    ) -> None:
         if not isinstance(diagnostics, LinearSolveDiagnostics):
             raise TypeError("diagnostics must be LinearSolveDiagnostics.")
         if not isinstance(provenance, LinearSolveProvenance):
@@ -645,7 +645,7 @@ class LinearSolveCheckEvidence(StrictModule):
         nullspace_ok: Any,
         nullspace_certificate_id: str | None,
         primal_valid: Any = True,
-    ):
+    ) -> None:
         if kind not in ("primal", "adjoint"):
             raise ValueError("kind must be 'primal' or 'adjoint'.")
         identifier = str(operator_id)
@@ -748,7 +748,7 @@ class RecycledLinearSolveResult(StrictModule):
         result: LinearSolveResult,
         recycling: RecyclingState,
         /,
-    ):
+    ) -> None:
         if not isinstance(result, LinearSolveResult):
             raise TypeError("result must be a LinearSolveResult.")
         if not isinstance(recycling, RecyclingState):

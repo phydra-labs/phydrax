@@ -53,7 +53,7 @@ class ShakePlan(StrictModule, NonTrainableState):
         minimum_amplitude: float = 0.0,
         convergence_tolerance: float = 1.0e-8,
         loss: AbstractRobustLoss | None = None,
-    ):
+    ) -> None:
         iterations_ = int(iterations)
         scalars = tuple(
             float(value)

@@ -56,7 +56,7 @@ class MomentPenalty(AbstractEvaluatedScalarTerm):
         *,
         scale: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(condition, AbstractMomentCondition):
             raise TypeError("MomentPenalty requires an AbstractMomentCondition.")
         if isinstance(source, AdaptiveIntegration):

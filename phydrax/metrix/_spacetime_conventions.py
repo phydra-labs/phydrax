@@ -56,7 +56,7 @@ class RelativityConvention(StrictModule, NonTrainableState):
         future_time_orientation: int = 1,
         azimuthal_orientation: int = 1,
         fourier_sign: int = -1,
-    ):
+    ) -> None:
         if metric_signature not in ("mostly_plus", "mostly_minus"):
             raise ValueError("metric_signature must be 'mostly_plus' or 'mostly_minus'.")
         riemann = _sign(riemann_sign, "riemann_sign")

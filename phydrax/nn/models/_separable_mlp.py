@@ -69,7 +69,7 @@ class SeparableMLP(_AbstractStructuredInputModel):
         initializer: str = "glorot_normal",
         scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         r"""Create a separable MLP.
 
         `SeparableMLP` forwards MLP hyperparameters to each internal scalar

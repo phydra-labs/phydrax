@@ -78,7 +78,7 @@ class RowMLP(StrictModule):
         activation: Callable = jax.nn.silu,
         final_activation: Callable | None = None,
         key: jax.Array,
-    ):
+    ) -> None:
         if depth < 1:
             raise ValueError("RowMLP depth must be at least 1.")
         sizes = [int(in_size)]
@@ -135,7 +135,7 @@ class MeshGraphNetBlock(StrictModule):
         use_edge_residual: bool = True,
         use_node_residual: bool = True,
         key: jax.Array,
-    ):
+    ) -> None:
         hidden = int(latent_size if hidden_size is None else hidden_size)
         k_edge, k_node = jax.random.split(key, 2)
         self.edge_mlp = RowMLP(
@@ -250,7 +250,7 @@ class MeshGraphNet(StrictModule):
         global_size: int = 0,
         activation: Callable = jax.nn.silu,
         key: jax.Array,
-    ):
+    ) -> None:
         if processor_steps < 0:
             raise ValueError("processor_steps must be non-negative.")
         hidden = int(latent_size if hidden_size is None else hidden_size)

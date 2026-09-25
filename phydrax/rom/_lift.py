@@ -46,7 +46,7 @@ class ReducedLiftArtifact(StrictModule, NonTrainableState):
         term_ids: Sequence[str],
         evidence_ids: Sequence[str],
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(reduction, TrialTestReduction):
             raise TypeError("reduction must be a TrialTestReduction.")
         if not isinstance(trace_operator, AbstractLinearOperator):

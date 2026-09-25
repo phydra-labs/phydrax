@@ -128,7 +128,7 @@ class FittedPolynomialFeatures(AbstractFittedModel):
         linear_indices: tuple[int, ...],
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.exponents = jnp.asarray(exponents, dtype=jnp.int32)
@@ -174,7 +174,7 @@ class PolynomialFeatures(AbstractRecipe):
         include_bias: bool = True,
         max_output_features: int = 4096,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if (
             isinstance(degree, bool)
             or not isinstance(degree, Integral)
@@ -276,7 +276,7 @@ class FittedSplineTransformer(AbstractFittedModel):
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.knots = jnp.asarray(knots)
@@ -364,7 +364,7 @@ class SplineTransformer(AbstractRecipe):
         knots: Literal["uniform", "quantile"] = "uniform",
         bounds: Literal["clip", "error"] = "error",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(n_knots) < 2:
             raise ValueError("n_knots must be at least two.")
         if int(degree) < 0:
@@ -478,7 +478,7 @@ class FittedFourierFeatures(AbstractFittedModel):
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.origin = jnp.asarray(origin)
@@ -550,7 +550,7 @@ class FourierFeatures(AbstractRecipe):
         include_bias: bool = False,
         include_original: bool = False,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(n_frequencies) <= 0:
             raise ValueError("n_frequencies must be positive.")
         if weight_policy not in ("none", "statistical", "measure", "product"):
@@ -686,7 +686,7 @@ class FittedRandomFourierFeatures(AbstractFittedModel):
         *,
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.frequencies = jnp.asarray(frequencies)
@@ -727,7 +727,7 @@ class RandomFourierFeatures(AbstractRecipe):
         *,
         gamma: ArrayLike = 1.0,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
         gamma_ = jnp.asarray(gamma, dtype=jnp.float64)
@@ -804,7 +804,7 @@ class FittedFeatureHasher(AbstractFittedModel, NonTrainableState):
         *,
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.buckets = jnp.asarray(buckets, dtype=jnp.int32)
@@ -845,7 +845,7 @@ class FeatureHasher(AbstractRecipe):
         *,
         alternate_sign: bool = True,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(n_features) <= 0:
             raise ValueError("n_features must be positive.")
         if weight_policy not in ("none", "statistical", "measure", "product"):
@@ -933,7 +933,7 @@ class FittedGaussianRandomProjection(_AbstractRandomProjection):
         *,
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.projection = jnp.asarray(projection)
@@ -948,7 +948,9 @@ class GaussianRandomProjection(AbstractRecipe):
     n_components: int = eqx.field(static=True)
     weight_policy: WeightPolicy = eqx.field(static=True)
 
-    def __init__(self, n_components: int, *, weight_policy: WeightPolicy = "statistical"):
+    def __init__(
+        self, n_components: int, *, weight_policy: WeightPolicy = "statistical"
+    ) -> None:
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
         if weight_policy not in ("none", "statistical", "measure", "product"):
@@ -1009,7 +1011,7 @@ class FittedSparseRandomProjection(AbstractFittedModel):
         density: float,
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.projection = projection
@@ -1047,7 +1049,7 @@ class SparseRandomProjection(AbstractRecipe):
         *,
         density: float | None = None,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
         if density is not None and (
@@ -1186,7 +1188,7 @@ class FittedPowerTransformer(AbstractFittedModel):
         method: Literal["yeo-johnson", "box-cox"],
         schema: FeatureSchema,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.in_size = len(schema.names)
         self.out_size = len(schema.names)
         self.lambdas = jnp.asarray(lambdas)
@@ -1277,7 +1279,7 @@ class PowerTransformer(AbstractRecipe):
         lambda_range: tuple[float, float] = (-2.0, 2.0),
         n_lambdas: int = 65,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if method not in ("yeo-johnson", "box-cox"):
             raise ValueError("method must be 'yeo-johnson' or 'box-cox'.")
         lower, upper = float(lambda_range[0]), float(lambda_range[1])
@@ -1396,7 +1398,7 @@ class FittedQuantileTransformer(AbstractFittedModel):
         output_distribution: Literal["uniform", "normal"],
         schema: FeatureSchema,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.in_size = len(schema.names)
         self.out_size = len(schema.names)
         self.quantiles = jnp.asarray(quantiles)
@@ -1495,7 +1497,7 @@ class QuantileTransformer(AbstractRecipe):
         *,
         output_distribution: Literal["uniform", "normal"] = "uniform",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(n_quantiles) < 2:
             raise ValueError("n_quantiles must be at least two.")
         if output_distribution not in ("uniform", "normal"):

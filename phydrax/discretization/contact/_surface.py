@@ -143,7 +143,7 @@ class CollisionFeaturePolicy(StrictModule, NonTrainableState):
         solver_clearance: ArrayLike | float = 0.0,
         proxy_error: ArrayLike | float = 0.0,
         provenance_id: str,
-    ):
+    ) -> None:
         identifiers = np.asarray(feature_ids)
         kinds = np.asarray(feature_kinds)
         if (
@@ -285,7 +285,7 @@ class ContactPairPolicy(StrictModule, NonTrainableState):
         *,
         allowed_participant_pairs: ArrayLike | None = None,
         excluded_vertex_pairs: ArrayLike | None = None,
-    ):
+    ) -> None:
         count = int(vertex_count)
         if count <= 0:
             raise ValueError("Contact pair policy requires a positive vertex count.")
@@ -536,7 +536,7 @@ class CollisionSurfacePlan(StrictModule, NonTrainableState):
         feature_provenance_id: str | None = None,
         allow_isolated_vertices: bool = False,
         topology_id: str | None = None,
-    ):
+    ) -> None:
         identifiers = np.asarray(vertex_ids)
         dimension = int(ambient_dimension)
         if (
@@ -778,7 +778,7 @@ class PreparedCollisionSurface(StrictModule, NonTrainableState):
         *,
         precision: ContactPrecisionPolicy | None = None,
         prepared_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, CollisionSurfacePlan):
             raise TypeError("plan must be CollisionSurfacePlan.")
         if not isinstance(displacement_operator, AbstractLinearOperator):
@@ -980,7 +980,7 @@ class PreparedCollisionScene(StrictModule, NonTrainableState):
     face_offsets: tuple[int, ...] = eqx.field(static=True)
     scene_id: str = eqx.field(static=True)
 
-    def __init__(self, surfaces: Sequence[PreparedCollisionSurface], /):
+    def __init__(self, surfaces: Sequence[PreparedCollisionSurface], /) -> None:
         values = tuple(surfaces)
         if not values or not all(
             isinstance(value, PreparedCollisionSurface) for value in values

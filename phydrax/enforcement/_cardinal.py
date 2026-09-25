@@ -139,7 +139,7 @@ class CardinalCorrectionEvidence(StrictModule):
         extension_scope: CardinalExtensionScope,
         preserves_multiplier_zeros: bool,
         uses_envelopes: bool,
-    ):
+    ) -> None:
         self.provider_id = str(provider_id)
         self.action_id = str(action_id)
         self.field = str(field)
@@ -378,7 +378,7 @@ class CardinalCorrectionAction(StrictModule):
         components: tuple[int, ...] | None,
         output_width: int | None,
         evidence: CardinalCorrectionEvidence,
-    ):
+    ) -> None:
         field_ = str(field)
         if field_ != evidence.field:
             raise ValueError("Cardinal action field and evidence field disagree.")
@@ -479,7 +479,7 @@ class CardinalCorrectionPlan(StrictModule):
         envelope_enabled: Sequence[bool] = (),
         envelope_scale: ArrayLike = 1.0,
         preservation_weight: DomainFunction | None = None,
-    ):
+    ) -> None:
         if not isinstance(action, PointObservationAction):
             raise TypeError("CardinalCorrectionPlan requires PointObservationAction.")
         if not isinstance(domain, Domain):
@@ -670,7 +670,7 @@ class IDWCardinalCorrectionProvider(StrictModule):
         domain: Domain,
         /,
         **kwargs: Any,
-    ):
+    ) -> None:
         self.plan = CardinalCorrectionPlan(
             action,
             domain,
@@ -705,7 +705,7 @@ class CompactCardinalCorrectionProvider(StrictModule):
         domain: Domain,
         /,
         **kwargs: Any,
-    ):
+    ) -> None:
         self.plan = CardinalCorrectionPlan(
             action,
             domain,

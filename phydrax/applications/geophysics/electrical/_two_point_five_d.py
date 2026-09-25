@@ -42,7 +42,7 @@ class InvariantElectricalSurvey(StrictModule, NonTrainableState):
         current_kind: str,
         length_unit: UnitDefinition = METER,
         current_unit: UnitDefinition | None = None,
-    ):
+    ) -> None:
         if current_kind not in ("line-current", "point-current"):
             raise ValueError(
                 "Invariant electrical current kind must be line-current or point-current."
@@ -128,7 +128,7 @@ class PreparedInvariantElectricalGeometry(StrictModule, NonTrainableState):
     gauge: Array
     geometry_id: str = eqx.field(static=True)
 
-    def __init__(self, mesh: CellMesh, positions_m: ArrayLike, /):
+    def __init__(self, mesh: CellMesh, positions_m: ArrayLike, /) -> None:
         if (
             not isinstance(mesh, CellMesh)
             or mesh.topological_dimension != 2
@@ -287,7 +287,7 @@ class LineCurrentDCPlan(StrictModule, NonTrainableState):
     survey: InvariantElectricalSurvey
     policy: la.LinearSolvePolicy
 
-    def __init__(self, mesh: CellMesh, survey: InvariantElectricalSurvey, /):
+    def __init__(self, mesh: CellMesh, survey: InvariantElectricalSurvey, /) -> None:
         if (
             not isinstance(survey, InvariantElectricalSurvey)
             or survey.current_kind != "line-current"
@@ -365,7 +365,7 @@ class TwoPointFiveDDCPlan(StrictModule, NonTrainableState):
         wavenumbers_m_inverse: ArrayLike,
         quadrature_weights_m_inverse: ArrayLike,
         /,
-    ):
+    ) -> None:
         if (
             not isinstance(survey, InvariantElectricalSurvey)
             or survey.current_kind != "point-current"

@@ -68,7 +68,7 @@ class CableSolverPlan(StrictModule, NonTrainableState):
         *,
         scheme: CableScheme = "backward-euler",
         residual_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         if isinstance(dt_ms, bool):
             raise TypeError("dt_ms must be a real scalar, not bool.")
         step = float(dt_ms)
@@ -117,7 +117,7 @@ class PreparedCableSolver(StrictModule, NonTrainableState):
         morphology: PreparedCellMorphology,
         program: MembraneProgram,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.morphology = morphology
         self.program = program

@@ -29,7 +29,7 @@ class AdditiveIMEXTableau(StrictModule, NonTrainableState):
         weights: ArrayLike,
         nodes: ArrayLike,
         /,
-    ):
+    ) -> None:
         explicit = np.asarray(explicit_matrix, dtype=np.float64)
         implicit = np.asarray(implicit_matrix, dtype=np.float64)
         weights_ = np.asarray(weights, dtype=np.float64)
@@ -158,7 +158,7 @@ class BalanceLawCompositionPlan(StrictModule, NonTrainableState):
         self,
         process_subcycles: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         subcycles = tuple(process_subcycles)
         if not subcycles or any(value <= 0 for value in subcycles):
             raise ValueError("Balance-law multirate composition is invalid.")

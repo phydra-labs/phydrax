@@ -164,7 +164,7 @@ class RelativisticUnitContract(StrictModule, NonTrainableState):
         color_normalization: ColorNormalization = "average-initial-sum-final",
         polarization_normalization: PolarizationNormalization = "physical-helicity",
         identical_particle_normalization: IdenticalParticleNormalization = "factorial-symmetry",
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         if not isinstance(convention, RelativityConvention):
@@ -645,7 +645,7 @@ class LocalRelativisticFramePlan(StrictModule, NonTrainableState):
         *,
         observer_id: str,
         orientation_id: str,
-    ):
+    ) -> None:
         if not isinstance(geometry, ADMGridGeometry):
             raise TypeError("geometry must be an ADMGridGeometry.")
         if not isinstance(tetrad, OrthonormalTetrad):

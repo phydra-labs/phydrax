@@ -39,7 +39,7 @@ class ClosedTimePathPlan(StrictModule, NonTrainableState):
         *,
         maximum_contour_points: int = 4096,
         maximum_two_point_elements: int = 16_777_216,
-    ):
+    ) -> None:
         times = np.asarray(time_nodes, dtype=np.float64)
         contour_capacity = int(maximum_contour_points)
         two_point_capacity = int(maximum_two_point_elements)
@@ -83,7 +83,7 @@ class ClosedTimePathGrid(StrictModule, NonTrainableState):
     causal_mask: Array
     grid_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ClosedTimePathPlan, /):
+    def __init__(self, plan: ClosedTimePathPlan, /) -> None:
         if not isinstance(plan, ClosedTimePathPlan):
             raise TypeError("plan must be ClosedTimePathPlan.")
         times = np.asarray(plan.time_nodes)
@@ -162,7 +162,7 @@ class FreeKeldyshPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_modes: int = 4096,
-    ):
+    ) -> None:
         if not isinstance(grid, ClosedTimePathGrid):
             raise TypeError("grid must be ClosedTimePathGrid.")
         frequency = np.asarray(frequencies, dtype=np.float64)

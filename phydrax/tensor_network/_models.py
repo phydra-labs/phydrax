@@ -34,7 +34,7 @@ class FiniteLocalTerm(StrictModule):
         /,
         *,
         coefficient: ArrayLike = 1.0,
-    ):
+    ) -> None:
         start_ = int(start)
         values = tuple(jnp.asarray(value) for value in operators)
         coefficient_ = jnp.asarray(coefficient)
@@ -288,7 +288,7 @@ class FixedStructureMPOCoefficients(StrictModule):
         basis_operators: Sequence[MatrixProductOperator],
         coefficients: ArrayLike,
         /,
-    ):
+    ) -> None:
         basis = tuple(basis_operators)
         values = jnp.asarray(coefficients)
         if not basis or any(

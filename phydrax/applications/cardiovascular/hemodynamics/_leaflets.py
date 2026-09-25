@@ -88,7 +88,7 @@ class ImmersedLeafletRoute(StrictModule, NonTrainableState):
         *,
         maximum_leakage_proxy: float,
         route_id: str = "cardiovascular-immersed-leaflet",
-    ):
+    ) -> None:
         if not isinstance(transfer, PreparedSparseMarkerTransfer):
             raise TypeError("transfer must be PreparedSparseMarkerTransfer.")
         if not callable(kinematics) or not callable(leakage_probe):
@@ -201,7 +201,7 @@ class CutCellLeafletRoute(StrictModule, NonTrainableState):
         maximum_gcl_residual: float = 1.0e-6,
         maximum_small_cell_fraction: float = 0.05,
         route_id: str = "cardiovascular-cut-cell-leaflet",
-    ):
+    ) -> None:
         if not isinstance(geometry_plan, MACDiffuseSDFGeometryPlan):
             raise TypeError("geometry_plan must be MACDiffuseSDFGeometryPlan.")
         if not callable(geometry_arguments):
@@ -391,7 +391,7 @@ class LeafletContactWorkflowPlan(StrictModule, NonTrainableState):
         *,
         maximum_penetration: float,
         force_balance_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(contact, DeformableContactResidualPlan):
             raise TypeError("contact must be DeformableContactResidualPlan.")
         if not isinstance(fluid_route, (ImmersedLeafletRoute, CutCellLeafletRoute)):
@@ -437,7 +437,7 @@ class PreparedLeafletContactWorkflow(StrictModule, NonTrainableState):
     plan: LeafletContactWorkflowPlan
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: LeafletContactWorkflowPlan, /):
+    def __init__(self, plan: LeafletContactWorkflowPlan, /) -> None:
         if not isinstance(plan, LeafletContactWorkflowPlan):
             raise TypeError("plan must be LeafletContactWorkflowPlan.")
         self.plan = plan

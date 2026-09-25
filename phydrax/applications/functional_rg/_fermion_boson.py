@@ -44,7 +44,7 @@ class MatsubaraThresholdPlan(StrictModule, NonTrainableState):
     maximum_terms: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_mode: int, /, *, maximum_terms: int = 4096):
+    def __init__(self, maximum_mode: int, /, *, maximum_terms: int = 4096) -> None:
         mode = int(maximum_mode)
         capacity = int(maximum_terms)
         term_count = (2 * mode + 1) + 2 * mode
@@ -163,7 +163,7 @@ class FermionBosonTruncationState(StrictModule):
         yukawa_squared: ArrayLike,
         four_fermion: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value).reshape(())
             for value in (
@@ -230,7 +230,7 @@ class GrossNeveuYukawaFlowPlan(StrictModule, NonTrainableState):
         /,
         *,
         representation: FermionBosonRepresentation = "yukawa",
-    ):
+    ) -> None:
         flavors = int(fermion_flavors)
         scalars = int(scalar_components)
         dimension_ = float(dimension)

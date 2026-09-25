@@ -41,7 +41,7 @@ class RenderEvidence(StrictModule, NonTrainableState):
         plan_id: str,
         support_id: str,
         geometry_id: str,
-    ):
+    ) -> None:
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.coverage_complete = jnp.asarray(coverage_complete, dtype=jnp.bool_)
         self.capacity_sufficient = jnp.asarray(capacity_sufficient, dtype=jnp.bool_)

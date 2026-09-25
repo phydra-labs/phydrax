@@ -23,7 +23,7 @@ class CoordinateChart(StrictModule):
     name: str
     coordinates: tuple[str, ...]
 
-    def __init__(self, name: str, coordinates: Sequence[str], /):
+    def __init__(self, name: str, coordinates: Sequence[str], /) -> None:
         name_ = str(name)
         coordinates_ = tuple(str(coordinate) for coordinate in coordinates)
         if not name_:
@@ -59,7 +59,7 @@ class _ComposedMap(StrictModule):
         first: Callable[[Array], Array],
         second: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         self.first = first
         self.second = second
 
@@ -83,7 +83,7 @@ class ChartTransition(StrictModule):
         /,
         *,
         inverse: Callable[[Array], Array] | None = None,
-    ):
+    ) -> None:
         if not callable(map):
             raise TypeError("Chart transition map must be callable.")
         if inverse is not None and not callable(inverse):

@@ -45,7 +45,7 @@ class MultilayerEnergyBalance(StrictModule):
         exchanges: ArrayLike = (0.7,),
         *,
         feedback: float = 1.2,
-    ):
+    ) -> None:
         capacities_ = np.asarray(capacities, dtype=np.float64)
         exchanges_ = np.asarray(exchanges, dtype=np.float64)
         if (

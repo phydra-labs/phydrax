@@ -58,7 +58,7 @@ class RigidMarkerMapPlan(StrictModule, NonTrainableState):
         bodies: PreparedRigidBodySet,
         marker_owner: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(markers, LagrangianMarkerDiscretization):
             raise TypeError("markers must be LagrangianMarkerDiscretization.")
         if not isinstance(bodies, PreparedRigidBodySet):
@@ -103,7 +103,7 @@ class PreparedRigidMarkerMap(StrictModule, NonTrainableState):
     generalized_velocity_space: PyTreeSpace
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: RigidMarkerMapPlan, /):
+    def __init__(self, plan: RigidMarkerMapPlan, /) -> None:
         if not isinstance(plan, RigidMarkerMapPlan):
             raise TypeError("plan must be RigidMarkerMapPlan.")
         active_body = np.asarray(plan.bodies.particles.active_mask)
@@ -328,7 +328,7 @@ class PreparedRigidSiteForceBinding(StrictModule, NonTrainableState):
     source_to_marker: Array
     binding_id: str = eqx.field(static=True)
 
-    def __init__(self, marker_map, site_ids, body_ids, /):
+    def __init__(self, marker_map, site_ids, body_ids, /) -> None:
         sites, bodies = np.asarray(site_ids), np.asarray(body_ids)
         if sites.ndim != 1 or bodies.shape != sites.shape:
             raise ValueError("site_ids and body_ids must be equally sized vectors.")

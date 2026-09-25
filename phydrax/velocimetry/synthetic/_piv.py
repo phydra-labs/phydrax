@@ -89,7 +89,7 @@ class PIVScenarioPlan(StrictModule, NonTrainableState):
         boundary_fraction: float = 0.0,
         delta_t: float = 1.0,
         seed: int = 0,
-    ):
+    ) -> None:
         kind_ = PIVScenarioKind(kind)
         family = kind_.value if family_id is None else str(family_id)
         shape = tuple(image_shape)
@@ -269,7 +269,7 @@ class PIVSyntheticCase(StrictModule, NonTrainableState):
         family_id: str,
         plan_id: str,
         scenario_id: str,
-    ):
+    ) -> None:
         capacity = first_positions_rc.shape[0]
         if first_positions_rc.shape != (capacity, 2) or second_positions_rc.shape != (
             capacity,

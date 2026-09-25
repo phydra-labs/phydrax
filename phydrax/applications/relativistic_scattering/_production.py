@@ -52,7 +52,7 @@ class BeamPlan(StrictModule, NonTrainableState):
         *,
         spectrum_id: str = "monoenergetic",
         crossing_id: str = "head-on",
-    ):
+    ) -> None:
         identities = tuple(pdg_ids)
         energy = float(center_of_mass_energy)
         spectrum = str(spectrum_id).strip()
@@ -91,7 +91,7 @@ class ScalePlan(StrictModule, NonTrainableState):
         /,
         *,
         scheme_id: str,
-    ):
+    ) -> None:
         renormalization = float(renormalization_scale)
         factorization = float(factorization_scale)
         scheme = str(scheme_id).strip()
@@ -145,7 +145,7 @@ class HardProcessPlan(StrictModule, NonTrainableState):
         spin_average: float = 1.0,
         color_average: float = 1.0,
         cosine_range: tuple[float, float] = (-1.0, 1.0),
-    ):
+    ) -> None:
         if not isinstance(process, ScatteringProcess):
             raise TypeError("process must be ScatteringProcess.")
         if not isinstance(beam, BeamPlan) or not isinstance(scales, ScalePlan):
@@ -217,7 +217,7 @@ class PreparedHardProcess(StrictModule):
 
     def __init__(
         self, plan: HardProcessPlan, matrix_element_squared: MatrixElementSquared, /
-    ):
+    ) -> None:
         if not isinstance(plan, HardProcessPlan):
             raise TypeError("plan must be HardProcessPlan.")
         if not callable(matrix_element_squared):

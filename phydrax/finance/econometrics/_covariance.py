@@ -46,7 +46,7 @@ class CovarianceDefinition(StrictModule):
         method: CovarianceMethod = "ledoit-wolf",
         correction: float = 1.0,
         regularization: float = 1e-8,
-    ):
+    ) -> None:
         if method not in ("sample", "ledoit-wolf", "oas"):
             raise ValueError("method must be sample, ledoit-wolf, or oas.")
         correction_ = float(correction)
@@ -81,7 +81,7 @@ class FactorModelDefinition(StrictModule):
         *,
         correction: float = 1.0,
         regularization: float = 1e-8,
-    ):
+    ) -> None:
         rank_ = int(rank)
         correction_ = float(correction)
         regularization_ = float(regularization)
@@ -116,7 +116,7 @@ class RMTCleaningDefinition(StrictModule):
         preserve_trace: bool = True,
         eigenvalue_floor: float = 0.0,
         edge_tolerance: float = 0.0,
-    ):
+    ) -> None:
         if replacement not in ("bulk-mean", "upper-edge", "hard-floor"):
             raise ValueError("unsupported RMT replacement rule.")
         floor = float(eigenvalue_floor)

@@ -72,7 +72,7 @@ class MatterCouplingPolicy(StrictModule, NonTrainableState):
         maximum_floor_momentum: float = 0.0,
         maximum_consecutive_failures: int = 1,
         require_derivative_valid: bool = True,
-    ):
+    ) -> None:
         source = _static_bound(
             source_consistency_tolerance, "source_consistency_tolerance"
         )
@@ -128,7 +128,7 @@ class CoupledStageAddress(StrictModule, NonTrainableState):
         /,
         *,
         topology_id: str,
-    ):
+    ) -> None:
         start = _scalar(step_start_time, "step_start_time")
         self.step_start_time = start
         self.stage_time = _scalar(stage_time, "stage_time", dtype=start.dtype)
@@ -170,7 +170,7 @@ class SourceExchangeLedger(StrictModule):
         energy_defect: ArrayLike = 0.0,
         momentum_defect: ArrayLike = (0.0, 0.0, 0.0),
         /,
-    ):
+    ) -> None:
         energy_ = _scalar(energy, "source energy")
         self.energy = energy_
         self.momentum = _vector3(momentum, "source momentum").astype(energy_.dtype)
@@ -210,7 +210,7 @@ class ConstraintLedger(StrictModule):
         momentum_linf: ArrayLike,
         z4_linf: ArrayLike,
         /,
-    ):
+    ) -> None:
         hamiltonian = _scalar(hamiltonian_linf, "hamiltonian_linf")
         self.hamiltonian_linf = hamiltonian
         self.momentum_linf = _vector3(momentum_linf, "momentum_linf").astype(
@@ -249,7 +249,7 @@ class ConservationLedger(StrictModule):
         momentum_defect: ArrayLike,
         magnetic_divergence_linf: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         mass = _scalar(rest_mass_defect, "rest_mass_defect")
         self.rest_mass_defect = mass
         self.energy_defect = _scalar(energy_defect, "energy_defect", dtype=mass.dtype)
@@ -300,7 +300,7 @@ class FloorLedger(StrictModule):
         momentum_added: ArrayLike,
         cell_count: ArrayLike,
         /,
-    ):
+    ) -> None:
         mass = _scalar(rest_mass_added, "floor rest_mass_added")
         self.rest_mass_added = mass
         self.energy_added = _scalar(energy_added, "floor energy_added", dtype=mass.dtype)
@@ -343,7 +343,7 @@ class HorizonFluxLedger(StrictModule):
         angular_momentum: ArrayLike,
         magnetic_flux: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         mass = _scalar(rest_mass, "horizon rest_mass")
         self.rest_mass = mass
         self.energy = _scalar(energy, "horizon energy", dtype=mass.dtype)
@@ -383,7 +383,7 @@ class CoupledStepLedgers(StrictModule):
         floor: FloorLedger,
         horizon_flux: HorizonFluxLedger,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, SourceExchangeLedger):
             raise TypeError("source must be SourceExchangeLedger.")
         if not isinstance(constraint, ConstraintLedger):
@@ -535,7 +535,7 @@ class CoupledBudget(StrictModule, NonTrainableState):
         horizon_angular_momentum: ArrayLike,
         horizon_magnetic_flux: ArrayLike,
         /,
-    ):
+    ) -> None:
         source = _scalar(source_energy, "budget source_energy")
         dtype = source.dtype
         self.source_energy = source
@@ -722,7 +722,7 @@ class CoupledParticipantStatus(StrictModule):
         qualified: ArrayLike,
         derivative_valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.status = _scalar(status, "participant status", dtype=jnp.int32)
         self.finite = _scalar(finite, "participant finite", dtype=jnp.bool_)
         self.converged = _scalar(converged, "participant converged", dtype=jnp.bool_)
@@ -764,7 +764,7 @@ class Z4cStageProposal(StrictModule):
         constraint: ConstraintLedger,
         evidence: CoupledParticipantStatus,
         /,
-    ):
+    ) -> None:
         if not isinstance(geometry, ADMGridGeometry):
             raise TypeError("geometry must be ADMGridGeometry.")
         if not isinstance(address, CoupledStageAddress):
@@ -807,7 +807,7 @@ class MatterStageProposal(StrictModule):
         /,
         *,
         matter_kind: RelativisticMatterKind,
-    ):
+    ) -> None:
         if not isinstance(stress_energy, StressEnergyProjection):
             raise TypeError("stress_energy must be StressEnergyProjection.")
         if not isinstance(address, CoupledStageAddress):

@@ -170,7 +170,7 @@ class PolygonAdmissibilityPolicy(StrictModule, NonTrainableState):
         *,
         minimum_star_margin: float = 1.0e-8,
         minimum_edge_ratio: float = 1.0e-10,
-    ):
+    ) -> None:
         star = float(minimum_star_margin)
         edge = float(minimum_edge_ratio)
         if star < 0.0 or edge < 0.0:

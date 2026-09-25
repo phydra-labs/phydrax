@@ -26,7 +26,7 @@ class DEMCheckpointPolicy(StrictModule, NonTrainableState):
     interval: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, interval: int, /):
+    def __init__(self, interval: int, /) -> None:
         value = int(interval)
         if value <= 0:
             raise ValueError("checkpoint interval must be positive.")

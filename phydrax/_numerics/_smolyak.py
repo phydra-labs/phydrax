@@ -149,7 +149,7 @@ class SmolyakIndexSet(StrictModule, NonTrainableState):
         dimension: int,
         indices: Sequence[Sequence[int]],
         /,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         if dimension_ < 1:
             raise ValueError("Smolyak index-set dimension must be positive.")

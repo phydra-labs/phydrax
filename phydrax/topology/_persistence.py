@@ -53,7 +53,7 @@ class PersistenceRepresentatives(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         cells = []
         pairs = []
         coefficients = []
@@ -128,7 +128,7 @@ class PersistencePairing(StrictModule, NonTrainableState):
         layout_id: str,
         field: PrimeField,
         representatives: PersistenceRepresentatives | None = None,
-    ):
+    ) -> None:
         pair_arrays = tuple(
             np.asarray(value)
             for value in (
@@ -222,7 +222,7 @@ class PersistenceResult(StrictModule, NonTrainableState):
         /,
         *,
         filtration_id: str,
-    ):
+    ) -> None:
         values = jnp.asarray(compact_values)
         canonical = jnp.asarray(canonical_compact_values)
         if values.ndim != 1 or canonical.shape != values.shape:
@@ -300,7 +300,7 @@ class FrozenPersistenceEvaluation(StrictModule):
         ordering_valid: Array,
         ordering_margin: Array,
         /,
-    ):
+    ) -> None:
         self.degrees = jnp.asarray(degrees)
         self.birth_values = jnp.asarray(birth_values)
         self.death_values = jnp.asarray(death_values)
@@ -324,7 +324,7 @@ class FrozenPersistencePairing(StrictModule, NonTrainableState):
         /,
         *,
         direction: str,
-    ):
+    ) -> None:
         if not isinstance(result, PersistenceResult):
             raise TypeError("Frozen pairing requires a PersistenceResult.")
         if not isinstance(layout, CompactCellLayout):

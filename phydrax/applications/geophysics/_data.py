@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import MappingProxyType
-from typing import Any
+from typing import Any, NoReturn
 
 import numpy as np
 
@@ -144,7 +144,7 @@ _REQUIRED = frozenset(
 
 def _fail(
     message: str, status: AdapterStatus = AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
-):
+) -> NoReturn:
     raise AdapterError(status, message)
 
 
@@ -273,7 +273,7 @@ class GeophysicalData:
     arrays: Mapping[str, np.ndarray]
     data_id: str
 
-    def __init__(self, descriptor: Mapping[str, Any], arrays: Mapping[str, Any]):
+    def __init__(self, descriptor: Mapping[str, Any], arrays: Mapping[str, Any]) -> None:
         text = _json(descriptor)
         desc = json.loads(text)
         if desc.get("kind") != "geophysical-data" or desc.get("purpose") not in {

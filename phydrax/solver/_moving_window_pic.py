@@ -65,7 +65,7 @@ class PICMovingWindowPlan(StrictModule, NonTrainableState):
         /,
         *,
         shift_cells: int = 1,
-    ):
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be StructuredCochainBridge.")
         selected = int(axis)

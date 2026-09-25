@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any
 
 import equinox as eqx
 import jax
@@ -82,7 +81,7 @@ class AtomisticTrainingProblem(StrictModule, NonTrainableState):
         validation_forces: ArrayLike | None = None,
         validation_energy_mask: ArrayLike | None = None,
         validation_force_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         if (
             not isinstance(graph_execution, AtomisticGraphExecutionPlan)
             or graph_execution.backend != "dense"
@@ -226,7 +225,7 @@ class AtomisticTrainingPolicy(StrictModule, NonTrainableState):
         patience: int | None = None,
         min_delta: float = 0.0,
         select_best: bool = True,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         rate = float(learning_rate)
         energy_w = float(energy_weight)

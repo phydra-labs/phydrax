@@ -57,7 +57,7 @@ class WienerTerm(StrictModule):
         structure: NoiseStructure = "general",
         basis_id: str | None = None,
         representation: WienerCoefficientRepresentation = "dense",
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name:
             raise ValueError("WienerTerm name must be a non-empty string.")
         if not callable(coefficient):
@@ -289,7 +289,7 @@ class DifferentialProblem(StrictModule):
         state_geometry: AbstractStateGeometry | None = None,
         discretization_bundle: DiscretizationBundle | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(drift):
             raise TypeError("DifferentialProblem drift must be callable.")
         start = jnp.asarray(t0, dtype=jnp.float64)
@@ -531,7 +531,7 @@ class DifferentialSolution(StrictModule):
         temporal_evidence: TemporalSolveEvidence | None = None,
         problem_id: str | None = None,
         iteration_evidence: IterationEvidence | None = None,
-    ):
+    ) -> None:
         if eqx.is_array_like(states):
             arrays = validate_solution_arrays(
                 times,

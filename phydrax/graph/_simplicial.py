@@ -172,7 +172,7 @@ class SimplicialComplexGraph(StrictModule):
         edge_to_vertex_type: int,
         edge_to_face_type: int,
         face_to_edge_type: int,
-    ):
+    ) -> None:
         self.graph = graph
         self.vertex_cells = jnp.asarray(vertex_cells, dtype=jnp.int32)
         self.edge_cells = jnp.asarray(edge_cells, dtype=jnp.int32)
@@ -561,7 +561,7 @@ class SimplicialHodgeLaplacian(StrictModule):
         edge_to_vertex_type: int = 1,
         edge_to_face_type: int = 2,
         face_to_edge_type: int = 3,
-    ):
+    ) -> None:
         if form_degree not in (0, 1, 2):
             raise ValueError("form_degree must be 0, 1, or 2.")
         self.form_degree = int(form_degree)

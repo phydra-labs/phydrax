@@ -52,7 +52,7 @@ class EnergySeries(StrictModule):
         provenance: tuple[str, ...] = (),
         reference_id: str | None = None,
         sign_convention: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(samples, SampledSeries):
             raise TypeError("samples must be a native SampledSeries")
         if not isinstance(unit, UnitDefinition):

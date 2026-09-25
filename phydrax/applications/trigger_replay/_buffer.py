@@ -19,7 +19,7 @@ class TriggerBufferPlan(StrictModule, NonTrainableState):
     service_per_tick: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, capacity: int, service_per_tick: int, /):
+    def __init__(self, capacity: int, service_per_tick: int, /) -> None:
         capacity_ = int(capacity)
         service = int(service_per_tick)
         if capacity_ < 1 or service < 0:

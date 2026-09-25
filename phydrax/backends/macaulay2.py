@@ -77,7 +77,7 @@ class Macaulay2Environment(StrictModule):
         *,
         installation_root: str | Path | None = None,
         installation_inventory: Sequence[tuple[str, str]] = (),
-    ):
+    ) -> None:
         if not isinstance(executable, PinnedExecutable):
             raise TypeError("executable must be a PinnedExecutable.")
         inventory = tuple(
@@ -139,7 +139,7 @@ class Macaulay2Provider(AbstractExternalBackend):
     environment: Macaulay2Environment = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self, environment: Macaulay2Environment, /):
+    def __init__(self, environment: Macaulay2Environment, /) -> None:
         if not isinstance(environment, Macaulay2Environment):
             raise TypeError("environment must be Macaulay2Environment.")
         self.environment = environment

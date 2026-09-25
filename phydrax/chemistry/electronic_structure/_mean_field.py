@@ -60,7 +60,7 @@ class SCFConvergencePlan(StrictModule, NonTrainableState):
         density_tolerance: float = 1.0e-8,
         commutator_tolerance: float = 1.0e-8,
         maximum_iterations: int = 128,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -110,7 +110,7 @@ class SCFAccelerationPlan(StrictModule, NonTrainableState):
         diis_start: int = 2,
         diis_space: int = 8,
         level_shift: float = 0.0,
-    ):
+    ) -> None:
         schedule_ = tuple(schedule)
         if not schedule_ or any(
             not isinstance(value, SCFAccelerationKind) for value in schedule_
@@ -173,7 +173,7 @@ class ElectronicOccupationPlan(StrictModule, NonTrainableState):
         *,
         smearing_energy: float = 0.0,
         explicit_occupations: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(kind, ElectronicOccupationKind):
             raise TypeError("kind must be ElectronicOccupationKind.")
         smearing = float(smearing_energy)
@@ -223,7 +223,7 @@ class InitialGuessPlan(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(kind, InitialGuessKind):
             raise TypeError("kind must be InitialGuessKind.")
         source = None if source_id is None else str(source_id).strip()
@@ -251,7 +251,7 @@ class SCFStabilityPlan(StrictModule, NonTrainableState):
         require_internal: bool = False,
         require_external: bool = False,
         eigenvalue_tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         tolerance = float(eigenvalue_tolerance)
         if not isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("Stability eigenvalue tolerance must be non-negative.")
@@ -341,7 +341,7 @@ class RestrictedMeanFieldState(StrictModule, NonTrainableState):
         /,
         *,
         reference: ElectronicReferenceKind = ElectronicReferenceKind.RESTRICTED,
-    ):
+    ) -> None:
         density_ = jnp.asarray(density)
         coefficients_ = jnp.asarray(coefficients, dtype=density_.dtype)
         energies = jnp.asarray(orbital_energies, dtype=density_.real.dtype)
@@ -459,7 +459,7 @@ class UnrestrictedMeanFieldState(StrictModule, NonTrainableState):
         /,
         *,
         reference: ElectronicReferenceKind = ElectronicReferenceKind.UNRESTRICTED,
-    ):
+    ) -> None:
         alpha = jnp.asarray(alpha_density)
         beta = jnp.asarray(beta_density, dtype=alpha.dtype)
         count = alpha.shape[0] if alpha.ndim == 2 else -1
@@ -575,7 +575,7 @@ class GeneralizedMeanFieldState(StrictModule, NonTrainableState):
         evidence: SCFConvergenceEvidence,
         owner_id: str,
         /,
-    ):
+    ) -> None:
         density_ = jnp.asarray(density)
         count = density_.shape[0] if density_.ndim == 2 else -1
         coefficients_ = jnp.asarray(coefficients, dtype=density_.dtype)

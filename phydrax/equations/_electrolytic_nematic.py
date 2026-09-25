@@ -41,7 +41,7 @@ class ElectrolyticNematicParameters(StrictModule, NonTrainableState):
         isotropic_permittivity: ArrayLike,
         anisotropic_permittivity: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(nematic, LandauDeGennesParameters):
             raise TypeError("nematic must be LandauDeGennesParameters.")
         if not isinstance(electrolyte, ElectrolyteTransportParameters):
@@ -97,7 +97,7 @@ class ElectrolyticNematicClosure(StrictModule, NonTrainableState):
         nematic: LandauDeGennesClosure,
         electrochemical: AbstractElectrochemicalClosure,
         /,
-    ):
+    ) -> None:
         if not isinstance(nematic, LandauDeGennesClosure):
             raise TypeError("nematic must be LandauDeGennesClosure.")
         if not isinstance(electrochemical, AbstractElectrochemicalClosure):

@@ -53,7 +53,7 @@ class BMSQuadraturePlan(StrictModule, NonTrainableState):
         supported_bandlimit: int,
         quadrature_tolerance: float = 1.0e-10,
         plan_name: str = "bms-scri-quadrature",
-    ):
+    ) -> None:
         directions_host = np.asarray(directions, dtype=np.float64)
         weights_host = np.asarray(weights, dtype=np.float64)
         basis_host = np.asarray(charge_basis, dtype=np.float64)
@@ -278,7 +278,7 @@ class BMSScriData(StrictModule, NonTrainableState):
         /,
         *,
         data_name: str = "bondi-scri-data",
-    ):
+    ) -> None:
         times = np.asarray(retarded_times)
         mass = np.asarray(mass_aspect)
         news_host = np.asarray(news)
@@ -414,7 +414,7 @@ class BMSFrameTransformation(StrictModule, NonTrainableState):
         /,
         *,
         frame_name: str = "bms-poincare-frame",
-    ):
+    ) -> None:
         boost = np.asarray(boost_velocity, dtype=np.float64)
         shift = np.asarray(translation, dtype=np.float64)
         if boost.shape != (3,) or shift.shape != (4,):

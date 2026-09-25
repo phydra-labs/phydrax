@@ -57,7 +57,7 @@ class TwoViewAssociationPlan(StrictModule, NonTrainableState):
         intensity_weight: float = 0.0,
         unmatched_cost: float = 4.0,
         ambiguity_margin: float = 0.25,
-    ):
+    ) -> None:
         values = jnp.asarray(
             (
                 maximum_ray_distance,
@@ -142,7 +142,7 @@ class MultiViewAssociationPlan(StrictModule, NonTrainableState):
         view_reward: float = 2.0,
         exact_candidate_limit: int = 32,
         maximum_nodes: int = 1_000_000,
-    ):
+    ) -> None:
         for name, value in (
             ("camera_capacity", camera_capacity),
             ("candidate_capacity", candidate_capacity),

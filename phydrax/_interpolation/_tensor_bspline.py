@@ -77,7 +77,7 @@ class TensorBSplineJetPlan(StrictModule):
         *,
         maximum_order: int = 2,
         multi_indices: Sequence[Sequence[int]] | None = None,
-    ):
+    ) -> None:
         stencils = tuple(axis_stencils)
         if not stencils:
             raise ValueError("A tensor B-spline plan requires at least one axis stencil.")

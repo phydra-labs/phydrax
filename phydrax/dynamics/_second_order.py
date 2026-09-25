@@ -51,7 +51,7 @@ class SecondOrderDifferentialSystem(StrictModule):
         acceleration_scale: ArrayLike | None = None,
         residual_scale: ArrayLike | None = None,
         system_id: str,
-    ):
+    ) -> None:
         if not callable(residual):
             raise TypeError("Second-order residual must be callable.")
         shape = tuple(state_shape)
@@ -120,7 +120,7 @@ class SecondOrderDifferentialProblem(StrictModule):
         args: Any = None,
         discretization_bundle: DiscretizationBundle | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, SecondOrderDifferentialSystem):
             raise TypeError("system must be SecondOrderDifferentialSystem.")
         configuration = jnp.asarray(initial_configuration)

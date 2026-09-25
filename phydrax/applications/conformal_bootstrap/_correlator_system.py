@@ -49,7 +49,7 @@ class ExternalPrimaryOperator(StrictModule):
         *,
         parity: Literal[-1, 1] = 1,
         reality: Literal["real", "complex", "pseudoreal"] = "real",
-    ):
+    ) -> None:
         label_ = _identifier(label, "primary label")
         dimension = float(scaling_dimension)
         weight = tuple(lorentz_highest_weight)
@@ -105,7 +105,7 @@ class CorrelatorSpecification(StrictModule):
         /,
         *,
         structure_parities: Sequence[Literal[-1, 1]] | None = None,
-    ):
+    ) -> None:
         label_ = _identifier(label, "correlator label")
         external = tuple(
             _identifier(value, "external label") for value in external_labels
@@ -149,7 +149,7 @@ class CrossingSystemGenerator(StrictModule):
     order: int = eqx.field(static=True)
     generator_id: str = eqx.field(static=True)
 
-    def __init__(self, label: str, matrix: ArrayLike, order: int, /):
+    def __init__(self, label: str, matrix: ArrayLike, order: int, /) -> None:
         label_ = _identifier(label, "crossing generator label")
         matrix_ = np.asarray(matrix, dtype=np.complex128)
         order_ = int(order)
@@ -192,7 +192,7 @@ class CorrelatorSystemPlan(StrictModule):
         basis_gauge_id: str,
         tolerance: float = 1e-10,
         maximum_group_order: int = 48,
-    ):
+    ) -> None:
         primaries_ = tuple(primaries)
         correlators_ = tuple(correlators)
         generators_ = tuple(generators)

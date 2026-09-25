@@ -37,7 +37,7 @@ class MarkerFlowQualificationProfile(StrictModule, NonTrainableState):
         require_stochastic: bool = False,
         require_contact: bool = False,
         require_interface: bool = False,
-    ):
+    ) -> None:
         family_ = str(family)
         values = np.asarray(
             (
@@ -122,7 +122,7 @@ class MarkerFlowQualificationPlan(StrictModule, NonTrainableState):
     profile: MarkerFlowQualificationProfile
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, profile: MarkerFlowQualificationProfile, /):
+    def __init__(self, profile: MarkerFlowQualificationProfile, /) -> None:
         if not isinstance(profile, MarkerFlowQualificationProfile):
             raise TypeError("profile must be MarkerFlowQualificationProfile.")
         self.profile = profile

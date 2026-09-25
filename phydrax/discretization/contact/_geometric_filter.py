@@ -84,7 +84,7 @@ class GeometricContactFilterPlan(StrictModule, NonTrainableState):
         normal_alignment: float = 0.0,
         feature_tolerance: float = 1.0e-10,
         require_closed_surface: bool = True,
-    ):
+    ) -> None:
         alignment = float(normal_alignment)
         tolerance = float(feature_tolerance)
         if not -1.0 <= alignment <= 1.0 or tolerance < 0.0:

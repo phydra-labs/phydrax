@@ -116,7 +116,7 @@ class ExecutionCapabilities(StrictModule, NonTrainableState):
         jit: bool | None = None,
         vmap: bool | None = None,
         stateful: bool = False,
-    ):
+    ) -> None:
         host_only_ = _flag(host_only, "host_only")
         jit_ = not host_only_ if jit is None else _flag(jit, "jit")
         vmap_ = not host_only_ if vmap is None else _flag(vmap, "vmap")
@@ -208,7 +208,7 @@ class RandomnessContract(StrictModule, NonTrainableState):
         *,
         requires_inference_state: bool = False,
         realization_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(mode, str):
             raise TypeError("mode must be a string.")
         match mode:
@@ -341,7 +341,7 @@ class ComponentPrecisionContract(StrictModule, NonTrainableState):
         relative_error_floor: float | None = None,
         amplification_evidence: Iterable[str] = (),
         cast_boundary_evidence: Iterable[str] = (),
-    ):
+    ) -> None:
         dtypes = tuple(
             _dtype_name(value, label)
             for value, label in (
@@ -524,7 +524,7 @@ class ModelExecutionContract(StrictModule, NonTrainableState):
         certificates: Iterable[AbstractConstructionCertificate | CertificateRecord] = (),
         declared_capabilities: Iterable[str] = (),
         semantic_provenance: SemanticProvenance | None = None,
-    ):
+    ) -> None:
         if not isinstance(derivative, DerivativeContract):
             raise TypeError("derivative must be a DerivativeContract.")
         if not isinstance(execution, ExecutionCapabilities):
@@ -669,7 +669,7 @@ class ComponentSlotContract(StrictModule, NonTrainableState):
         *,
         slot_semantic_id: str | None = None,
         requirements: Iterable[CapabilityRequirement] = (),
-    ):
+    ) -> None:
         authority_ = _require_authority(authority)
         semantic_id = _slot_semantic_id(slot_semantic_id)
         requirements_ = _requirements(requirements)
@@ -763,7 +763,7 @@ class ComponentContract(StrictModule, NonTrainableState):
         port_binding: PortBindingEvidence | None = None,
         requirements: Iterable[CapabilityRequirement] = (),
         derivative_admission: DerivativeAdmission | None = None,
-    ):
+    ) -> None:
         authority_ = _require_authority(authority)
         semantic_id = _slot_semantic_id(slot_semantic_id)
         if not isinstance(model_contract, ModelExecutionContract):
@@ -944,7 +944,7 @@ class ComponentBinding(StrictModule):
         port_mapping: PortMapping | None = None,
         owner_ports: ModelPorts | None = None,
         requirements: Iterable[CapabilityRequirement] = (),
-    ):
+    ) -> None:
         # Imported here: `_array` imports this module for the model contract types.
         from ._array import AbstractArrayModel
 

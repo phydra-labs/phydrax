@@ -34,7 +34,7 @@ class RationalApproximationTarget(StrictModule):
         self,
         factors: tuple[tuple[float, float], ...],
         /,
-    ):
+    ) -> None:
         if not factors:
             raise ValueError(
                 "A rational approximation target requires at least one factor."
@@ -91,7 +91,7 @@ class RationalApproximationResourcePolicy(StrictModule):
         maximum_poles: int = 128,
         maximum_verification_points: int = 131_072,
         maximum_workspace_bytes: int = 512 * 1024 * 1024,
-    ):
+    ) -> None:
         poles = int(maximum_poles)
         points = int(maximum_verification_points)
         workspace = int(maximum_workspace_bytes)
@@ -133,7 +133,7 @@ class RationalApproximationPlan(StrictModule):
         error_metric: RationalErrorMetric = "relative",
         requested_tolerance: float | None = None,
         resources: RationalApproximationResourcePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(target, RationalApproximationTarget):
             raise TypeError("target must be a RationalApproximationTarget.")
         poles = int(num_poles)
@@ -220,7 +220,7 @@ class CertifiedRationalApproximation(StrictModule):
         metric: RationalErrorMetric,
         verification_points: int,
         evidence: str,
-    ):
+    ) -> None:
         if not isinstance(target, RationalApproximationTarget):
             raise TypeError("target must be a RationalApproximationTarget.")
         if not isinstance(spectral_interval, SpectralInterval):

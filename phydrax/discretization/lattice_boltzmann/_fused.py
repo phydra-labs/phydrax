@@ -46,7 +46,7 @@ class FusedLatticeBoltzmannExecutionPlan(StrictModule, NonTrainableState):
         /,
         *,
         backend: str = "jax",
-    ):
+    ) -> None:
         if not isinstance(reference, ReferenceLatticeBoltzmannExecutionPlan):
             raise TypeError("reference must be a reference LBM execution plan.")
         if backend != "jax":

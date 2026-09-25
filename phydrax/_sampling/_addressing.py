@@ -35,7 +35,7 @@ class SampleAddress(StrictModule):
         *,
         target: str | Sequence[str] = (),
         role: str = "sample",
-    ):
+    ) -> None:
         namespace_ = _nonempty(namespace, "namespace")
         operation_ = _nonempty(operation, "operation")
         if isinstance(target, str):

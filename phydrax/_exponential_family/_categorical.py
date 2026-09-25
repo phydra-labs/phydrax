@@ -28,7 +28,7 @@ class CategoricalFamily(_AbstractAnalyticExponentialFamily):
     num_categories: int = eqx.field(static=True)
     _signature: ExponentialFamilySignature = eqx.field(static=True)
 
-    def __init__(self, num_categories: int):
+    def __init__(self, num_categories: int) -> None:
         categories = int(num_categories)
         if categories < 2:
             raise ValueError("num_categories must be at least two.")

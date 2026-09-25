@@ -47,7 +47,7 @@ class VortexSourceState(StrictModule):
         dimension: int | None = None,
         source_kind: str = "particle",
         source_id: str | None = None,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions)
         if positions_.ndim != 2 or positions_.shape[0] == 0:
             raise ValueError(
@@ -174,7 +174,7 @@ class VortexTargetState(StrictModule):
         *,
         source_indices: ArrayLike | None = None,
         target_id: str | None = None,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions)
         if (
             positions_.ndim != 2

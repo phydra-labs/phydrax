@@ -50,7 +50,7 @@ class RaggedSeriesSupervisedBatch(StrictModule):
         points: PointBatch,
         target: ArrayLike,
         indices: ArrayLike,
-    ):
+    ) -> None:
         self.points = points
         self.target = jnp.asarray(target, dtype=jnp.float64)
         self.indices = jnp.asarray(indices, dtype=jnp.int32)
@@ -101,7 +101,7 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
         indices: ArrayLike | None = None,
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
-    ):
+    ) -> None:
         """Create a ragged-series supervised data constraint.
 
         Parameters:

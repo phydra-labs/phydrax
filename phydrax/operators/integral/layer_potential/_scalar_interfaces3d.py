@@ -47,7 +47,7 @@ class ScalarTransmissionMaterial3D(StrictModule, NonTrainableState):
         /,
         *,
         flux_coefficient: float = 1.0,
-    ):
+    ) -> None:
         name_ = str(name)
         coefficient = float(flux_coefficient)
         if not name_:
@@ -92,7 +92,7 @@ class ScalarTransmissionSideConvention3D(StrictModule, NonTrainableState):
 
     def __init__(
         self, normal_orientation: ScalarTransmissionOrientation3D = "calderon", /
-    ):
+    ) -> None:
         if normal_orientation not in ("calderon", "reversed"):
             raise ValueError("normal_orientation must be 'calderon' or 'reversed'.")
         sign = 1 if normal_orientation == "calderon" else -1
@@ -147,7 +147,7 @@ class ScalarCauchyTraceBundle3D(StrictModule, NonTrainableState):
         *,
         side: ScalarTransmissionSide3D,
         material_id: str,
-    ):
+    ) -> None:
         if side not in ("minus", "plus"):
             raise ValueError("Cauchy bundle side must be 'minus' or 'plus'.")
         material = str(material_id)
@@ -186,7 +186,7 @@ class ScalarTransmissionData3D(StrictModule, NonTrainableState):
         dirichlet_jump: ArrayLike,
         weighted_flux_jump: ArrayLike,
         /,
-    ):
+    ) -> None:
         dtype = jnp.result_type(
             minus_calderon,
             plus_calderon,

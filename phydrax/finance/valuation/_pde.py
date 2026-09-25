@@ -48,7 +48,7 @@ class FiniteDifferencePlan(StrictModule):
         spot_minimum: float = 0.0,
         spot_maximum: float,
         pivot_tolerance: float = 1.0e-13,
-    ):
+    ) -> None:
         if any(
             isinstance(value, bool) or not isinstance(value, int) or value < 4
             for value in (space_steps, time_steps)
@@ -101,7 +101,7 @@ class PDEProblem(StrictModule):
         currency: Currency | None = None,
         evidence_binding: FinanceEvidenceBinding | None = None,
         pricing_law: PricingLaw | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, (BlackScholesModel, LocalVolatilityModel)):
             raise TypeError(
                 "PDE model must be BlackScholesModel or LocalVolatilityModel."
@@ -164,7 +164,7 @@ class PIDEPlan(StrictModule):
         *,
         jump_quadrature_nodes: int = 48,
         jump_truncation: float = 10.0,
-    ):
+    ) -> None:
         if not isinstance(finite_difference, FiniteDifferencePlan):
             raise TypeError("finite_difference must be a FiniteDifferencePlan.")
         if (
@@ -190,7 +190,7 @@ class PIDEProblem(StrictModule):
         diffusion_problem: PDEProblem,
         jump_model: MertonJumpDiffusionModel | KouJumpDiffusionModel,
         /,
-    ):
+    ) -> None:
         if not isinstance(diffusion_problem, PDEProblem):
             raise TypeError("diffusion_problem must be a PDEProblem.")
         if not isinstance(diffusion_problem.model, BlackScholesModel):

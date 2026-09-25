@@ -133,7 +133,7 @@ class KineticRolloutTrainingPlan(StrictModule):
         replay_block_size: int | None = None,
         replay_schedules: tuple[PreparedReplaySchedule, ...] = (),
         rejection_budget: int = 64,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedSmoothCompressibleD2V17SpatialDynamics):
             raise TypeError(
                 "dynamics must be PreparedSmoothCompressibleD2V17SpatialDynamics."
@@ -689,7 +689,9 @@ class _GuardedRolloutRule(AbstractKernelUpdateRule):
     dtype: str = eqx.field(static=True)
     rule_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: KineticRolloutTrainingPlan, guard_count: int, dtype: Any):
+    def __init__(
+        self, plan: KineticRolloutTrainingPlan, guard_count: int, dtype: Any
+    ) -> None:
         self.proposal = OptaxUpdateRule(
             plan.optimizer(), rule_id=f"adam:{float(plan.learning_rate).hex()}"
         )
@@ -849,7 +851,7 @@ class KineticRolloutTrainingState(StrictModule):
         plan_id: str,
         dataset_id: str,
         model_structure_id: str,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel) or not isinstance(
             best_model, AbstractArrayModel
         ):
@@ -975,7 +977,7 @@ class KineticRolloutTrainingResult(StrictModule):
         attempts: tuple[KineticRolloutUpdateResult, ...],
         termination: KineticRolloutTermination,
         /,
-    ):
+    ) -> None:
         if not isinstance(state, KineticRolloutTrainingState):
             raise TypeError("state must be KineticRolloutTrainingState.")
         attempts_ = tuple(attempts)

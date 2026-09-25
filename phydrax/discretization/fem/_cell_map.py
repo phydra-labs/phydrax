@@ -50,7 +50,7 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
         discretization: FiniteElementDiscretization,
         block_index: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be FiniteElementDiscretization.")
         index = int(block_index)

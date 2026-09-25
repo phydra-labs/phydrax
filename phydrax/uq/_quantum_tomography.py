@@ -47,7 +47,7 @@ class QuantumPOVM(StrictModule):
         tolerance: float = 1e-9,
         precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = GeometryPrecisionPolicy() if precision is None else precision
         hermitian_ = (
             HermitianPrecisionPolicy()
@@ -159,7 +159,7 @@ class QuantumTomographyData(StrictModule):
     valid: Array
     data_id: str = eqx.field(static=True)
 
-    def __init__(self, counts: ArrayLike, /, *, data_id: str):
+    def __init__(self, counts: ArrayLike, /, *, data_id: str) -> None:
         values = jnp.asarray(counts, dtype=jnp.float64)
         if values.ndim != 1:
             raise ValueError("Tomography counts must be a vector.")
@@ -187,7 +187,7 @@ class TomographyLikelihoodResult(StrictModule):
         valid: ArrayLike,
         precision_evidence: PrecisionEvidenceEnvelope,
         /,
-    ):
+    ) -> None:
         self.log_likelihood = jnp.asarray(log_likelihood)
         self.probabilities = jnp.asarray(probabilities)
         self.normalization_residual = jnp.asarray(normalization_residual)

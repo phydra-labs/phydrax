@@ -28,7 +28,7 @@ class HelmholtzLayerKernel3D(StrictModule):
     wavenumber: float = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, wavenumber: float):
+    def __init__(self, wavenumber: float) -> None:
         value = float(wavenumber)
         if not jnp.isfinite(value) or value <= 0.0:
             raise ValueError("Helmholtz wavenumber must be finite and positive.")
@@ -95,7 +95,7 @@ class HelmholtzLayerPotential3D(_AbstractTrialSpaceField):
         *,
         kind: Literal["single", "double"] = "single",
         density: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(panelization, SurfacePanelization3D):
             raise TypeError("panelization must be SurfacePanelization3D.")
         if kind not in ("single", "double"):
@@ -215,7 +215,7 @@ class HelmholtzCombinedField3D(_AbstractTrialSpaceField):
         /,
         *,
         eta: float,
-    ):
+    ) -> None:
         if not isinstance(panelization, SurfacePanelization3D):
             raise TypeError("panelization must be SurfacePanelization3D.")
         coupling = float(eta)

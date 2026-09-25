@@ -183,7 +183,7 @@ class CayleyDicksonAlgebraSpec(AbstractFiniteRealAlgebraSpec):
         /,
         *,
         budget: AlgebraResourceBudget | None = None,
-    ):
+    ) -> None:
         _initialize_cayley_dickson(self, level, budget)
 
     def _family_marker(self) -> str:
@@ -193,7 +193,7 @@ class CayleyDicksonAlgebraSpec(AbstractFiniteRealAlgebraSpec):
 class RealAlgebraSpec(AbstractFiniteRealAlgebraSpec):
     level: int = eqx.field(static=True)
 
-    def __init__(self, *, budget: AlgebraResourceBudget | None = None):
+    def __init__(self, *, budget: AlgebraResourceBudget | None = None) -> None:
         _initialize_cayley_dickson(self, 0, budget)
 
     def _family_marker(self) -> str:
@@ -203,7 +203,7 @@ class RealAlgebraSpec(AbstractFiniteRealAlgebraSpec):
 class ComplexAlgebraSpec(AbstractFiniteRealAlgebraSpec):
     level: int = eqx.field(static=True)
 
-    def __init__(self, *, budget: AlgebraResourceBudget | None = None):
+    def __init__(self, *, budget: AlgebraResourceBudget | None = None) -> None:
         _initialize_cayley_dickson(self, 1, budget)
 
     def _family_marker(self) -> str:
@@ -213,7 +213,7 @@ class ComplexAlgebraSpec(AbstractFiniteRealAlgebraSpec):
 class QuaternionAlgebraSpec(AbstractFiniteRealAlgebraSpec):
     level: int = eqx.field(static=True)
 
-    def __init__(self, *, budget: AlgebraResourceBudget | None = None):
+    def __init__(self, *, budget: AlgebraResourceBudget | None = None) -> None:
         _initialize_cayley_dickson(self, 2, budget)
 
     def _family_marker(self) -> str:
@@ -223,7 +223,7 @@ class QuaternionAlgebraSpec(AbstractFiniteRealAlgebraSpec):
 class OctonionAlgebraSpec(AbstractFiniteRealAlgebraSpec):
     level: int = eqx.field(static=True)
 
-    def __init__(self, *, budget: AlgebraResourceBudget | None = None):
+    def __init__(self, *, budget: AlgebraResourceBudget | None = None) -> None:
         _initialize_cayley_dickson(self, 3, budget)
 
     def _family_marker(self) -> str:

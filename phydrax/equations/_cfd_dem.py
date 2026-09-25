@@ -66,7 +66,7 @@ class StokesDragPlan(AbstractHydrodynamicClosurePlan):
         *,
         maximum_reynolds: float = 1.0,
         include_pressure_gradient: bool = True,
-    ):
+    ) -> None:
         maximum = float(maximum_reynolds)
         if not np.isfinite(maximum) or maximum <= 0.0:
             raise ValueError("maximum_reynolds must be finite and positive.")
@@ -145,7 +145,7 @@ class UnresolvedCFDEMCouplingPlan(StrictModule, NonTrainableState):
         *,
         minimum_porosity: float = 1.0e-3,
         maximum_porosity: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
             raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
         if not isinstance(transfer, PreparedMeshParticleGridSplat):

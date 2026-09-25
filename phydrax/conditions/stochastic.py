@@ -91,7 +91,7 @@ def StochasticBoundaryResidual(
 class _RiemannianNormalCallable(StrictModule):
     boundary: RiemannianHypersurface
 
-    def __init__(self, boundary: RiemannianHypersurface, /):
+    def __init__(self, boundary: RiemannianHypersurface, /) -> None:
         self.boundary = boundary
 
     def __call__(self, coordinates, /, *, key=None, **kwargs: Any):

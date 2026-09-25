@@ -50,7 +50,7 @@ class NewtonianPairKernel(StrictModule, NonTrainableState):
         *,
         softening: float,
         cutoff: float | None = None,
-    ):
+    ) -> None:
         gravity = float(gravitational_constant)
         epsilon = float(softening)
         cutoff_ = None if cutoff is None else float(cutoff)
@@ -181,7 +181,7 @@ class ParticleGravityEvidence(StrictModule):
 class DirectParticleGravityPlan(StrictModule, NonTrainableState):
     kernel: NewtonianPairKernel
 
-    def __init__(self, kernel: NewtonianPairKernel, /):
+    def __init__(self, kernel: NewtonianPairKernel, /) -> None:
         self.kernel = kernel
 
     def evaluate(
@@ -229,7 +229,7 @@ class DistributedParticleLayout(StrictModule, NonTrainableState):
         capacity_per_device: int,
         key_boundaries: ArrayLike,
         /,
-    ):
+    ) -> None:
         devices = int(device_count)
         capacity = int(capacity_per_device)
         boundaries = jnp.asarray(key_boundaries, dtype=jnp.uint32)
@@ -299,7 +299,7 @@ class ParticleOctreePlan3D(StrictModule, NonTrainableState):
         /,
         *,
         target_leaf_occupancy: int = 4,
-    ):
+    ) -> None:
         lengths = tuple(float(value) for value in box_size)
         depth_ = int(depth)
         target = int(target_leaf_occupancy)
@@ -524,7 +524,7 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
         use_quadrupole: bool = True,
         direct_chunk_size: int = 32,
         target_batch_size: int = 32,
-    ):
+    ) -> None:
         gravity = float(gravitational_constant)
         epsilon = float(softening)
         theta = float(opening_angle)
@@ -1098,7 +1098,7 @@ class CartesianExpansionSpace(StrictModule, NonTrainableState):
     factorials: tuple[int, ...] = eqx.field(static=True)
     coefficient_count: int = eqx.field(static=True)
 
-    def __init__(self, order: int, /):
+    def __init__(self, order: int, /) -> None:
         order_ = int(order)
         if order_ < 1 or order_ > 7:
             raise ValueError("Cartesian FMM order must lie in [1,7].")
@@ -1134,7 +1134,7 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
         *,
         short_range_scale: float | None = None,
         short_range_cutoff: float | None = None,
-    ):
+    ) -> None:
         gravity = float(gravitational_constant)
         epsilon = float(softening)
         split = None if short_range_scale is None else float(short_range_scale)
@@ -1415,7 +1415,7 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         pallas_interpret: bool = False,
         short_range_scale: float | None = None,
         short_range_cutoff: float | None = None,
-    ):
+    ) -> None:
         gravity = float(gravitational_constant)
         epsilon = float(softening)
         theta = float(opening_angle)
@@ -1904,7 +1904,7 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
         ),
         real_cutoff: float | None = None,
         maximum_real_pairs: int | None = None,
-    ):
+    ) -> None:
         lengths = tuple(float(value) for value in box_size)
         gravity = float(gravitational_constant)
         epsilon = float(softening)
@@ -2210,7 +2210,7 @@ class PeriodicBarnesHutPlan(StrictModule, NonTrainableState):
     barnes_hut: BarnesHutGravityPlan
     ewald: Any
 
-    def __init__(self, barnes_hut: BarnesHutGravityPlan, ewald: Any, /):
+    def __init__(self, barnes_hut: BarnesHutGravityPlan, ewald: Any, /) -> None:
         if (
             barnes_hut.gravitational_constant != ewald.gravitational_constant
             or barnes_hut.softening != ewald.softening
@@ -2281,7 +2281,7 @@ class MeshComplementCalibrationEvidence(StrictModule):
 class MeshComplementCalibrationPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
 
-    def __init__(self, tolerance: float, /):
+    def __init__(self, tolerance: float, /) -> None:
         value = float(tolerance)
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError("Mesh-complement tolerance must be finite and positive.")
@@ -2316,7 +2316,9 @@ class TreePMSplitPolicy(StrictModule, NonTrainableState):
     compensation_id: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, split_scale: float, cutoff: float, compensation_id: str, /):
+    def __init__(
+        self, split_scale: float, cutoff: float, compensation_id: str, /
+    ) -> None:
         split = float(split_scale)
         cutoff_ = float(cutoff)
         compensation = str(compensation_id).strip()
@@ -2364,7 +2366,7 @@ class TreePMPlan(StrictModule, NonTrainableState):
         short_range: BarnesHutGravityPlan | UniformFMMPlan,
         split: TreePMSplitPolicy,
         /,
-    ):
+    ) -> None:
         if not isinstance(short_range, (BarnesHutGravityPlan, UniformFMMPlan)):
             raise TypeError(
                 "short_range must be a BarnesHutGravityPlan or UniformFMMPlan."

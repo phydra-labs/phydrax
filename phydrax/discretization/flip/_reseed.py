@@ -49,7 +49,7 @@ class FLIPReseedingPlan(StrictModule, NonTrainableState):
         minimum_per_cell: int,
         maximum_per_cell: int,
         maximum_events: int,
-    ):
+    ) -> None:
         cells = int(cell_count)
         target = int(target_per_cell)
         minimum = int(minimum_per_cell)

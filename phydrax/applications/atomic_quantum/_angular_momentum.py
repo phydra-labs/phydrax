@@ -120,7 +120,7 @@ class AtomicManifold(StrictModule, NonTrainableState):
         twice_total_f: int,
         parity: int,
         angular_frequency: float,
-    ):
+    ) -> None:
         label_ = str(label)
         if not label_:
             raise ValueError("Atomic manifold labels must be nonempty.")

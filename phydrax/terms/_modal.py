@@ -78,7 +78,7 @@ class CompiledModalResidualTerm(AbstractSamplingTerm):
         args: Any = None,
         scalar_weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         from ..equations._spectral_compile import CompiledSpectralDynamics
 
         if not isinstance(compiled, CompiledSpectralDynamics):
@@ -164,7 +164,7 @@ class ModalObservationTerm(AbstractScalarTerm):
         weights: ArrayLike = 1.0,
         scalar_weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         times_ = np.asarray(_time_batch(times))
         targets_ = np.asarray(targets)
         name = str(function_name)

@@ -82,7 +82,7 @@ class EnsemblePredictiveScoreCriterion(StrictModule, NonTrainableState):
         stage_id: PredictiveStageId,
         minimum_independent_unit_macro: float,
         /,
-    ):
+    ) -> None:
         if stage_id not in _SCORE_ROLE_BY_STAGE:
             raise ValueError(
                 "Predictive score stage must be predictive-calibration or locked-prediction."
@@ -148,7 +148,7 @@ class EnsembleMixtureAdvantageCriterion(StrictModule, NonTrainableState):
     aggregation: str = eqx.field(static=True)
     criterion_id: str = eqx.field(static=True)
 
-    def __init__(self, minimum_independent_unit_macro: float, /):
+    def __init__(self, minimum_independent_unit_macro: float, /) -> None:
         if isinstance(minimum_independent_unit_macro, bool) or not isinstance(
             minimum_independent_unit_macro, Real
         ):
@@ -266,7 +266,7 @@ class EnsemblePosteriorUncertainty(StrictModule, NonTrainableState):
         fit: ConditionalMappingFit | FiniteEnsembleFit,
         campaign: ScientificCampaign,
         /,
-    ):
+    ) -> None:
         if not isinstance(campaign, ScientificCampaign):
             raise TypeError("campaign must be a ScientificCampaign.")
         cases, fitted, _, fit_id = _fit_identity(model, fit, campaign)
@@ -646,7 +646,7 @@ class ModelLadderEvaluation(StrictModule, NonTrainableState):
         derivation_id: str | None = None,
         posterior_uncertainty: EnsemblePosteriorUncertainty | None = None,
         execution_valid: bool | ArrayLike,
-    ):
+    ) -> None:
         model = _identifier(model_id, "model_id")
         if level not in (
             "binary-accessibility",
@@ -853,7 +853,7 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
         /,
         *,
         model_selection_tolerance: float,
-    ):
+    ) -> None:
         if not isinstance(batch, MutationProfileBatch) or not isinstance(
             campaign, ScientificCampaign
         ):

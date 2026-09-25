@@ -34,7 +34,7 @@ class ContractionState(StrictModule):
         distortion: ArrayLike,
         previous_stretch: ArrayLike,
         /,
-    ):
+    ) -> None:
         activation_ = jnp.asarray(activation)
         calcium_bound_ = jnp.asarray(calcium_bound, dtype=activation_.dtype)
         distortion_ = jnp.asarray(distortion, dtype=activation_.dtype)
@@ -112,7 +112,7 @@ class ContractionCheckpoint(StrictModule):
         /,
         *,
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(state, ContractionState):
             raise TypeError("Contraction checkpoint state must be ContractionState.")
         time_ = jnp.asarray(time)
@@ -132,7 +132,7 @@ class PrescribedTensionContractionPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     fidelity_id: str = eqx.field(static=True, default="prescribed-tension")
 
-    def __init__(self, /, *, allow_compression: bool = False):
+    def __init__(self, /, *, allow_compression: bool = False) -> None:
         self.allow_compression = bool(allow_compression)
         self.plan_id = canonical_fingerprint(
             {
@@ -160,7 +160,7 @@ class ActivationDrivenContractionPlan(StrictModule, NonTrainableState):
         *,
         activation_time: float = 30.0,
         relaxation_time: float = 80.0,
-    ):
+    ) -> None:
         values = (float(peak_tension), float(activation_time), float(relaxation_time))
         if any(not isfinite(value) or value <= 0.0 for value in values):
             raise ValueError("Activation-driven contraction parameters must be positive.")
@@ -200,7 +200,7 @@ class CalciumDrivenFirstOrderContractionPlan(StrictModule, NonTrainableState):
         relaxation_time: float = 75.0,
         calcium_unit: str = "mM",
         ionic_model_id: str,
-    ):
+    ) -> None:
         values = (
             float(peak_tension),
             float(half_activation_calcium),
@@ -268,7 +268,7 @@ class LandLengthVelocityContractionPlan(StrictModule, NonTrainableState):
         reference_stretch: float = 1.0,
         calcium_unit: str = "mM",
         ionic_model_id: str,
-    ):
+    ) -> None:
         positive = (
             float(peak_tension),
             float(half_activation_calcium),
@@ -365,7 +365,7 @@ class PreparedContraction(StrictModule, NonTrainableState):
     dtype: np.dtype = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ContractionPlan, state: ContractionState, /):
+    def __init__(self, plan: ContractionPlan, state: ContractionState, /) -> None:
         if not isinstance(
             plan,
             (

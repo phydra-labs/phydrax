@@ -409,7 +409,7 @@ class FreeSurfaceHydrodynamicsPolicy3D(StrictModule, NonTrainableState):
         max_resident_bytes: int = 256 * 1024 * 1024,
         max_preparation_workspace_bytes: int = 512 * 1024 * 1024,
         minimum_geometric_clearance: float = 1.0e-8,
-    ):
+    ) -> None:
         green_ = FreeSurfaceGreenPolicy3D() if green is None else green
         galerkin_ = (
             LaplaceSingleLayerDP0GalerkinPolicy3D() if galerkin is None else galerkin

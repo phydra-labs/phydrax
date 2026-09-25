@@ -44,7 +44,7 @@ class ObserverProjectionPlan(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         first = np.asarray(sky_x, dtype=np.float64)

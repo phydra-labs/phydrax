@@ -35,7 +35,7 @@ class ProjectiveLineSamples(StrictModule):
         valid: ArrayLike,
         line_ids: ArrayLike,
         root_ids: ArrayLike,
-    ):
+    ) -> None:
         self.homogeneous_points = jnp.asarray(homogeneous_points)
         self.chart_indices = jnp.asarray(chart_indices, dtype=jnp.int32)
         self.pivot_indices = jnp.asarray(pivot_indices, dtype=jnp.int32)

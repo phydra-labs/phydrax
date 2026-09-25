@@ -64,7 +64,7 @@ class MeshInteropPolicy:
 
     file_profile: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.coordinate_contract, SpatialCoordinateContract):
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if not isinstance(self.allow_lossy, bool):
@@ -186,7 +186,7 @@ def _report(
     )
 
 
-def _check_array_limits(artifact, policy):
+def _check_array_limits(artifact, policy) -> None:
     if artifact.points.shape[0] > policy.maximum_vertices:
         raise ValueError("Mesh artifact exceeds maximum_vertices.")
     if (
@@ -383,7 +383,7 @@ def _scope(mesh, dimension, identifiers, kind="mesh"):
     )
 
 
-def _validate_scope(scope, mesh):
+def _validate_scope(scope, mesh) -> None:
     if scope.source_id != mesh.mesh_id or scope.source_revision != mesh.numeric_version:
         raise ValueError("Mesh interchange scope has a stale or foreign source binding.")
     entity_set = mesh.entity_set(scope.entity_dimension)

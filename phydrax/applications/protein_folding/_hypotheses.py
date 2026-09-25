@@ -30,7 +30,7 @@ class ProteinSourceAtom:
     label_chain_id: str = ""
     label_residue_number: str = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for value in (self.record_id, self.model_id, self.author_residue_number):
             _identifier(value, "source identity")
         if not isinstance(self.atom_key, ProteinAtomKey):
@@ -85,7 +85,7 @@ class ProteinStructureHypothesis:
         *,
         provider="user-supplied",
         confidence=(),
-    ):
+    ) -> None:
         if not isinstance(construct, ProteinConstruct) or not isinstance(
             source, ScientificArtifactEnvelope
         ):
@@ -174,7 +174,7 @@ class ProteinHypothesisView:
     selected_indices: tuple[int, ...]
     policy_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identifier(self.policy_id, "selection policy")
         if (
             not self.hypotheses

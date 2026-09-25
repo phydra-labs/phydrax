@@ -57,7 +57,7 @@ class DeclaredPopulationMomentMap(StrictModule, NonTrainableState):
         *,
         moment_names: Sequence[str],
         name: str,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         values = np.asarray(coefficients)
@@ -146,7 +146,7 @@ class PeriodicUniformGridDepartureTransfer(StrictModule, NonTrainableState):
         *,
         periodic_axes: Sequence[bool] = (True, True),
         dtype: object = jnp.float64,
-    ):
+    ) -> None:
         shape = tuple(spatial_shape)
         spacing = tuple(float(value) for value in cell_spacing)
         offset = tuple(float(value) for value in offset_in_cells)
@@ -328,7 +328,7 @@ class SemiLagrangianTransferRequirements(StrictModule, NonTrainableState):
         positivity_preserving: bool = True,
         differentiable_geometry: bool = False,
         exact_on: Sequence[str] = (),
-    ):
+    ) -> None:
         exact = tuple(str(value) for value in exact_on)
         if any(not value for value in exact) or len(set(exact)) != len(exact):
             raise ValueError("exact_on requirements must be unique non-empty strings.")
@@ -436,7 +436,7 @@ class PreparedOffLatticeSemiLagrangianDVM(StrictModule, NonTrainableState):
         *,
         requirements: SemiLagrangianTransferRequirements | None = None,
         declared_moments: DeclaredPopulationMomentMap | None = None,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if quadrature.transport_kind != "off_lattice":
@@ -651,7 +651,7 @@ class PreparedCoupledD2V37OffLatticeTransport(StrictModule, NonTrainableState):
         /,
         *,
         conservation_tolerance: float = 1.0e-11,
-    ):
+    ) -> None:
         from ._smooth_compressible import SmoothCompressibleD2VKineticMethod
 
         if not isinstance(method, SmoothCompressibleD2VKineticMethod):

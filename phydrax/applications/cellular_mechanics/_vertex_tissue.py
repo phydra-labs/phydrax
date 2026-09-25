@@ -463,7 +463,7 @@ class VertexTissuePlan(StrictModule, NonTrainableState):
         field_names: tuple[str, ...] = (),
         minimum_edge_length: float = 1.0e-8,
         minimum_cell_measure: float = 1.0e-10,
-    ):
+    ) -> None:
         if isinstance(dimension, bool) or dimension not in (2, 3):
             raise ValueError("dimension must be 2 or 3.")
         dimension_ = int(dimension)
@@ -903,7 +903,7 @@ class VertexTissueState(StrictModule):
         time: ArrayLike,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions)
         fields_ = jnp.asarray(cell_fields)
         time_ = jnp.asarray(time)
@@ -958,7 +958,7 @@ class PreparedVertexTissue(StrictModule, NonTrainableState):
     reference_quality_valid: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: VertexTissuePlan, reference_positions: ArrayLike, /):
+    def __init__(self, plan: VertexTissuePlan, reference_positions: ArrayLike, /) -> None:
         if not isinstance(plan, VertexTissuePlan):
             raise TypeError("plan must be a VertexTissuePlan.")
         positions = _real_array("reference_positions", reference_positions, 2)
@@ -1440,7 +1440,7 @@ class VertexTissueDynamicsPlan(StrictModule, NonTrainableState):
         *,
         maximum_displacement: float = 1.0,
         energy_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         step = float(step_size)
         maximum = float(maximum_displacement)
         tolerance = float(energy_tolerance)
@@ -1478,7 +1478,9 @@ class PreparedVertexTissueDynamics(StrictModule, NonTrainableState):
     tissue: PreparedVertexTissue
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: VertexTissueDynamicsPlan, tissue: PreparedVertexTissue, /):
+    def __init__(
+        self, plan: VertexTissueDynamicsPlan, tissue: PreparedVertexTissue, /
+    ) -> None:
         if not isinstance(plan, VertexTissueDynamicsPlan):
             raise TypeError("plan must be a VertexTissueDynamicsPlan.")
         if not isinstance(tissue, PreparedVertexTissue):
@@ -1661,7 +1663,7 @@ class VertexTissueTopologyEvent(StrictModule, NonTrainableState):
         /,
         *,
         conservation_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         kind_ = _enum_kind(kind)
         if (
             not isinstance(source_prepared_id, str)
@@ -1717,7 +1719,7 @@ class VertexTissueTopologyCandidate(StrictModule, NonTrainableState):
         state: VertexTissueState,
         source_state_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(event, VertexTissueTopologyEvent):
             raise TypeError("event must be a VertexTissueTopologyEvent.")
         if not isinstance(prepared, PreparedVertexTissue):
@@ -2193,7 +2195,7 @@ class VertexTissueTopologyResult(StrictModule, NonTrainableState):
         status: ArrayLike,
         result_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedVertexTissue):
             raise TypeError("prepared must be a PreparedVertexTissue.")
         if not isinstance(state, VertexTissueState):

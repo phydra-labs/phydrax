@@ -79,7 +79,7 @@ class LaplaceSingleLayerDP0GalerkinPolicy3D(StrictModule, NonTrainableState):
         max_resident_bytes: int = 256 * 1024 * 1024,
         precision: IntegrationPrecisionPolicy | None = None,
         dense_oracle: MaterializationPolicy | None = None,
-    ):
+    ) -> None:
         orders = tuple((regular_order, singular_order, near_order))
         if any(value < 2 for value in orders):
             raise ValueError("Galerkin quadrature orders must be at least two.")
@@ -190,7 +190,7 @@ class _LaplaceDP0WeakOperator3D(_AbstractCostedLinearOperator):
         target_block_size: int,
         source_block_size: int,
         operator_id: str,
-    ):
+    ) -> None:
         self.pair_data = pair_data
         self.target_block_size = int(target_block_size)
         self.source_block_size = int(source_block_size)
@@ -323,7 +323,7 @@ class _LaplaceDP0StrongOperator3D(_AbstractCostedLinearOperator):
         /,
         *,
         operator_id: str,
-    ):
+    ) -> None:
         self.weak = weak
         self.inverse_areas = jnp.reciprocal(jnp.asarray(areas))
         self.diagonal = jnp.asarray(diagonal)

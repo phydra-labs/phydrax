@@ -141,7 +141,7 @@ class ConvexProgramPlan(StrictModule):
     problem_signature: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, program: CanonicalProgram, policy: ConvexSolvePolicy, /):
+    def __init__(self, program: CanonicalProgram, policy: ConvexSolvePolicy, /) -> None:
         if not isinstance(program, (LinearProgram, QuadraticProgram, ConicProgram)):
             raise TypeError(
                 "program must be a LinearProgram, QuadraticProgram, or ConicProgram."
@@ -208,7 +208,7 @@ class ConvexProgramTemplate(StrictModule):
     symbolic_state: Any
     template_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ConvexProgramPlan, symbolic_state: Any = None, /):
+    def __init__(self, plan: ConvexProgramPlan, symbolic_state: Any = None, /) -> None:
         if not isinstance(plan, ConvexProgramPlan):
             raise TypeError("plan must be a ConvexProgramPlan.")
         self.plan = plan
@@ -236,7 +236,7 @@ class PreparedConvexProgram(StrictModule):
         *,
         numeric_version: Any = 0,
         numeric_binding_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(program, (LinearProgram, QuadraticProgram, ConicProgram)):
             raise TypeError("program must be a canonical convex program.")
         if not isinstance(template, ConvexProgramTemplate):
@@ -294,7 +294,7 @@ class ConvexProgramExecution(StrictModule):
         numeric_version: Any,
         plan_id: str,
         numeric_binding_id: str,
-    ):
+    ) -> None:
         if not isinstance(result, ConvexProgramResult):
             raise TypeError("result must be a ConvexProgramResult.")
         identifier = str(plan_id)

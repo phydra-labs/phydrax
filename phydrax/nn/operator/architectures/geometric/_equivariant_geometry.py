@@ -41,7 +41,7 @@ class EquivariantOperatorState(StrictModule):
         weights: Array,
         mask: Array,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.values = jnp.asarray(values)
         self.coordinates = jnp.asarray(coordinates)
         self.weights = jnp.asarray(weights)
@@ -77,7 +77,7 @@ class EquivariantGeometryOperator(AbstractEncodedOperatorModel):
         depth: int = 3,
         source_key: str | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.input_representation = input_representation
         self.output_representation = output_representation
         self.hidden_representation = (

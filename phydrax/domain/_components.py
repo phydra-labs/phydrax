@@ -75,7 +75,7 @@ def _as_field(x: Array, *, dims: tuple[str | None, ...]) -> cx.AxisArray:
 class _NormalCallable(StrictModule):
     geom: AbstractGeometry
 
-    def __init__(self, geom: AbstractGeometry):
+    def __init__(self, geom: AbstractGeometry) -> None:
         self.geom = geom
 
     def __call__(self, x: Array, /, *, key=None, **kwargs: Any) -> Array:
@@ -110,7 +110,7 @@ class _NormalCallable(StrictModule):
 class _SdfCallable(StrictModule):
     geom: AbstractGeometry
 
-    def __init__(self, geom: AbstractGeometry):
+    def __init__(self, geom: AbstractGeometry) -> None:
         self.geom = geom
 
     def __call__(self, x: Any, /, *, key=None, **kwargs: Any) -> Array:
@@ -156,7 +156,7 @@ class _EnforcementGateCallable(StrictModule):
         method: EnforcementGateMethod,
         saturation_fraction: float,
         linear_fraction: float,
-    ):
+    ) -> None:
         self.gate = geom.make_enforcement_gate(
             method=method,
             saturation_fraction=saturation_fraction,
@@ -380,7 +380,7 @@ class DomainComponent(StrictModule):
         where_all: DomainFunction | Callable | None = None,
         weight_all: DomainFunction | Callable | None = None,
         density_normalized: bool = False,
-    ):
+    ) -> None:
         self.domain = domain
         self.spec = spec or SelectionSpec()
         unknown = tuple(
@@ -1640,7 +1640,7 @@ class ComponentSum(StrictModule):
         /,
         *,
         assume_disjoint: bool = False,
-    ):
+    ) -> None:
         """Create an additive collection from non-empty compatible terms."""
         resolved_terms = tuple(terms)
         if not resolved_terms:

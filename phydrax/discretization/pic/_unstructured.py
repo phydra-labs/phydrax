@@ -78,7 +78,7 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
         maximum_iterations: int = 500,
         pusher: RelativisticBorisPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(locator, PreparedSimplicialCellLocator):
             raise TypeError("locator must be PreparedSimplicialCellLocator.")
         if locator.cell_map.coordinate_element.degree != 1:

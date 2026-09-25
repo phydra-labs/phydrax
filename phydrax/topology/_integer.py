@@ -43,7 +43,7 @@ class ExactIntegerCOO(StrictModule, NonTrainableState):
         *,
         source_id: str,
         target_id: str,
-    ):
+    ) -> None:
         rows_count = int(row_count)
         columns_count = int(column_count)
         if rows_count < 0 or columns_count < 0:
@@ -327,7 +327,7 @@ class ExactChainComplex(StrictModule, NonTrainableState):
         /,
         *,
         complex_id: str,
-    ):
+    ) -> None:
         values = tuple(boundaries)
         if not values:
             raise ValueError("Exact chain complexes require at least degree zero.")

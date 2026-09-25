@@ -42,7 +42,7 @@ class QoICertificate(StrictModule, NonTrainableState):
         trace_regular: bool,
         point_evaluation: bool = False,
         regularized_point_evaluation: bool = False,
-    ):
+    ) -> None:
         qoi = str(qoi_id)
         state = str(state_space_id)
         bound = float(continuity_bound)
@@ -94,7 +94,7 @@ class DWREstimate(StrictModule, NonTrainableState):
         /,
         *,
         pollution: Sequence[tuple[str, float]],
-    ):
+    ) -> None:
         cells = tuple(cell_ids)
         indicators = np.asarray(signed_indicators, dtype=np.float64)
         pollution_ = tuple((str(name), float(value)) for name, value in pollution)
@@ -163,7 +163,7 @@ class AdaptiveDesignEpoch(StrictModule, NonTrainableState):
         *,
         transition_count: int = 0,
         minimum_iterations: int = 1,
-    ):
+    ) -> None:
         epoch_ = int(epoch)
         count = int(transition_count)
         minimum = int(minimum_iterations)

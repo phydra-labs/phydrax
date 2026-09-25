@@ -205,7 +205,7 @@ class MultiheadWarp(StrictModule, ParameterOwner):
         displacement_width: int | None = None,
         fill_value: float = 0.0,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.spatial_ndim = int(spatial_ndim)
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)

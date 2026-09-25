@@ -235,7 +235,7 @@ class InteractiveMoistColumnPlan(StrictModule):
         background_diffusivity: ArrayLike = 0.0,
         mixing_length: ArrayLike = 50.0,
         critical_richardson: ArrayLike = 0.25,
-    ):
+    ) -> None:
         self.thermodynamics = (
             MoistThermodynamicPlan() if thermodynamics is None else thermodynamics
         )
@@ -1116,7 +1116,7 @@ class InteractiveColumnFixedStepMethod(AbstractFixedStepMethod, NonTrainableStat
     plan: InteractiveMoistColumnPlan
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: InteractiveMoistColumnPlan):
+    def __init__(self, plan: InteractiveMoistColumnPlan) -> None:
         self.plan = plan
         self.method_id = canonical_fingerprint(
             {"kind": "interactive-column-fixed-step", "plan": plan.plan_id}

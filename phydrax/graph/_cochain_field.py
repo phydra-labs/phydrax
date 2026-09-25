@@ -30,7 +30,7 @@ class CochainField(StrictModule):
         *,
         boundary_policy: CochainBoundaryKind = "absolute",
         field_id: str,
-    ):
+    ) -> None:
         if not isinstance(complex, CochainComplexIR):
             raise TypeError("complex must be a CochainComplexIR.")
         degree_ = int(degree)

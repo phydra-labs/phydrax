@@ -50,7 +50,7 @@ class GraphCapillarityPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
         maximum_iterations: int = 200,
-    ):
+    ) -> None:
         if not isinstance(surface, PreparedGraphSurfaceALE):
             raise TypeError("surface must be PreparedGraphSurfaceALE.")
         sigma = float(surface_tension)

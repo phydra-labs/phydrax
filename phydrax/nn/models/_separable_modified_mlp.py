@@ -54,7 +54,7 @@ class SeparableModifiedMLP(_AbstractStructuredInputModel):
         initializer: str = "glorot_normal",
         scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         """Construct a separable modified MLP."""
         in_dim = _get_size(in_size)
         clones = (

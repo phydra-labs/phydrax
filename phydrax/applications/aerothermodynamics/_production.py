@@ -87,7 +87,7 @@ class AerothermodynamicProductionPlan(StrictModule):
     profile: AerothermodynamicProfile
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, profile: AerothermodynamicProfile, /):
+    def __init__(self, profile: AerothermodynamicProfile, /) -> None:
         if not isinstance(
             profile,
             (

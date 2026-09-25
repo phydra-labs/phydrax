@@ -80,7 +80,7 @@ class CompactGeometricTarget(StrictModule):
         local_coordinate_shape: tuple[int, ...],
         reference_measure: str,
         target_id: str,
-    ):
+    ) -> None:
         if not callable(evaluate):
             raise TypeError("evaluate must be callable.")
         if not isinstance(geometry, AbstractStateGeometry):

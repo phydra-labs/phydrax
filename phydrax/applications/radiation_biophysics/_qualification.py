@@ -56,7 +56,7 @@ class LesionExpectationSupport:
     denominator: float
     candidate_artifact_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not isinstance(self.direct_multiplicity, tuple)
             or not isinstance(self.indirect_multiplicity, tuple)
@@ -135,7 +135,7 @@ class RadiationCondition:
     scavenger_mol_per_m3: float
     chemistry_endpoint_s: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _text(self.condition_id, "condition")
         for value in (
             self.dose_gy,
@@ -166,7 +166,7 @@ class RadiationCalibrationData:
     reference: ReferenceArtifactManifest
     source_kind: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         n = len(self.observation_ids)
         arrays = (
             self.observation_ids,
@@ -275,7 +275,7 @@ class RadiationStageEvidence:
     maximum_standardized_rms: float
     upstream_artifact_ids: tuple[str, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.stage not in (
             "dosimetry",
             "transport",

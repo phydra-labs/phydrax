@@ -73,7 +73,7 @@ class CanteraAdapterError(RuntimeError):
 
 
 class CanteraUnsupportedFeatureError(CanteraAdapterError):
-    def __init__(self, features: Sequence[str], /):
+    def __init__(self, features: Sequence[str], /) -> None:
         self.features = tuple(str(value) for value in features)
         super().__init__(
             "Unsupported Cantera features: " + ", ".join(self.features) + "."
@@ -130,7 +130,7 @@ class CanteraYAMLAdapter(StrictModule, NonTrainableState):
     phase_name: str = eqx.field(static=True)
     adapter_id: str = eqx.field(static=True)
 
-    def __init__(self, phase_name: str = "gas", /):
+    def __init__(self, phase_name: str = "gas", /) -> None:
         name = str(phase_name)
         if not name:
             raise ValueError("phase_name must be nonempty.")
@@ -358,7 +358,7 @@ class CanteraReferenceAdapter(StrictModule, NonTrainableState):
     solution: Any = eqx.field(static=True)
     adapter_id: str = eqx.field(static=True)
 
-    def __init__(self, solution: Any, /, *, solution_id: str):
+    def __init__(self, solution: Any, /, *, solution_id: str) -> None:
         identifier = str(solution_id)
         if not identifier:
             raise ValueError("solution_id must be nonempty.")

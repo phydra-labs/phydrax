@@ -69,7 +69,7 @@ class PeriodicVortexEwaldPlan(AbstractVortexVelocityPlan):
         reciprocal_mode_radius: int,
         compatibility_tolerance: float = 1.0e-12,
         precision: VortexPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         period_host = np.asarray(periods, dtype=np.float64)
         if (
             period_host.ndim != 1
@@ -174,7 +174,7 @@ class PreparedPeriodicVortexEwald(AbstractPreparedVortexVelocity):
 
     def __init__(
         self, plan: PeriodicVortexEwaldPlan, compatibility: VortexVelocityCompatibility, /
-    ):
+    ) -> None:
         self.plan = plan
         self.compatibility = compatibility
         self.dimension = plan.dimension

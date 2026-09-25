@@ -42,7 +42,7 @@ class LeapSecondTable(StrictModule, NonTrainableState):
         initial_tai_minus_utc: float,
         source: ResourceManifest,
         /,
-    ):
+    ) -> None:
         transitions = np.asarray(transition_utc_seconds, dtype=np.float64)
         offsets = np.asarray(tai_minus_utc_after, dtype=np.float64)
         initial = float(initial_tai_minus_utc)
@@ -139,7 +139,7 @@ class TimeReferenceContract(StrictModule, NonTrainableState):
         drift_ppm: float = 0.0,
         leap_seconds: LeapSecondTable | None = None,
         correction_resources: Sequence[ResourceManifest] = (),
-    ):
+    ) -> None:
         if scale not in ("tai", "gps", "utc", "instrument", "source-relative"):
             raise ValueError("Unsupported time scale.")
         label = str(epoch_label).strip()
@@ -246,7 +246,9 @@ class TimeTransform(StrictModule, NonTrainableState):
     resources: tuple[ResourceManifest, ...] = eqx.field(static=True)
     transform_id: str = eqx.field(static=True)
 
-    def __init__(self, source: TimeReferenceContract, target: TimeReferenceContract, /):
+    def __init__(
+        self, source: TimeReferenceContract, target: TimeReferenceContract, /
+    ) -> None:
         if not isinstance(source, TimeReferenceContract) or not isinstance(
             target, TimeReferenceContract
         ):

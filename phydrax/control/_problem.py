@@ -95,7 +95,7 @@ class ControlProblem(StrictModule):
         terminal_constraints: Sequence[TerminalConstraint] = (),
         args: Any = None,
         problem_id: str,
-    ):
+    ) -> None:
         from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
 
         if not isinstance(

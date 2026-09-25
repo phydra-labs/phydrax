@@ -31,7 +31,7 @@ class NeutralMesonMixingParameters(StrictModule, NonTrainableState):
         width_difference: float,
         q_over_p: complex,
         convention_id: str,
-    ):
+    ) -> None:
         width = float(decay_width)
         mass = float(mass_difference)
         difference = float(width_difference)
@@ -70,7 +70,7 @@ class TaggingCalibration(StrictModule, NonTrainableState):
 
     def __init__(
         self, intercept: float, slope: float, mean_raw_mistag: float, /, *, source_id: str
-    ):
+    ) -> None:
         values = tuple(map(float, (intercept, slope, mean_raw_mistag)))
         source = str(source_id).strip()
         if (

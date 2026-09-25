@@ -90,7 +90,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
         occupations: ElectronicOccupationPlan | None = None,
         guess: InitialGuessPlan | None = None,
         linear_dependence_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         if (

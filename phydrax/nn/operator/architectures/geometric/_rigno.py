@@ -81,7 +81,7 @@ class RIGNO(AbstractOperatorModel):
         query_chunk_size: int | None = 256,
         assume_uniform_measure: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if int(coord_dim) <= 0 or int(regional_count) <= 0:
             raise ValueError("coord_dim and regional_count must be positive.")
         if int(latent_channels) <= 0:

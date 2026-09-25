@@ -56,7 +56,7 @@ class AbstractLinearMethod(StrictModule):
 class AutoLinearMethod(AbstractLinearMethod):
     """Deterministic capability-based method selection."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -65,7 +65,7 @@ class AutoLinearMethod(AbstractLinearMethod):
 
 
 class DenseLU(AbstractLinearMethod):
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -74,7 +74,7 @@ class DenseLU(AbstractLinearMethod):
 
 
 class DenseCholesky(AbstractLinearMethod):
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -83,7 +83,7 @@ class DenseCholesky(AbstractLinearMethod):
 
 
 class DenseQR(AbstractLinearMethod):
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -96,7 +96,7 @@ class DenseSVD(AbstractLinearMethod):
 
     damping: float = eqx.field(static=True)
 
-    def __init__(self, *, damping: float = 0.0):
+    def __init__(self, *, damping: float = 0.0) -> None:
         damping_ = float(damping)
         if not math.isfinite(damping_) or damping_ < 0.0:
             raise ValueError("damping must be finite and non-negative.")
@@ -110,7 +110,7 @@ class DenseSVD(AbstractLinearMethod):
 class StructuredDirect(AbstractLinearMethod):
     """Exact native execution for an operator with recognized structure."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -129,7 +129,7 @@ class SparseLU(AbstractLinearMethod):
         self,
         *,
         provider: Literal["auto", "jax-cpu", "scipy-superlu", "umfpack"] = "auto",
-    ):
+    ) -> None:
         if provider not in ("auto", "jax-cpu", "scipy-superlu", "umfpack"):
             raise ValueError(f"Unknown sparse LU provider {provider!r}.")
         self.provider = provider
@@ -144,7 +144,7 @@ class SparseCholesky(AbstractLinearMethod):
 
     provider: Literal["cholmod"] = eqx.field(static=True)
 
-    def __init__(self, *, provider: Literal["cholmod"] = "cholmod"):
+    def __init__(self, *, provider: Literal["cholmod"] = "cholmod") -> None:
         if provider != "cholmod":
             raise ValueError(f"Unknown sparse Cholesky provider {provider!r}.")
         self.provider = provider
@@ -169,7 +169,7 @@ class SparseLDLT(AbstractLinearMethod):
         reordering: Literal["default", "nested_dissection", "amd"] = "default",
         memory_mode: Literal["device", "hybrid"] = "device",
         refinement_steps: int = 1,
-    ):
+    ) -> None:
         if provider != "spineax-cudss":
             raise ValueError(f"Unknown sparse LDLT provider {provider!r}.")
         if reordering not in ("default", "nested_dissection", "amd"):
@@ -200,7 +200,7 @@ class SparseQR(AbstractLinearMethod):
         *,
         provider: Literal["jax-cuda", "spqr"] = "jax-cuda",
         reorder: int = 1,
-    ):
+    ) -> None:
         if provider not in ("jax-cuda", "spqr"):
             raise ValueError(f"Unknown sparse QR provider {provider!r}.")
         reorder_ = int(reorder)
@@ -215,7 +215,7 @@ class SparseQR(AbstractLinearMethod):
 
 
 class ConjugateGradient(AbstractLinearMethod):
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -226,7 +226,7 @@ class ConjugateGradient(AbstractLinearMethod):
 class PCG(AbstractLinearMethod):
     """Pairing-aware preconditioned conjugate gradients."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -237,7 +237,7 @@ class PCG(AbstractLinearMethod):
 class ProjectedPCG(AbstractLinearMethod):
     """PCG on the certified orthogonal complement of a complete kernel."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -248,7 +248,7 @@ class ProjectedPCG(AbstractLinearMethod):
 class BlockCG(AbstractLinearMethod):
     """True shared-space block conjugate gradients."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -259,7 +259,7 @@ class BlockCG(AbstractLinearMethod):
 class MINRES(AbstractLinearMethod):
     """Minimum residual iteration for self-adjoint indefinite systems."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -271,7 +271,7 @@ class GMRES(AbstractLinearMethod):
     restart: int = eqx.field(static=True)
     stagnation_iterations: int = eqx.field(static=True)
 
-    def __init__(self, *, restart: int = 20, stagnation_iterations: int = 20):
+    def __init__(self, *, restart: int = 20, stagnation_iterations: int = 20) -> None:
         restart_ = int(restart)
         stagnation = int(stagnation_iterations)
         if restart_ < 1 or stagnation < 1:
@@ -289,7 +289,7 @@ class BlockGMRES(AbstractLinearMethod):
 
     restart: int = eqx.field(static=True)
 
-    def __init__(self, *, restart: int = 20):
+    def __init__(self, *, restart: int = 20) -> None:
         restart_ = int(restart)
         if restart_ < 1:
             raise ValueError("BlockGMRES restart must be positive.")
@@ -306,7 +306,7 @@ class FGMRES(AbstractLinearMethod):
     restart: int = eqx.field(static=True)
     stagnation_iterations: int = eqx.field(static=True)
 
-    def __init__(self, *, restart: int = 30, stagnation_iterations: int = 30):
+    def __init__(self, *, restart: int = 30, stagnation_iterations: int = 30) -> None:
         restart_ = int(restart)
         stagnation = int(stagnation_iterations)
         if restart_ < 1 or stagnation < 1:
@@ -320,7 +320,7 @@ class FGMRES(AbstractLinearMethod):
 
 
 class BiCGStab(AbstractLinearMethod):
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -332,7 +332,7 @@ class LSMR(AbstractLinearMethod):
     condition_limit: float = eqx.field(static=True)
     damping: float = eqx.field(static=True)
 
-    def __init__(self, *, condition_limit: float = 1e8, damping: float = 0.0):
+    def __init__(self, *, condition_limit: float = 1e8, damping: float = 0.0) -> None:
         condition = float(condition_limit)
         damping_ = float(damping)
         if not math.isfinite(condition) or condition <= 1.0:
@@ -353,7 +353,7 @@ class GeneralizedLSMR(AbstractLinearMethod):
     condition_limit: float = eqx.field(static=True)
     damping: float = eqx.field(static=True)
 
-    def __init__(self, *, condition_limit: float = 1e8, damping: float = 0.0):
+    def __init__(self, *, condition_limit: float = 1e8, damping: float = 0.0) -> None:
         condition = float(condition_limit)
         damping_ = float(damping)
         if not math.isfinite(condition) or condition <= 1.0:
@@ -379,7 +379,7 @@ class TolerancePolicy(StrictModule):
         relative: float = 1e-8,
         absolute: float = 1e-10,
         max_steps: int | None = None,
-    ):
+    ) -> None:
         relative_ = float(relative)
         absolute_ = float(absolute)
         steps = None if max_steps is None else int(max_steps)
@@ -410,7 +410,7 @@ class LinearSolveControl(StrictModule):
         relative_tolerance: Any | None = None,
         absolute_tolerance: Any | None = None,
         maximum_steps: Any | None = None,
-    ):
+    ) -> None:
         self.relative_tolerance = _runtime_tolerance(
             relative_tolerance,
             "relative_tolerance",
@@ -485,7 +485,7 @@ class MixedPrecisionPolicy(StrictModule):
         accumulation_dtype: DTypeLike | None = None,
         maximum_refinement_steps: int = 0,
         condition_limit: float | None = None,
-    ):
+    ) -> None:
         self.operator_dtype = _precision_dtype(operator_dtype, "operator_dtype")
         self.factorization_dtype = _precision_dtype(
             factorization_dtype,
@@ -545,7 +545,7 @@ class RankPolicy(StrictModule):
         relative_cutoff: float | None = None,
         absolute_cutoff: float | None = None,
         require_full_rank: bool = False,
-    ):
+    ) -> None:
         relative = None if relative_cutoff is None else float(relative_cutoff)
         absolute = None if absolute_cutoff is None else float(absolute_cutoff)
         if relative is not None and (not math.isfinite(relative) or relative < 0.0):
@@ -560,7 +560,7 @@ class RankPolicy(StrictModule):
 class FailurePolicy(StrictModule):
     mode: FailureMode = eqx.field(static=True)
 
-    def __init__(self, mode: FailureMode = "status", /):
+    def __init__(self, mode: FailureMode = "status", /) -> None:
         if mode not in ("status", "error"):
             raise ValueError("Failure mode must be 'status' or 'error'.")
         self.mode = mode
@@ -571,7 +571,7 @@ class DifferentiationPolicy(StrictModule):
 
     mode: DifferentiationMode = eqx.field(static=True)
 
-    def __init__(self, mode: DifferentiationMode = "mathematical", /):
+    def __init__(self, mode: DifferentiationMode = "mathematical", /) -> None:
         if mode not in ("mathematical", "rhs-only", "algorithmic", "none"):
             raise ValueError("Unknown differentiation mode.")
         self.mode = mode
@@ -594,7 +594,7 @@ class SolveResourcePolicy(StrictModule):
         krylov_basis_bytes: int = 256 * 1024 * 1024,
         preconditioner_bytes: int = 256 * 1024 * 1024,
         recycling_state_bytes: int = 256 * 1024 * 1024,
-    ):
+    ) -> None:
         values = tuple(
             (
                 factorization_bytes,
@@ -658,7 +658,7 @@ class LinearSolveCheckPolicy(StrictModule):
         nullspace_tolerance: float = 1e-10,
         stability_lower_bound: StabilityLowerBound | None = None,
         require_nullspace: bool = False,
-    ):
+    ) -> None:
         (
             self.relative_tolerance,
             self.absolute_tolerance,
@@ -692,7 +692,7 @@ class LinearDerivativeSolvePolicy(StrictModule):
         nullspace_tolerance: float = 1e-10,
         stability_lower_bound: StabilityLowerBound | None = None,
         require_nullspace: bool = False,
-    ):
+    ) -> None:
         (
             self.relative_tolerance,
             self.absolute_tolerance,
@@ -743,7 +743,7 @@ class LinearSolvePolicy(StrictModule):
         resources: SolveResourcePolicy | None = None,
         precision: MixedPrecisionPolicy | None = None,
         require_device_binding: bool = False,
-    ):
+    ) -> None:
         method_ = AutoLinearMethod() if method is None else method
         tolerance_ = TolerancePolicy() if tolerance is None else tolerance
         rank_ = RankPolicy() if rank is None else rank

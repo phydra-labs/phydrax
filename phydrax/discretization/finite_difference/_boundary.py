@@ -51,7 +51,7 @@ class AxisBoundaryPair(StrictModule, NonTrainableState):
         lower: BoundaryConditionKind,
         upper: BoundaryConditionKind,
         /,
-    ):
+    ) -> None:
         axis_ = str(axis)
         allowed = (
             "periodic",
@@ -99,7 +99,7 @@ class BoundaryRealizationPlan(StrictModule, NonTrainableState):
         *,
         lower_width: int = 0,
         upper_width: int = 0,
-    ):
+    ) -> None:
         if not isinstance(boundary, AxisBoundaryPair):
             raise TypeError("boundary must be an AxisBoundaryPair.")
         if realization not in (
@@ -157,7 +157,7 @@ class HaloPlan(StrictModule, NonTrainableState):
         same_level_neighbors: bool = False,
         coarse_fine_neighbors: bool = False,
         distributed_neighbors: bool = False,
-    ):
+    ) -> None:
         if not isinstance(footprint, StencilFootprint):
             raise TypeError("footprint must be a StencilFootprint.")
         boundaries = tuple(physical_boundaries)
@@ -209,7 +209,7 @@ class BoundaryAffineMap(StrictModule, NonTrainableState):
         lift_operator: AbstractLinearOperator,
         boundary_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(rhs_operator, AbstractLinearOperator) or not isinstance(
             lift_operator, AbstractLinearOperator
         ):

@@ -69,7 +69,7 @@ class AdaptiveSignedEstimator(StrictModule):
 
     refresh_interval: int = eqx.field(static=True)
 
-    def __init__(self, *, refresh_interval: int = 1):
+    def __init__(self, *, refresh_interval: int = 1) -> None:
         interval = int(refresh_interval)
         if interval < 1:
             raise ValueError("refresh_interval must be positive.")
@@ -196,7 +196,7 @@ class AdaptiveStratifiedEstimator(AdaptiveSignedEstimator):
         variance_floor: float = 1.0e-12,
         minimum_per_stratum: int = 1,
         refresh_interval: int = 1,
-    ):
+    ) -> None:
         super().__init__(refresh_interval=refresh_interval)
         masses = jnp.asarray(stratum_masses, dtype=jnp.float64).reshape((-1,))
         floor = float(variance_floor)
@@ -253,7 +253,7 @@ class AdaptiveImportanceEstimator(AdaptiveSignedEstimator):
         *,
         defensive_mixture_floor: float = 1.0e-3,
         refresh_interval: int = 1,
-    ):
+    ) -> None:
         super().__init__(refresh_interval=refresh_interval)
         floor = float(defensive_mixture_floor)
         if not isfinite(floor) or not 0.0 < floor <= 1.0:

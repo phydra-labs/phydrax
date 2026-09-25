@@ -22,7 +22,7 @@ class ImageSample2D(StrictModule):
     values: Array
     valid: Array
 
-    def __init__(self, values: ArrayLike, valid: ArrayLike, /):
+    def __init__(self, values: ArrayLike, valid: ArrayLike, /) -> None:
         values_ = jnp.asarray(values)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if values_.shape[: valid_.ndim] != valid_.shape:

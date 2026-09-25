@@ -69,7 +69,7 @@ class AerothermodynamicSupportTuple(StrictModule, NonTrainableState):
         kinetic_id: str | None = None,
         hybrid_id: str | None = None,
         turbulence_id: str | None = None,
-    ):
+    ) -> None:
         species = int(species_count)
         modes = int(mode_count)
         groups = int(radiation_group_count)
@@ -194,7 +194,7 @@ class AerothermodynamicCapabilityStatus(StrictModule, NonTrainableState):
         operational: bool,
         security: bool,
         released: bool = False,
-    ):
+    ) -> None:
         gate_values = (scientific, performance, operational, security)
         if any(type(value) is not bool for value in (*gate_values, released)):
             raise TypeError("Capability gates and released must be booleans.")
@@ -241,7 +241,7 @@ class AerothermodynamicResourceCaps(StrictModule, NonTrainableState):
         maximum_surface_events: int,
         maximum_topology_events: int,
         maximum_radiation_groups: int,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_particles,

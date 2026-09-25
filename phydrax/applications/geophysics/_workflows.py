@@ -60,7 +60,7 @@ class MatrixFreeMAPPlan(StrictModule, NonTrainableState):
         damping: float = 1e-6,
         maximum_iterations: int = 30,
         gradient_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         if not callable(objective) or not callable(hessian_action):
             raise TypeError("MAP objective and Hessian action must be callable.")
         objective_identity = str(objective_id).strip()
@@ -167,7 +167,7 @@ class EnsembleKalmanInversionPlan(StrictModule, NonTrainableState):
         /,
         *,
         inflation: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(covariance, DiagonalCovarianceAction):
             raise TypeError(
                 "Scalable ensemble inversion currently requires diagonal covariance."
@@ -299,7 +299,7 @@ class PCNSampler(StrictModule, NonTrainableState):
         /,
         *,
         log_likelihood_id: str,
-    ):
+    ) -> None:
         likelihood_identity = str(log_likelihood_id).strip()
         step, count = float(step_size), int(sample_count)
         if (

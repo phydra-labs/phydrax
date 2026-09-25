@@ -152,7 +152,7 @@ class PlateWellIdentity:
     preparation_id: str
     replicate_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for value, name in (
             (self.experiment_id, "experiment_id"),
             (self.plate_id, "plate_id"),
@@ -211,7 +211,7 @@ class FluorescenceTimeTrace:
         injection_reference_seconds: float | None,
         saturation_threshold_intensity: float | None,
         intensity_unit_id: str = "instrument-fluorescence-unit",
-    ):
+    ) -> None:
         if not isinstance(identity, PlateWellIdentity):
             raise TypeError("identity must be a PlateWellIdentity.")
         case = _identifier(case_id, "case_id")
@@ -379,7 +379,7 @@ class StrandDisplacementSourceMember:
     path: str
     manifest: ReferenceArtifactManifest
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.relationship not in (
             "raw-workbook",
             "plate-layout",
@@ -429,7 +429,7 @@ class StrandDisplacementWellManifest:
         role: str,
         parent_case_ids: Sequence[str] = (),
         saturation_threshold_intensity: float | None = None,
-    ):
+    ) -> None:
         constructs = _identifiers(tuple(construct_ids), "construct_ids")
         raw = np.asarray(tuple(initial_concentrations), dtype=np.float64)
         if (
@@ -505,7 +505,7 @@ class StrandDisplacementSourceManifest:
     readme: StrandDisplacementSourceMember | None = None
     manifest_id: str = field(init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (self.record_id, self.version, self.doi, self.license_id) != (
             _ZENODO_RECORD_ID,
             _ZENODO_VERSION,

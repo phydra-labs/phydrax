@@ -39,7 +39,7 @@ class GeometryGraph(StrictModule):
         interior_nodes: Any,
         boundary_edges: Any,
         interface_edges: Any,
-    ):
+    ) -> None:
         self.graph = graph
         self.boundary_nodes = jnp.asarray(boundary_nodes, dtype=jnp.int32)
         self.interior_nodes = jnp.asarray(interior_nodes, dtype=jnp.int32)
@@ -89,7 +89,7 @@ class QueryGraph(StrictModule):
         source_type: int,
         target_type: int,
         query_edge_type: int,
-    ):
+    ) -> None:
         self.graph = graph
         self.source_nodes = jnp.asarray(source_nodes, dtype=jnp.int32)
         self.target_nodes = jnp.asarray(target_nodes, dtype=jnp.int32)

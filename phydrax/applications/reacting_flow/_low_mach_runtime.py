@@ -47,7 +47,7 @@ class LowMachReactingSDCPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, correction_sweeps: int = 2, nonlinear_tolerance: float = 1.0e-8, /
-    ):
+    ) -> None:
         sweeps = int(correction_sweeps)
         tolerance = float(nonlinear_tolerance)
         if sweeps < 1 or not isfinite(tolerance) or tolerance <= 0.0:
@@ -140,7 +140,7 @@ class LowMachReactingFlowPlan(StrictModule, NonTrainableState):
         conservation_tolerance: float = 1.0e-8,
         eos_tolerance: float = 1.0e-7,
         maximum_temperature_iterations: int = 64,
-    ):
+    ) -> None:
         if not isinstance(formulation, LowMachReactingFormulation):
             raise TypeError("formulation must be LowMachReactingFormulation.")
         if formulation.mechanism is None:

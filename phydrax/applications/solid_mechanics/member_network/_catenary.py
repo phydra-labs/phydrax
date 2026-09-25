@@ -51,7 +51,7 @@ class ElasticCatenaryReference(StrictModule, NonTrainableState):
         *,
         thermal_strain: ArrayLike = 0.0,
         reference_id: str | None = None,
-    ):
+    ) -> None:
         length = jnp.asarray(unstretched_length)
         rigidity = jnp.asarray(axial_rigidity, dtype=length.dtype)
         load = jnp.asarray(distributed_load, dtype=length.dtype)
@@ -104,7 +104,7 @@ class CatenarySolvePolicy(StrictModule, NonTrainableState):
         relative_residual: float = 1.0e-10,
         minimum_tension: float = 1.0e-10,
         straight_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if int(quadrature_order) < 4:
             raise ValueError("quadrature_order must be at least four.")
         values = (
@@ -152,7 +152,7 @@ class ElasticCatenaryBlock(AbstractMemberBlock):
         *,
         policy: CatenarySolvePolicy | None = None,
         block_id: str | None = None,
-    ):
+    ) -> None:
         indices = jnp.asarray(member_indices, dtype=jnp.int32)
         references_ = tuple(references)
         if indices.ndim != 1 or len(references_) != indices.size:

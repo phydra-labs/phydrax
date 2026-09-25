@@ -44,7 +44,7 @@ class StencilFootprint(StrictModule, NonTrainableState):
         lower: Sequence[int],
         upper: Sequence[int],
         /,
-    ):
+    ) -> None:
         names = tuple(str(name) for name in axis_names)
         lower_ = tuple(lower)
         upper_ = tuple(upper)
@@ -93,7 +93,7 @@ class StencilRowReport(StrictModule, NonTrainableState):
         valid_width: int,
         coefficient_plan: StencilCoefficientPlan,
         /,
-    ):
+    ) -> None:
         if kind not in (
             "interior",
             "lower_closure",
@@ -144,7 +144,7 @@ class LinearStencil(StrictModule, NonTrainableState):
         valid: ArrayLike | None = None,
         row_kinds: Sequence[StencilRowKind] | None = None,
         stencil_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(request, DerivativeRequest):
             raise TypeError("request must be a DerivativeRequest.")
         axis = int(axis_index)
@@ -258,7 +258,7 @@ class BoundaryStencilSet(StrictModule, NonTrainableState):
         kind: BoundaryClosureKind,
         interior_accuracy_order: int | None = None,
         closure_accuracy_order: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(stencil, LinearStencil):
             raise TypeError("stencil must be a LinearStencil.")
         if kind not in ("periodic", "one_sided"):

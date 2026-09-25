@@ -46,7 +46,7 @@ class MonolithicReactiveTransportPlan(StrictModule):
         /,
         *,
         minerals: MineralKinetics | None = None,
-    ):
+    ) -> None:
         if not isinstance(transport, ComponentTransport) or not isinstance(
             chemistry, MassActionSystem
         ):

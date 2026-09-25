@@ -39,7 +39,7 @@ class DressedStateLabel(StrictModule):
         /,
         *,
         label_id: str | None = None,
-    ):
+    ) -> None:
         raw_levels = tuple(levels)
         if not raw_levels or any(
             isinstance(level, bool) or not isinstance(level, Integral)
@@ -81,7 +81,7 @@ class DressedSpectrumPolicy(StrictModule):
         hermiticity_tolerance: float = 1e-10,
         eigen_residual_tolerance: float = 1e-8,
         tracking: HermitianEigenspaceTrackingPolicy | None = None,
-    ):
+    ) -> None:
         for name, value in (
             ("maximum_hilbert_dimension", maximum_hilbert_dimension),
             ("maximum_dense_entries", maximum_dense_entries),

@@ -57,7 +57,7 @@ class ExperimentConditions(StrictModule):
         denaturant_unit=None,
         concentration=None,
         concentration_unit=None,
-    ):
+    ) -> None:
         t = np.asarray(temperature, dtype=np.float64) * float(
             conversion_factor(temperature_unit, KELVIN)
         )
@@ -112,7 +112,7 @@ class ExperimentParameter:
     scale: float
     free: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identifier(self.name, "Parameter name")
         if not isinstance(self.unit, UnitDefinition):
             raise TypeError("Parameter unit must be UnitDefinition.")
@@ -132,7 +132,7 @@ class NamedParameterMap(StrictModule):
     free_names: tuple[str, ...] = eqx.field(static=True)
     units: tuple[UnitDefinition, ...] = eqx.field(static=True)
 
-    def __init__(self, parameters):
+    def __init__(self, parameters) -> None:
         parameters = tuple(parameters)
         if not parameters or any(
             not isinstance(p, ExperimentParameter) for p in parameters

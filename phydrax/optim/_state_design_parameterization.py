@@ -73,7 +73,7 @@ class _DecodedStateSolver(AbstractStateSolver):
     physical_problem: StateDesignProblem
     decoder: _FrozenDecoder
 
-    def __init__(self, physical_problem, decoder, /):
+    def __init__(self, physical_problem, decoder, /) -> None:
         self.physical_problem = physical_problem
         self.decoder = decoder
 

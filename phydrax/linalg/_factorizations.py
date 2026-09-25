@@ -86,7 +86,7 @@ class FactorizationPolicy(StrictModule):
         failure: FailurePolicy | None = None,
         resources: SolveResourcePolicy | None = None,
         precision: MixedPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if kind not in ("auto", "lu", "cholesky", "qr", "svd"):
             raise ValueError("Unknown factorization kind.")
         self.kind = kind
@@ -168,7 +168,7 @@ class PreparedFactorization(StrictModule):
         policy: FactorizationPolicy,
         capabilities: FactorizationCapabilities,
         /,
-    ):
+    ) -> None:
         self.operator = operator
         self.prepared_solve = prepared_solve
         self.policy = policy

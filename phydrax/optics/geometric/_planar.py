@@ -49,7 +49,7 @@ class PlanarRefractiveStack(StrictModule, NonTrainableState):
         refractive_indices: ArrayLike,
         *,
         interface_active: ArrayLike | None = None,
-    ):
+    ) -> None:
         points_host = np.asarray(interface_points, dtype=np.float64)
         normals_host = np.asarray(interface_normals, dtype=np.float64)
         indices_host = np.asarray(refractive_indices, dtype=np.float64)

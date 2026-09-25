@@ -64,7 +64,7 @@ class DirectFresnelPlan(StrictModule, NonTrainableState):
         maximum_sampling_phase_step: float = np.pi,
         maximum_paraxial_angle: float = 0.3,
         maximum_power_error: float = 5.0e-2,
-    ):
+    ) -> None:
         if not isinstance(input_space, PlaneFieldSpace) or not isinstance(
             output_space, PlaneFieldSpace
         ):

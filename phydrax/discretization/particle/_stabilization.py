@@ -56,7 +56,9 @@ class SPHFirstOrderGradientCorrectionPlan(StrictModule, NonTrainableState):
     maximum_condition: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, *, regularization: float = 1e-10, maximum_condition: float = 1e10):
+    def __init__(
+        self, *, regularization: float = 1e-10, maximum_condition: float = 1e10
+    ) -> None:
         if regularization < 0.0 or maximum_condition <= 1.0:
             raise ValueError("SPH correction regularization/condition are invalid.")
         self.regularization = float(regularization)
@@ -166,7 +168,7 @@ class MolteniColagrossiDensityDiffusionPlan(AbstractSPHDensityDiffusionPlan):
     regularization: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, delta: float = 0.1, /, *, regularization: float = 0.01):
+    def __init__(self, delta: float = 0.1, /, *, regularization: float = 0.01) -> None:
         if delta < 0.0 or regularization <= 0.0:
             raise ValueError("Density diffusion parameters are invalid.")
         self.delta = float(delta)
@@ -195,7 +197,7 @@ class AntuonoDeltaSPHDiffusionPlan(AbstractSPHDensityDiffusionPlan):
         regularization: float = 0.01,
         correction: SPHFirstOrderGradientCorrectionPlan | None = None,
         free_surface_policy: FreeSurfaceDiffusionPolicy = "disable",
-    ):
+    ) -> None:
         if delta < 0.0 or regularization <= 0.0:
             raise ValueError("Density diffusion parameters are invalid.")
         if free_surface_policy not in (
@@ -332,7 +334,7 @@ class MonaghanArtificialViscosityPlan(StrictModule, NonTrainableState):
         regularization: float = 0.01,
         activation: ArtificialViscosityActivation = "approaching-only",
         smooth_sharpness: float = 50.0,
-    ):
+    ) -> None:
         if alpha < 0.0 or beta < 0.0 or regularization <= 0.0:
             raise ValueError("Artificial-viscosity coefficients are invalid.")
         if activation not in ("approaching-only", "always", "smooth-approach"):

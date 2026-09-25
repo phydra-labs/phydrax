@@ -56,7 +56,7 @@ class PreprocessingDiagnostics(StrictModule):
         output_shape: tuple[int, ...],
         method: str,
         details: tuple[tuple[str, Any], ...] = (),
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.observed_weight = jnp.asarray(observed_weight)

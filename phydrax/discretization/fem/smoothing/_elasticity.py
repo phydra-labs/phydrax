@@ -76,7 +76,7 @@ class SmoothedElasticityOperator(StrictModule, NonTrainableState):
         local_stiffness: ArrayLike,
         global_node_count: int,
         /,
-    ):
+    ) -> None:
         local = jnp.asarray(local_stiffness)
         count = int(global_node_count)
         local_width = 2 * layout.dof_routes.shape[1]

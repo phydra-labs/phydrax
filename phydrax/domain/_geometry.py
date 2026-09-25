@@ -38,7 +38,7 @@ class GeometryDomain(AbstractGeometry):
     geometry: CompiledGeometry
     _label: str
 
-    def __init__(self, geometry: CompiledGeometry, *, label: str = "x"):
+    def __init__(self, geometry: CompiledGeometry, *, label: str = "x") -> None:
         if not isinstance(geometry, CompiledGeometry):
             raise TypeError("GeometryDomain requires a CompiledGeometry.")
         if geometry.kind is not GeometryKind.REGION:

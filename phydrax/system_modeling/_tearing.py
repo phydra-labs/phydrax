@@ -11,7 +11,7 @@ class TearingPlan:
     variable_count: int
     residual_count: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             isinstance(self.variable_count, bool)
             or not isinstance(self.variable_count, int)

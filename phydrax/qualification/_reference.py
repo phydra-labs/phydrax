@@ -116,7 +116,7 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
         nondimensionalization: Mapping[str, int | float],
         uncertainty: Mapping[str, int | float] | None,
         lineage_ids: Sequence[str],
-    ):
+    ) -> None:
         algorithm = _identifier(checksum_algorithm, "checksum algorithm").lower()
         if algorithm not in _CHECKSUM_LENGTHS:
             raise ValueError("Checksum algorithm must be sha256, sha384, or sha512.")

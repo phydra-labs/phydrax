@@ -59,7 +59,7 @@ class SpacecraftDynamicsPlan(StrictModule, NonTrainableState):
         /,
         *,
         load_id: str,
-    ):
+    ) -> None:
         if not isinstance(bodies, PreparedRigidBodySet):
             raise TypeError("bodies must be a PreparedRigidBodySet.")
         if bodies.ambient_dimension != 3:
@@ -233,7 +233,7 @@ class FiniteBurnPlan(StrictModule, NonTrainableState):
         lever_arm_body: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         standard_gravity: ArrayLike = 9.80665,
         burn_id: str,
-    ):
+    ) -> None:
         direction = np.asarray(direction_body, dtype=np.float64)
         lever = np.asarray(lever_arm_body, dtype=np.float64)
         if direction.shape != (3,) or lever.shape != (3,):
@@ -295,7 +295,9 @@ class VariableMassSpacecraftState(StrictModule):
     kinematics: RigidBodyKinematics
     propellant_mass: Array
 
-    def __init__(self, kinematics: RigidBodyKinematics, propellant_mass: ArrayLike, /):
+    def __init__(
+        self, kinematics: RigidBodyKinematics, propellant_mass: ArrayLike, /
+    ) -> None:
         if not isinstance(kinematics, RigidBodyKinematics):
             raise TypeError("kinematics must be RigidBodyKinematics.")
         mass = jnp.asarray(propellant_mass)
@@ -342,7 +344,7 @@ class ReactionWheelSet(StrictModule, NonTrainableState):
         /,
         *,
         wheel_id: str,
-    ):
+    ) -> None:
         axes = np.asarray(axes_body, dtype=np.float64)
         inertias_ = np.asarray(inertias, dtype=np.float64)
         torque = np.asarray(maximum_torque, dtype=np.float64)

@@ -28,7 +28,7 @@ class MACMultiphaseProjectionPlan(StrictModule, NonTrainableState):
     projection: MACVariableDensityProjectionPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, projection: MACVariableDensityProjectionPlan, /):
+    def __init__(self, projection: MACVariableDensityProjectionPlan, /) -> None:
         if not isinstance(projection, MACVariableDensityProjectionPlan):
             raise TypeError("projection must be MACVariableDensityProjectionPlan.")
         self.projection = projection

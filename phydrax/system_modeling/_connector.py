@@ -15,7 +15,7 @@ class ConnectorVariable:
     kind: VariableKind
     unit: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name or not self.unit or self.kind not in ("across", "through"):
             raise ValueError("Connector variable invalid.")
 
@@ -29,7 +29,7 @@ class ConnectorType:
     def create(cls, identifier, variables):
         return cls(str(identifier), tuple(variables))
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not self.connector_type_id
             or not self.variables
@@ -44,7 +44,7 @@ class Connector:
     connector_type: ConnectorType
     orientation: float = 1.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.connector_id, str) or not self.connector_id:
             raise ValueError("Connector identifier must be a non-empty string.")
         if not isinstance(self.connector_type, ConnectorType):

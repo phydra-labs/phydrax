@@ -175,7 +175,7 @@ class LocalLevelComponent(AbstractStructuralComponent):
         process_variance: ArrayLike,
         initial_mean: ArrayLike = 0.0,
         initial_variance: ArrayLike = 1.0,
-    ):
+    ) -> None:
         resolved = _name(name, owner="name")
         self.initial_mean = _vector(initial_mean, 1, owner="initial_mean")
         self.initial_covariance = _covariance(
@@ -219,7 +219,7 @@ class TrendComponent(AbstractStructuralComponent):
         slope_variance: ArrayLike,
         initial_mean: ArrayLike | Sequence[float] = (0.0, 0.0),
         initial_covariance: ArrayLike = 1.0,
-    ):
+    ) -> None:
         resolved = _name(name, owner="name")
         self.initial_mean = _vector(initial_mean, 2, owner="initial_mean")
         self.initial_covariance = _covariance(
@@ -272,7 +272,7 @@ class DampedTrendComponent(AbstractStructuralComponent):
         slope_variance: ArrayLike,
         initial_mean: ArrayLike | Sequence[float] = (0.0, 0.0),
         initial_covariance: ArrayLike = 1.0,
-    ):
+    ) -> None:
         resolved = _name(name, owner="name")
         self.initial_mean = _vector(initial_mean, 2, owner="initial_mean")
         self.initial_covariance = _covariance(
@@ -335,7 +335,7 @@ class SeasonalComponent(AbstractStructuralComponent):
         process_variance: ArrayLike = 0.0,
         initial_mean: ArrayLike | None = None,
         initial_covariance: ArrayLike = 1.0,
-    ):
+    ) -> None:
         resolved = _name(name, owner="name")
         period_value = float(period)
         if not np.isfinite(period_value) or period_value <= 1.0:
@@ -405,7 +405,7 @@ class RegressionComponent(AbstractStructuralComponent):
         initial_coefficients: ArrayLike,
         initial_covariance: ArrayLike = 1.0,
         process_covariance: ArrayLike = 0.0,
-    ):
+    ) -> None:
         resolved = _name(name, owner="name")
         coefficients = jnp.asarray(initial_coefficients, dtype=jnp.float64)
         if coefficients.ndim != 1 or coefficients.size <= 0:
@@ -474,7 +474,7 @@ class AutoregressiveComponent(AbstractStructuralComponent):
         process_variance: ArrayLike,
         initial_mean: ArrayLike | None = None,
         initial_covariance: ArrayLike = 1.0,
-    ):
+    ) -> None:
         resolved = _name(name, owner="name")
         coefficient_array = jnp.asarray(coefficients, dtype=jnp.float64)
         if coefficient_array.ndim != 1 or coefficient_array.size <= 0:
@@ -537,7 +537,7 @@ class DeterministicTransitionComponent(AbstractStructuralComponent):
         initial_mean: ArrayLike,
         initial_covariance: ArrayLike,
         transition_id: str = "provided-deterministic-transition",
-    ):
+    ) -> None:
         resolved = _name(name, owner="name")
         mean = jnp.asarray(initial_mean, dtype=jnp.float64)
         if mean.ndim != 1 or mean.size <= 0:
@@ -609,7 +609,7 @@ class ProcessNoiseComponent(AbstractStructuralComponent):
         *,
         variance: ArrayLike,
         initial_variance: ArrayLike | None = None,
-    ):
+    ) -> None:
         resolved = _name(name, owner="name")
         resolved_variance = _finite_scalar(variance, owner="variance", lower=0.0)
         prior_variance = variance if initial_variance is None else initial_variance

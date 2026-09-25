@@ -91,7 +91,7 @@ class GaussianBasisPlan(StrictModule, NonTrainableState):
         source_id: str,
         source_artifact_id: str | None = None,
         role: str = "orbital",
-    ):
+    ) -> None:
         shells_ = tuple(shells)
         if not shells_ or any(
             not isinstance(value, GaussianShellPlan) for value in shells_
@@ -260,7 +260,7 @@ class PreparedGaussianBasis(StrictModule, NonTrainableState):
     system_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: GaussianBasisPlan, system: AtomisticSystemPlan, /):
+    def __init__(self, plan: GaussianBasisPlan, system: AtomisticSystemPlan, /) -> None:
         if not isinstance(plan, GaussianBasisPlan):
             raise TypeError("plan must be GaussianBasisPlan.")
         if not isinstance(system, AtomisticSystemPlan):

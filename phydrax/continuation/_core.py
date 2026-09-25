@@ -136,7 +136,7 @@ class ContinuationIterationMetrics(StrictModule):
     committed: Array
     rolled_back: Array
 
-    def __init__(self, step: ContinuationStepResult, /):
+    def __init__(self, step: ContinuationStepResult, /) -> None:
         candidate = step.candidate
         self.coordinate = jnp.asarray(candidate.coordinate)
         self.residual_norm = jnp.asarray(candidate.residual_norm)
@@ -375,7 +375,7 @@ class ParameterContinuationProblem(ContinuationCurveProblem):
         state_jacobian_action: Callable[..., PyTree[Any]] | None = None,
         coordinate_derivative: Callable[..., PyTree[Any]] | None = None,
         problem_id: str = "parameter-continuation",
-    ):
+    ) -> None:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         for value, name in (
@@ -526,7 +526,7 @@ class ParameterPathContinuationProblem(ContinuationCurveProblem):
         state_jacobian_action: Callable[..., PyTree[Any]] | None = None,
         coordinate_derivative: Callable[..., PyTree[Any]] | None = None,
         problem_id: str = "parameter-path-continuation",
-    ):
+    ) -> None:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         if not callable(path):
@@ -738,7 +738,7 @@ class StabilityEvidence(StrictModule):
         full_spectrum: bool,
         zero_tolerance: float,
         pair_tolerance: float,
-    ):
+    ) -> None:
         values = jnp.asarray(eigenvalues)
         mask = jnp.asarray(mode_mask, dtype=jnp.bool_)
         if values.ndim != 1 or mask.shape != values.shape or not values.size:
@@ -868,7 +868,7 @@ class DenseSchurStabilityAnalyzer(AbstractStabilityAnalyzer):
         zero_tolerance: float = 1e-7,
         pair_tolerance: float = 1e-6,
         analyzer_id: str = "dense-schur-stability",
-    ):
+    ) -> None:
         policy_ = eigen.SchurSolvePolicy() if policy is None else policy
         dimension = int(maximum_dimension)
         zero = float(zero_tolerance)
@@ -967,7 +967,7 @@ class SelfAdjointKrylovStabilityAnalyzer(AbstractStabilityAnalyzer):
         zero_tolerance: float = 1e-7,
         pair_tolerance: float = 1e-6,
         analyzer_id: str = "self-adjoint-krylov-stability",
-    ):
+    ) -> None:
         count = int(mode_count)
         policy_ = (
             eigen.EigenSolvePolicy(
@@ -1076,7 +1076,7 @@ class GeneralKrylovStabilityAnalyzer(AbstractStabilityAnalyzer):
         zero_tolerance: float = 1e-7,
         pair_tolerance: float = 1e-6,
         analyzer_id: str = "general-krylov-stability",
-    ):
+    ) -> None:
         count = int(mode_count)
         policy_ = (
             eigen.GeneralEigenSolvePolicy(
@@ -1279,7 +1279,7 @@ class BifurcationIndicators(StrictModule):
     fold: Array
     hopf: Array
 
-    def __init__(self, *, fold: Any, hopf: Any = jnp.nan):
+    def __init__(self, *, fold: Any, hopf: Any = jnp.nan) -> None:
         self.fold = _real_scalar(fold, name="fold indicator")
         self.hopf = _real_scalar(hopf, name="Hopf indicator")
 
@@ -1328,7 +1328,7 @@ class BranchPoint(StrictModule):
         parent_point_id: str = "",
         stability: StabilityEvidence | None = None,
         tangent_status: Any = LinearSolveStatus.SUCCESS,
-    ):
+    ) -> None:
         state_ = _validate_inexact_tree(state, name="continuation state")
         tangent_ = _validate_inexact_tree(
             tangent_state,
@@ -1425,7 +1425,7 @@ class EventBracket(StrictModule):
         right_coordinate: Any,
         left_indicator: Any,
         right_indicator: Any,
-    ):
+    ) -> None:
         if kind not in ("fold-candidate", "hopf-candidate"):
             raise ValueError("Unknown event bracket kind.")
         identifiers = tuple(
@@ -1474,7 +1474,7 @@ class ContinuationEvent(StrictModule):
         point_id: str = "",
         bracket_id: str = "",
         message: str = "",
-    ):
+    ) -> None:
         if kind not in (
             "fold-candidate",
             "hopf-candidate",
@@ -1530,7 +1530,7 @@ class ContinuationBranch(StrictModule):
         problem_id: str,
         method: str,
         termination_reason: str,
-    ):
+    ) -> None:
         points_ = tuple(points)
         events_ = tuple(events)
         brackets_ = tuple(brackets)
@@ -1639,7 +1639,7 @@ class BranchSeed(StrictModule):
         tangent_coordinate: Any,
         branch_id: str,
         source_point_id: str,
-    ):
+    ) -> None:
         self.state = _validate_inexact_tree(state, name="branch seed state")
         self.coordinate = _real_scalar(coordinate, name="branch seed coordinate")
         self.tangent_state = _validate_inexact_tree(
@@ -1690,7 +1690,7 @@ class CallableBranchSwitchHook(AbstractBranchSwitchHook):
     function: Callable[[ContinuationBranch, ContinuationEvent, Any], Sequence[BranchSeed]]
     hook_id: str = eqx.field(static=True)
 
-    def __init__(self, function, /, *, hook_id: str = "callable-branch-switch"):
+    def __init__(self, function, /, *, hook_id: str = "callable-branch-switch") -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         identifier = str(hook_id)
@@ -1738,7 +1738,9 @@ class CallableBranchMonitor(AbstractBranchMonitor):
     ]
     monitor_id: str = eqx.field(static=True)
 
-    def __init__(self, function, /, *, monitor_id: str = "callable-branch-monitor"):
+    def __init__(
+        self, function, /, *, monitor_id: str = "callable-branch-monitor"
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         identifier = str(monitor_id)
@@ -1908,7 +1910,7 @@ class NaturalParameterContinuation(AbstractContinuationMethod):
         direction: int = 1,
         predictor: Literal["constant", "tangent"] = "constant",
         predictor_failure: Literal["terminate", "constant"] = "terminate",
-    ):
+    ) -> None:
         corrector_, termination_, derivative_ = _validated_corrector(
             corrector,
             termination,
@@ -1990,7 +1992,7 @@ class PseudoArclengthContinuation(AbstractContinuationMethod):
         direction: int = 1,
         tangent_update: Literal["secant", "bordered"] = "secant",
         minimum_tangent_alignment: float | None = None,
-    ):
+    ) -> None:
         corrector_, termination_, derivative_ = _validated_corrector(
             corrector,
             termination,
@@ -2703,7 +2705,7 @@ class ContinuationDiagnostics(StrictModule):
         monitor_events: Any,
         target_corrections: Any = 0,
         curvature_rejections: Any = 0,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value, dtype=jnp.int32)
             for value in (
@@ -2798,7 +2800,7 @@ class ContinuationProvenance(StrictModule):
         corrector_linear_numeric_version: Any = 0,
         corrector_preconditioner_plan_id: str = "",
         terminal_coordinate: float | None = None,
-    ):
+    ) -> None:
         identifiers = tuple(
             str(value)
             for value in (
@@ -2890,7 +2892,7 @@ class ContinuationResult(StrictModule):
         accepted_state: ContinuationAcceptedState | None,
         checkpoint: ContinuationCheckpoint | None,
         iteration_session_state: IterationSessionState | None = None,
-    ):
+    ) -> None:
         if not isinstance(branch, ContinuationBranch):
             raise TypeError("branch must be a ContinuationBranch.")
         if not isinstance(diagnostics, ContinuationDiagnostics):
@@ -3012,7 +3014,7 @@ class ContinuationPlan(StrictModule):
         branch_id: str,
         plan_id: str,
         terminal_coordinate: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(method, AbstractContinuationMethod):
             raise TypeError("method must be an AbstractContinuationMethod.")
         if stability_analyzer is not None and not isinstance(
@@ -3082,7 +3084,7 @@ class PreparedContinuation(StrictModule):
         attempt_history: Sequence[str] = (),
         numeric_version: Any = 0,
         prepared_id: str,
-    ):
+    ) -> None:
         problem_, adapter = _resolve_continuation_adapter(problem)
         if not isinstance(plan, ContinuationPlan):
             raise TypeError("plan must be a ContinuationPlan.")
@@ -3711,7 +3713,7 @@ class _ContinuationIterationEmitter:
         scope: IterationScope | None,
         steps: list[ContinuationStepResult],
         /,
-    ):
+    ) -> None:
         self.session = session
         self.scope = scope
         self.steps = steps

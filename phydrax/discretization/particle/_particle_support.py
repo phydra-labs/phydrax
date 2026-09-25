@@ -67,7 +67,7 @@ class ParticleDiscretizationSupportClaim(StrictModule, NonTrainableState):
         sensitivity: str = "forward",
         status: ParticleDiscretizationSupportStatus = ParticleDiscretizationSupportStatus.EXPERIMENTAL,
         evidence_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(status, ParticleDiscretizationSupportStatus):
             raise TypeError("status must be ParticleDiscretizationSupportStatus.")
         labels = tuple(
@@ -166,7 +166,7 @@ class ParticleDiscretizationSupportMatrix(StrictModule, NonTrainableState):
     claims: tuple[ParticleDiscretizationSupportClaim, ...]
     matrix_id: str = eqx.field(static=True)
 
-    def __init__(self, claims: Sequence[ParticleDiscretizationSupportClaim], /):
+    def __init__(self, claims: Sequence[ParticleDiscretizationSupportClaim], /) -> None:
         values = tuple(claims)
         if not values or any(
             not isinstance(value, ParticleDiscretizationSupportClaim) for value in values

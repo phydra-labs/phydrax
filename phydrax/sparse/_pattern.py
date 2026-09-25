@@ -36,7 +36,7 @@ class SparsePattern(StrictModule, NonTrainableState):
         *,
         symmetric: bool = False,
         origin: SparsePatternOrigin = "declared",
-    ):
+    ) -> None:
         if not isinstance(relation, EdgeRelation):
             raise TypeError("relation must be an EdgeRelation.")
         if origin not in ("declared", "structural"):

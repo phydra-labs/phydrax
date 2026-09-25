@@ -35,7 +35,7 @@ class StinespringTomographyProblem(StrictModule):
         /,
         *,
         problem_id: str = "stinespring-process-tomography",
-    ):
+    ) -> None:
         values = tuple(experiments)
         if not values:
             raise ValueError("At least one tomography experiment is required.")
@@ -69,7 +69,7 @@ class StinespringTomographyResult(StrictModule):
         physical_parameter_count: ArrayLike,
         coordinate_count: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.model = model
         self.loss_history = jnp.asarray(loss_history)
         self.held_out_loss = jnp.asarray(held_out_loss)
@@ -282,7 +282,7 @@ class ProcessMemoryRefitResult(StrictModule):
         /,
         *,
         probability_tolerance: float,
-    ):
+    ) -> None:
         process = tomography.model.materialize()
         training_observed = jnp.asarray(training_observed_probabilities)
         training_fitted = jnp.asarray(training_fitted_probabilities)

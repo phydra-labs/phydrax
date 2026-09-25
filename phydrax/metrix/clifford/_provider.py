@@ -24,7 +24,7 @@ class CliffordFiniteAlgebraProvider(StrictModule, NonTrainableState):
     basis_ids: tuple[str, ...] = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self, algebra: CliffordAlgebraSpec, /):
+    def __init__(self, algebra: CliffordAlgebraSpec, /) -> None:
         if not isinstance(algebra, CliffordAlgebraSpec):
             raise TypeError("algebra must be CliffordAlgebraSpec.")
         layout = CliffordBladeLayout.full(algebra)

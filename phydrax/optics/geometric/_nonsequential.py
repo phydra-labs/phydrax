@@ -100,7 +100,7 @@ class NonSequentialSurfaceTable(StrictModule, NonTrainableState):
         detector_acceptance_cosines: ArrayLike | None = None,
         medium_power_attenuation_coefficients: ArrayLike | None = None,
         medium_attenuation_model_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         vertices_host = np.asarray(vertices)
         triangles_host = np.asarray(triangles)
         if vertices_host.ndim != 2 or vertices_host.shape[1:] != (3,):
@@ -311,7 +311,7 @@ class NonSequentialOpticsPlan(StrictModule, NonTrainableState):
         ray_tolerance: float = 1e-9,
         tie_tolerance: float = 1e-9,
         power_tolerance: float = 0.0,
-    ):
+    ) -> None:
         maximum = int(maximum_interactions)
         branches = int(branch_capacity)
         stack = int(traversal_stack_capacity)

@@ -45,7 +45,7 @@ class ParameterBlock(StrictModule):
         block_id: str,
         constant: bool = False,
         elimination_group: int = 0,
-    ):
+    ) -> None:
         if not callable(extract) or not callable(replace):
             raise TypeError("extract and replace must be callable.")
         if retract is not None and not callable(retract):
@@ -102,7 +102,7 @@ class ResidualBlock(StrictModule):
         weight: Any = None,
         loss: AbstractRobustLoss | None = None,
         block_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         parameter_ids_ = tuple(str(value) for value in parameter_ids)
@@ -167,7 +167,7 @@ class ResidualGraphProblem(StrictModule):
         /,
         *,
         problem_id: str = "residual-graph",
-    ):
+    ) -> None:
         parameters = tuple(parameter_blocks)
         residuals = tuple(residual_blocks)
         if not parameters or not all(
@@ -313,7 +313,7 @@ class PreparedResidualGraph(StrictModule):
         *,
         graph_id: str,
         numeric_version: Any,
-    ):
+    ) -> None:
         if not isinstance(graph, ResidualGraphProblem):
             raise TypeError("graph must be ResidualGraphProblem.")
         self.graph = graph

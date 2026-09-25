@@ -57,7 +57,7 @@ class FiniteFusionCategory(StrictModule):
         *,
         coherence_tolerance: float = 1e-9,
         maximum_simple_objects: int = 8,
-    ):
+    ) -> None:
         labels_ = tuple(str(label) for label in labels)
         duals = tuple(str(label) for label in dual_labels)
         maximum = int(maximum_simple_objects)
@@ -477,7 +477,7 @@ class StringNetPlan(StrictModule):
         *,
         maximum_hilbert_dimension: int = 65_536,
         maximum_operator_elements: int = 10_000_000,
-    ):
+    ) -> None:
         if not isinstance(category, FiniteFusionCategory):
             raise TypeError("category must be FiniteFusionCategory.")
         if not bool(np.asarray(category.coherence.coherent)):
@@ -746,7 +746,7 @@ class AnyonicTensorBlock(StrictModule):
     charges: tuple[str, ...] = eqx.field(static=True)
     data: Array
 
-    def __init__(self, charges: Sequence[str], data: ArrayLike, /):
+    def __init__(self, charges: Sequence[str], data: ArrayLike, /) -> None:
         charges_ = tuple(str(charge) for charge in charges)
         data_ = jnp.asarray(data)
         if data_.ndim != len(charges_):
@@ -771,7 +771,7 @@ class AnyonicTensor(StrictModule):
         orientations: Sequence[int],
         blocks: Sequence[AnyonicTensorBlock],
         /,
-    ):
+    ) -> None:
         if not isinstance(category, FiniteFusionCategory):
             raise TypeError("category must be FiniteFusionCategory.")
         orientations_ = tuple(orientations)

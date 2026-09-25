@@ -57,7 +57,7 @@ class PartitionedDifferentialProblem(StrictModule):
         args: Any = None,
         discretization_bundle: DiscretizationBundle | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(slow_drift) or not callable(fast_drift):
             raise TypeError("Partitioned drifts must be callable.")
         if not isinstance(partition, StatePartition) or len(partition.names) != 2:
@@ -136,7 +136,7 @@ class MultiratePartitionedRK(StrictModule, NonTrainableState):
     refinement_ratio: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, order: int = 3, /, *, refinement_ratio: int = 2):
+    def __init__(self, order: int = 3, /, *, refinement_ratio: int = 2) -> None:
         order_ = int(order)
         ratio = int(refinement_ratio)
         if order_ not in (2, 3):

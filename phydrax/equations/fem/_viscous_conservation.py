@@ -80,7 +80,7 @@ class ViscousBoundaryClosure(StrictModule, NonTrainableState):
         *,
         gradient_provider=None,
         normal_flux_provider=None,
-    ):
+    ) -> None:
         identifier = str(boundary_id)
         gradient = lambda time, state, gradient, points, normal, args: (
             gradient if gradient_provider is None else gradient_provider
@@ -163,7 +163,7 @@ class ViscousDGPlan(StrictModule, NonTrainableState):
         beta: float = 0.0,
         penalty: float = 1.0,
         boundary_closures: Sequence[ViscousBoundaryClosure] = (),
-    ):
+    ) -> None:
         formulation_ = str(formulation)
         beta_ = float(beta)
         penalty_ = float(penalty)
@@ -219,7 +219,7 @@ class PreparedViscousDGOperator(StrictModule):
     dynamics: Any
     operator_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ViscousDGPlan, dynamics: Any, /):
+    def __init__(self, plan: ViscousDGPlan, dynamics: Any, /) -> None:
         if not isinstance(plan, ViscousDGPlan):
             raise TypeError("plan must be ViscousDGPlan.")
         if not isinstance(dynamics.system, AbstractEntropyDiffusionSystem):

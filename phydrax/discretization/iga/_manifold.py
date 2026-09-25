@@ -68,7 +68,7 @@ class ParametricBasisPayload(StrictModule):
         /,
         *,
         provider_revision: str,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         gradients_ = jnp.asarray(gradients)
         hessians_ = jnp.asarray(hessians)
@@ -193,7 +193,9 @@ class AtlasManifold(StrictModule, NonTrainableState):
     rank_tolerance: float = eqx.field(static=True)
     atlas_id: str = eqx.field(static=True)
 
-    def __init__(self, atlas: BoundaryAtlas, /, *, rank_tolerance: float = 1.0e-10):
+    def __init__(
+        self, atlas: BoundaryAtlas, /, *, rank_tolerance: float = 1.0e-10
+    ) -> None:
         if not isinstance(atlas, BoundaryAtlas):
             raise TypeError("atlas must be a BoundaryAtlas.")
         if atlas.reference_dimension not in (1, 2, 3):
@@ -366,7 +368,7 @@ class ManifoldBasisProviderAdapter(StrictModule, NonTrainableState):
         /,
         *,
         provider_id: str,
-    ):
+    ) -> None:
         if not isinstance(provider, ManifoldBasisPayloadProvider):
             raise TypeError("provider must implement ManifoldBasisPayloadProvider.")
         if not isinstance(manifold, AtlasManifold):
@@ -415,7 +417,7 @@ class SurfaceChartTransition(StrictModule, NonTrainableState):
         left_reference: ArrayLike,
         right_reference: ArrayLike,
         /,
-    ):
+    ) -> None:
         left = int(left_chart)
         right = int(right_chart)
         left_points = jnp.asarray(left_reference, dtype=jnp.float64)

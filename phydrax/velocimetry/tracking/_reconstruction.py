@@ -43,7 +43,7 @@ class TriangulationPlan(StrictModule, NonTrainableState):
         convergence_tolerance: float = 1e-7,
         robust_loss: AbstractRobustLoss | None = None,
         small_solve_plan: SmallLinearSolvePlan | None = None,
-    ):
+    ) -> None:
         for name, value in (
             ("minimum_views", minimum_views),
             ("maximum_iterations", maximum_iterations),

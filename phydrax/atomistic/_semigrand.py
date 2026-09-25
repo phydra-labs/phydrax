@@ -36,7 +36,7 @@ class VarianceConstrainedSemiGrandPlan(StrictModule, NonTrainableState):
         /,
         *,
         realization_id: int = 0,
-    ):
+    ) -> None:
         thermal = float(temperature)
         chemical = np.asarray(chemical_potentials, dtype=np.float64)
         target = np.asarray(target_fractions, dtype=np.float64)

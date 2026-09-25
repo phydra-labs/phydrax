@@ -55,7 +55,7 @@ class BoundaryRefinementPolicy(StrictModule, NonTrainableState):
         fraction: float = 0.5,
         max_marked_faces: int = 100_000,
         max_target_faces: int = 1_000_000,
-    ):
+    ) -> None:
         if strategy not in ("dorfler", "maximum"):
             raise ValueError("Boundary marking strategy must be 'dorfler' or 'maximum'.")
         fraction_ = float(fraction)
@@ -183,7 +183,7 @@ class BoundaryMeshEpoch(StrictModule, NonTrainableState):
         *,
         generation: int = 0,
         parent_epoch_id: str | None = None,
-    ):
+    ) -> None:
         if isinstance(surface, SurfaceModel):
             mesh = surface.mesh
             surface_model = surface
@@ -304,7 +304,7 @@ class DP0BoundaryTransfer(StrictModule, NonTrainableState):
         target: BoundaryMeshEpoch,
         parent_local_indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, BoundaryMeshEpoch) or not isinstance(
             target, BoundaryMeshEpoch
         ):

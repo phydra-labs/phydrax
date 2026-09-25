@@ -67,7 +67,7 @@ class GlobalSurfacePhysics(StrictModule):
         solar_p2: float = -0.48,
         subgrid_wind_speed: float = 5.0,
         measurement_height: float = 10.0,
-    ):
+    ) -> None:
         if not isinstance(slab, WetSlabPlan):
             raise TypeError("slab must be WetSlabPlan.")
         if not isinstance(surface_exchange, BulkSurfaceExchangePlan):

@@ -26,7 +26,7 @@ class LocalHamiltonianQuantumLatticePolicy(StrictModule):
     maximum_term_matrix_elements: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, *, maximum_term_matrix_elements: int):
+    def __init__(self, *, maximum_term_matrix_elements: int) -> None:
         limit = int(maximum_term_matrix_elements)
         if limit < 1:
             raise ValueError("maximum_term_matrix_elements must be positive.")

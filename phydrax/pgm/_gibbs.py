@@ -50,7 +50,7 @@ class ChromaticGibbs(StrictModule):
     colors: Array | None
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, colors: ArrayLike | None = None):
+    def __init__(self, colors: ArrayLike | None = None) -> None:
         if colors is None:
             resolved = None
         else:
@@ -75,7 +75,7 @@ class GibbsSchedule(StrictModule):
         warmup_sweeps: int = 0,
         num_draws: int,
         sweeps_per_draw: int = 1,
-    ):
+    ) -> None:
         warmup = int(warmup_sweeps)
         draws = int(num_draws)
         sweeps = int(sweeps_per_draw)
@@ -106,7 +106,7 @@ class GibbsState(StrictModule):
         *,
         valid: ArrayLike | None = None,
         sweep_index: int | Array = 0,
-    ):
+    ) -> None:
         states = jnp.asarray(positions)
         if states.ndim != 2 or not jnp.issubdtype(states.dtype, jnp.integer):
             raise ValueError(
@@ -188,7 +188,7 @@ class GibbsSampleResult(AbstractChainSampleResult):
         method_id: str,
         warmup_sweeps: int,
         sweeps_per_draw: int,
-    ):
+    ) -> None:
         values = jnp.asarray(samples)
         scores = jnp.asarray(log_score)
         if values.ndim != 3:

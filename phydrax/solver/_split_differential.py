@@ -51,7 +51,7 @@ class SplitDifferentialProblem(StrictModule):
         state_geometry: AbstractStateGeometry | None = None,
         discretization_bundle: DiscretizationBundle | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(explicit_drift) or not callable(implicit_drift):
             raise TypeError("Split differential drifts must be callable.")
         start = jnp.asarray(t0, dtype=jnp.float64)

@@ -45,7 +45,7 @@ class ColliderStageEvidence(StrictModule, NonTrainableState):
         overflow_event_count: int,
         evidence_ids: Sequence[str],
         accepted: bool,
-    ):
+    ) -> None:
         values = tuple(
             str(value).strip()
             for value in (stage, input_artifact_id, output_artifact_id, provider_id)
@@ -113,7 +113,7 @@ class ColliderProductionRecord(StrictModule, NonTrainableState):
         systematics: SystematicConfiguration,
         stages: Sequence[ColliderStageEvidence],
         /,
-    ):
+    ) -> None:
         if (
             not isinstance(run_context, HEPRunContext)
             or not isinstance(normalization, ProcessNormalization)

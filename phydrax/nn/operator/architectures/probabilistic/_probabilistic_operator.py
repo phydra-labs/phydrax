@@ -80,7 +80,7 @@ class GaussianFunctionOperator(AbstractProbabilisticOperatorModel):
         scale_mode: Literal["learned", "fixed"] = "learned",
         fixed_scale: float = 1e-4,
         uncertainty_source: UncertaintySource = "observation",
-    ):
+    ) -> None:
         if not isinstance(base, AbstractOperatorModel):
             raise TypeError("GaussianFunctionOperator base must be a neural operator.")
         rank = int(factor_rank)

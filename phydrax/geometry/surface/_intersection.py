@@ -43,7 +43,7 @@ class PlaneSectionLoop(StrictModule, NonTrainableState):
         source_chart_ids: ArrayLike,
         source_cell_global_ids: ArrayLike,
         source_edge_vertex_global_ids: ArrayLike,
-    ):
+    ) -> None:
         points_ = np.asarray(points, dtype=np.float64)
         charts = np.asarray(source_chart_ids, dtype=np.int32)
         cells = np.asarray(source_cell_global_ids, dtype=np.int64)
@@ -111,7 +111,7 @@ class PlaneSectionEvidence(StrictModule, NonTrainableState):
         chart_mapping_id: str,
         considered_cell_count: int,
         loop_count: int,
-    ):
+    ) -> None:
         origin = np.asarray(plane_origin, dtype=np.float64)
         normal = np.asarray(plane_normal, dtype=np.float64)
         tolerance_ = float(tolerance)
@@ -183,7 +183,7 @@ class PlaneSurfaceSection(StrictModule, NonTrainableState):
         loops: tuple[PlaneSectionLoop, ...],
         evidence: PlaneSectionEvidence,
         /,
-    ):
+    ) -> None:
         if not all(isinstance(loop, PlaneSectionLoop) for loop in loops):
             raise TypeError("PlaneSurfaceSection loops must be PlaneSectionLoop values.")
         if not isinstance(evidence, PlaneSectionEvidence):

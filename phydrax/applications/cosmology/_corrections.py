@@ -51,7 +51,7 @@ class CorrectionModelCard(StrictModule, NonTrainableState):
         wavenumber_domain: tuple[float, float],
         expected_error: str,
         license_id: str,
-    ):
+    ) -> None:
         strings = tuple(
             str(value).strip()
             for value in (
@@ -153,7 +153,7 @@ class MultiplicativeMatterPowerCorrectionPlan(StrictModule, NonTrainableState):
         differentiation: DerivativeContract = DerivativeContract(
             route=DerivativeRoute.DIRECT
         ),
-    ):
+    ) -> None:
         if not isinstance(card, CorrectionModelCard):
             raise TypeError("card must be CorrectionModelCard.")
         if not isinstance(differentiation, DerivativeContract):

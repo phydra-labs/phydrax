@@ -64,7 +64,7 @@ class CompositeAMRCellLayout(StrictModule, NonTrainableState):
         component_shape: Sequence[int] = (),
         dtype: Any = np.float64,
         dummy_weight: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(topology, BlockHierarchyTopology):
             raise TypeError("Composite AMR layout requires BlockHierarchyTopology.")
         components = tuple(component_shape)

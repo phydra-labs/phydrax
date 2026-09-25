@@ -48,7 +48,7 @@ class ParameterGeometry(StrictModule):
         /,
         *,
         weights: Mapping[str, ArrayLike] | None = None,
-    ):
+    ) -> None:
         if not isinstance(manifolds, Mapping):
             raise TypeError("ParameterGeometry manifolds must be a path mapping.")
         if not manifolds:

@@ -58,7 +58,7 @@ class FittedFeatureUnion(AbstractFittedModel):
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
         derivative_contract: DerivativeContract,
-    ):
+    ) -> None:
         transformers = tuple(transformer_list)
         results = tuple(fit_results)
         schemas = tuple(branch_output_schemas)
@@ -131,7 +131,7 @@ class FeatureUnion(AbstractRecipe):
 
     transformer_list: tuple[tuple[str, AbstractRecipe], ...]
 
-    def __init__(self, transformer_list: Sequence[tuple[str, AbstractRecipe]], /):
+    def __init__(self, transformer_list: Sequence[tuple[str, AbstractRecipe]], /) -> None:
         self.transformer_list = _normalize_recipe_specs(
             transformer_list, kind="FeatureUnion", recipe_type=AbstractRecipe
         )

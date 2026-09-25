@@ -35,7 +35,7 @@ class BarotropicEulerSystem(
         /,
         *,
         material: AbstractBarotropicMaterial,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (1, 2, 3):
             raise ValueError("Barotropic Euler dimension must be one, two, or three.")

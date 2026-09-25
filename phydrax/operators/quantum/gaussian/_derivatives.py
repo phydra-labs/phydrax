@@ -44,7 +44,7 @@ class GaussianIntegralDerivativePlan(StrictModule, NonTrainableState):
         /,
         *,
         include_electron_repulsion: bool = False,
-    ):
+    ) -> None:
         order = int(derivative_order)
         if order not in (1, 2):
             raise ValueError("Gaussian integral derivative order must be one or two.")

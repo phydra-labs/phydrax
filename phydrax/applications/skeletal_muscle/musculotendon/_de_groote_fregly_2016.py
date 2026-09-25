@@ -131,7 +131,7 @@ class DeGrooteFregly2016Parameters(StrictModule):
         force_velocity_d3: ArrayLike = -0.374,
         force_velocity_d4: ArrayLike = 0.886,
         implicit_force_rate_scale_per_s: ArrayLike = 10.0,
-    ):
+    ) -> None:
         force = _positive_vector(maximum_isometric_force_N, "maximum_isometric_force_N")
         dtype = force.dtype
         optimal = _positive_vector(
@@ -246,7 +246,9 @@ class DeGrooteFregly2016State(StrictModule):
     activation: Array
     normalized_tendon_force: Array
 
-    def __init__(self, activation: ArrayLike, normalized_tendon_force: ArrayLike, /):
+    def __init__(
+        self, activation: ArrayLike, normalized_tendon_force: ArrayLike, /
+    ) -> None:
         activation_ = jnp.asarray(activation)
         tendon_force = jnp.asarray(normalized_tendon_force, dtype=activation_.dtype)
         if activation_.ndim != 1 or activation_.shape != tendon_force.shape:
@@ -545,7 +547,7 @@ class DeGrooteFregly2016Plan(StrictModule):
         *,
         muscle_mask: Sequence[bool] | None = None,
         model_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(parameters, DeGrooteFregly2016Parameters):
             raise TypeError("parameters must be DeGrooteFregly2016Parameters.")
         names = tuple(_identifier(name, "muscle name") for name in muscle_names)
@@ -599,7 +601,7 @@ class PreparedDeGrooteFregly2016Musculotendon(StrictModule):
         plan: DeGrooteFregly2016Plan,
         reference_state: DeGrooteFregly2016State,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, DeGrooteFregly2016Plan):
             raise TypeError("plan must be DeGrooteFregly2016Plan.")
         self.plan = plan
@@ -993,7 +995,7 @@ class DeGrooteFregly2016ImplicitTendonForcePlan(StrictModule):
         *,
         muscle_mask: Sequence[bool] | None = None,
         model_id: str | None = None,
-    ):
+    ) -> None:
         explicit = DeGrooteFregly2016Plan(
             parameters,
             muscle_names,
@@ -1071,7 +1073,7 @@ class PreparedDeGrooteFregly2016ImplicitTendonForce(StrictModule):
         plan: DeGrooteFregly2016ImplicitTendonForcePlan,
         reference_state: DeGrooteFregly2016State,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, DeGrooteFregly2016ImplicitTendonForcePlan):
             raise TypeError("plan must be DeGrooteFregly2016ImplicitTendonForcePlan.")
         explicit_plan = DeGrooteFregly2016Plan(

@@ -80,7 +80,7 @@ class CylindricalAnalyticPulseField(StrictModule):
         angular_frequency: ArrayLike,
         longitudinal_coordinate: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(hankel, PreparedCylindricalHankel):
             raise TypeError("hankel must be PreparedCylindricalHankel.")
         if hankel.plan.order != 0:
@@ -186,7 +186,7 @@ class CylindricalUnidirectionalPropagationPlan(StrictModule, NonTrainableState):
         maximum_radial_high_mode_fraction: float = 1.0e-6,
         maximum_longitudinal_cutoff_fraction: float = 0.0,
         maximum_workspace_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         if not isinstance(hankel, PreparedCylindricalHankel):
             raise TypeError("hankel must be PreparedCylindricalHankel.")
         if hankel.plan.order != 0:

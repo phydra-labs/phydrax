@@ -45,7 +45,7 @@ class PauliRotationInstruction(StrictModule):
         /,
         *,
         dtype: DTypeLike = jnp.complex128,
-    ):
+    ) -> None:
         selected_axes = tuple(str(axis).upper() for axis in axes)
         targets = _target_wire_ids(target_wire_ids)
         if len(selected_axes) != len(targets) or len(targets) not in (1, 2):
@@ -113,7 +113,7 @@ class QuantumProgramTemplate(StrictModule):
         *,
         state_kind: QuantumStateKind,
         dtype: DTypeLike = jnp.complex128,
-    ):
+    ) -> None:
         if not isinstance(layout, HilbertRegisterLayout):
             raise TypeError("layout must be a HilbertRegisterLayout.")
         if state_kind not in ("state-vector", "density-matrix"):

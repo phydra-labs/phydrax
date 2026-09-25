@@ -45,7 +45,7 @@ class SymplecticMapPlan(StrictModule, NonTrainableState):
         *,
         element_id: str,
         maximum_symplectic_residual: float = 1.0e-10,
-    ):
+    ) -> None:
         matrix_ = np.asarray(matrix, dtype=np.float64)
         offset_ = np.asarray(offset, dtype=np.float64)
         maximum = float(maximum_symplectic_residual)
@@ -102,7 +102,7 @@ class RingTrackingPlan(StrictModule, NonTrainableState):
         *,
         horizontal_aperture: float,
         vertical_aperture: float,
-    ):
+    ) -> None:
         if not isinstance(one_turn, SymplecticMapPlan):
             raise TypeError("one_turn must be SymplecticMapPlan.")
         turns = int(turn_count)
@@ -226,7 +226,7 @@ class LongitudinalWakePlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, zeta_edges: ArrayLike, wake_values: ArrayLike, /, *, kick_scale: float
-    ):
+    ) -> None:
         edges = np.asarray(zeta_edges, dtype=np.float64)
         wake = np.asarray(wake_values, dtype=np.float64)
         scale = float(kick_scale)

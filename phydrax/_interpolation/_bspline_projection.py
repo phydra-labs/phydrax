@@ -249,7 +249,7 @@ class BSplineGridTransfer(StrictModule, NonTrainableState):
         *,
         method: ProjectionMethod = "auto",
         maximum_condition: float = 1.0e12,
-    ):
+    ) -> None:
         if not isfinite(maximum_condition) or maximum_condition <= 1.0:
             raise ValueError("maximum_condition must be finite and greater than one.")
         _validate_common_interval(old_grid, new_grid)

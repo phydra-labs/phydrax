@@ -40,7 +40,7 @@ class ScheduledHybridGuard(StrictModule, NonTrainableState):
         /,
         *,
         event: HybridEventPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(guard, HybridGuardPlan):
             raise TypeError("guard must be a HybridGuardPlan.")
         if event is not None and not isinstance(event, HybridEventPlan):
@@ -86,7 +86,7 @@ class HybridSchedulePlan(StrictModule, NonTrainableState):
         maximum_events=64,
         simultaneous_tolerance=1.0e-10,
         minimum_event_separation=1.0e-12,
-    ):
+    ) -> None:
         items = tuple(events)
         if not items or any(not isinstance(item, ScheduledHybridGuard) for item in items):
             raise ValueError("Hybrid schedule requires scheduled guard values.")

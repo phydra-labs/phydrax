@@ -83,7 +83,7 @@ class BehavioralCurrentLaw(AbstractImplicitCircuitLaw):
         /,
         *,
         law_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(expression, str) or not expression.strip():
             raise ValueError("Behavioral expression must be nonempty.")
         instructions = _instructions(ast.parse(expression, mode="eval"))

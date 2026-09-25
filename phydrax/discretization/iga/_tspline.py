@@ -108,7 +108,7 @@ class TVertex2D(StrictModule, NonTrainableState):
     vertex_id: int = eqx.field(static=True)
     parameter: tuple[float, float] = eqx.field(static=True)
 
-    def __init__(self, vertex_id: int, parameter: Sequence[float], /):
+    def __init__(self, vertex_id: int, parameter: Sequence[float], /) -> None:
         identifier = int(vertex_id)
         if identifier < 0:
             raise ValueError("vertex_id must be nonnegative.")
@@ -131,7 +131,7 @@ class TEdge2D(StrictModule, NonTrainableState):
         cell_ids: Sequence[int],
         axis: Literal["u", "v"],
         /,
-    ):
+    ) -> None:
         identifier = int(edge_id)
         vertices = tuple(vertex_ids)
         cells = tuple(sorted(int(value) for value in cell_ids))
@@ -167,7 +167,7 @@ class TCell2D(StrictModule, NonTrainableState):
         vertex_ids: Sequence[int] = (),
         edge_ids: Sequence[int] = (),
         level: int = 0,
-    ):
+    ) -> None:
         identifier = int(cell_id)
         level_ = int(level)
         if identifier < 0 or level_ < 0:
@@ -190,7 +190,7 @@ class LocalKnotVector2D(StrictModule, NonTrainableState):
     u: tuple[float, ...] = eqx.field(static=True)
     v: tuple[float, ...] = eqx.field(static=True)
 
-    def __init__(self, u: Sequence[float], v: Sequence[float], /):
+    def __init__(self, u: Sequence[float], v: Sequence[float], /) -> None:
         self.u = _knot_tuple("u knots", u)
         self.v = _knot_tuple("v knots", v)
 
@@ -219,7 +219,7 @@ class TAnchor2D(StrictModule, NonTrainableState):
         parameter: Sequence[float],
         local_knots: LocalKnotVector2D,
         /,
-    ):
+    ) -> None:
         identifier = int(anchor_id)
         if identifier < 0:
             raise ValueError("anchor_id must be nonnegative.")
@@ -250,7 +250,7 @@ class TJunctionExtension2D(StrictModule, NonTrainableState):
         *,
         backward_crossings: int,
         forward_crossings: int,
-    ):
+    ) -> None:
         identifier = int(junction_vertex_id)
         segment_ = tuple(float(value) for value in segment)
         if identifier < 0 or axis not in ("u", "v"):
@@ -293,7 +293,7 @@ class TMesh2D(StrictModule, NonTrainableState):
         mesh_id: str | None = None,
         proprietary_format: str | None = None,
         extraordinary: bool = False,
-    ):
+    ) -> None:
         degrees = tuple(degree)
         if degrees != (_BICUBIC_DEGREE, _BICUBIC_DEGREE):
             raise NotImplementedError("F7 supports bicubic ASTS2D bases only.")
@@ -878,7 +878,7 @@ class ExtractedBernstein(StrictModule, NonTrainableState):
         anchor_ids: ArrayLike,
         extraction_operator: ArrayLike,
         /,
-    ):
+    ) -> None:
         bounds_ = _bounds(parameter_bounds)
         anchors = np.asarray(anchor_ids)
         operator = np.asarray(extraction_operator, dtype=np.float64)
@@ -974,7 +974,9 @@ class LocalExtractedBernsteinRealization(StrictModule, NonTrainableState):
     cell_ranks: Array
     cell_condition_numbers: Array
 
-    def __init__(self, mesh: TMesh2D, extractions: Sequence[ExtractedBernstein], /):
+    def __init__(
+        self, mesh: TMesh2D, extractions: Sequence[ExtractedBernstein], /
+    ) -> None:
         if not isinstance(mesh, TMesh2D):
             raise TypeError("mesh must be TMesh2D.")
         extractions_ = tuple(extractions)
@@ -1309,7 +1311,7 @@ class ASTSTransferPlan(StrictModule, NonTrainableState):
         *,
         maximum_reproduction_residual: float,
         tolerance: float,
-    ):
+    ) -> None:
         targets = np.asarray(target_indices)
         sources = np.asarray(source_indices)
         weights = np.asarray(coefficients, dtype=np.float64)
@@ -1414,7 +1416,7 @@ class ASTSRefinement(StrictModule, NonTrainableState):
         transfer_plan: ASTSTransferPlan,
         certificate: ASTSCertificate,
         /,
-    ):
+    ) -> None:
         if transfer_plan.source_mesh_id != source_mesh.mesh_id:
             raise ValueError(
                 "Transfer source identity does not match the refinement source."

@@ -39,7 +39,7 @@ class HybridRANSLESGridScalePlan(StrictModule, NonTrainableState):
         /,
         *,
         coefficient: float = 0.65,
-    ):
+    ) -> None:
         coefficient_ = float(coefficient)
         if (
             kind not in ("maximum", "volume", "vorticity-aligned")
@@ -96,7 +96,7 @@ class DelayedDetachedEddyPlan(StrictModule, NonTrainableState):
         *,
         shielding_constant: float = 8.0,
         elevation_constant: float = 2.0,
-    ):
+    ) -> None:
         shield = float(shielding_constant)
         elevation = float(elevation_constant)
         if (
@@ -198,7 +198,9 @@ class PrescribedTransitionPlan(StrictModule, NonTrainableState):
     transition_width: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, onset_coordinate: float, /, *, transition_width: float = 0.0):
+    def __init__(
+        self, onset_coordinate: float, /, *, transition_width: float = 0.0
+    ) -> None:
         onset = float(onset_coordinate)
         width = float(transition_width)
         if not np.isfinite(onset) or not np.isfinite(width) or width < 0.0:

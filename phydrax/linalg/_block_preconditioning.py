@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import Literal, NoReturn, TypeAlias
 
 import equinox as eqx
 import jax
@@ -290,7 +290,7 @@ class _PlanningSchurLinearOperator(AbstractLinearOperator):
         *,
         properties: OperatorProperties,
         operator_id: str,
-    ):
+    ) -> None:
         self.diagonal_block = diagonal_block
         self.source = diagonal_block.source
         self.target = diagonal_block.target
@@ -314,7 +314,7 @@ class _PlanningSchurLinearOperator(AbstractLinearOperator):
         del vector
         raise ValueError("Planning Schur operator has no adjoint action.")
 
-    def _materialize(self, /):
+    def _materialize(self, /) -> NoReturn:
         raise ValueError("Planning Schur operator cannot be materialized.")
 
 
@@ -355,7 +355,7 @@ class BlockFactorizationPreconditioner(AbstractPreconditioner):
         properties: PreconditionerProperties,
         space: BlockSpace | None = None,
         preconditioner_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(schur_operator, SchurComplementLinearOperator):
             raise TypeError("schur_operator must be a SchurComplementLinearOperator.")
         if not isinstance(schur_action, AbstractPreconditioner):
@@ -523,7 +523,7 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
         *,
         schur_setup_operator: AbstractLinearOperator | None = None,
         properties: PreconditionerProperties | None = None,
-    ):
+    ) -> None:
         pivot_id = _source_identifier(pivot_solver)
         schur_id = _source_identifier(schur_solver)
         if form not in ("diagonal", "lower", "upper", "ldu"):

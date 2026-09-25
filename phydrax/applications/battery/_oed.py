@@ -96,7 +96,7 @@ class BatteryOEDModelContract(StrictModule, NonTrainableState):
         /,
         *,
         at_time: int,
-    ):
+    ) -> None:
         model = _identifier(model_id, "Battery OED model ID")
         if not isinstance(release_index, ReleaseIndex):
             raise TypeError("release_index must be a ReleaseIndex.")
@@ -300,7 +300,7 @@ class BatteryOEDSupport(StrictModule, NonTrainableState):
         temperature_k: tuple[float, float],
         stoichiometry: Mapping[str, tuple[float, float]],
         duration_s: tuple[float, float],
-    ):
+    ) -> None:
         lower_input = np.asarray(current_lower_a)
         upper_input = np.asarray(current_upper_a)
         if lower_input.ndim > 1 or upper_input.ndim > 1:
@@ -446,7 +446,7 @@ class PreparedBatteryOED(StrictModule):
         prior_information: ArrayLike | None = None,
         criterion: BatteryOEDCriterion = "d_optimal",
         regularization: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(calibration, PreparedBatteryCalibration):
             raise TypeError("calibration must be a PreparedBatteryCalibration.")
         if not isinstance(support, BatteryOEDSupport):
@@ -768,7 +768,7 @@ class BatteryOEDCandidateSet(StrictModule, NonTrainableState):
     candidate_ids: tuple[str, ...] = eqx.field(static=True)
     candidate_set_id: str = eqx.field(static=True)
 
-    def __init__(self, amplitudes_a: ArrayLike, /):
+    def __init__(self, amplitudes_a: ArrayLike, /) -> None:
         host = np.asarray(amplitudes_a)
         if host.ndim != 2 or host.shape[0] == 0 or host.shape[1] == 0:
             raise ValueError(

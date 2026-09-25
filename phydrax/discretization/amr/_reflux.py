@@ -36,7 +36,7 @@ class FluxRegister(StrictModule):
         refinement_ratio: int = 1,
         register_id: str | None = None,
         owner_id: str | None = None,
-    ):
+    ) -> None:
         coarse = jnp.asarray(coarse_flux)
         fine = jnp.asarray(fine_flux)
         mask = jnp.asarray(interface_mask, dtype=jnp.bool_)

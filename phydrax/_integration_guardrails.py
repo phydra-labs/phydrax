@@ -57,7 +57,7 @@ class CoreAbstractionRegistry(StrictModule, NonTrainableState):
     owners: tuple[tuple[str, str], ...] = eqx.field(static=True)
     registry_id: str = eqx.field(static=True)
 
-    def __init__(self, additions: Mapping[str, str] | None = None, /):
+    def __init__(self, additions: Mapping[str, str] | None = None, /) -> None:
         owners = dict(CANONICAL_CORE_OWNERS)
         for kind, owner in ({} if additions is None else additions).items():
             kind_ = str(kind)

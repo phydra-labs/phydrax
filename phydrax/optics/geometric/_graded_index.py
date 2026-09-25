@@ -47,7 +47,7 @@ class AnalyticRefractiveIndexField(AbstractRefractiveIndexField):
         /,
         *,
         field_id: str,
-    ):
+    ) -> None:
         if not callable(index_function):
             raise TypeError("index_function must be callable.")
         if not isinstance(coordinate_contract, SpatialCoordinateContract):
@@ -99,7 +99,7 @@ class StructuredRefractiveIndexField(AbstractRefractiveIndexField, NonTrainableS
         /,
         *,
         field_id: str,
-    ):
+    ) -> None:
         values_host = np.asarray(values)
         origin_host = np.asarray(origin, dtype=np.float64)
         spacing_host = np.asarray(spacing, dtype=np.float64)
@@ -206,7 +206,7 @@ class TetrahedralRefractiveIndexField(AbstractRefractiveIndexField, NonTrainable
         *,
         field_id: str,
         maximum_candidates: int = 64,
-    ):
+    ) -> None:
         vertices_host = np.asarray(vertices, dtype=np.float64)
         tetrahedra_host = np.asarray(tetrahedra, dtype=np.int32)
         values_host = np.asarray(vertex_values, dtype=np.float64)

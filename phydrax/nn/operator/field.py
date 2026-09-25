@@ -65,7 +65,7 @@ class OperatorFieldSpec(StrictModule):
         tensor_layout: TensorFieldLayout | None = None,
         clifford_layout: CliffordGradeRepresentation | None = None,
         required: bool = True,
-    ):
+    ) -> None:
         resolved_name = str(name)
         if not resolved_name:
             raise ValueError("Operator field name must not be empty.")

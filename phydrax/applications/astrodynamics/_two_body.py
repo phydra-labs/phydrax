@@ -67,7 +67,9 @@ class UniversalKeplerPolicy(StrictModule, NonTrainableState):
     relative_tolerance: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, *, max_iterations: int = 48, relative_tolerance: float = 1.0e-12):
+    def __init__(
+        self, *, max_iterations: int = 48, relative_tolerance: float = 1.0e-12
+    ) -> None:
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
             raise TypeError("max_iterations must be an integer.")
         iterations = max_iterations

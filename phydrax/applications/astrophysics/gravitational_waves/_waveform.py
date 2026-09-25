@@ -50,7 +50,7 @@ class WaveformCapabilities(StrictModule, NonTrainableState):
         phase_harmonic: int | None = None,
         distance_parameter: str | None = None,
         reference_distance: float | None = None,
-    ):
+    ) -> None:
         polarizations = tuple(str(value).strip() for value in polarization_ids)
         parameterization = str(parameterization_id).strip()
         if not polarizations or any(not value for value in polarizations):
@@ -131,7 +131,7 @@ class FrequencyDomainPolarizations(StrictModule):
         invalid_status: ArrayLike | GravitationalWaveStatus = (
             GravitationalWaveStatus.NONFINITE_WAVEFORM
         ),
-    ):
+    ) -> None:
         frequencies = jnp.asarray(frequency)
         waveforms = jnp.asarray(values)
         polarizations = tuple(polarization_ids)
@@ -195,7 +195,7 @@ class CallableFrequencyDomainWaveform(AbstractFrequencyDomainWaveform):
         *,
         waveform_id: str,
         parameter_map: Callable[[PyTree[Any]], PyTree[Any]] | None = None,
-    ):
+    ) -> None:
         if not callable(function) or (
             parameter_map is not None and not callable(parameter_map)
         ):
@@ -261,7 +261,7 @@ class SineGaussianWaveformPlan(AbstractFrequencyDomainWaveform, NonTrainableStat
         *,
         parameterization_id: str = "sine-gaussian",
         waveform_id: str = "native-sine-gaussian",
-    ):
+    ) -> None:
         if not isinstance(provenance, ObservationDataProvenance):
             raise TypeError("provenance must be ObservationDataProvenance.")
         self.capabilities = WaveformCapabilities(

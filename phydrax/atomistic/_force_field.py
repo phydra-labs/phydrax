@@ -80,7 +80,7 @@ class AtomisticForceFieldProvenance(StrictModule, NonTrainableState):
         typing_source: str = "explicit",
         charge_source: str = "explicit",
         adapter_id: str = "native",
-    ):
+    ) -> None:
         values = tuple(
             str(value).strip()
             for value in (
@@ -145,7 +145,7 @@ class AtomisticNonbondedPolicy(StrictModule, NonTrainableState):
         electrostatics: str = "pme",
         dispersion: str = "cutoff",
         charge_neutrality: str = "require-neutral",
-    ):
+    ) -> None:
         cutoff_ = float(cutoff)
         switch = None if switch_distance is None else float(switch_distance)
         if (
@@ -322,7 +322,7 @@ class GeneralForceFieldTerm(AbstractAtomisticEnergyTerm, NonTrainableState):
         cutoff: float | None = None,
         name: str | None = None,
         force_group: int = 0,
-    ):
+    ) -> None:
         if not isinstance(kind, ForceFieldTermKind):
             raise TypeError("kind must be ForceFieldTermKind.")
         values = tuple(jnp.asarray(value) for value in arrays)
@@ -483,7 +483,9 @@ class PreparedGeneralForceFieldTerm(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan: GeneralForceFieldTerm, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: GeneralForceFieldTerm, system: PreparedAtomisticSystem, /
+    ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name
@@ -966,7 +968,7 @@ class AtomisticForceFieldPlan(StrictModule):
         /,
         *,
         constraint_plan: DistanceConstraintPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan) or not isinstance(
             potential, AtomisticPotentialProgram
         ):
@@ -1118,7 +1120,7 @@ class PreparedAtomisticForceField(StrictModule):
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, system, potential, constraints, preparation, /):
+    def __init__(self, plan, system, potential, constraints, preparation, /) -> None:
         self.plan = plan
         self.system = system
         self.potential = potential
@@ -1150,7 +1152,7 @@ class SETTLEPlan(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         groups = np.asarray(water_groups)
         if (
             groups.ndim != 2
@@ -1207,7 +1209,7 @@ class PreparedSETTLE(StrictModule, NonTrainableState):
     system: PreparedAtomisticSystem
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: SETTLEPlan, system: PreparedAtomisticSystem, /):
+    def __init__(self, plan: SETTLEPlan, system: PreparedAtomisticSystem, /) -> None:
         self.plan = plan
         self.system = system
         self.prepared_id = canonical_fingerprint(

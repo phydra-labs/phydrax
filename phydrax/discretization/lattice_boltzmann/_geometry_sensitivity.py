@@ -43,7 +43,7 @@ class LatticeBoltzmannGeometrySensitivityPolicy(StrictModule, NonTrainableState)
         link_margin: float = 1.0e-8,
         event_time_margin: float = 1.0e-8,
         surrogate_width: float = 1.0e-3,
-    ):
+    ) -> None:
         if not isinstance(mode, BranchDifferentiationPolicy):
             raise TypeError("mode must be a BranchDifferentiationPolicy.")
         match mode:
@@ -113,7 +113,7 @@ class LatticeBoltzmannGeometrySensitivityMargins(StrictModule, NonTrainableState
         event_requested: ArrayLike = False,
         event_localized: ArrayLike = False,
         forward_successful: ArrayLike = True,
-    ):
+    ) -> None:
         classification = jnp.asarray(minimum_classification_margin)
         link = jnp.asarray(minimum_link_margin)
         event = jnp.asarray(event_time_margin)

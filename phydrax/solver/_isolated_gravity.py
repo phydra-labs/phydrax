@@ -38,7 +38,7 @@ class IsolatedCartesianGravityPlan(StrictModule, NonTrainableState):
         *,
         gravitational_constant: float = 1.0,
         softening: float = 1e-3,
-    ):
+    ) -> None:
         coupling = float(gravitational_constant)
         epsilon = float(softening)
         if (

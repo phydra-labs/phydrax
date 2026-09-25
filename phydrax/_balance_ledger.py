@@ -22,7 +22,7 @@ class BalanceTerm(StrictModule):
 
     def __init__(
         self, name: str, value: ArrayLike, sign: int, owner_id: str, unit_id: str, /
-    ):
+    ) -> None:
         if sign not in (-1, 1):
             raise ValueError("BalanceTerm sign must be -1 or 1.")
         if not name or not owner_id or not unit_id:

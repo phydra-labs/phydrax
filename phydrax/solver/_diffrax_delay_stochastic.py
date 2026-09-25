@@ -372,7 +372,7 @@ class _VectorizedDelayDenseInterpolation(StrictModule):
         sample_shape: tuple[int, ...],
         state_adapter: _PreparedDiffraxStateAdapter,
         /,
-    ):
+    ) -> None:
         samples = tuple(sample_shape)
         sample_ndim = len(samples)
         sample_count = prod(samples)

@@ -61,7 +61,7 @@ class PrimordialSpeciesState(StrictModule):
         internal_energy: ArrayLike,
         scale_factor: ArrayLike,
         /,
-    ):
+    ) -> None:
         densities = jnp.asarray(number_densities)
         energy = jnp.asarray(internal_energy, dtype=densities.dtype)
         scale = jnp.asarray(scale_factor, dtype=densities.dtype)
@@ -100,7 +100,7 @@ class PrimordialRateTable(StrictModule, NonTrainableState):
         rates: ArrayLike,
         artifact: ScientificArtifactEnvelope,
         /,
-    ):
+    ) -> None:
         temperature = jax.lax.stop_gradient(jnp.asarray(temperatures))
         scale = jax.lax.stop_gradient(jnp.asarray(scale_factors, dtype=temperature.dtype))
         values = jax.lax.stop_gradient(jnp.asarray(rates, dtype=temperature.dtype))
@@ -208,7 +208,7 @@ class PrimordialMicrophysicsPlan(StrictModule, NonTrainableState):
         boltzmann_constant: float = 1.0,
         maximum_iterations: int = 16,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         gamma = float(adiabatic_index)
         boltzmann = float(boltzmann_constant)
         iterations = int(maximum_iterations)

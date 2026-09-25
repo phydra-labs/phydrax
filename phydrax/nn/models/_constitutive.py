@@ -22,7 +22,7 @@ class DeformationGradientMinors(StrictModule):
     dimension: int = eqx.field(static=True)
     lifted_size: int = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         self.dimension = int(dimension)
         if self.dimension not in (2, 3):
             raise ValueError("Deformation-gradient minors support dimension 2 or 3.")
@@ -101,7 +101,7 @@ class PolyconvexPotential(StrictModule, ParameterOwner):
         activation: ConvexActivation = "softplus",
         use_bias: bool = True,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.minors = DeformationGradientMinors(dimension)
         convex_potential = (
             InputConvexNetwork(

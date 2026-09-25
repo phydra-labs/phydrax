@@ -44,7 +44,7 @@ class StatisticalResidualAOPlan(StrictModule, NonTrainableState):
         loop_delay: ArrayLike = 0.0,
         measurement_phase_variance: ArrayLike = 0.0,
         aliasing_phase_variance: ArrayLike = 0.0,
-    ):
+    ) -> None:
         cutoff = jnp.asarray(control_cutoff, dtype=jnp.float64)
         gain = jnp.asarray(correction_gain, dtype=jnp.float64)
         delay = jnp.asarray(loop_delay, dtype=jnp.float64)

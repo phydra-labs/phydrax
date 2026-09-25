@@ -72,7 +72,7 @@ class _InitialPolynomialCallable(StrictModule):
         target_pos: tuple[tuple[int, ...], ...],
         var_pos: int | None,
         t0: Array,
-    ):
+    ) -> None:
         self.targets = targets
         self.coeffs = coeffs
         self.target_pos = target_pos

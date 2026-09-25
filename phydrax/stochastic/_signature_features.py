@@ -193,7 +193,7 @@ class SignatureFeatures(StrictModule):
         *,
         include_scalar: bool = False,
         stream: bool = False,
-    ):
+    ) -> None:
         resolved_dimension = int(dimension)
         resolved_depth = int(depth)
         if resolved_dimension <= 0:
@@ -237,7 +237,7 @@ class LogSignatureFeatures(StrictModule):
     stream: bool = eqx.field(static=True)
     feature_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, depth: int, /, *, stream: bool = False):
+    def __init__(self, dimension: int, depth: int, /, *, stream: bool = False) -> None:
         basis = PrimitiveBasis(dimension, depth)
         self.primitive_basis = basis
         self.dimension = basis.dimension

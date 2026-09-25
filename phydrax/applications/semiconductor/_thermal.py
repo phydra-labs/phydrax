@@ -80,7 +80,7 @@ class ConstantLatticeHeatCapacity(StrictModule):
         provenance,
         capacity_unit=VOLUMETRIC_HEAT_CAPACITY_UNIT,
         temperature_unit=KELVIN,
-    ):
+    ) -> None:
         self.volumetric_heat_capacity = _positive_scalar(
             volumetric_heat_capacity,
             capacity_unit,
@@ -169,7 +169,7 @@ class ThermalConductance(StrictModule):
         provenance,
         conductance_unit=THERMAL_CONDUCTANCE_UNIT,
         temperature_unit=KELVIN,
-    ):
+    ) -> None:
         self.conductance = _positive_scalar(
             conductance, conductance_unit, THERMAL_CONDUCTANCE_UNIT, "thermal conductance"
         )
@@ -204,7 +204,9 @@ class ThermalBoundaryExchange(StrictModule):
     conductor: ThermalConductance
     reservoir_temperature: Array
 
-    def __init__(self, conductor, reservoir_temperature, /, *, temperature_unit=KELVIN):
+    def __init__(
+        self, conductor, reservoir_temperature, /, *, temperature_unit=KELVIN
+    ) -> None:
         if not isinstance(conductor, ThermalConductance):
             raise TypeError("conductor must be a ThermalConductance.")
         self.conductor = conductor
@@ -266,7 +268,7 @@ class CarrierEnergyRelaxation(StrictModule):
         provenance,
         time_unit=SECOND,
         temperature_unit=KELVIN,
-    ):
+    ) -> None:
         self.thermodynamics = thermodynamics
         self.carrier = _carrier_name(carrier)
         self.relaxation_time = _positive_scalar(
@@ -368,7 +370,7 @@ class CarrierEnergyTransport(StrictModule):
         provenance,
         conductivity_unit=THERMAL_CONDUCTIVITY_UNIT,
         temperature_unit=KELVIN,
-    ):
+    ) -> None:
         self.thermodynamics = thermodynamics
         self.carrier = _carrier_name(carrier)
         self.thermal_conductivity = _positive_scalar(

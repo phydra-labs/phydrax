@@ -16,7 +16,7 @@ class FacetOrientationAction:
     shape: FacetShape
     permutation: tuple[int, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         sizes = {"point": 1, "edge": 2, "triangle": 3, "quadrilateral": 4}
         size = sizes[self.shape]
         if tuple(sorted(self.permutation)) != tuple(range(size)):

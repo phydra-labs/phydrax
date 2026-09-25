@@ -33,7 +33,7 @@ class PlanePatch(AbstractSurfacePatch):
     first_axis: Array
     second_axis: Array
 
-    def __init__(self, origin: Array, first_axis: Array, second_axis: Array):
+    def __init__(self, origin: Array, first_axis: Array, second_axis: Array) -> None:
         self.origin = jnp.asarray(origin, dtype=jnp.float64).reshape((3,))
         self.first_axis = jnp.asarray(first_axis, dtype=jnp.float64).reshape((3,))
         self.second_axis = jnp.asarray(second_axis, dtype=jnp.float64).reshape((3,))
@@ -54,7 +54,7 @@ class CylinderPatch(AbstractSurfacePatch):
     axis: Array
     radius: Array
 
-    def __init__(self, origin, first_axis, second_axis, axis, radius):
+    def __init__(self, origin, first_axis, second_axis, axis, radius) -> None:
         self.origin = jnp.asarray(origin, dtype=jnp.float64).reshape((3,))
         self.first_axis = jnp.asarray(first_axis, dtype=jnp.float64).reshape((3,))
         self.second_axis = jnp.asarray(second_axis, dtype=jnp.float64).reshape((3,))
@@ -88,7 +88,7 @@ class ConePatch(AbstractSurfacePatch):
         axis,
         reference_radius,
         semi_angle,
-    ):
+    ) -> None:
         self.origin = jnp.asarray(origin, dtype=jnp.float64).reshape((3,))
         self.first_axis = jnp.asarray(first_axis, dtype=jnp.float64).reshape((3,))
         self.second_axis = jnp.asarray(second_axis, dtype=jnp.float64).reshape((3,))
@@ -117,7 +117,7 @@ class SpherePatch(AbstractSurfacePatch):
     axis: Array
     radius: Array
 
-    def __init__(self, center, first_axis, second_axis, axis, radius):
+    def __init__(self, center, first_axis, second_axis, axis, radius) -> None:
         self.center = jnp.asarray(center, dtype=jnp.float64).reshape((3,))
         self.first_axis = jnp.asarray(first_axis, dtype=jnp.float64).reshape((3,))
         self.second_axis = jnp.asarray(second_axis, dtype=jnp.float64).reshape((3,))
@@ -155,7 +155,7 @@ class TorusPatch(AbstractSurfacePatch):
         axis,
         major_radius,
         minor_radius,
-    ):
+    ) -> None:
         self.center = jnp.asarray(center, dtype=jnp.float64).reshape((3,))
         self.first_axis = jnp.asarray(first_axis, dtype=jnp.float64).reshape((3,))
         self.second_axis = jnp.asarray(second_axis, dtype=jnp.float64).reshape((3,))
@@ -197,7 +197,7 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
         v_knots: Array,
         u_degree: int,
         v_degree: int,
-    ):
+    ) -> None:
         control_points_ = jnp.asarray(control_points, dtype=jnp.float64)
         weights_ = jnp.asarray(weights, dtype=jnp.float64)
         u_knots_ = jnp.asarray(u_knots, dtype=jnp.float64).reshape((-1,))
@@ -262,7 +262,7 @@ class BSplineCurve(StrictModule):
     knots: Array
     degree: int = eqx.field(static=True)
 
-    def __init__(self, control_points, weights, knots, degree):
+    def __init__(self, control_points, weights, knots, degree) -> None:
         control_points_ = jnp.asarray(control_points, dtype=jnp.float64)
         weights_ = jnp.asarray(weights, dtype=jnp.float64).reshape((-1,))
         knots_ = jnp.asarray(knots, dtype=jnp.float64).reshape((-1,))

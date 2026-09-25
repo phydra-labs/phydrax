@@ -43,7 +43,7 @@ class KohnShamExcitedResponsePlan(StrictModule, NonTrainableState):
         /,
         *,
         dipole_ao: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(kohn_sham, MolecularKohnShamPlan):
             raise TypeError("kohn_sham must be MolecularKohnShamPlan.")
         if not isinstance(state, RestrictedMeanFieldState) or not bool(

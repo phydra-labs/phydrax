@@ -27,7 +27,7 @@ class PMJAttachmentEpoch(StrictModule, NonTrainableState):
         graph_geometry: int | ArrayLike,
         myocardial_geometry: int | ArrayLike,
         /,
-    ):
+    ) -> None:
         graph_host = np.asarray(graph_geometry)
         myocardial_host = np.asarray(myocardial_geometry)
         if graph_host.shape != () or myocardial_host.shape != ():
@@ -89,7 +89,7 @@ class PurkinjeAttachmentPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         capacity = int(pmj_capacity)
         maximum_distance = float(maximum_distance_mm)
         if capacity <= 0:
@@ -231,7 +231,7 @@ class PreparedPurkinjeAttachment(StrictModule, NonTrainableState):
         myocardial_geometry_id: str,
         prepared_epoch: PMJAttachmentEpoch,
         attachment_id: str,
-    ):
+    ) -> None:
         if not isinstance(plan, PurkinjeAttachmentPlan):
             raise TypeError("plan must be a PurkinjeAttachmentPlan.")
         graph_capacity = int(graph_point_capacity)

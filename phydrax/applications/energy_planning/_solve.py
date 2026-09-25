@@ -131,7 +131,7 @@ def replay_energy_system(
             violations.append(np.inf)
         return value
 
-    def equal(name, left, right=0.0):
+    def equal(name, left, right=0.0) -> None:
         left, right = np.asarray(left), np.asarray(right)
         residual = np.abs(left - right)
         maximum = float(np.max(residual, initial=0))
@@ -139,7 +139,7 @@ def replay_energy_system(
         if not np.all(residual <= atol + rtol * np.maximum(np.abs(left), np.abs(right))):
             failures.append(name)
 
-    def below(name, left, right):
+    def below(name, left, right) -> None:
         left, right = np.asarray(left), np.asarray(right)
         violation = np.maximum(left - right, 0)
         violations.append(float(np.max(violation, initial=0)))
@@ -206,7 +206,7 @@ def replay_energy_system(
 
     keys = information_keys(spec)
 
-    def nonanticipative(name, data, group_keys=keys):
+    def nonanticipative(name, data, group_keys=keys) -> None:
         groups = {}
         for key, value in zip(group_keys, data, strict=True):
             if key in groups:

@@ -268,7 +268,7 @@ class RationalResamplingPlan(StrictModule, NonTrainableState):
         /,
         *,
         axis: int = -1,
-    ):
+    ) -> None:
         up_factor = _positive_int(up, "up")
         down_factor = _positive_int(down, "down")
         common = gcd(up_factor, down_factor)

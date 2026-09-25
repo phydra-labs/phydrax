@@ -105,7 +105,7 @@ class ImplicitPointProjectionEvidence(StrictModule):
         finite: Any,
         status: Any,
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(geometry, GeometryValidityEvidence):
             raise TypeError("geometry must be GeometryValidityEvidence.")
         self.geometry = geometry
@@ -148,7 +148,7 @@ class ImplicitPointProjectionResult(StrictModule):
         normals: Array,
         evidence: ImplicitPointProjectionEvidence,
         /,
-    ):
+    ) -> None:
         proposed = jnp.asarray(proposed_points, dtype=jnp.float64)
         safe = jnp.asarray(points, dtype=proposed.dtype)
         normals_ = jnp.asarray(normals, dtype=proposed.dtype)
@@ -196,7 +196,7 @@ class ImplicitPointProjectionPlan(StrictModule):
         policy: ImplicitProjectionPolicy = _DEFAULT_PROJECTION_POLICY,
         source_id: str,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, CompiledGeometry):
             raise TypeError("geometry must be CompiledGeometry.")
         if not isinstance(policy, ImplicitProjectionPolicy):

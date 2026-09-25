@@ -65,7 +65,7 @@ class WelchSpectrumPlan(StrictModule, NonTrainableState):
         window: Literal["hann", "tukey"] = "hann",
         average: Literal["mean", "median"] = "mean",
         tukey_alpha: float = 0.5,
-    ):
+    ) -> None:
         interval = float(sample_interval)
         length = _positive_int(segment_length, "segment_length")
         overlap_ = (

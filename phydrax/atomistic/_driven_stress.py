@@ -39,7 +39,7 @@ class AtomisticDrivenStressPlan(StrictModule, NonTrainableState):
         require_stresslet: bool = False,
         require_brownian_stress: bool = False,
         cell_virial_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         tolerance = float(cell_virial_tolerance)
         if momentum_frame != "peculiar":
             raise ValueError("Driven atomistic stress requires peculiar momenta.")

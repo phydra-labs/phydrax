@@ -151,7 +151,7 @@ class OrthogonalPolynomialEdgeBasis(AbstractEdgeBasis):
         family: str = "chebyshev",
         regularization_start: int = 2,
         regularization_power: float = 2.0,
-    ):
+    ) -> None:
         if isinstance(degree, bool) or not isinstance(degree, int) or degree < 0:
             raise ValueError(
                 "Orthogonal polynomial degree must be a nonnegative integer."
@@ -243,7 +243,7 @@ class _BSplineQuadrature(StrictModule, NonTrainableState):
     points: Array
     weights: Array
 
-    def __init__(self, points: Array, weights: Array, /):
+    def __init__(self, points: Array, weights: Array, /) -> None:
         self.points = points
         self.weights = weights
 
@@ -272,7 +272,7 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
         per_input: bool = False,
         knot_entropy_weight: float = 0.0,
         knot_neighbor_weight: float = 0.0,
-    ):
+    ) -> None:
         if grid is None:
             degree_ = 3 if degree is None else degree
             interval_count = 8 if num_intervals is None else num_intervals
@@ -519,7 +519,7 @@ class RationalBSplineEdgeParameters(StrictModule, ParameterOwner):
         control_values: ArrayLike,
         raw_log_weights: ArrayLike,
         /,
-    ):
+    ) -> None:
         control_values_ = jnp.asarray(control_values)
         raw_log_weights_ = jnp.asarray(raw_log_weights)
         if control_values_.ndim != 3:
@@ -566,7 +566,7 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
         weight_variation_weight: float = 1.0e-4,
         minimum_denominator: float = 1.0e-4,
         denominator_weight: float = 1.0,
-    ):
+    ) -> None:
         if grid is None:
             degree_ = 3 if degree is None else degree
             interval_count = 8 if num_intervals is None else num_intervals

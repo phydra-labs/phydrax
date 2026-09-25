@@ -1277,7 +1277,7 @@ class StateSpaceLaplaceLikelihood(StrictModule):
         optimizer_max_steps: int = 128,
         max_dimension: int = 128,
         raise_on_failure: bool = False,
-    ):
+    ) -> None:
         (
             method,
             curvature,

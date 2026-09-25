@@ -49,7 +49,7 @@ class ImplicitTimeDomainEMPlan(StrictModule, NonTrainableState):
     policy: la.LinearSolvePolicy
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, mesh: CellMesh, survey: FrequencyDomainEMSurvey, /):
+    def __init__(self, mesh: CellMesh, survey: FrequencyDomainEMSurvey, /) -> None:
         space = TetrahedralNedelecSpace(mesh)
         if not isinstance(survey, FrequencyDomainEMSurvey):
             raise TypeError(

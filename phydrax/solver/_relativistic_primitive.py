@@ -70,7 +70,7 @@ class AtmosphereFloorPolicy(StrictModule, NonTrainableState):
         maximum_mass_addition: float = 1.0e30,
         maximum_energy_addition: float = 1.0e30,
         replace_failed_recovery: bool = True,
-    ):
+    ) -> None:
         density = float(rest_mass_density)
         energy = float(specific_internal_energy)
         activation = density if activation_density is None else float(activation_density)
@@ -233,7 +233,7 @@ class GRHDC2PPolicy(StrictModule, NonTrainableState):
         relative_tolerance: float = 1.0e-9,
         recomposition_tolerance: float = 1.0e-8,
         implicit_differentiation: bool = False,
-    ):
+    ) -> None:
         if not isinstance(system, ValenciaGRHDSystem):
             raise TypeError("system must be a ValenciaGRHDSystem.")
         atmosphere_ = AtmosphereFloorPolicy() if atmosphere is None else atmosphere

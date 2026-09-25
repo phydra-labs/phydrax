@@ -37,7 +37,7 @@ class PreconditionerCostEstimate(StrictModule):
         setup_matvec_count: int = 0,
         accepted: bool = True,
         reason: str = "feasible",
-    ):
+    ) -> None:
         component_, reason_ = str(component), str(reason)
         if not component_ or not reason_:
             raise ValueError("Preconditioner cost strings must be non-empty.")
@@ -81,7 +81,7 @@ class OperatorActionCostEstimate(StrictModule):
         operation_class: str,
         exact: bool,
         reason: str,
-    ):
+    ) -> None:
         strings = tuple(str(value) for value in (operator_id, operation_class, reason))
         if any(not value for value in strings):
             raise ValueError("Operator action cost strings must be non-empty.")
@@ -137,7 +137,7 @@ class LinearCostEstimate(StrictModule):
         operation_class: str,
         accepted: bool,
         reason: str,
-    ):
+    ) -> None:
         strings = tuple(
             str(value) for value in (provider, method, operation_class, reason)
         )

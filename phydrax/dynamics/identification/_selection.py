@@ -316,7 +316,7 @@ class SINDySelectionPolicy(StrictModule):
         max_rollouts: int = 32,
         complexity_weight: float = 0.0,
         combined_weights: Sequence[float] = (1.0, 1.0, 1.0),
-    ):
+    ) -> None:
         if criterion not in ("equation", "one_step", "rollout", "combined", "bic"):
             raise ValueError("Unsupported selection criterion.")
         if not 0.0 < float(validation_fraction) < 1.0:

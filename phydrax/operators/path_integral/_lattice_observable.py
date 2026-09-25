@@ -48,7 +48,7 @@ class LatticeObservablePlan(StrictModule):
         normalization: LatticeObservableNormalization,
         output_kind: LatticeObservableKind,
         observable_id: str,
-    ):
+    ) -> None:
         if not callable(evaluate):
             raise TypeError("evaluate must be callable.")
         shape = tuple(output_shape)

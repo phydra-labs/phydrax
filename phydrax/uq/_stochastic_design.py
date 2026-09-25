@@ -74,7 +74,7 @@ class StochasticExperimentDesignPlan(StrictModule, NonTrainableState):
         lanczos_steps: int = 32,
         linear_policy: LinearSolvePolicy | None = None,
         linear_policy_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(precision_factory):
             raise TypeError("precision_factory must be callable.")
         factory_id = str(precision_factory_id).strip()

@@ -132,7 +132,7 @@ class DynamicTrap(StrictModule):
         rate_unit=RATE_UNIT,
         energy_unit=JOULE,
         temperature_unit=KELVIN,
-    ):
+    ) -> None:
         if population_kind not in ("bulk", "surface"):
             raise ValueError("population_kind must be 'bulk' or 'surface'.")
         if isinstance(empty_charge_number, bool) or empty_charge_number not in (0, 1):
@@ -379,7 +379,7 @@ class WKBBarrierPath(StrictModule):
         length_unit=METER,
         energy_unit=JOULE,
         mass_unit=KILOGRAM,
-    ):
+    ) -> None:
         x = _si(positions, length_unit, METER)
         u = _si(barrier_energies, energy_unit, JOULE)
         mass = _si(effective_masses, mass_unit, KILOGRAM)
@@ -510,7 +510,7 @@ class NonlocalTunnelingPath(StrictModule):
     node_count: int = eqx.field(static=True)
     provenance: str = eqx.field(static=True)
 
-    def __init__(self, barrier, node_count, path_nodes, /, *, provenance):
+    def __init__(self, barrier, node_count, path_nodes, /, *, provenance) -> None:
         if not isinstance(barrier, WKBBarrierPath):
             raise TypeError("barrier must be a WKBBarrierPath.")
         if (

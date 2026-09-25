@@ -96,7 +96,7 @@ class FiniteExperimentalDesignProblem(StrictModule):
         likelihood_id: str,
         context: Mapping[str, ArrayLike] | None = None,
         design_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         if any(
             not isinstance(space, FiniteProductSpace)
             for space in (parameters, designs, outcomes)
@@ -157,7 +157,7 @@ class FiniteDesignBelief(StrictModule):
         *,
         parameter_mask: ArrayLike | None = None,
         history: tuple[Experiment, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(parameters, FiniteProductSpace):
             raise TypeError("parameters must be a FiniteProductSpace.")
         values = jnp.asarray(log_masses)
@@ -247,7 +247,7 @@ class ExpectedInformationGain(StrictModule):
         maximum_bytes: int = 64 * 1024 * 1024,
         normalization_tolerance: float = 1e-6,
         likelihood_workspace_bytes_per_candidate: int = 0,
-    ):
+    ) -> None:
         self.candidate_batch_size = _positive_integer(
             candidate_batch_size, "candidate_batch_size"
         )

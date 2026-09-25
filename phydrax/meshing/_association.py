@@ -52,7 +52,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         resolved: ArrayLike | None = None,
         ambiguous: ArrayLike | None = None,
         exact: bool = False,
-    ):
+    ) -> None:
         if not isinstance(association_kind, GeometryAssociationKind):
             raise TypeError("association_kind must be GeometryAssociationKind.")
         source = str(source_id).strip()

@@ -42,7 +42,7 @@ class ObservationDataProvenance(StrictModule, NonTrainableState):
         checksum: str,
         license_id: str,
         differentiation: DerivativeContract,
-    ):
+    ) -> None:
         values = tuple(
             str(value).strip()
             for value in (producer, producer_version, source_id, checksum, license_id)
@@ -106,7 +106,7 @@ class PhotonCountingBandpass(StrictModule, NonTrainableState):
         /,
         *,
         band_id: str,
-    ):
+    ) -> None:
         if not isinstance(provenance, ObservationDataProvenance):
             raise TypeError("provenance must be ObservationDataProvenance.")
         identifier = str(band_id).strip()
@@ -193,7 +193,7 @@ class TransitPhotometryPlan(StrictModule, NonTrainableState):
         *,
         collecting_area: ArrayLike,
         background_rate: ArrayLike = 0.0,
-    ):
+    ) -> None:
         bands = tuple(bandpasses)
         if not bands or any(
             not isinstance(band, PhotonCountingBandpass) for band in bands

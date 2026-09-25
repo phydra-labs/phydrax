@@ -50,7 +50,7 @@ class SemidiscreteProblemProvenance(StrictModule):
         cost: str,
         integration: IntegrationProvenance,
         /,
-    ):
+    ) -> None:
         self.source = str(source)
         self.target = str(target)
         self.cost = str(cost)
@@ -86,7 +86,7 @@ class SemidiscreteTransportProblem(StrictModule):
         source_encoder: EventEncoder | None = None,
         target_encoder: EventEncoder | None = None,
         mass_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(source, DensityTarget):
             raise TypeError("source must be a DensityTarget.")
         if not isinstance(realization, IntegrationRealization):
@@ -281,7 +281,7 @@ class SemidiscreteTransportProvenance(StrictModule):
     common_random_numbers: bool = eqx.field(static=True)
     deterministic_replay: bool = eqx.field(static=True)
 
-    def __init__(self, problem: SemidiscreteTransportProblem, /):
+    def __init__(self, problem: SemidiscreteTransportProblem, /) -> None:
         self.method = "semidiscrete-entropic-dual"
         self.ground_cost = problem.provenance.cost
         self.source = problem.provenance.source
@@ -393,7 +393,7 @@ class SemidiscreteSinkhorn(StrictModule):
         check_every: int = 1,
         early_stop: bool = False,
         store_history: bool = False,
-    ):
+    ) -> None:
         maximum = int(max_iterations)
         minimum = int(min_iterations)
         interval = int(check_every)
@@ -760,7 +760,7 @@ class SemidiscreteQuantizer(StrictModule):
         *,
         num_steps: int,
         support_transform: Callable[[Array], Array] | None = None,
-    ):
+    ) -> None:
         if not isinstance(solver, SemidiscreteSinkhorn):
             raise TypeError("solver must be a SemidiscreteSinkhorn.")
         if not isinstance(optimizer, optax.GradientTransformation):

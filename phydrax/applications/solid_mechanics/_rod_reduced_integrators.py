@@ -70,7 +70,7 @@ class ReducedRodIntegrationState(StrictModule):
         time: ArrayLike = 0,
         step_index: ArrayLike = 0,
         /,
-    ):
+    ) -> None:
         if not isinstance(reduced_state, ReducedRodState):
             raise TypeError("reduced_state must be a ReducedRodState.")
         if not isinstance(material_state, ReducedRodMaterialState):
@@ -166,7 +166,7 @@ class ReducedRodSemiImplicitVelocityEuler(StrictModule):
         *,
         maximum_step_size: float,
         energy_balance_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         maximum = float(maximum_step_size)
         tolerance = float(energy_balance_tolerance)
         if not isfinite(maximum) or maximum <= 0.0:
@@ -204,7 +204,7 @@ class ReducedRodImplicitMidpoint(StrictModule):
         nonlinear_method: AbstractNonlinearMethod | None = None,
         nonlinear_termination: NonlinearTermination | None = None,
         energy_balance_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         maximum = float(maximum_step_size)
         tolerance = float(energy_balance_tolerance)
         if not isfinite(maximum) or maximum <= 0.0:

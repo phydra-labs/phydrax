@@ -59,7 +59,7 @@ class SpectralStateLayout(StrictModule):
         fields: Sequence[PDEField],
         discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
         /,
-    ):
+    ) -> None:
         field_values = tuple(fields)
         if not field_values or not all(
             isinstance(field, PDEField) for field in field_values
@@ -237,7 +237,7 @@ class _SpectralEvaluator(StrictModule):
         *,
         field_coordinate_axes: Sequence[tuple[str, tuple[int, ...]]] = (),
         parameter_coordinate_axes: Sequence[tuple[str, tuple[int, ...]]] = (),
-    ):
+    ) -> None:
         self.layout = layout
         self.discretization = discretization
         self.method = method
@@ -844,7 +844,7 @@ class CompiledSpectralDynamics(StrictModule):
         compilation_id: str,
         source_hash: str,
         resolved_method: str,
-    ):
+    ) -> None:
         residual_key = DiscretizationKey(
             "spectral_form",
             DiscretizationRole.RESIDUAL,

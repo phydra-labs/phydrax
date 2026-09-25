@@ -38,7 +38,7 @@ class TargetConsistencyTerm(AbstractSamplingTerm):
         *,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not field:
             raise ValueError("Target consistency field must be nonempty.")
         self.field = str(field)

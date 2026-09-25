@@ -100,7 +100,7 @@ class CotranslationObservationLaw:
         forster_radius: float | None = None,
         forster_radius_standard_error: float | None = None,
         length_unit: UnitDefinition | None = None,
-    ):
+    ) -> None:
         if observable_kind not in (
             "length-resolved-fret",
             "calibrated-arrest-release",
@@ -248,7 +248,7 @@ class LengthResolvedCotranslationObservations:
         timing_semantics: Literal["measured-dwell-time"],
         source: ReferenceArtifactManifest,
         timing_reference: ReferenceArtifactManifest | None,
-    ):
+    ) -> None:
         cases = tuple(case_ids)
         independent = tuple(independent_unit_ids)
         preparations = tuple(preparation_ids)
@@ -383,7 +383,7 @@ class CotranslationModelFit:
         prediction_code: ReferenceArtifactManifest,
         fit_execution_evidence: QualificationEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(campaign, ScientificCampaign):
             raise TypeError("campaign must be a ScientificCampaign.")
         model = _identifier(model_id, "model_id")
@@ -514,7 +514,7 @@ class CotranslationModelPrediction:
         /,
         *,
         latent_unit: UnitDefinition,
-    ):
+    ) -> None:
         if not isinstance(observations, LengthResolvedCotranslationObservations):
             raise TypeError(
                 "observations must be LengthResolvedCotranslationObservations."

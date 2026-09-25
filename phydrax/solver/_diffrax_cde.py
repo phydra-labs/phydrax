@@ -61,7 +61,7 @@ class ControlledDifferentialSolution(StrictModule):
         *,
         problem_id: str,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(differential_solution, DifferentialSolution):
             raise TypeError("differential_solution must be a DifferentialSolution.")
         if not isinstance(path, AbstractDifferentiableDrivingPath):

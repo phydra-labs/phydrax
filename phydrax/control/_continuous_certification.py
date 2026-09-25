@@ -45,7 +45,7 @@ class ControlSegmentInterpolant(StrictModule, NonTrainableState):
         state_shape: Sequence[int],
         control_shape: Sequence[int],
         interpolant_id: str,
-    ):
+    ) -> None:
         times_ = jnp.asarray(times)
         state_ = jnp.asarray(state_coefficients)
         control_ = jnp.asarray(control_coefficients)
@@ -196,7 +196,7 @@ class AffineBernsteinPathEnvelope(AbstractPathConstraintEnvelope, NonTrainableSt
         /,
         *,
         envelope_id: str,
-    ):
+    ) -> None:
         self.state_weights = jnp.asarray(state_weights)
         self.control_weights = jnp.asarray(control_weights)
         self.bias = jnp.asarray(bias).reshape(())
@@ -253,7 +253,7 @@ class LipschitzPathEnvelope(AbstractPathConstraintEnvelope, NonTrainableState):
         *,
         sample_count: int = 3,
         envelope_id: str,
-    ):
+    ) -> None:
         if not callable(derivative_bound):
             derivative_bound = jnp.asarray(derivative_bound)
         if (
@@ -326,7 +326,7 @@ class CertifiedPathConstraint(StrictModule, NonTrainableState):
     envelope: AbstractPathConstraintEnvelope
     constraint_id: str = eqx.field(static=True)
 
-    def __init__(self, residual, envelope, /, *, constraint_id: str):
+    def __init__(self, residual, envelope, /, *, constraint_id: str) -> None:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         if not isinstance(envelope, AbstractPathConstraintEnvelope):

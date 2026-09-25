@@ -72,7 +72,7 @@ class LatticeBoltzmannBlockInterfacePlan(StrictModule, NonTrainableState):
         left_side: LatticeBoltzmannBlockSide = "upper",
         right_side: LatticeBoltzmannBlockSide = "lower",
         scale_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(left, LatticeBoltzmannDiscretization) or not isinstance(
             right, LatticeBoltzmannDiscretization
         ):
@@ -239,7 +239,7 @@ class LatticeBoltzmannBlockConnection(StrictModule, NonTrainableState):
         right_block: int,
         interface: LatticeBoltzmannBlockInterfacePlan,
         /,
-    ):
+    ) -> None:
         left = int(left_block)
         right = int(right_block)
         if left < 0 or right < 0 or left == right:
@@ -264,7 +264,7 @@ class LatticeBoltzmannBlockConnection(StrictModule, NonTrainableState):
 class LatticeBoltzmannMultiblockState(StrictModule):
     populations: tuple[Array, ...]
 
-    def __init__(self, populations: Sequence[ArrayLike], /):
+    def __init__(self, populations: Sequence[ArrayLike], /) -> None:
         values = tuple(jnp.asarray(value) for value in populations)
         if not values:
             raise ValueError("A multiblock state requires at least one block.")
@@ -324,7 +324,7 @@ class LatticeBoltzmannMultiblockCouplingPlan(StrictModule, NonTrainableState):
         blocks: Sequence[LatticeBoltzmannDiscretization],
         connections: Sequence[LatticeBoltzmannBlockConnection],
         /,
-    ):
+    ) -> None:
         blocks_ = tuple(blocks)
         connections_ = tuple(connections)
         if not blocks_ or any(

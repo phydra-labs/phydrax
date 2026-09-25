@@ -55,7 +55,7 @@ class EndpointInterpolantEvaluation(StrictModule):
         valid: ArrayLike,
         event_shape,
         interpolant_id: str,
-    ):
+    ) -> None:
         events = _event_shape(event_shape)
         state_array = jnp.asarray(state)
         velocity = jnp.asarray(conditional_velocity)
@@ -121,7 +121,7 @@ class LinearEndpointInterpolant(AbstractEndpointInterpolant):
         source_coordinate: ArrayLike = 0.0,
         target_coordinate: ArrayLike = 1.0,
         interpolant_id: str | None = None,
-    ):
+    ) -> None:
         events = _event_shape(event_shape)
         source = jnp.asarray(source_coordinate, dtype=jnp.float64).reshape(())
         target = jnp.asarray(target_coordinate, dtype=jnp.float64).reshape(())

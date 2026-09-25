@@ -40,7 +40,7 @@ class AutoregressiveFidelityKernel(AbstractMultiOutputKernel):
         /,
         *,
         transfer_coefficients: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(path, FidelityPath):
             raise TypeError("path must be a FidelityPath.")
         kernels = tuple(spatial_kernels)
@@ -161,7 +161,7 @@ class FidelityGaussianProcess(StrictModule):
         path: FidelityPath,
         dataset: FidelityDataset,
         /,
-    ):
+    ) -> None:
         if not isinstance(path, FidelityPath):
             raise TypeError("path must be a FidelityPath.")
         if not isinstance(dataset, FidelityDataset):

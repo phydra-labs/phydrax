@@ -59,7 +59,7 @@ class MotorUnitActionPotentialTemplatePlan(StrictModule, NonTrainableState):
         /,
         *,
         template_source_id: str,
-    ):
+    ) -> None:
         template = jnp.asarray(template_V)
         if template.ndim != 3:
             raise ValueError("template_V must have shape (motor_unit, channel, sample).")

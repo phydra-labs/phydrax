@@ -112,7 +112,7 @@ class OperatorDatasetTerm(AbstractScalarTerm):
         relative: bool = True,
         weight: Any = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         self.batches = _batches_tuple(batches)
         if len(self.batches) == 1:
             target_values = (jnp.asarray(targets),)
@@ -211,7 +211,7 @@ class PhysicsInformedOperatorTerm(AbstractScalarTerm):
         loss: OperatorLoss = "l2",
         weight: Any = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         self.batches = _batches_tuple(batches)
         if not callable(residual_fn):
             raise TypeError("residual_fn must be callable.")
@@ -276,7 +276,7 @@ class DifferentialPhysicsInformedOperatorTerm(AbstractScalarTerm):
         loss: OperatorLoss = "l2",
         weight: Any = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         self.batches = _batches_tuple(batches)
         self.domain = domain
         self.coordinate_label = str(coordinate_label)

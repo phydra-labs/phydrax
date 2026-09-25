@@ -52,7 +52,7 @@ class MatrixProductState(StrictModule):
         /,
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, TensorNetworkPrecisionPolicy):
             raise TypeError("precision must be TensorNetworkPrecisionPolicy or None.")
@@ -131,7 +131,7 @@ class MatrixProductOperator(StrictModule):
         /,
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, TensorNetworkPrecisionPolicy):
             raise TypeError("precision must be TensorNetworkPrecisionPolicy or None.")
@@ -192,7 +192,7 @@ class LocallyPurifiedDensity(StrictModule):
         /,
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, TensorNetworkPrecisionPolicy):
             raise TypeError("precision must be TensorNetworkPrecisionPolicy or None.")

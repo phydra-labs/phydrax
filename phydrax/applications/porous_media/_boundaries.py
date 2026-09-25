@@ -29,7 +29,7 @@ class PorousBoundaryConditions(StrictModule):
         pressure_Pa=None,
         mass_rate_kg_s=None,
         leakage_kg_Pa_s=None,
-    ):
+    ) -> None:
         self.diffusion = HybridDiffusionBoundary(
             discretization,
             dirichlet=pressure_Pa,

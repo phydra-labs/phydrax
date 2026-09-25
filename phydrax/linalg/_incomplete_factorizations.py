@@ -43,7 +43,7 @@ class SparseFactorizationPreconditioner(AbstractPreconditioner, NonTrainableStat
         *,
         properties: PreconditionerProperties,
         preconditioner_id: str,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractSparseLinearOperator):
             raise TypeError("operator must be an AbstractSparseLinearOperator.")
         if not isinstance(factorization, PreparedSparseFactorization):
@@ -254,7 +254,7 @@ class SparseFactorizationPreconditionerBuilder(_AbstractSparseFactorizationBuild
         self,
         policy: SparseFactorizationPolicy | None = None,
         /,
-    ):
+    ) -> None:
         policy_ = SparseFactorizationPolicy() if policy is None else policy
         if not isinstance(policy_, SparseFactorizationPolicy):
             raise TypeError("policy must be SparseFactorizationPolicy or None.")
@@ -286,7 +286,7 @@ class ILUPreconditionerBuilder(_AbstractSparseFactorizationBuilder):
         diagonal_shift: float = 0.0,
         allow_pivot_replacement: bool = False,
         replacement_value: float = 1e-12,
-    ):
+    ) -> None:
         fill = int(fill_level)
         numeric = tuple(
             float(value) for value in (pivot_tolerance, diagonal_shift, replacement_value)
@@ -341,7 +341,7 @@ class ILUTPreconditionerBuilder(_AbstractSparseFactorizationBuilder):
         diagonal_shift: float = 0.0,
         allow_pivot_replacement: bool = False,
         replacement_value: float = 1e-12,
-    ):
+    ) -> None:
         fill = int(fill_level)
         maximum_fill = int(maximum_fill_per_row)
         numeric = tuple(
@@ -408,7 +408,7 @@ class IncompleteCholeskyPreconditionerBuilder(_AbstractSparseFactorizationBuilde
         diagonal_shift: float = 0.0,
         allow_pivot_replacement: bool = False,
         replacement_value: float = 1e-12,
-    ):
+    ) -> None:
         fill = int(fill_level)
         maximum_fill = None if maximum_fill_per_row is None else int(maximum_fill_per_row)
         numeric = tuple(

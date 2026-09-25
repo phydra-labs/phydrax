@@ -181,7 +181,7 @@ class SpecialOrthogonalGroup(AbstractLieGroup):
     point_shape: tuple[int, int] = eqx.field(static=True)
     algebra_shape: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, tolerance: float = 1e-6):
+    def __init__(self, dimension: int, /, *, tolerance: float = 1e-6) -> None:
         dimension_value = int(dimension)
         if dimension_value not in (2, 3):
             raise ValueError("SpecialOrthogonalGroup currently supports SO(2) and SO(3).")
@@ -258,7 +258,7 @@ class SpecialEuclideanGroup(AbstractLieGroup):
     point_shape: tuple[int, int] = eqx.field(static=True)
     algebra_shape: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, spatial_dimension: int, /, *, tolerance: float = 1e-6):
+    def __init__(self, spatial_dimension: int, /, *, tolerance: float = 1e-6) -> None:
         dimension = int(spatial_dimension)
         if dimension not in (2, 3):
             raise ValueError("SpecialEuclideanGroup currently supports SE(2) and SE(3).")
@@ -420,7 +420,7 @@ class LieGroupStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
-    def __init__(self, group: AbstractLieGroup, /):
+    def __init__(self, group: AbstractLieGroup, /) -> None:
         if not isinstance(group, AbstractLieGroup):
             raise TypeError("LieGroupStateGeometry requires an AbstractLieGroup.")
         self.group = group
@@ -570,7 +570,7 @@ class RightLieGroupStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
-    def __init__(self, group: AbstractLieGroup, /):
+    def __init__(self, group: AbstractLieGroup, /) -> None:
         if not isinstance(group, AbstractLieGroup):
             raise TypeError("RightLieGroupStateGeometry requires an AbstractLieGroup.")
         self.group = group

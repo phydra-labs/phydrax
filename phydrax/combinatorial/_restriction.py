@@ -49,7 +49,7 @@ class CombinatorialFeatureRestriction(StrictModule, NonTrainableState):
         *,
         lower: Any | None = None,
         upper: Any | None = None,
-    ):
+    ) -> None:
         if not isinstance(space, AbstractBoundableCombinatorialSpace):
             raise TypeError("space must be an AbstractBoundableCombinatorialSpace.")
         specification = space.feature_spec()

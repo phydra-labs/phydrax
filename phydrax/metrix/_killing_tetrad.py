@@ -48,7 +48,7 @@ class MetricInnerProductEvidence(StrictModule, NonTrainableState):
         derivative_valid: ArrayLike,
         tolerance: float,
         evidence_id: str,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         expected_ = jnp.asarray(expected, dtype=values_.dtype)
         if values_.ndim < 2 or values_.shape[-2] != values_.shape[-1]:
@@ -112,7 +112,7 @@ class KillingInnerProductEvidence(StrictModule, NonTrainableState):
         *,
         timelike_sign: int,
         evidence_id: str,
-    ):
+    ) -> None:
         stationary_norm_ = jnp.asarray(stationary_norm)
         cross_ = jnp.asarray(stationary_axial_inner_product, dtype=stationary_norm_.dtype)
         axial_norm_ = jnp.asarray(axial_norm, dtype=stationary_norm_.dtype)
@@ -191,7 +191,7 @@ class OrthonormalTetrad(StrictModule, NonTrainableState):
         convention: RelativityConvention,
         domain: MetricDomainEvidence,
         tetrad_id: str,
-    ):
+    ) -> None:
         vectors_ = jnp.asarray(vectors)
         dual_ = jnp.asarray(dual_covectors, dtype=vectors_.dtype)
         if vectors_.shape[-2:] != (4, 4):
@@ -262,7 +262,7 @@ class PrincipalNullTetrad(StrictModule, NonTrainableState):
         convention: RelativityConvention,
         domain: MetricDomainEvidence,
         tetrad_id: str,
-    ):
+    ) -> None:
         vectors_ = jnp.asarray(vectors)
         dual_ = jnp.asarray(dual_covectors, dtype=vectors_.dtype)
         if vectors_.shape[-2:] != (4, 4):
@@ -330,7 +330,7 @@ class TetradParallelTransportEvidence(StrictModule, NonTrainableState):
         derivative_valid: ArrayLike,
         tolerance: float,
         evidence_id: str,
-    ):
+    ) -> None:
         residuals_ = jnp.asarray(residuals)
         if residuals_.shape[-2:] != (4, 4):
             raise ValueError("Transport residuals must have trailing shape (4, 4).")

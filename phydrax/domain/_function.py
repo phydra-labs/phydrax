@@ -92,7 +92,7 @@ def _rank1_leading_broadcast_op(
 class _ConstCallable(StrictModule, NonTrainableState):
     value: jax.Array
 
-    def __init__(self, value: ArrayLike | None):
+    def __init__(self, value: ArrayLike | None) -> None:
         if value is None:
             raise TypeError("DomainFunction constants must be array-like, not None.")
         self.value = jnp.asarray(value)
@@ -114,7 +114,7 @@ class _ConstCallable(StrictModule, NonTrainableState):
 class _TrainableConstCallable(StrictModule, ParameterOwner):
     value: jax.Array
 
-    def __init__(self, value: ArrayLike | None):
+    def __init__(self, value: ArrayLike | None) -> None:
         if value is None:
             raise TypeError("Domain.Parameter constants must be array-like, not None.")
         self.value = jnp.asarray(value)
@@ -128,7 +128,7 @@ class UnaryFieldEvaluator(StrictModule):
     func: Callable
     op: Callable[[Any], Any]
 
-    def __init__(self, func: Callable, op: Callable[[Any], Any]):
+    def __init__(self, func: Callable, op: Callable[[Any], Any]) -> None:
         self.func = func
         self.op = op
 
@@ -143,7 +143,7 @@ def _terminal_softmax(values: Any, /) -> Any:
 class _ExpectationFieldOp(StrictModule, NonTrainableState):
     class_values: jax.Array
 
-    def __init__(self, class_values: ArrayLike):
+    def __init__(self, class_values: ArrayLike) -> None:
         self.class_values = jnp.asarray(class_values)
 
     def __call__(self, probabilities: Any, /) -> Any:
@@ -166,7 +166,7 @@ class SwapAxesFieldEvaluator(StrictModule, DerivativeRuleProvider):
     axis1: int
     axis2: int
 
-    def __init__(self, func: Callable, axis1: int, axis2: int):
+    def __init__(self, func: Callable, axis1: int, axis2: int) -> None:
         self.func = func
         self.axis1 = int(axis1)
         self.axis2 = int(axis2)
@@ -223,7 +223,7 @@ class BinaryFieldEvaluator(StrictModule, BatchEvaluator, DerivativeRuleProvider)
         b_pos: tuple[int, ...],
         reverse: bool,
         operand_derivatives: bool = False,
-    ):
+    ) -> None:
         self.a = a
         self.b = b
         self.op = op
@@ -568,7 +568,7 @@ class DomainFunction(StrictModule):
         func: Callable | ArrayLike,
         metadata: Mapping[str, Any] | None = None,
         derivative_rule: DerivativeRule | None = None,
-    ):
+    ) -> None:
         if not isinstance(domain, Domain):
             raise TypeError("DomainFunction.domain must be a Domain.")
         deps_ = tuple(deps)

@@ -98,7 +98,7 @@ class HolomorphicFactorizationEvidence(StrictModule, NonTrainableState):
         coordinate_mode: str,
         child_certificate_ids: Sequence[str],
         gauge_kind: str,
-    ):
+    ) -> None:
         factors = int(factor_count)
         branches = int(branch_count)
         rank = None if latent_rank is None else int(latent_rank)
@@ -146,7 +146,7 @@ class HolomorphicFactorGaugeReport(StrictModule, NonTrainableState):
     maximum_factor_norm: Array
     imbalance_ratio: Array
 
-    def __init__(self, factor_norms: ArrayLike, /):
+    def __init__(self, factor_norms: ArrayLike, /) -> None:
         norms = jnp.asarray(factor_norms)
         if norms.ndim != 1 or norms.size == 0:
             raise ValueError("Holomorphic factor norms must be one nonempty vector.")
@@ -175,7 +175,7 @@ class HolomorphicBranchBundle(StrictModule):
     factorization: HolomorphicFactorizationEvidence = fixed_field()
     _certificate: HolomorphicMapCertificate = fixed_field()
 
-    def __init__(self, providers: Sequence[HolomorphicPotentialProvider], /):
+    def __init__(self, providers: Sequence[HolomorphicPotentialProvider], /) -> None:
         resolved = tuple(providers)
         certificates = _certificates(resolved)
         if any(certificate.complex_input_size != 1 for certificate in certificates):
@@ -266,7 +266,7 @@ class HolomorphicProductPotential(StrictModule):
         *,
         latent_rank: int,
         branches: int,
-    ):
+    ) -> None:
         resolved = tuple(factors)
         certificates = _certificates(resolved)
         rank = int(latent_rank)

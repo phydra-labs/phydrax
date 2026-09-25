@@ -52,7 +52,7 @@ class ReciprocalPairRadiationPlan(StrictModule, NonTrainableState):
         wall_view_factor: ArrayLike = (),
         maximum_range: float,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         emissivity = np.asarray(particle_emissivity, dtype=np.float64)
         view = np.asarray(pair_view_factor, dtype=np.float64)
         wall = np.asarray(wall_emissivity, dtype=np.float64)

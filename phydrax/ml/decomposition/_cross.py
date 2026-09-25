@@ -206,7 +206,7 @@ class CCAModel(AbstractFittedModel):
         y_rotations: ArrayLike,
         canonical_correlations: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.x_mean = jnp.asarray(x_mean)
         self.y_mean = jnp.asarray(y_mean)
         self.x_rotations = jnp.asarray(x_rotations)
@@ -279,7 +279,7 @@ class CCA(AbstractRecipe):
         *,
         regularization: float = 1e-8,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.n_components = int(n_components)
         self.regularization = float(regularization)
         self.weight_policy = weight_policy
@@ -408,7 +408,7 @@ class PLSModel(AbstractFittedModel):
     case_shape: tuple[int, ...] = eqx.field(static=True)
     _input_binding = ModelBinding.blockwise("flat", pass_key=False)
 
-    def __init__(self, x_mean, y_mean, x_weights, x_decoder, y_loadings):
+    def __init__(self, x_mean, y_mean, x_weights, x_decoder, y_loadings) -> None:
         self.x_mean = jnp.asarray(x_mean)
         self.y_mean = jnp.asarray(y_mean)
         self.x_weights = jnp.asarray(x_weights)
@@ -463,7 +463,7 @@ class PLS(AbstractRecipe):
         /,
         *,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.n_components = int(n_components)
         self.weight_policy = weight_policy
         if self.n_components <= 0:

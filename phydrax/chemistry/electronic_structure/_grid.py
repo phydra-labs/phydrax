@@ -39,7 +39,7 @@ class AtomicRadialGridPlan(StrictModule, NonTrainableState):
         *,
         kind: AtomicRadialGridKind = AtomicRadialGridKind.MURA_KNOWLES,
         radial_scale: float = 1.0,
-    ):
+    ) -> None:
         count = int(point_count)
         scale = float(radial_scale)
         if not isinstance(kind, AtomicRadialGridKind):
@@ -99,7 +99,7 @@ class MolecularDFTGridPlan(StrictModule, NonTrainableState):
         angular_degree: int = 17,
         becke_iterations: int = 3,
         maximum_points: int = 2_000_000,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         radial_ = AtomicRadialGridPlan() if radial is None else radial
@@ -148,7 +148,7 @@ class PreparedMolecularDFTGrid(StrictModule, NonTrainableState):
     angular_source_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MolecularDFTGridPlan, /):
+    def __init__(self, plan: MolecularDFTGridPlan, /) -> None:
         if not isinstance(plan, MolecularDFTGridPlan):
             raise TypeError("plan must be MolecularDFTGridPlan.")
         angular = lebedev_rule_data(plan.angular_degree)

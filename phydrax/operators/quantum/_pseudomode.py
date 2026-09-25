@@ -28,7 +28,7 @@ class BathCorrelationExpansion(StrictModule):
         *,
         expansion_id: str,
         fit_residual: ArrayLike = 0.0,
-    ):
+    ) -> None:
         coefficients_ = jnp.asarray(coefficients)
         exponents_ = jnp.asarray(exponents, dtype=coefficients_.dtype)
         if coefficients_.ndim != 1 or exponents_.shape != coefficients_.shape:
@@ -83,7 +83,7 @@ class Pseudomode(StrictModule):
         *,
         cutoff: int,
         mode_id: str,
-    ):
+    ) -> None:
         if damping < 0.0 or int(cutoff) < 2:
             raise ValueError("Pseudomode damping/cutoff are invalid.")
         self.frequency = float(frequency)
@@ -107,7 +107,7 @@ class ReactionCoordinateMapping(StrictModule):
         /,
         *,
         mapping_id: str,
-    ):
+    ) -> None:
         if coupling < 0.0 or residual_damping < 0.0:
             raise ValueError("Reaction-coordinate parameters must be non-negative.")
         self.frequency = float(frequency)

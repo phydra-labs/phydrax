@@ -13,7 +13,7 @@ class MaterialActivationState(StrictModule, NonTrainableState):
     active: Array
     activation_time_s: Array
 
-    def __init__(self, active: ArrayLike, activation_time_s: ArrayLike, /):
+    def __init__(self, active: ArrayLike, activation_time_s: ArrayLike, /) -> None:
         a = jnp.asarray(active, dtype=jnp.bool_)
         t = jnp.asarray(activation_time_s)
         if a.shape != t.shape:

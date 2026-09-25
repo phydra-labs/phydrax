@@ -56,7 +56,7 @@ class BatteryParticlePlan(StrictModule, NonTrainableState):
         *,
         reference_faces: ArrayLike | None = None,
         particle_id: str = "particle",
-    ):
+    ) -> None:
         if isinstance(shell_count, bool) or not isinstance(shell_count, int):
             raise TypeError("shell_count must be an integer.")
         if (
@@ -103,7 +103,7 @@ class PreparedBatteryParticle(StrictModule, NonTrainableState):
     transport: PreparedRadialSpeciesTransport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: BatteryParticlePlan, /):
+    def __init__(self, plan: BatteryParticlePlan, /) -> None:
         if not isinstance(plan, BatteryParticlePlan):
             raise TypeError("plan must be a BatteryParticlePlan.")
         mesh = plan.mesh.prepare()

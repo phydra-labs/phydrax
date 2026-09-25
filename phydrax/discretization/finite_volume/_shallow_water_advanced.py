@@ -107,7 +107,7 @@ class ShallowWaterEquilibriumWENOZPlan(StrictModule, NonTrainableState):
         condition_limit: float = 1e8,
         epsilon: float = 1e-12,
         power: int = 2,
-    ):
+    ) -> None:
         if int(order) != 5:
             raise ValueError("Equilibrium WENO-Z currently requires order=5.")
         values = (float(characteristic_depth), float(condition_limit), float(epsilon))
@@ -221,7 +221,7 @@ class ShallowWaterNormalDischargeBoundary(StrictModule, NonTrainableState):
         *,
         tangential_velocity=None,
         boundary_id: str,
-    ):
+    ) -> None:
         if not callable(normal_discharge) or not callable(exterior_surface):
             raise TypeError("Discharge and surface data must be callable.")
         if tangential_velocity is not None and not callable(tangential_velocity):
@@ -287,7 +287,7 @@ class ShallowWaterCharacteristicOpenBoundary(StrictModule, NonTrainableState):
         *,
         critical_tolerance=1e-6,
         boundary_id: str,
-    ):
+    ) -> None:
         if not callable(exterior_surface) or not callable(exterior_velocity):
             raise TypeError("Open-boundary data must be callable.")
         tolerance = float(critical_tolerance)
@@ -375,7 +375,7 @@ class GeostrophicBalancePlan(StrictModule, NonTrainableState):
         /,
         *,
         tolerance=1e-10,
-    ):
+    ) -> None:
         surface = np.asarray(reference_surface)
         discharge = np.asarray(reference_discharge)
         tol = float(tolerance)

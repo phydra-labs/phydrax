@@ -69,7 +69,7 @@ class PhysicalRelativeForceCalibrationPlan(StrictModule):
         asset_id: str,
         relative_rank_cutoff: float = 1.0e-10,
         maximum_condition_number: float = 1.0e10,
-    ):
+    ) -> None:
         design = jnp.asarray(nuisance_design)
         if design.ndim != 2 or design.shape[0] < 1:
             raise ValueError("nuisance_design must have shape (samples>=1, nuisances).")

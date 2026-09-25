@@ -392,7 +392,7 @@ class EigenbasisDiscretization(AbstractStrongFormDiscretization):
         key: DiscretizationKey | None = None,
         numeric_version: str = "0",
         dtype: Any = jnp.float64,
-    ):
+    ) -> None:
         if not isinstance(plan, SpectralDecomposition):
             raise TypeError("plan must be a SpectralDecomposition.")
         fields = tuple(str(name) for name in field_names)

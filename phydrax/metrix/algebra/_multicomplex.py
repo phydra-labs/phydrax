@@ -23,7 +23,7 @@ class MulticomplexAlgebraSpec(AbstractFiniteRealAlgebraSpec):
         /,
         *,
         budget: AlgebraResourceBudget | None = None,
-    ):
+    ) -> None:
         if isinstance(rank, bool):
             raise TypeError("Multicomplex rank must be an integer.")
         rank_ = index(rank)

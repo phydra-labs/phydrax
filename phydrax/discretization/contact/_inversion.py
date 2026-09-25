@@ -48,7 +48,7 @@ class SimplexInversionStepPlan(StrictModule, NonTrainableState):
         numerical_error: float = 1.0e-13,
         conservative_rescaling: float = 0.8,
         maximum_iterations: int = 1_000_000,
-    ):
+    ) -> None:
         topology = np.asarray(cells)
         reference = np.asarray(reference_positions, dtype=np.float64)
         if (

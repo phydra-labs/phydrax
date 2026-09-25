@@ -42,7 +42,7 @@ class ParticleExecutionPolicy(StrictModule, NonTrainableState):
         realization: ParticleRealization = "dense_pairs",
         accumulation: ParticleAccumulation = "deterministic",
         kernel_backend: ParticleKernelBackend = "reference",
-    ):
+    ) -> None:
         if realization not in ("dense_pairs", "cell_edge_list", "morton_tree"):
             raise ValueError(
                 "realization must be 'dense_pairs', 'cell_edge_list', or 'morton_tree'."
@@ -89,7 +89,7 @@ class ParticlePrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: Any | None = None,
         certification_dtype: Any | None = None,
         output_dtype: Any | None = None,
-    ):
+    ) -> None:
         geometry = real_precision_dtype_name(geometry_dtype)
         evaluation = real_precision_dtype_name(evaluation_dtype)
         accumulation = real_precision_dtype_name(

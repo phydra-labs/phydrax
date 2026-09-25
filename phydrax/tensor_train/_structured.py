@@ -26,7 +26,7 @@ class BoundaryPolicy(StrictModule):
     kind: BoundaryKind = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: BoundaryKind, /):
+    def __init__(self, kind: BoundaryKind, /) -> None:
         if kind not in ("periodic", "dirichlet", "neumann"):
             raise ValueError("Boundary kind must be periodic, dirichlet, or neumann.")
         self.kind = kind

@@ -28,7 +28,7 @@ class FiberSectionGeometry(StrictModule, NonTrainableState):
         /,
         *,
         section_id: str = "fiber-section",
-    ):
+    ) -> None:
         coordinates_ = jnp.asarray(coordinates)
         areas_ = jnp.asarray(areas, dtype=coordinates_.dtype)
         materials = jnp.asarray(material_indices, dtype=jnp.int32)
@@ -62,7 +62,7 @@ class BilinearFiberMaterial(StrictModule, NonTrainableState):
         kinematic_hardening: ArrayLike = 0.0,
         fracture_strain: ArrayLike = jnp.inf,
         material_id: str = "bilinear-fiber-material",
-    ):
+    ) -> None:
         young = jnp.asarray(young_modulus)
         yield_ = jnp.asarray(yield_strength, dtype=young.dtype)
         isotropic = jnp.asarray(isotropic_hardening, dtype=young.dtype)

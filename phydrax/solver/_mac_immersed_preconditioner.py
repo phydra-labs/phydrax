@@ -56,7 +56,7 @@ class MACImmersedPressureBlockPreconditionerPlan(StrictModule):
         factorization: str = "diagonal",
         side: str = "right",
         refresh: str = "numeric",
-    ):
+    ) -> None:
         pressure = (
             JacobiPreconditionerBuilder() if pressure_solver is None else pressure_solver
         )

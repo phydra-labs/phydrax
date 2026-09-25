@@ -103,7 +103,7 @@ class MotorUnitTerritoryPlan(StrictModule, NonTrainableState):
         /,
         *,
         stimulus_source_id: str,
-    ):
+    ) -> None:
         units = tuple(str(value).strip() for value in unit_ids)
         fibers = tuple(str(value).strip() for value in fiber_ids)
         if (

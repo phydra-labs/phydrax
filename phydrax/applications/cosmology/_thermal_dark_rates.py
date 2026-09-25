@@ -221,7 +221,7 @@ class ThermalKernelArtifact(StrictModule, NonTrainableState):
         export: bool = False,
         thermodynamic_tolerance: float = 5.0e-3,
         covariance_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(units, RelativisticUnitContract):
             raise TypeError("units must be a RelativisticUnitContract.")
         if (
@@ -584,7 +584,7 @@ class HTLPolarizationPlan(StrictModule, NonTrainableState):
         /,
         *,
         ward_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         mass_squared = float(debye_mass_squared)
         tolerance = float(ward_tolerance)
         if not np.isfinite(mass_squared) or mass_squared < 0.0:
@@ -751,7 +751,7 @@ class LPMIntegralPlan(StrictModule, NonTrainableState):
         *,
         rate_prefactor: float,
         residual_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         nodes = np.asarray(basis_nodes, dtype=np.float64)
         weights = np.asarray(quadrature_weights, dtype=np.float64)
         collision = np.asarray(collision_matrix)
@@ -938,7 +938,7 @@ class ThermalDarkRatePlan(StrictModule, NonTrainableState):
     heat_capacity: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, artifact: ThermalKernelArtifact, /):
+    def __init__(self, artifact: ThermalKernelArtifact, /) -> None:
         if not isinstance(artifact, ThermalKernelArtifact):
             raise TypeError("artifact must be ThermalKernelArtifact.")
         if not artifact.evidence.qualified:

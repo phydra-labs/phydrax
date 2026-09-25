@@ -40,7 +40,7 @@ class MultiphaseElectrolyteParameters(StrictModule, NonTrainableState):
         negative_phase_permittivity: ArrayLike,
         positive_phase_permittivity: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(binary, BinaryThermodynamicParameters):
             raise TypeError("binary must be BinaryThermodynamicParameters.")
         if not isinstance(electrolyte, ElectrolyteTransportParameters):
@@ -102,7 +102,7 @@ class MultiphaseElectrolyteClosure(StrictModule, NonTrainableState):
         binary: BinaryPhaseThermodynamicClosure,
         electrochemical: AbstractElectrochemicalClosure,
         /,
-    ):
+    ) -> None:
         if not isinstance(binary, BinaryPhaseThermodynamicClosure):
             raise TypeError("binary must be BinaryPhaseThermodynamicClosure.")
         if not isinstance(electrochemical, AbstractElectrochemicalClosure):

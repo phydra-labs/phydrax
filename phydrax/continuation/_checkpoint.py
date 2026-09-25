@@ -44,7 +44,7 @@ class ContinuationReplayEvidence(StrictModule):
         decision_history_matches: Any,
         realization_matches: Any,
         application_state_matches: Any,
-    ):
+    ) -> None:
         identifier = str(checkpoint_id)
         expected = tuple(str(value) for value in expected_decision_ids)
         observed = tuple(str(value) for value in observed_decision_ids)
@@ -126,7 +126,7 @@ class ContinuationCheckpoint(StrictModule):
         attempt_decision_ids: Sequence[str],
         accepted_index: int,
         replay_evidence: ContinuationReplayEvidence | None = None,
-    ):
+    ) -> None:
         if not isinstance(candidate, ContinuationCandidate):
             raise TypeError("candidate must be a ContinuationCandidate.")
         identifiers = tuple(

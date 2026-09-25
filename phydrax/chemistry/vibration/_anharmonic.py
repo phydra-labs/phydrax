@@ -47,7 +47,7 @@ class AnharmonicForceFieldResult(StrictModule, NonTrainableState):
         successful: ArrayLike,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         quadratic_ = jnp.asarray(quadratic)
         gradient_ = jnp.asarray(gradient, dtype=quadratic_.dtype)
         cubic_ = jnp.asarray(cubic, dtype=quadratic_.dtype)
@@ -107,7 +107,7 @@ class AnharmonicForceFieldPlan(StrictModule, NonTrainableState):
         *,
         stationarity_tolerance: float = 1.0e-7,
         symmetry_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not callable(energy):
             raise TypeError("energy must be a differentiable callable.")
         count = int(mode_count)
@@ -208,7 +208,7 @@ class VibrationalPerturbationResult(StrictModule, NonTrainableState):
         kind: VibrationalPerturbationKind,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         states = jnp.asarray(state_quanta, dtype=jnp.int32)
         harmonic = jnp.asarray(harmonic_energies)
         anharmonic = jnp.asarray(anharmonic_energies, dtype=harmonic.dtype)
@@ -323,7 +323,7 @@ class VibrationalPerturbationPlan(StrictModule, NonTrainableState):
         maximum_basis_states: int = 4096,
         resonance_tolerance: float = 1.0e-3,
         coupling_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(kind, VibrationalPerturbationKind) or not isinstance(
             force_field, AnharmonicForceFieldResult
         ):

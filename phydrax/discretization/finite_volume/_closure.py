@@ -92,7 +92,7 @@ class FaceFluxContext(StrictModule, NonTrainableState):
         axis: int | None = None,
         active: ArrayLike | None = None,
         frame: FaceClosureFrame = "global",
-    ):
+    ) -> None:
         normal = jnp.asarray(unit_normal)
         if normal.ndim < 1 or not jnp.issubdtype(normal.dtype, jnp.floating):
             raise TypeError("unit_normal must be a real floating array.")
@@ -253,7 +253,7 @@ class SymmetrizedFaceClosureCertificate(AbstractConstructionCertificate):
     capability_id: ClassVar[str] = "face-closure-consistency-antisymmetry"
     certificate_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.certificate_id = canonical_fingerprint(
             {
                 "kind": "symmetrized-face-closure-certificate",
@@ -276,7 +276,7 @@ class SymmetrizedFaceClosure(StrictModule):
 
     generator: Callable
 
-    def __init__(self, generator: Callable, /):
+    def __init__(self, generator: Callable, /) -> None:
         if not callable(generator):
             raise TypeError("generator must be callable.")
         self.generator = generator
@@ -356,7 +356,7 @@ class ArbitraryNormalFaceClosurePlan(AbstractFaceClosurePlan):
         differentiability: BranchDifferentiationPolicy = (
             BranchDifferentiationPolicy.SMOOTH
         ),
-    ):
+    ) -> None:
         if not callable(correction):
             raise TypeError("correction must be callable.")
         if not isinstance(differentiability, BranchDifferentiationPolicy):

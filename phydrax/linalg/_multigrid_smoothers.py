@@ -121,7 +121,7 @@ class GaussSeidelPreconditioner(AbstractPreconditioner, NonTrainableState):
         direction: GaussSeidelDirection = "symmetric",
         relaxation: float = 1.0,
         previous: "GaussSeidelPreconditioner | None" = None,
-    ):
+    ) -> None:
         if direction not in ("forward", "backward", "symmetric"):
             raise ValueError(f"Unknown Gauss-Seidel direction {direction!r}.")
         omega = float(relaxation)
@@ -278,7 +278,7 @@ class GaussSeidelPreconditionerBuilder(AbstractPreconditionerBuilder):
         *,
         direction: GaussSeidelDirection = "symmetric",
         relaxation: float = 1.0,
-    ):
+    ) -> None:
         if direction not in ("forward", "backward", "symmetric"):
             raise ValueError(f"Unknown Gauss-Seidel direction {direction!r}.")
         omega = float(relaxation)

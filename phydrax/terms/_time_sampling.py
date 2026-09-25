@@ -50,7 +50,7 @@ class UniformTimeSamplingPolicy(AbstractTimeSamplingPolicy):
         /,
         *,
         policy_id: str | None = None,
-    ):
+    ) -> None:
         lower = jnp.asarray(minimum_time, dtype=jnp.float64).reshape(())
         upper = jnp.asarray(maximum_time, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(lower) & jnp.isfinite(upper)):
@@ -105,7 +105,7 @@ class LogitNormalTimeSamplingPolicy(AbstractTimeSamplingPolicy):
         location: float = 0.0,
         scale: float = 1.0,
         policy_id: str | None = None,
-    ):
+    ) -> None:
         lower = jnp.asarray(minimum_time, dtype=jnp.float64).reshape(())
         upper = jnp.asarray(maximum_time, dtype=jnp.float64).reshape(())
         location_ = float(location)

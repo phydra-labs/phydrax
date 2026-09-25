@@ -48,7 +48,7 @@ class GaussianProcessKernelFitPolicy(StrictModule):
         termination: OptimizationTermination | None = None,
         minimum_data_count: int = 4,
         refit_interval: int = 1,
-    ):
+    ) -> None:
         if not isinstance(parameter_space, ParameterSpace):
             raise TypeError("parameter_space must be a ParameterSpace.")
         constrained = parameter_space.constrain(parameter_space.initial)
@@ -101,7 +101,7 @@ class MultiOutputGaussianProcessKernelFitPolicy(StrictModule):
         termination: OptimizationTermination | None = None,
         minimum_data_count: int = 4,
         refit_interval: int = 1,
-    ):
+    ) -> None:
         if not isinstance(parameter_space, ParameterSpace):
             raise TypeError("parameter_space must be a ParameterSpace.")
         constrained = parameter_space.constrain(parameter_space.initial)

@@ -42,7 +42,7 @@ class ROMGeneration(StrictModule, NonTrainableState):
         qualification_ids: Sequence[str],
         hyperreduction_id: str | None = None,
         certification_id: str | None = None,
-    ):
+    ) -> None:
         number = int(generation)
         identifiers = tuple(
             str(value)
@@ -94,7 +94,7 @@ class ActiveLearningPlan(StrictModule, NonTrainableState):
         *,
         minimum_separation: float = 0.0,
         cost_weight: float = 0.0,
-    ):
+    ) -> None:
         maximum = int(maximum_acquisitions)
         separation = float(minimum_separation)
         cost = float(cost_weight)
@@ -173,7 +173,7 @@ class EnrichmentTransaction(StrictModule, NonTrainableState):
         *,
         truth_artifact_ids: Sequence[str],
         replay_artifact_id: str,
-    ):
+    ) -> None:
         if not isinstance(parent, ROMGeneration) or not isinstance(child, ROMGeneration):
             raise TypeError("parent and child must be ROMGeneration values.")
         truth = tuple(str(value) for value in truth_artifact_ids)
@@ -217,7 +217,7 @@ class DistributedBasisArtifact(StrictModule, NonTrainableState):
         local_offset: int,
         axis_name: str,
         partition_id: str,
-    ):
+    ) -> None:
         basis = jnp.asarray(local_basis)
         global_size = int(global_dimension)
         offset = int(local_offset)
@@ -269,7 +269,9 @@ class StreamingCorrelationAccumulator(StrictModule, NonTrainableState):
     sample_count: Array
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, correlation: ArrayLike, sample_count: int, /, *, source_id: str):
+    def __init__(
+        self, correlation: ArrayLike, sample_count: int, /, *, source_id: str
+    ) -> None:
         value = jnp.asarray(correlation)
         count = int(sample_count)
         source = str(source_id)

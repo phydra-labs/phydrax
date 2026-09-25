@@ -58,7 +58,7 @@ class SpectralResidualDataLayout(StrictModule, NonTrainableState):
         case_plan_ids: Sequence[str] = (),
         maximum_trial_shape: Sequence[int] = (),
         maximum_evaluation_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         if mask_semantics not in ("measure_only", "supported_subdomain"):
             raise ValueError("Unknown spectral residual mask semantics.")
         plans = tuple(str(value) for value in case_plan_ids)
@@ -112,7 +112,7 @@ class SpectralResidualCompilationReport(StrictModule, NonTrainableState):
         maximum_polynomial_degree: int | None,
         exact: bool,
         coefficient_itemsize: int,
-    ):
+    ) -> None:
         trial = tuple(trial_shape)
         evaluation = tuple(evaluation_shape)
         names = tuple(str(name) for name in equation_names)
@@ -178,7 +178,7 @@ class CompiledSpectralResidual(StrictModule):
         compilation_id: str,
         source_hash: str,
         scope: SpectralResidualScope,
-    ):
+    ) -> None:
         names = tuple(str(name) for name in equation_names)
         components = tuple(equation_components)
         scales = jnp.asarray(
@@ -438,7 +438,7 @@ class CaseGroupedSpectralResidual(StrictModule):
         compiled: Sequence[CompiledSpectralResidual],
         case_plan_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         values = tuple(compiled)
         identities = tuple(str(value) for value in case_plan_ids)
         if not values or len(values) != len(identities):

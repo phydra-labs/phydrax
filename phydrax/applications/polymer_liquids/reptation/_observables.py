@@ -37,7 +37,7 @@ class ReptationObservablePlan(StrictModule):
         *,
         maximum_modes: int = 4,
         minimum_origins: int = 8,
-    ):
+    ) -> None:
         values = (
             maximum_frames,
             maximum_particles,

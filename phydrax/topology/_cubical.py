@@ -26,7 +26,7 @@ class CubicalPersistenceResult(StrictModule, NonTrainableState):
     persistence: PersistenceResult
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, bridge_id: str, persistence: PersistenceResult, /):
+    def __init__(self, bridge_id: str, persistence: PersistenceResult, /) -> None:
         self.bridge_id = str(bridge_id)
         self.persistence = persistence
         self.result_id = canonical_fingerprint(

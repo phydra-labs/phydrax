@@ -182,7 +182,7 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod, NonTrainableState):
     ocean: PreparedHydrostaticOcean
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, ocean: PreparedHydrostaticOcean, /):
+    def __init__(self, ocean: PreparedHydrostaticOcean, /) -> None:
         if not isinstance(ocean, PreparedHydrostaticOcean):
             raise TypeError("ocean must be PreparedHydrostaticOcean.")
         self.ocean = ocean

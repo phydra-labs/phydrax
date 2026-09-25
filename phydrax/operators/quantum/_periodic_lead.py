@@ -45,7 +45,7 @@ class PeriodicPrincipalLayerLeadPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-12,
         fixed_point_tolerance: float = 1.0e-6,
         maximum_iterations: int = 100,
-    ):
+    ) -> None:
         onsite_ = np.asarray(onsite)
         coupling_ = np.asarray(coupling)
         tolerance_ = float(tolerance)

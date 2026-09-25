@@ -120,7 +120,7 @@ class SphereContactGeometry(AbstractImplicitContactGeometry):
         /,
         *,
         feature_policy: CollisionFeaturePolicy,
-    ):
+    ) -> None:
         center_ = jnp.asarray(center)
         radius_ = float(radius)
         if center_.shape not in ((2,), (3,)):
@@ -183,7 +183,7 @@ class PlaneContactGeometry(AbstractImplicitContactGeometry):
         /,
         *,
         feature_policy: CollisionFeaturePolicy,
-    ):
+    ) -> None:
         normal_ = jnp.asarray(normal)
         if normal_.shape not in ((2,), (3,)):
             raise ValueError("Plane normal requires dimension two or three.")
@@ -259,7 +259,7 @@ class FunctionImplicitContactGeometry(AbstractImplicitContactGeometry):
         guarantee_level: ContactGuaranteeLevel = ContactGuaranteeLevel.HEURISTIC,
         feature_policy: CollisionFeaturePolicy,
         geometry_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(distance_action):
             raise TypeError("distance_action must be callable.")
         lower = jnp.asarray(lower_bound)

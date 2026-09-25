@@ -33,7 +33,7 @@ class AffinePixelMap2D(StrictModule, NonTrainableState):
         /,
         *,
         transform_id: str | None = None,
-    ):
+    ) -> None:
         matrix_ = jnp.asarray(matrix, dtype=jnp.float64)
         if matrix_.shape != (2, 3):
             raise ValueError("Affine matrix must have shape (2, 3).")
@@ -70,7 +70,7 @@ class HomographyPixelMap2D(StrictModule, NonTrainableState):
         /,
         *,
         transform_id: str | None = None,
-    ):
+    ) -> None:
         matrix_ = jnp.asarray(matrix, dtype=jnp.float64)
         if matrix_.shape != (3, 3):
             raise ValueError("Homography matrix must have shape (3, 3).")

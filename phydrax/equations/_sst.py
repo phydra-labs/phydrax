@@ -50,7 +50,7 @@ class SSTTurbulencePlan(StrictModule, NonTrainableState):
         *,
         turbulent_prandtl: float = 0.9,
         turbulent_schmidt: float = 0.9,
-    ):
+    ) -> None:
         prandtl = float(turbulent_prandtl)
         schmidt = float(turbulent_schmidt)
         if (

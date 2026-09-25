@@ -65,7 +65,7 @@ class FacetAdjacency(StrictModule, NonTrainableState):
         cell_entity_set_id: str,
         facet_entity_set_id: str,
         active_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         facets = _integer_routes("facet_ids", facet_ids)
         owners = _integer_routes("owner_cells", owner_cells)
         neighbors = _integer_routes("neighbor_cells", neighbor_cells)

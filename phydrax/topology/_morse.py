@@ -34,7 +34,7 @@ class MorseReductionResult(StrictModule, NonTrainableState):
         upper_cell: int,
         pivot: int,
         /,
-    ):
+    ) -> None:
         self.source = source
         self.reduced = reduced
         self.degree = int(degree)

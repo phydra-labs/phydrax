@@ -58,7 +58,7 @@ class DarkBoundStateLevel(StrictModule, NonTrainableState):
         orbital_angular_momentum: int,
         spin_twice: int,
         level_label: str,
-    ):
+    ) -> None:
         constituents = tuple(constituent_pdg_ids)
         energy = float(rest_energy)
         charge_ = float(charge)
@@ -138,7 +138,7 @@ class DarkBoundStateSpectrum(StrictModule, NonTrainableState):
         model_revision_id: str,
         spectrum_source_id: str,
         production_evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(runtime_plan, DarkSectorEpochPlan):
             raise TypeError("runtime_plan must be DarkSectorEpochPlan.")
         if not isinstance(species, ParticleSpeciesTable):
@@ -266,7 +266,7 @@ class RadiativeCapturePlan(StrictModule, NonTrainableState):
         cross_section_unit: UnitDefinition,
         coefficient_source_id: str,
         differentiation_mode: str = "analytic",
-    ):
+    ) -> None:
         if not isinstance(spectrum, DarkBoundStateSpectrum):
             raise TypeError("spectrum must be DarkBoundStateSpectrum.")
         level = spectrum.level(bound_pdg_id)

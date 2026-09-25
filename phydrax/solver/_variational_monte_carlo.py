@@ -231,7 +231,7 @@ class VariationalMonteCarloProblem(StrictModule):
         problem_id: str | None = None,
         target_factory: Callable[[Any], Any] | None = None,
         target_factory_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
         if not isinstance(operator, AbstractLocalQuantumOperator):
@@ -396,7 +396,7 @@ class VariationalMonteCarloPolicy(StrictModule):
         final_chain_diagnostics: bool = True,
         linear_policy: LinearSolvePolicy | None = None,
         nullspace_policy: NullspacePolicy | None = None,
-    ):
+    ) -> None:
         iterations = int(num_iterations)
         draws = int(draws_per_iteration)
         transitions = int(steps_per_draw)
@@ -475,7 +475,7 @@ class VariationalMonteCarloState(StrictModule):
         iteration: int | Array,
         root_key: Key[Array, ""],
         attempt_cursor: int | Array | None = None,
-    ):
+    ) -> None:
         if not isinstance(markov_state, MarkovState):
             raise TypeError("markov_state must be a MarkovState.")
         iteration_ = jnp.asarray(iteration, dtype=jnp.int32)
@@ -792,7 +792,7 @@ class _StochasticReconfigurationRule(AbstractKernelUpdateRule):
     max_update_norm: float | None = eqx.field(static=True)
     rule_id: str = eqx.field(static=True)
 
-    def __init__(self, policy: VariationalMonteCarloPolicy, /):
+    def __init__(self, policy: VariationalMonteCarloPolicy, /) -> None:
         self.learning_rate = policy.learning_rate
         self.max_update_norm = policy.max_update_norm
         self.rule_id = canonical_fingerprint(

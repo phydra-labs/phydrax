@@ -281,7 +281,7 @@ class OperatorClassificationNLL(AbstractOperatorLossTerm):
     case_reduction: OperatorCaseReduction = "mean"
     zero_measure: OperatorZeroMeasure = "error"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _validate_common(**self.__dict__)
         if self.classification.target != "hard":
             raise ValueError("OperatorClassificationNLL requires hard targets.")
@@ -330,7 +330,7 @@ class OperatorSoftClassificationLoss(AbstractOperatorLossTerm):
     case_reduction: OperatorCaseReduction = "mean"
     zero_measure: OperatorZeroMeasure = "error"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _validate_common(**self.__dict__)
         if self.classification.target != "soft":
             raise ValueError("OperatorSoftClassificationLoss requires soft targets.")
@@ -384,7 +384,7 @@ class OperatorFocalClassificationLoss(AbstractOperatorLossTerm):
     gamma: float = 2.0
     alpha: float | tuple[float, ...] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _validate_common(
             name=self.name,
             weight=self.weight,
@@ -532,7 +532,7 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
     alpha: float = 0.5
     beta: float = 0.5
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _validate_common(
             name=self.name,
             weight=self.weight,

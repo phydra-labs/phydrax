@@ -32,7 +32,7 @@ class BridgeInferenceAdapter(StrictModule):
     result: SchrodingerBridgeResult
     transition: ControlledTransitionKernel
 
-    def __init__(self, result: SchrodingerBridgeResult, /):
+    def __init__(self, result: SchrodingerBridgeResult, /) -> None:
         if not isinstance(result, SchrodingerBridgeResult):
             raise TypeError("result must be a SchrodingerBridgeResult.")
         result = require_converged_bridge(result)
@@ -75,7 +75,7 @@ class TerminalDistributionControlAdapter(StrictModule):
     terminal_probabilities: Array
     terminal_weights: Array
 
-    def __init__(self, result: SchrodingerBridgeResult, /):
+    def __init__(self, result: SchrodingerBridgeResult, /) -> None:
         if not isinstance(result, SchrodingerBridgeResult):
             raise TypeError("result must be a SchrodingerBridgeResult.")
         result = require_converged_bridge(result)

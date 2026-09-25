@@ -58,7 +58,7 @@ class ElectrostaticConductorCoupling(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
         maximum_iterations: int = 500,
-    ):
+    ) -> None:
         matrix = np.asarray(stiffness, dtype=np.float64)
         constraint = np.asarray(constraint_matrix, dtype=np.float64)
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:

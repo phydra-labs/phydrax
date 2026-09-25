@@ -51,7 +51,7 @@ class SpatialUnbalancedSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
         objective_vars: Sequence[str] | None = None,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not callable(measure_builder):
             raise TypeError("measure_builder must be callable.")
         if not isinstance(reference, PreparedUnbalancedSinkhornReference):

@@ -32,7 +32,7 @@ class BackgroundMCCPlan(StrictModule, NonTrainableState):
         *,
         maximum_probability: float = 0.25,
         background_velocity=(0.0, 0.0, 0.0),
-    ):
+    ) -> None:
         frequency = float(collision_frequency)
         maximum = float(maximum_probability)
         background = tuple(float(value) for value in background_velocity)

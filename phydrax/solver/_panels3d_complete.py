@@ -70,7 +70,7 @@ class CompletePanelFlowPlan3D(StrictModule, NonTrainableState):
         density: float = 1.0,
         policy: LinearSolvePolicy | None = None,
         compressibility: PanelCompressibilityPolicy | None = None,
-    ):
+    ) -> None:
         if (
             not isinstance(geometry, NativePanelGeometry3D)
             or formulation not in ("source", "doublet", "source-doublet")

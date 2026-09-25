@@ -54,7 +54,7 @@ class ReferenceDataSnapshot(StrictModule, NonTrainableState):
         *,
         as_of: FinancialTimestamp,
         lineage: DataLineage,
-    ):
+    ) -> None:
         asset_values = tuple(assets)
         instrument_values = tuple(instruments)
         currency_values = tuple(currencies)
@@ -151,7 +151,7 @@ class MarketDataSnapshot(StrictModule, NonTrainableState):
         *,
         snapshot_time: FinancialTimestamp,
         reference_data_id: str = "",
-    ):
+    ) -> None:
         values = tuple(observations)
         if not all(isinstance(value, QuoteObservation) for value in values):
             raise TypeError("observations must contain QuoteObservation values.")

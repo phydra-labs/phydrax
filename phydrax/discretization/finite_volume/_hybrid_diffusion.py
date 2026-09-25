@@ -82,7 +82,7 @@ class HybridMimeticDiffusion(StrictModule):
     component_count: int = eqx.field(static=True)
     stabilization: float = eqx.field(static=True)
 
-    def __init__(self, discretization, /, *, stabilization: float = 1.0):
+    def __init__(self, discretization, /, *, stabilization: float = 1.0) -> None:
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError("Hybrid diffusion requires native prepared unstructured FV.")
         if discretization.cell_dimension != 3:

@@ -42,7 +42,7 @@ class AbelianMatrixProductState(StrictModule):
     total_charge: AbelianCharge = eqx.field(static=True)
     structure_id: str = eqx.field(static=True)
 
-    def __init__(self, tensors: Sequence[AbelianTensor], /):
+    def __init__(self, tensors: Sequence[AbelianTensor], /) -> None:
         values = tuple(tensors)
         if not values or any(not isinstance(tensor, AbelianTensor) for tensor in values):
             raise TypeError(
@@ -127,7 +127,7 @@ class AbelianMatrixProductOperator(StrictModule):
     input_dimensions: tuple[int, ...] = eqx.field(static=True)
     structure_id: str = eqx.field(static=True)
 
-    def __init__(self, tensors: Sequence[AbelianTensor], /):
+    def __init__(self, tensors: Sequence[AbelianTensor], /) -> None:
         values = tuple(tensors)
         if not values or any(not isinstance(tensor, AbelianTensor) for tensor in values):
             raise TypeError(

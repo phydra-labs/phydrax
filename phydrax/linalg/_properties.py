@@ -40,7 +40,7 @@ class OperatorCapabilities(StrictModule):
         adjoint: bool,
         materialize: bool,
         diagonal_assembly: bool = False,
-    ):
+    ) -> None:
         if adjoint and not transpose:
             raise ValueError("An adjoint capability requires a transpose capability.")
         self.transpose = bool(transpose)
@@ -72,7 +72,7 @@ class OperatorProperties(StrictModule):
         block_diagonal: bool = False,
         rank: int | None = None,
         evidence: Mapping[str, PropertyEvidence] | None = None,
-    ):
+    ) -> None:
         rank_ = None if rank is None else int(rank)
         if rank_ is not None and rank_ < 0:
             raise ValueError("rank must be non-negative or None.")

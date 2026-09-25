@@ -35,7 +35,7 @@ class AdaptiveHRootPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1e-10,
         maximum_iterations: int = 30,
-    ):
+    ) -> None:
         if eta <= 0.0 or dimension <= 0 or minimum_h <= 0.0 or maximum_h < minimum_h:
             raise ValueError("Adaptive-h root parameters are invalid.")
         if tolerance <= 0.0 or maximum_iterations <= 0:

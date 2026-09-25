@@ -48,7 +48,7 @@ class SpeciesBoundaryCondition(StrictModule, NonTrainableState):
         *,
         value: ArrayLike,
         boundary_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(kind, SpeciesBoundaryKind):
             raise TypeError("kind must be a SpeciesBoundaryKind.")
         mask = np.asarray(node_mask)
@@ -95,7 +95,7 @@ class SpeciesLatticeBoltzmannPlan(StrictModule, NonTrainableState):
     species_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, diffusivity: ArrayLike, /, *, plan_id: str | None = None):
+    def __init__(self, diffusivity: ArrayLike, /, *, plan_id: str | None = None) -> None:
         coefficients = np.asarray(diffusivity, dtype=np.float64)
         if (
             coefficients.ndim != 1
@@ -368,7 +368,7 @@ def species_element_amount(
     return contract("es,...s->...e", composition, amount)
 
 
-def _validate_lattice_precision(lattice, precision):
+def _validate_lattice_precision(lattice, precision) -> None:
     if not isinstance(lattice, LatticeBoltzmannVelocitySet):
         raise TypeError("lattice must be a LatticeBoltzmannVelocitySet.")
     if not isinstance(precision, LatticeBoltzmannPrecisionPolicy):

@@ -119,7 +119,7 @@ class SphericalRotationPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_matrix_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         layout_ = _layout(layout, "layout")
         if isinstance(maximum_matrix_bytes, bool):
             raise TypeError("maximum_matrix_bytes must be an integer.")
@@ -152,7 +152,7 @@ class PreparedSphericalRotation(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
     convention: str = eqx.field(static=True)
 
-    def __init__(self, plan: SphericalRotationPlan, /):
+    def __init__(self, plan: SphericalRotationPlan, /) -> None:
         if not isinstance(plan, SphericalRotationPlan):
             raise TypeError("plan must be a SphericalRotationPlan.")
         self.plan = plan
@@ -263,7 +263,7 @@ class SphericalClebschGordanPlan(StrictModule, NonTrainableState):
         output_bandlimit: int | None = None,
         maximum_couplings: int = 10_000_000,
         maximum_coefficient_bytes: int = 1024 * 1024**2,
-    ):
+    ) -> None:
         left = _layout(left_layout, "left_layout")
         right = _layout(right_layout, "right_layout")
         output_limit = (
@@ -320,7 +320,7 @@ class PreparedSphericalClebschGordan(StrictModule, NonTrainableState):
     report: SphericalClebschGordanReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: SphericalClebschGordanPlan, /):
+    def __init__(self, plan: SphericalClebschGordanPlan, /) -> None:
         if not isinstance(plan, SphericalClebschGordanPlan):
             raise TypeError("plan must be a SphericalClebschGordanPlan.")
         left = plan.left_layout

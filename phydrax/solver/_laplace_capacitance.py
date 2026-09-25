@@ -95,7 +95,7 @@ class LaplaceCapacitancePlan3D(StrictModule, NonTrainableState):
         /,
         *,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(epoch, BoundaryMeshEpoch):
             raise TypeError("epoch must be BoundaryMeshEpoch.")
         if not isinstance(galerkin, LaplaceSingleLayerDP0Galerkin3D):
@@ -164,7 +164,7 @@ class PreparedLaplaceCapacitance3D(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: LaplaceCapacitancePlan3D, /):
+    def __init__(self, plan: LaplaceCapacitancePlan3D, /) -> None:
         if not isinstance(plan, LaplaceCapacitancePlan3D):
             raise TypeError("plan must be LaplaceCapacitancePlan3D.")
         problem = LinearSystem(

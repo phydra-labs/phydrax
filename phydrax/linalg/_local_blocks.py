@@ -38,7 +38,7 @@ class LocalBlockFactorization(StrictModule):
         /,
         *,
         kind: LocalBlockFactorizationKind,
-    ):
+    ) -> None:
         self.factors = factors
         self.pivots = pivots
         self.metric_sqrt = metric_sqrt

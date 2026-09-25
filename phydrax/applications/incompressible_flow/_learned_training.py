@@ -86,7 +86,7 @@ class FixedGridStressOperatorModel(AbstractArrayModel):
         *,
         source_name: str,
         target_name: str,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractOperatorModel):
             raise TypeError("operator must be an AbstractOperatorModel.")
         if not isinstance(template, OperatorBatch) or template.case_shape:
@@ -157,7 +157,7 @@ class _CurrentStressPredictor(StrictModule):
         iteration: Array | None,
         output_shape: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         self.model = model
         self.key = key
         self.iteration = iteration
@@ -208,7 +208,7 @@ class PeriodicLearnedStressRolloutTransition(
         step_rtol: float = 1e-7,
         step_atol: float = 1e-12,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not isinstance(prepared_stress, PreparedPeriodicLearnedStress):
             raise TypeError("prepared_stress must be PreparedPeriodicLearnedStress.")
         if not isinstance(coordinates, HermitianSpectralCoordinates):
@@ -391,7 +391,7 @@ class MACLearnedRateRolloutTransition(
         step_rtol: float = 1e-7,
         step_atol: float = 1e-12,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         if dynamics.algebraic_les is not None or dynamics.dynamic_les is not None:

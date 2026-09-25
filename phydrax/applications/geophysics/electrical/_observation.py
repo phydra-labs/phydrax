@@ -45,7 +45,7 @@ class LogConductivity(StrictModule, NonTrainableState):
         *,
         cell_parameter_indices: ArrayLike | None = None,
         unit: UnitDefinition = DC_CONDUCTIVITY_UNIT,
-    ):
+    ) -> None:
         raw = jnp.asarray(reference_cell_conductivity)
         if jnp.issubdtype(raw.dtype, jnp.complexfloating):
             raise TypeError("Reference conductivity must be real.")
@@ -126,7 +126,7 @@ class DCElectricalObservationPlan(StrictModule, NonTrainableState):
         *,
         observation_id: str = "dc-voltage-observations",
         voltage_unit: UnitDefinition = VOLT,
-    ):
+    ) -> None:
         if not isinstance(dc, PreparedDC) or not isinstance(
             parameterization, LogConductivity
         ):

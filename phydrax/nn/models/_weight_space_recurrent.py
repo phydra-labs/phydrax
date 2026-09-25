@@ -31,7 +31,7 @@ class FunctionalStateDecoder(StrictModule):
     subspace: ParameterSubspace
     query_size: int = eqx.field(static=True)
 
-    def __init__(self, subspace: ParameterSubspace, query_size: int, /):
+    def __init__(self, subspace: ParameterSubspace, query_size: int, /) -> None:
         if not isinstance(subspace, ParameterSubspace):
             raise TypeError("subspace must be a ParameterSubspace.")
         if not callable(subspace.reconstruct(subspace.initial)):
@@ -121,7 +121,7 @@ class WeightSpaceRecurrentModel(StrictModule, ParameterOwner):
         input_scale: float = 1e-2,
         dtype: Any | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if execution not in ("serial", "associative"):
             raise ValueError("execution must be 'serial' or 'associative'.")
         self.decoder = FunctionalStateDecoder(subspace, query_size)

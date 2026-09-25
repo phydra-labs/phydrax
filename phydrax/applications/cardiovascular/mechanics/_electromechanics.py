@@ -38,7 +38,7 @@ class ElectromechanicsCadence(StrictModule, NonTrainableState):
         /,
         *,
         mechanics_substeps: int = 1,
-    ):
+    ) -> None:
         ep = int(electrophysiology_substeps)
         mechanics = int(mechanics_substeps)
         if ep <= 0 or mechanics <= 0:
@@ -81,7 +81,7 @@ class ActivationEPToMechanicsPort(StrictModule, NonTrainableState):
         target_port_id: str = "mechanics.activation.input",
         exchange_id: str = "ep-to-mechanics-activation",
         reference_scale: float = 1.0,
-    ):
+    ) -> None:
         _validate_exchange_spaces(source, target, transfer)
         scale = _positive_scale(reference_scale)
         self.source = source
@@ -120,7 +120,7 @@ class CalciumEPToMechanicsPort(StrictModule, NonTrainableState):
         exchange_id: str = "ep-to-mechanics-calcium",
         reference_scale: float = 1.0e-4,
         calcium_unit: str = "mM",
-    ):
+    ) -> None:
         _validate_exchange_spaces(source, target, transfer)
         self.source = source
         self.target = target
@@ -156,7 +156,7 @@ class StretchMechanicsToEPPort(StrictModule, NonTrainableState):
         target_port_id: str = "ep.fiber-stretch.input",
         exchange_id: str = "mechanics-to-ep-stretch",
         reference_scale: float = 1.0,
-    ):
+    ) -> None:
         _validate_exchange_spaces(source, target, transfer)
         self.source = source
         self.target = target
@@ -194,7 +194,7 @@ class ElectricalWindowCandidate(StrictModule):
         iterations: ArrayLike = 0,
         work: ArrayLike = 0,
         completed_substeps: ArrayLike,
-    ):
+    ) -> None:
         self.candidate_state = candidate_state
         self.drive = jnp.asarray(drive)
         self.successful = _scalar(successful, bool)
@@ -229,7 +229,7 @@ class MechanicalWindowCandidate(StrictModule):
         iterations: ArrayLike = 0,
         work: ArrayLike = 0,
         completed_substeps: ArrayLike,
-    ):
+    ) -> None:
         self.candidate_state = candidate_state
         self.stretch = jnp.asarray(stretch)
         self.successful = _scalar(successful, bool)
@@ -291,7 +291,7 @@ class PreparedElectromechanics(StrictModule, NonTrainableState):
         cadence: ElectromechanicsCadence,
         preparation: ElectromechanicsPreparationEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, coupling.CouplingProblem):
             raise TypeError("Prepared electromechanics requires CouplingProblem.")
         if not isinstance(rollout, coupling.CouplingRolloutPlan):
@@ -401,7 +401,7 @@ class OneWayElectromechanicsPlan(StrictModule, NonTrainableState):
         /,
         *,
         differentiation: coupling.CouplingDifferentiationPolicy | None = None,
-    ):
+    ) -> None:
         _validate_forward_contraction(forward_port, contraction_plan)
         if not isinstance(cadence, ElectromechanicsCadence):
             raise TypeError("One-way electromechanics requires ElectromechanicsCadence.")
@@ -555,7 +555,7 @@ class BidirectionalElectromechanicsPlan(StrictModule, NonTrainableState):
         relative_tolerance: float = 1.0e-6,
         maximum_iterations: int = 30,
         differentiation: coupling.CouplingDifferentiationPolicy | None = None,
-    ):
+    ) -> None:
         _validate_forward_contraction(forward_port, contraction_plan)
         if not isinstance(backward_port, StretchMechanicsToEPPort):
             raise TypeError(

@@ -67,7 +67,7 @@ class OperatorResidualCorpus(StrictModule, NonTrainableState):
         residual_loss_fingerprint: str,
         source_artifact_ids: Sequence[str],
         corpus_id: str,
-    ):
+    ) -> None:
         if not isinstance(dataset, OperatorDataset):
             raise TypeError("dataset must be an OperatorDataset.")
         if dataset.targets.fields:

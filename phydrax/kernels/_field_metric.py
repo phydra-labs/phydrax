@@ -53,7 +53,7 @@ class KernelInputAdapter(StrictModule):
         *,
         adapter_id: str = "identity",
         output_ndim: int = 1,
-    ):
+    ) -> None:
         function_ = _IdentityInput() if function is None else function
         if not callable(function_):
             raise TypeError("Kernel input adapters must be callable.")
@@ -87,7 +87,7 @@ class KernelFunctionalTerm(StrictModule):
         derivative_orders: Sequence[Sequence[int]],
         coefficients: ArrayLike,
         /,
-    ):
+    ) -> None:
         field = str(field_name)
         point_array = jnp.asarray(points)
         coefficient_array = jnp.asarray(coefficients)
@@ -165,7 +165,7 @@ class KernelFunctional(StrictModule):
         functional_id: str,
         exactness: KernelFunctionalExactness = "analytic",
         realization_id: str | None = None,
-    ):
+    ) -> None:
         terms_ = tuple(terms)
         identifier = str(functional_id)
         if not terms_ or any(
@@ -223,7 +223,7 @@ class KernelGramEvidence(StrictModule):
         minimum_diagonal: Any,
         finite: Any,
         positive_semidefinite: Any,
-    ):
+    ) -> None:
         self.left_id = str(left_id)
         self.right_id = str(right_id)
         self.metric_id = str(metric_id)
@@ -239,7 +239,7 @@ class KernelGram(StrictModule):
     matrix: Array
     evidence: KernelGramEvidence
 
-    def __init__(self, matrix: ArrayLike, evidence: KernelGramEvidence, /):
+    def __init__(self, matrix: ArrayLike, evidence: KernelGramEvidence, /) -> None:
         if not isinstance(evidence, KernelGramEvidence):
             raise TypeError("evidence must be KernelGramEvidence.")
         matrix_ = jnp.asarray(matrix)
@@ -273,7 +273,7 @@ class ProductFieldKernelMetric(StrictModule):
         mode: KernelMetricMode,
         geometry_revision_id: str = "fixed",
         numeric_version: Any = 0,
-    ):
+    ) -> None:
         if not isinstance(field_spec, ProductFieldSpec):
             raise TypeError("field_spec must be a ProductFieldSpec.")
         kernels_ = tuple(kernels)
@@ -767,7 +767,7 @@ class KernelSection(StrictModule):
         functional: KernelFunctional,
         field_name: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(metric, ProductFieldKernelMetric):
             raise TypeError("metric must be a ProductFieldKernelMetric.")
         if not isinstance(functional, KernelFunctional):

@@ -92,7 +92,7 @@ class FitDiagnostics(StrictModule):
         rank: Any = -1,
         condition: Any = jnp.nan,
         method: str,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
@@ -128,7 +128,7 @@ class FitResult(StrictModule):
         status: Any,
         method: str,
         derivative_contract: DerivativeContract,
-    ):
+    ) -> None:
         if not isinstance(derivative_contract, DerivativeContract):
             raise TypeError("derivative_contract must be a DerivativeContract.")
         self.model = model if isinstance(model, FrozenModel) else FrozenModel(model)

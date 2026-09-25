@@ -244,7 +244,7 @@ class CrackFaceContactAdapter(StrictModule, NonTrainableState):
         plus_material_id: int = 0,
         minus_material_id: int = 0,
         adapter_id: str = "sharp-crack-face-contact",
-    ):
+    ) -> None:
         if not isinstance(topology, SharpCrackTopology):
             raise TypeError("topology must be SharpCrackTopology.")
         if not isinstance(normal_law, AbstractNormalContactLaw):

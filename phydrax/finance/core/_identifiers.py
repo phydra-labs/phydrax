@@ -47,7 +47,7 @@ class FinancialIdentifier(StrictModule):
     value: str = eqx.field(static=True)
     canonical: str = eqx.field(static=True)
 
-    def __init__(self, scheme: str, value: str, /):
+    def __init__(self, scheme: str, value: str, /) -> None:
         scheme_ = _canonical_text(scheme, "identifier scheme")
         value_ = _canonical_text(value, "identifier value")
         if _SCHEME_PATTERN.fullmatch(scheme_) is None:
@@ -81,7 +81,7 @@ class AssetReference(StrictModule):
         currency: Currency,
         description: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(identifier, FinancialIdentifier):
             raise TypeError("identifier must be a FinancialIdentifier.")
         if not isinstance(currency, Currency):
@@ -113,7 +113,7 @@ class InstrumentReference(StrictModule):
         quote_unit: str,
         description: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(identifier, FinancialIdentifier):
             raise TypeError("identifier must be a FinancialIdentifier.")
         if isinstance(underlying_ids, (str, bytes)) or not isinstance(

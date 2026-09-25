@@ -29,7 +29,7 @@ class MultigroupM1RadiationSystem(AbstractAdmissibleSystem, NonTrainableState):
         *,
         reduced_light_speed: float = 1.0,
         energy_floor: float = 1e-12,
-    ):
+    ) -> None:
         groups = int(group_count)
         dimension_ = int(dimension)
         speed = float(reduced_light_speed)

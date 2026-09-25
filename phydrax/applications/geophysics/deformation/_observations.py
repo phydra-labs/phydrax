@@ -42,7 +42,7 @@ class GeodeticDeformationObservationPlan(StrictModule, NonTrainableState):
         strain_matrix: ArrayLike,
         model_size: int,
         /,
-    ):
+    ) -> None:
         size = int(model_size)
         matrices = tuple(
             jnp.asarray(value)
@@ -106,7 +106,7 @@ class InSARObservationPlan(StrictModule, NonTrainableState):
         *,
         coordinates_xy_m: ArrayLike | None = None,
         ramp_degree: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(forward, GeodeticDeformationObservationPlan):
             raise TypeError("InSAR observation requires geodetic forward plan.")
         observed = jnp.asarray(observed_los_m)

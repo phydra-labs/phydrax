@@ -58,7 +58,7 @@ class CallableFlowEndpointFunctional(AbstractFlowEndpointFunctional):
         *,
         event_shape: tuple[int, ...],
         functional_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         shape = tuple(event_shape)
@@ -94,7 +94,7 @@ class FlowEndpointRolloutPolicy(StrictModule, NonTrainableState):
         schedule: Literal["constant", "linear"] = "constant",
         rematerialize: bool = False,
         time_power: float = 0.0,
-    ):
+    ) -> None:
         maximum = int(maximum_steps)
         initial = maximum if initial_steps is None else int(initial_steps)
         transition = int(transition_steps)
@@ -176,7 +176,7 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
         state_label: str = "x",
         time_label: str = "t",
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(endpoint_functional, AbstractFlowEndpointFunctional):
             raise TypeError(
                 "endpoint_functional must implement AbstractFlowEndpointFunctional."

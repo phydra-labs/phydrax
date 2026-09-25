@@ -78,7 +78,7 @@ class WorksetSignature(StrictModule, NonTrainableState):
         | None = None,
         neighbor_block_name: str | None = None,
         material_id: str | None = None,
-    ):
+    ) -> None:
         region = str(region_kind)
         block = str(block_name)
         neighbor_block = None if neighbor_block_name is None else str(neighbor_block_name)
@@ -261,7 +261,7 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         neighbor_permutations: ArrayLike | None = None,
         neighbor_trace_permutations: ArrayLike | None = None,
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(signature, WorksetSignature):
             raise TypeError("signature must be WorksetSignature.")
         actions = np.asarray(action_indices, dtype=np.int32)
@@ -484,7 +484,7 @@ class WorksetBucket(StrictModule, NonTrainableState):
     resident_bytes: int = eqx.field(static=True)
     bucket_id: str = eqx.field(static=True)
 
-    def __init__(self, worksets: Sequence[CompiledWorkset], /):
+    def __init__(self, worksets: Sequence[CompiledWorkset], /) -> None:
         values = tuple(worksets)
         if not values or len({value.signature.signature_id for value in values}) != 1:
             raise ValueError(
@@ -544,7 +544,7 @@ class WorksetProgram(StrictModule, NonTrainableState):
         /,
         *,
         operator_program: OperatorProgram | None = None,
-    ):
+    ) -> None:
         worksets_ = tuple(worksets)
         if not isinstance(ir, LocalActionIR) or not worksets_:
             raise ValueError("WorksetProgram requires an IR and worksets.")

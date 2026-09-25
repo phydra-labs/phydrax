@@ -1805,7 +1805,7 @@ def fit_discrete_model(
 
     window_microbatches = 0
 
-    def save_progress(training_seconds, *, emit_event=True):
+    def save_progress(training_seconds, *, emit_event=True) -> None:
         if checkpoint is None or window_microbatches:
             return
         if emit_event:
@@ -1840,7 +1840,7 @@ def fit_discrete_model(
             },
         )
 
-    def consider_validation(metrics, current_model):
+    def consider_validation(metrics, current_model) -> None:
         if validation_config is None:
             raise RuntimeError("Validation configuration is unavailable.")
         nonlocal best_model

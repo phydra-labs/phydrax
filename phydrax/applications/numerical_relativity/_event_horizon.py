@@ -76,7 +76,7 @@ class CompletedSpacetimeHistory(StrictModule, NonTrainableState):
         completed: bool,
         completion_id: str,
         history_name: str = "completed-spacetime-history",
-    ):
+    ) -> None:
         if completed is not True:
             raise ValueError(
                 "Event-horizon tracing requires an explicitly completed spacetime history."
@@ -439,7 +439,7 @@ class OfflineEventHorizonTracingPlan(StrictModule, NonTrainableState):
         null_tolerance: float = 1.0e-6,
         caustic_distance: float = 1.0e-6,
         plan_name: str = "offline-event-horizon-generator-trace",
-    ):
+    ) -> None:
         if not isinstance(terminal_surface, SphericalSpectralSurface):
             raise TypeError("terminal_surface must be a SphericalSpectralSurface.")
         positions = np.asarray(terminal_positions, dtype=np.float64)

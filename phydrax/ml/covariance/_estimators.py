@@ -259,7 +259,7 @@ class CovarianceModel(AbstractFittedModel):
         factor_loadings: Array | None = None,
         diagonal: Array | None = None,
         method: str,
-    ):
+    ) -> None:
         self.mean = jnp.asarray(mean)
         self.covariance = jnp.asarray(covariance)
         self.precision = jnp.asarray(precision)
@@ -426,7 +426,7 @@ class EmpiricalCovariance(AbstractRecipe):
         correction: float = 0.0,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.correction = _nonnegative_scalar(correction, "correction")
         self.regularization = _nonnegative_scalar(regularization, "regularization")
         self.weight_policy = weight_policy
@@ -461,7 +461,7 @@ class WeightedCovariance(AbstractRecipe):
         correction: float = 1.0,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if weight_policy == "none":
             raise ValueError("WeightedCovariance requires a weighted batch policy.")
         self.correction = _nonnegative_scalar(correction, "correction")
@@ -496,7 +496,7 @@ class DiagonalCovariance(AbstractRecipe):
         correction: float = 0.0,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.correction = _nonnegative_scalar(correction, "correction")
         self.regularization = _nonnegative_scalar(regularization, "regularization")
         self.weight_policy = weight_policy
@@ -537,7 +537,7 @@ class FactorCovariance(AbstractRecipe):
         correction: float = 0.0,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if rank <= 0:
             raise ValueError("rank must be positive.")
         self.rank = int(rank)
@@ -654,7 +654,7 @@ class LedoitWolfCovariance(AbstractRecipe):
         correction: float = 0.0,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.correction = _nonnegative_scalar(correction, "correction")
         self.regularization = _nonnegative_scalar(regularization, "regularization")
         self.weight_policy = weight_policy
@@ -677,7 +677,7 @@ class OASCovariance(AbstractRecipe):
         correction: float = 0.0,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.correction = _nonnegative_scalar(correction, "correction")
         self.regularization = _nonnegative_scalar(regularization, "regularization")
         self.weight_policy = weight_policy
@@ -704,7 +704,7 @@ class RobustCovariance(AbstractRecipe):
         huber_delta: float = 2.5,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if max_iterations <= 0:
             raise ValueError("max_iterations must be positive.")
         self.max_iterations = int(max_iterations)
@@ -796,7 +796,7 @@ class GraphicalLasso(AbstractRecipe):
         step_size: float = 0.1,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if max_iterations <= 0:
             raise ValueError("max_iterations must be positive.")
         self.penalty = _nonnegative_scalar(penalty, "penalty")

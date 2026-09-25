@@ -32,7 +32,7 @@ class ParticleInternalAdaptationPolicy(StrictModule, NonTrainableState):
         *,
         minimum_dwell_windows: int = 1,
         balance_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         refine = float(refine_threshold)
         coarsen = float(coarsen_threshold)
         dwell = int(minimum_dwell_windows)

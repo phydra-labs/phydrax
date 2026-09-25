@@ -148,7 +148,7 @@ class EdgeTrackingProblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(evolution, AbstractEvolution):
             raise TypeError("evolution must be an AbstractEvolution.")
         if not callable(classifier):

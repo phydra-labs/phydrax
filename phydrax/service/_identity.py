@@ -110,7 +110,7 @@ class JWKSProvider(Protocol):
 class StaticJWKSProvider:
     """Mutable-injection reference used to model rotation without network effects."""
 
-    def __init__(self, issuer: str, key_set: JSONWebKeySet, /):
+    def __init__(self, issuer: str, key_set: JSONWebKeySet, /) -> None:
         self._issuer = issuer
         self._key_set = key_set
         self._lock = threading.RLock()
@@ -139,7 +139,7 @@ class HTTPSJWKSProvider:
         clock: Clock | None = None,
         bearer_token: str | None = None,
         default_cache_seconds: int = 300,
-    ):
+    ) -> None:
         issuer_url = urlparse(issuer)
         jwks_url = urlparse(jwks_uri)
         for value, label in ((issuer_url, "issuer"), (jwks_url, "JWKS URI")):
@@ -226,7 +226,7 @@ class OIDCJWKSTokenValidator:
         *,
         clock: Clock | None = None,
         accepted_algorithms: frozenset[str] = frozenset({"RS256", "EdDSA"}),
-    ):
+    ) -> None:
         if not accepted_algorithms or not accepted_algorithms <= {"RS256", "EdDSA"}:
             raise ValueError(
                 "Accepted OIDC algorithms must be an explicit RS256/EdDSA subset."
@@ -490,7 +490,7 @@ class X509WorkloadCertificateValidator:
         /,
         *,
         clock: Clock | None = None,
-    ):
+    ) -> None:
         if not issuer_certificates:
             raise ValueError("At least one issuer certificate is required.")
         self._policy = policy

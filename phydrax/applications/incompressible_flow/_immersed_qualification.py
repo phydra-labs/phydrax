@@ -68,7 +68,7 @@ class ImmersedReferenceCaseEvidence(StrictModule, NonTrainableState):
         *,
         subject_ids: Sequence[str],
         raw_artifact_ids: Sequence[str],
-    ):
+    ) -> None:
         case = _identifier(case_id, "case_id")
         if case not in IMMERSED_REFERENCE_CASES:
             raise ValueError(f"Unknown immersed reference case {case!r}.")
@@ -250,7 +250,7 @@ class ImmersedReferenceCampaignPlan(StrictModule, NonTrainableState):
         profile: ImmersedDNSQualificationProfile,
         regimes: Sequence[ImmersedBodyRegimePlan],
         /,
-    ):
+    ) -> None:
         if not isinstance(profile, ImmersedDNSQualificationProfile):
             raise TypeError("profile must be ImmersedDNSQualificationProfile.")
         regimes_ = tuple(regimes)

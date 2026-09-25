@@ -62,7 +62,7 @@ class PositiveCompressibleKineticPlan(StrictModule, NonTrainableState):
         collision_kind: PositiveKineticCollisionKind | None = None,
         equilibrium_solve: FiniteSupportNaturalSolvePlan | None = None,
         entropy_root: KineticEntropyRootPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(rule, CompressibleVelocityRule):
             raise TypeError("rule must be a CompressibleVelocityRule.")
         gamma_value = float(gamma)

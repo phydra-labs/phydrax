@@ -37,7 +37,7 @@ class PluriharmonicCertificate(AbstractConstructionCertificate):
         complex_dimension: int,
         branch: int,
         holomorphic_certificate_id: str,
-    ):
+    ) -> None:
         dimension = int(complex_dimension)
         branch_ = int(branch)
         identifier = str(holomorphic_certificate_id)
@@ -74,7 +74,7 @@ class PluriharmonicPotential(_AbstractTrialSpaceField):
         /,
         *,
         branch: int = 0,
-    ):
+    ) -> None:
         if not isinstance(provider, MultivariableHolomorphicPotentialProvider):
             raise TypeError(
                 "provider must implement MultivariableHolomorphicPotentialProvider."

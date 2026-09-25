@@ -55,7 +55,7 @@ class CalabiYauMetricProblem(StrictModule):
         normalization: ArrayLike = 0.0,
         positivity_floor: float = 1e-7,
         precision: GeometryPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(hypersurface, ProjectiveHypersurface):
             raise TypeError("hypersurface must be a ProjectiveHypersurface.")
         if not isinstance(samples, ProjectiveLineSamples):
@@ -96,7 +96,7 @@ class CalabiYauSolvePolicy(StrictModule):
         maximum_backtracks: int = 8,
         contraction: float = 0.5,
         gradient_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         if int(iterations) < 0 or int(maximum_backtracks) < 0:
             raise ValueError("Iteration counts must be non-negative.")
         if learning_rate <= 0.0 or not 0.0 < contraction < 1.0:
@@ -136,7 +136,7 @@ class CalabiYauMetricResult(StrictModule):
         hypersurface_id: str,
         precision_evidence: PrecisionEvidenceEnvelope,
         precision: GeometryPrecisionPolicy,
-    ):
+    ) -> None:
         self.potential_model = potential_model
         self.normalization = jnp.asarray(normalization)
         self.objective_history = jnp.asarray(objective_history)
@@ -186,7 +186,7 @@ class _CalabiYauPayload(StrictModule):
     pivot_indices: tuple[int, ...] = eqx.field(static=True)
     positivity_floor: float = eqx.field(static=True)
 
-    def __init__(self, problem: CalabiYauMetricProblem, /):
+    def __init__(self, problem: CalabiYauMetricProblem, /) -> None:
         self.hypersurface = problem.hypersurface
         self.homogeneous_points = problem.samples.homogeneous_points
         self.weights = problem.weights
@@ -299,7 +299,7 @@ class _CalabiYauBacktrackingRule(AbstractKernelUpdateRule):
     maximum_backtracks: int = eqx.field(static=True)
     rule_id: str = eqx.field(static=True)
 
-    def __init__(self, policy: CalabiYauSolvePolicy, /):
+    def __init__(self, policy: CalabiYauSolvePolicy, /) -> None:
         self.learning_rate = policy.learning_rate
         self.contraction = policy.contraction
         self.maximum_backtracks = policy.maximum_backtracks

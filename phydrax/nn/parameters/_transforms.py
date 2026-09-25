@@ -41,7 +41,7 @@ class PositiveTransform(AbstractParameterTransform):
     preserves_shape: ClassVar[bool] = True
     minimum: float = eqx.field(static=True)
 
-    def __init__(self, minimum: float = 0.0):
+    def __init__(self, minimum: float = 0.0) -> None:
         minimum_value = float(minimum)
         if not math.isfinite(minimum_value):
             raise ValueError("minimum must be finite.")
@@ -61,7 +61,7 @@ class IntervalTransform(AbstractParameterTransform):
     lower: float = eqx.field(static=True)
     upper: float = eqx.field(static=True)
 
-    def __init__(self, lower: float, upper: float):
+    def __init__(self, lower: float, upper: float) -> None:
         lower_value = float(lower)
         upper_value = float(upper)
         if not math.isfinite(lower_value) or not math.isfinite(upper_value):
@@ -199,7 +199,7 @@ class PositiveDefiniteTransform(AbstractParameterTransform):
 
     minimum_diagonal: float = eqx.field(static=True)
 
-    def __init__(self, minimum_diagonal: float = 1e-6):
+    def __init__(self, minimum_diagonal: float = 1e-6) -> None:
         minimum = float(minimum_diagonal)
         if not math.isfinite(minimum) or minimum <= 0.0:
             raise ValueError("minimum_diagonal must be finite and positive.")
@@ -232,7 +232,7 @@ class HurwitzTransform(AbstractParameterTransform):
 
     minimum_damping: float = eqx.field(static=True)
 
-    def __init__(self, minimum_damping: float = 1e-6):
+    def __init__(self, minimum_damping: float = 1e-6) -> None:
         minimum = float(minimum_damping)
         if not math.isfinite(minimum) or minimum <= 0.0:
             raise ValueError("minimum_damping must be finite and positive.")
@@ -256,7 +256,7 @@ class SchurStableTransform(AbstractParameterTransform):
     minimum_damping: float = eqx.field(static=True)
     step: float = eqx.field(static=True)
 
-    def __init__(self, *, minimum_damping: float = 1e-6, step: float = 1.0):
+    def __init__(self, *, minimum_damping: float = 1e-6, step: float = 1.0) -> None:
         minimum = float(minimum_damping)
         step_value = float(step)
         if not math.isfinite(minimum) or minimum <= 0.0:

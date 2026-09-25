@@ -35,7 +35,7 @@ class CSGContinuationPolicy(StrictModule):
         /,
         *,
         terminal_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         widths_ = tuple(float(value) for value in widths)
         if not widths_ or any(not isfinite(value) or value <= 0.0 for value in widths_):
             raise ValueError("CSG continuation widths must be finite and positive.")
@@ -81,7 +81,7 @@ class CSGContinuationResult(StrictModule):
 
 
 class _SmoothBuild:
-    def __init__(self):
+    def __init__(self) -> None:
         self.width_ids: list[ParameterId] = []
 
     def convert(self, source: GeometrySource, path: str = "root") -> GeometrySource:

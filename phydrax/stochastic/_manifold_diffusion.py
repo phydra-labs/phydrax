@@ -28,7 +28,7 @@ class ManifoldProbabilityLaw(AbstractProbabilityLaw):
     log_density: Any
     law_id: str = eqx.field(static=True)
 
-    def __init__(self, manifold, sampler, log_density, /, *, law_id: str):
+    def __init__(self, manifold, sampler, log_density, /, *, law_id: str) -> None:
         if not isinstance(manifold, AbstractRiemannianManifold):
             raise TypeError("manifold must implement AbstractRiemannianManifold.")
         if not callable(sampler) or not callable(log_density):
@@ -88,7 +88,7 @@ class RiemannianScoreField(StrictModule):
     function: Any
     score_id: str = eqx.field(static=True)
 
-    def __init__(self, manifold, function, /, *, score_id: str):
+    def __init__(self, manifold, function, /, *, score_id: str) -> None:
         if not isinstance(manifold, AbstractRiemannianManifold) or not callable(function):
             raise TypeError("Riemannian score requires a manifold and callable.")
         if not score_id:
@@ -140,7 +140,7 @@ class IsotropicRiemannianDiffusion(StrictModule):
         *,
         terminal_time: float = 1.0,
         process_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(manifold, AbstractRiemannianManifold):
             raise TypeError("manifold must implement AbstractRiemannianManifold.")
         if (

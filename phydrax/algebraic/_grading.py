@@ -39,7 +39,7 @@ class PolynomialVariableGroup(StrictModule, NonTrainableState):
         /,
         *,
         geometry: PolynomialVariableGeometry = "affine",
-    ):
+    ) -> None:
         label_ = str(label).strip()
         if not label_:
             raise ValueError("Polynomial variable-group labels must be non-empty.")
@@ -89,7 +89,7 @@ class PolynomialDegreeProfile(StrictModule, NonTrainableState):
         total_degrees: Sequence[int],
         multidegrees: Sequence[Sequence[int]],
         group_labels: Sequence[str],
-    ):
+    ) -> None:
         support_id_ = str(support_id)
         totals = tuple(total_degrees)
         multidegrees_ = tuple(tuple(row) for row in multidegrees)
@@ -144,7 +144,7 @@ class PolynomialBezoutForecast(StrictModule, NonTrainableState):
         group_labels: Sequence[str],
         group_dimensions: Sequence[int],
         path_count: int,
-    ):
+    ) -> None:
         if kind not in ("total_degree", "multihomogeneous"):
             raise ValueError("Unknown polynomial Bézout forecast kind.")
         labels = tuple(str(value) for value in group_labels)

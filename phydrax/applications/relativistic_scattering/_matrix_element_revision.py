@@ -77,7 +77,7 @@ class MatrixElementRevision:
         parent_revision_id: str | None = None,
         valid_from_epoch_manifest_id: str | None = None,
         held_out_evidence_id: str | None = None,
-    ):
+    ) -> None:
         values = tuple(
             _identity(value, role)
             for value, role in (
@@ -223,7 +223,7 @@ class MatrixElementAdaptationProposal:
         adaptation_id: str,
         proposed_after_epoch_manifest_id: str,
         /,
-    ):
+    ) -> None:
         base = _digest(base_revision_id, "base_revision_id")
         candidate = _digest(candidate_revision_id, "candidate_revision_id")
         if base == candidate:
@@ -306,7 +306,7 @@ class MatrixElementAdaptationEvidence:
         minimum_improvement: float,
         evaluated_after_epoch_manifest_id: str,
         /,
-    ):
+    ) -> None:
         proposal = _digest(proposal_record_id, "proposal_record_id")
         held_out = _identity(held_out_data_id, "held_out_data_id")
         metric = _identity(metric_id, "metric_id")
@@ -403,7 +403,7 @@ class MatrixElementAdaptationDecision:
         after_epoch_manifest_id: str,
         accepted: bool,
         /,
-    ):
+    ) -> None:
         if not isinstance(active_revision, MatrixElementRevision):
             raise TypeError("active_revision must be MatrixElementRevision.")
         base = _digest(base_revision_id, "base_revision_id")
@@ -492,7 +492,7 @@ class MatrixElementWeightSnapshot:
         matrix_element_revision_id: str,
         epoch_manifest_id: str,
         /,
-    ):
+    ) -> None:
         events = tuple(_digest(value, "event_id") for value in event_ids)
         if len(set(events)) != len(events):
             raise ValueError("Weight snapshot event IDs must be unique.")

@@ -25,7 +25,7 @@ class QuantumLatticeVMCOperator(AbstractDiscreteQuantumOperator):
     operator_id: str = eqx.field(static=True)
     max_connections: int = eqx.field(static=True)
 
-    def __init__(self, sector_operator: QuantumSectorOperator, /):
+    def __init__(self, sector_operator: QuantumSectorOperator, /) -> None:
         if not isinstance(sector_operator, QuantumSectorOperator):
             raise TypeError("sector_operator must be QuantumSectorOperator.")
         if not sector_operator.properties.certifies("self_adjoint"):

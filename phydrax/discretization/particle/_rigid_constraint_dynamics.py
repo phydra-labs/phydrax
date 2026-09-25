@@ -121,7 +121,7 @@ class RigidConstraintSolverPlan(StrictModule, NonTrainableState):
         hinge_alignment_margin: float = 1.0e-6,
         rotation_chart_margin: float = 1.0e-4,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         default_linear = LinearSolvePolicy(
             GMRES(restart=32, stagnation_iterations=32),
             tolerance=TolerancePolicy(relative=1.0e-9, absolute=1.0e-11, max_steps=256),
@@ -222,7 +222,7 @@ class RigidConstraintDynamicsPlan(StrictModule, NonTrainableState):
         *,
         solver: RigidConstraintSolverPlan | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(joints, RigidJointGraphPlan):
             raise TypeError("joints must be a RigidJointGraphPlan.")
         solver_ = RigidConstraintSolverPlan() if solver is None else solver
@@ -508,7 +508,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
         external_load_id: str | None,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         if joints.bodies.prepared_id != bodies.prepared_id:
             raise ValueError("Rigid joint graph and body set do not match.")
         if joints.constraint_count == 0:

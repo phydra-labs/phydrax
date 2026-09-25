@@ -46,7 +46,7 @@ class AcousticShot(StrictModule, NonTrainableState):
         /,
         *,
         trace_weights: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(acquisition, SeismicAcquisition):
             raise TypeError("Acoustic shot requires SeismicAcquisition.")
         source = jnp.asarray(source_rates)
@@ -118,7 +118,7 @@ class AcousticWaveformInversionPlan(StrictModule, NonTrainableState):
         *,
         replay: CheckpointedScanMode = "block",
         block_size: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(forward, ConstantDensityAcousticPlan):
             raise TypeError("Waveform inversion requires ConstantDensityAcousticPlan.")
         shots_ = tuple(shots)
@@ -246,7 +246,7 @@ class AcousticSourceProjectionPlan(StrictModule, NonTrainableState):
         basis_source_rates: ArrayLike,
         reference_wavespeed_m_s: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(inversion, AcousticWaveformInversionPlan):
             raise TypeError("Source projection requires waveform inversion plan.")
         index = int(shot_index)

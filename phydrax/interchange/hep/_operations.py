@@ -40,7 +40,7 @@ class HEPFileReplica(StrictModule, NonTrainableState):
         byte_size: int,
         event_count: int,
         replica_uris: Sequence[str],
-    ):
+    ) -> None:
         replicas = tuple(
             sorted(_identifier(value, "Replica URI") for value in replica_uris)
         )
@@ -82,7 +82,7 @@ class HEPDatasetSnapshot(StrictModule, NonTrainableState):
         *,
         closed: bool,
         expected_file_count: int,
-    ):
+    ) -> None:
         files_ = tuple(files)
         expected = int(expected_file_count)
         if not files_ or any(not isinstance(value, HEPFileReplica) for value in files_):
@@ -150,7 +150,7 @@ class HEPSoftwareEnvironment(StrictModule, NonTrainableState):
         cvmfs_revisions: Sequence[str] = (),
         provider_binding_ids: Sequence[str],
         sbom_checksum: str,
-    ):
+    ) -> None:
         cvmfs = tuple(
             sorted(_identifier(value, "CVMFS revision") for value in cvmfs_revisions)
         )
@@ -204,7 +204,7 @@ class HEPWorkloadExport(StrictModule, NonTrainableState):
         environment: HEPSoftwareEnvironment,
         output_repository_id: str,
         read_only_credentials: bool = True,
-    ):
+    ) -> None:
         if (
             not isinstance(backend, WorkloadBackend)
             or not isinstance(dataset_snapshot, HEPDatasetSnapshot)
@@ -269,7 +269,7 @@ class HEPPreservationBundle(StrictModule, NonTrainableState):
         qualification_evidence_ids: Sequence[str],
         rights_manifest_ids: Sequence[str],
         external_approval_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if (
             not isinstance(run_context, HEPRunContext)
             or not isinstance(conditions, ResolvedConditionSnapshot)

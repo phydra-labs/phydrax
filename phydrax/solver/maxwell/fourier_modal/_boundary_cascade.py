@@ -33,7 +33,7 @@ class BoundaryCascadePolicy(StrictModule, NonTrainableState):
         paired_error: bool = True,
         relative_tolerance: float = 1e-8,
         absolute_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         doublings_ = int(doublings)
         order = int(initializer_order)
         relative = float(relative_tolerance)

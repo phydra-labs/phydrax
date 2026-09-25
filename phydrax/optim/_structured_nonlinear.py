@@ -125,7 +125,7 @@ class StructuredOptimizationWork(StrictModule):
         certificate_evaluations: Any = 0,
         provider_rebuilds: Any = 0,
         complete: Any = True,
-    ):
+    ) -> None:
         values = locals()
         for name in _STRUCTURED_WORK_FIELDS:
             setattr(self, name, _work_count(values[name], name))
@@ -179,7 +179,7 @@ class StructuredNonlinearWarmStart(StrictModule):
         source_program_id: str | None = None,
         source_backend: str | None = None,
         warm_start_id: str | None = None,
-    ):
+    ) -> None:
         primal_ = _real_vector(primal, None, "warm-start primal")
         constraints = _real_vector(
             constraint_multipliers, None, "warm-start constraint multipliers"
@@ -309,7 +309,7 @@ class StructuredNonlinearProgram(StrictModule):
         hessian_plan: SparseDerivativePlan | None = None,
         program_id: str,
         structure_id: str,
-    ):
+    ) -> None:
         if not callable(objective) or not callable(constraints):
             raise TypeError(
                 "Structured nonlinear objective and constraints must be callable."
@@ -691,7 +691,7 @@ class StructuredNonlinearTemplate(StrictModule):
         program: StructuredNonlinearProgram,
         sample_args: Any = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(program, StructuredNonlinearProgram):
             raise TypeError("program must be a StructuredNonlinearProgram.")
         roles = _bound_roles(
@@ -759,7 +759,7 @@ class PreparedStructuredNonlinearProgram(StrictModule):
         objective_scale: ArrayLike = 1.0,
         constraint_scale: ArrayLike | None = None,
         numeric_version: Any = 0,
-    ):
+    ) -> None:
         if not isinstance(template, StructuredNonlinearTemplate):
             raise TypeError("template must be a StructuredNonlinearTemplate.")
         program = template.program
@@ -968,7 +968,7 @@ class StructuredNonlinearResult(StrictModule):
         structure_id: str,
         numeric_binding_id: str,
         method_id: str,
-    ):
+    ) -> None:
         if not isinstance(optimization, MinimizationResult):
             raise TypeError("optimization must be a MinimizationResult.")
         if not isinstance(warm_start, StructuredNonlinearWarmStart):

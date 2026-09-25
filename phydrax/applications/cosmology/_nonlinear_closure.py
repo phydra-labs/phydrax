@@ -18,7 +18,9 @@ class HaloMassFunctionPlan(StrictModule, NonTrainableState):
     amplitude: Array
     exponent: Array
 
-    def __init__(self, collapse_threshold=1.686, amplitude=0.3222, exponent=0.3, /):
+    def __init__(
+        self, collapse_threshold=1.686, amplitude=0.3222, exponent=0.3, /
+    ) -> None:
         self.collapse_threshold = jnp.asarray(collapse_threshold).reshape(())
         self.amplitude = jnp.asarray(amplitude).reshape(())
         self.exponent = jnp.asarray(exponent).reshape(())
@@ -61,7 +63,7 @@ class HaloModelPlan(StrictModule, NonTrainableState):
         /,
         *,
         model_id="halo-model",
-    ):
+    ) -> None:
         self.mass = jnp.asarray(mass)
         self.mass_function = jnp.asarray(mass_function)
         self.bias = jnp.asarray(bias)
@@ -114,7 +116,7 @@ class CmbLensingPlan(StrictModule, NonTrainableState):
     multipoles: Array
     deflection_variance: Array
 
-    def __init__(self, multipoles, deflection_variance, /):
+    def __init__(self, multipoles, deflection_variance, /) -> None:
         self.multipoles = jnp.asarray(multipoles)
         self.deflection_variance = jnp.asarray(deflection_variance).reshape(())
 
@@ -134,7 +136,7 @@ class LightConePlan(StrictModule, NonTrainableState):
     shell_radii: Array
     capacity: int = eqx.field(static=True)
 
-    def __init__(self, shell_radii, capacity: int, /):
+    def __init__(self, shell_radii, capacity: int, /) -> None:
         self.shell_radii = jnp.asarray(shell_radii)
         self.capacity = int(capacity)
 
@@ -158,7 +160,7 @@ class LightConePlan(StrictModule, NonTrainableState):
 class LensingPlanePlan(StrictModule, NonTrainableState):
     pixel_scale: Array
 
-    def __init__(self, pixel_scale, /):
+    def __init__(self, pixel_scale, /) -> None:
         self.pixel_scale = jnp.asarray(pixel_scale).reshape(())
 
     def convergence_and_shear(
@@ -186,7 +188,7 @@ class BaryonicFeedbackPlan(StrictModule, NonTrainableState):
     pivot_wavenumber: Array
     slope: Array
 
-    def __init__(self, amplitude, pivot_wavenumber, slope, /):
+    def __init__(self, amplitude, pivot_wavenumber, slope, /) -> None:
         self.amplitude = jnp.asarray(amplitude).reshape(())
         self.pivot_wavenumber = jnp.asarray(pivot_wavenumber).reshape(())
         self.slope = jnp.asarray(slope).reshape(())

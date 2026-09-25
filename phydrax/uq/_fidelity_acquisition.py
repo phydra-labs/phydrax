@@ -44,7 +44,7 @@ class TargetVarianceAcquisitionPolicy(StrictModule, NonTrainableState):
         batch_size: int = 1,
         cost_unit: str = "relative-cost",
         policy_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(path, FidelityPath):
             raise TypeError("path must be a FidelityPath.")
         points = _as_points(target_points)

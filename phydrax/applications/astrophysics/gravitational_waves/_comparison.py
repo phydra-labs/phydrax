@@ -37,7 +37,7 @@ class WaveformMatchPlan(StrictModule, NonTrainableState):
         /,
         *,
         normalization_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(psd, OneSidedPowerSpectralDensity):
             raise TypeError("psd must be OneSidedPowerSpectralDensity.")
         tolerance = float(normalization_tolerance)

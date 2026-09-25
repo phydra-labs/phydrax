@@ -51,7 +51,7 @@ class RosenbrockWMethod(StrictModule, NonTrainableState):
     embedded_weights: tuple[float, ...] = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.propagation = (
             (0.0, 0.0, 0.0, 0.0),
             (8.7173304301691801e-01, 0.0, 0.0, 0.0),
@@ -133,7 +133,7 @@ class RosenbrockAdaptivePolicy(StrictModule, NonTrainableState):
         maximum_factor: float = 5.0,
         maximum_accepted_steps: int = 4096,
         maximum_attempts: int = 8192,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

@@ -147,7 +147,7 @@ class FixedGridZ4cRuntime(StrictModule, NonTrainableState):
         start_time: float = 0.0,
         integrator: Z4cIntegrator = "ssprk54",
         maximum_courant_number: float = 0.25,
-    ):
+    ) -> None:
         if not isinstance(system, Z4cSystem):
             raise TypeError("system must be a Z4cSystem.")
         if not isinstance(grid, FixedGridGeometry):

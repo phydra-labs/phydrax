@@ -68,7 +68,7 @@ class RegionalConnectivity(StrictModule):
         *,
         delay_unit: Literal["s", "ms"] = "s",
         normalization: Literal["none", "incoming_abs"] = "none",
-    ):
+    ) -> None:
         labels = tuple(region_ids)
         if (
             not labels
@@ -215,7 +215,7 @@ class WilsonCowan(StrictModule):
         baseline_e: ArrayLike = 0.0,
         baseline_i: ArrayLike = 0.0,
         coupling_gain: ArrayLike = 1.0,
-    ):
+    ) -> None:
         self.tau_e_s = _parameter(tau_e_s, "tau_e_s", positive=True)
         self.tau_i_s = _parameter(tau_i_s, "tau_i_s", positive=True)
         self.c_ee = _parameter(c_ee, "c_ee")
@@ -280,7 +280,7 @@ class Hopf(StrictModule):
         frequency_hz: ArrayLike = 0.04,
         coupling_per_s: ArrayLike = 0.1,
         cubic_per_s: ArrayLike = 1.0,
-    ):
+    ) -> None:
         self.a_per_s = _parameter(a_per_s, "a_per_s")
         self.frequency_hz = _parameter(frequency_hz, "frequency_hz")
         self.coupling_per_s = _parameter(coupling_per_s, "coupling_per_s")

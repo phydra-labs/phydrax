@@ -72,7 +72,7 @@ class CompletePanelFlowPlan2D(StrictModule, NonTrainableState):
         density: float = 1.0,
         policy: LinearSolvePolicy | None = None,
         compressibility: PanelCompressibilityPolicy | None = None,
-    ):
+    ) -> None:
         if (
             not isinstance(geometry, NativePanelGeometry2D)
             or formulation not in ("source", "vortex", "source-vortex", "doublet")

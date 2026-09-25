@@ -106,7 +106,7 @@ class _ProgramDomainOutput(StrictModule, BatchEvaluator):
         fields: Mapping[str, DomainFunction],
         output_name: str,
         /,
-    ):
+    ) -> None:
         self.program = program
         self.fields = frozendict(fields)
         self.output_name = str(output_name)
@@ -238,7 +238,7 @@ class CochainResidualTerm(AbstractSamplingTerm):
         sampling_mode: str = "resample",
         fixed_batch: GraphBatch | None = None,
         fixed_batch_key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(component, DomainComponent):
             raise TypeError("CochainResidualTerm requires one DomainComponent.")
         if (

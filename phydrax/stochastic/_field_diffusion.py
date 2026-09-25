@@ -32,7 +32,7 @@ class FieldNoiseGeometry(StrictModule):
         /,
         *,
         field_space_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(basis, SpatialNoiseBasis):
             raise TypeError("basis must be a SpatialNoiseBasis.")
         if jnp.iscomplexobj(basis.modes):
@@ -117,7 +117,7 @@ class FieldGaussianDiffusion(StrictModule):
 
     def __init__(
         self, geometry, coefficient_process, /, *, process_id: str | None = None
-    ):
+    ) -> None:
         if not isinstance(geometry, FieldNoiseGeometry):
             raise TypeError("geometry must be a FieldNoiseGeometry.")
         if not isinstance(coefficient_process, AbstractGaussianDiffusion):

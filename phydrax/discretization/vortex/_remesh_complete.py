@@ -62,7 +62,7 @@ class CompleteVortexRemeshPlan(StrictModule, NonTrainableState):
         periodic: tuple[bool, ...] | None = None,
         obstacle_clearance=None,
         obstacle_id: str | None = None,
-    ):
+    ) -> None:
         lower_, upper_ = (
             np.asarray(lower, dtype=np.float64),
             np.asarray(upper, dtype=np.float64),

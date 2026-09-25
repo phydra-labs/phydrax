@@ -336,7 +336,7 @@ class DerivativeRegularity(StrictModule, NonTrainableState):
         degree_bound: int | None = None,
         conditions: Iterable[str] = (),
         support: str | None = None,
-    ):
+    ) -> None:
         continuity_ = _continuity(continuity)
         _piece_rank(pieces)
         if pieces == "polynomial":
@@ -549,7 +549,7 @@ class SurfaceDerivative(StrictModule, NonTrainableState):
         /,
         *,
         conditions: Iterable[str] = (),
-    ):
+    ) -> None:
         surface_ = _require_surface(surface)
         level_ = _require_level(level)
         conditions_ = _identifier_set(conditions, "conditions")
@@ -577,7 +577,7 @@ class DifferentiationRequest(StrictModule, NonTrainableState):
         *,
         order: int = 1,
         authority: ComponentAuthority | None = None,
-    ):
+    ) -> None:
         surfaces_ = _surface_set(surfaces)
         order_ = _derivative_order(order)
         if authority is not None and not isinstance(authority, ComponentAuthority):
@@ -616,7 +616,7 @@ class DerivativeAdmission(StrictModule, NonTrainableState):
         conditions: Iterable[str] = (),
         reasons: Iterable[str] = (),
         nondifferentiable_outputs: Iterable[str] = (),
-    ):
+    ) -> None:
         if not isinstance(request, DifferentiationRequest):
             raise TypeError("request must be a DifferentiationRequest.")
         levels_ = tuple(_require_level(level) for level in levels)
@@ -669,7 +669,7 @@ class RegularityPolicy(StrictModule, NonTrainableState):
         *,
         allow_almost_everywhere: bool = False,
         allow_undeclared: bool = False,
-    ):
+    ) -> None:
         if not isinstance(allow_almost_everywhere, bool) or not isinstance(
             allow_undeclared, bool
         ):
@@ -904,7 +904,7 @@ class DerivativeContract(StrictModule, NonTrainableState):
         regularity: DerivativeRegularity | None = None,
         conditions: Iterable[str] = (),
         nondifferentiable_outputs: Iterable[str] = (),
-    ):
+    ) -> None:
         entries = tuple(surfaces)
         if any(not isinstance(entry, SurfaceDerivative) for entry in entries):
             raise TypeError("surfaces must contain SurfaceDerivative values.")
@@ -1387,7 +1387,7 @@ class CapabilityRequirement(StrictModule, NonTrainableState):
         /,
         *,
         safety_critical: bool = False,
-    ):
+    ) -> None:
         capability_id_ = _identifier(capability_id, "capability_id")
         if not isinstance(safety_critical, bool):
             raise TypeError("safety_critical must be bool.")

@@ -53,7 +53,7 @@ class NativeVorticityLearningPlan(StrictModule, NonTrainableState):
         termination: OptimizationTermination | None = None,
         circulation_weight: float = 1.0,
         dissipation_weight: float = 1.0,
-    ):
+    ) -> None:
         if (
             not isinstance(method, AbstractMinimizationMethod)
             or circulation_weight < 0.0
@@ -182,7 +182,7 @@ class PeriodicVorticityReconstructionPlan(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, shape: tuple[int, ...], periods: ArrayLike, /):
+    def __init__(self, shape: tuple[int, ...], periods: ArrayLike, /) -> None:
         shape_ = tuple(shape)
         periods_ = jnp.asarray(periods, dtype=jnp.float64)
         if (
@@ -281,7 +281,7 @@ class ConstrainedLearnedClosure(StrictModule, NonTrainableState):
         /,
         *,
         closure_id: str,
-    ):
+    ) -> None:
         center, scale = jnp.asarray(distribution_center), jnp.asarray(distribution_scale)
         if center.shape != scale.shape or jnp.any(scale <= 0.0) or not str(closure_id):
             raise ValueError("Learned closure distribution controls are invalid.")

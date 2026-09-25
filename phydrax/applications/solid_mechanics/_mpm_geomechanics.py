@@ -61,7 +61,7 @@ class DruckerPragerParameters(StrictModule, NonTrainableState):
         dilation_angle,
         hardening_modulus=0.0,
         /,
-    ):
+    ) -> None:
         values = _validated_frictional_values(
             "Drucker-Prager",
             (
@@ -100,7 +100,7 @@ class MohrCoulombParameters(StrictModule, NonTrainableState):
         dilation_angle,
         hardening_modulus=0.0,
         /,
-    ):
+    ) -> None:
         values = _validated_frictional_values(
             "Mohr-Coulomb",
             (
@@ -130,7 +130,7 @@ class ModifiedCamClayParameters(StrictModule, NonTrainableState):
 
     def __init__(
         self, shear_modulus, bulk_modulus, critical_state_slope, hardening_modulus, /
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -167,7 +167,7 @@ class NonlocalSofteningPlan(StrictModule, NonTrainableState):
         *,
         viscosity: float = 0.0,
         minimum_modulus: float = 0.0,
-    ):
+    ) -> None:
         length = float(characteristic_length)
         viscosity_ = float(viscosity)
         minimum = float(minimum_modulus)
@@ -335,7 +335,7 @@ class DruckerPragerMPMConstitutivePlan(
     _AbstractPressureDependentPlan,
     NonTrainableState,
 ):
-    def __init__(self):
+    def __init__(self) -> None:
         self.dimension = 3
         self.kinematics = "three_dimensional"
         self.state_shape = (10,)
@@ -449,7 +449,7 @@ class DruckerPragerMPMConstitutivePlan(
 
 
 class MohrCoulombMPMConstitutivePlan(_AbstractPressureDependentPlan, NonTrainableState):
-    def __init__(self):
+    def __init__(self) -> None:
         self.dimension = 3
         self.kinematics = "three_dimensional"
         self.state_shape = (10,)
@@ -573,7 +573,7 @@ class ModifiedCamClayMPMConstitutivePlan(
 
     def __init__(
         self, *, initial_preconsolidation_pressure: float, initial_void_ratio: float
-    ):
+    ) -> None:
         pressure = float(initial_preconsolidation_pressure)
         void = float(initial_void_ratio)
         if pressure <= 0.0 or void <= 0.0:

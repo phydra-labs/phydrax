@@ -47,7 +47,7 @@ class SphericalSpectralConv(StrictModule):
         in_channels: int,
         out_channels: int,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(plan, SphericalHarmonicPlan):
             raise TypeError("plan must be a SphericalHarmonicPlan.")
         in_size = int(in_channels)
@@ -102,7 +102,7 @@ class _SFNOBlock(StrictModule):
         *,
         channels: int,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         spectral_key, pointwise_key = jr.split(key)
         self.spectral = SphericalSpectralConv(
             plan,
@@ -196,7 +196,7 @@ class SFNO(AbstractOperatorModel):
         depth: int = 4,
         source_key: str | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(discretization, SphericalSpectralDiscretization):
             raise TypeError("discretization must be a SphericalSpectralDiscretization.")
         plan = discretization.transform

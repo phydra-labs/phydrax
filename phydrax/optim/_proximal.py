@@ -84,7 +84,7 @@ class L1Functional(AbstractProximalFunctional):
 
     weight: float = eqx.field(static=True)
 
-    def __init__(self, weight: float = 1.0, /):
+    def __init__(self, weight: float = 1.0, /) -> None:
         weight_ = float(weight)
         if not isfinite(weight_) or weight_ < 0.0:
             raise ValueError("weight must be finite and non-negative.")
@@ -110,7 +110,7 @@ class ElasticNetFunctional(AbstractProximalFunctional):
     l1_weight: float = eqx.field(static=True)
     l2_weight: float = eqx.field(static=True)
 
-    def __init__(self, l1_weight: float = 1.0, l2_weight: float = 1.0, /):
+    def __init__(self, l1_weight: float = 1.0, l2_weight: float = 1.0, /) -> None:
         l1 = float(l1_weight)
         l2 = float(l2_weight)
         if any(not isfinite(value) or value < 0.0 for value in (l1, l2)):
@@ -145,7 +145,7 @@ class IndicatorFunctional(AbstractProximalFunctional):
         projection: Callable[[PyTree[Any]], PyTree[Any]],
         contains: Callable[[PyTree[Any]], Any],
         /,
-    ):
+    ) -> None:
         if not callable(projection) or not callable(contains):
             raise TypeError("projection and contains must be callable.")
         self.projection = projection
@@ -176,7 +176,7 @@ class BoxIndicator(AbstractProximalFunctional):
     lower: PyTree[Any]
     upper: PyTree[Any]
 
-    def __init__(self, lower: Any = -jnp.inf, upper: Any = jnp.inf, /):
+    def __init__(self, lower: Any = -jnp.inf, upper: Any = jnp.inf, /) -> None:
         self.lower = lower
         self.upper = upper
 
@@ -224,7 +224,7 @@ class SimplexIndicator(AbstractProximalFunctional):
     mass: float = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
 
-    def __init__(self, mass: float = 1.0, /, *, tolerance: float = 1e-7):
+    def __init__(self, mass: float = 1.0, /, *, tolerance: float = 1e-7) -> None:
         mass_ = float(mass)
         tolerance_ = float(tolerance)
         if not isfinite(mass_) or mass_ <= 0.0:
@@ -259,7 +259,7 @@ class GroupLassoFunctional(AbstractProximalFunctional):
     weight: float = eqx.field(static=True)
     axis: int = eqx.field(static=True)
 
-    def __init__(self, weight: float = 1.0, /, *, axis: int = -1):
+    def __init__(self, weight: float = 1.0, /, *, axis: int = -1) -> None:
         weight_ = float(weight)
         if not isfinite(weight_) or weight_ < 0.0:
             raise ValueError("weight must be finite and non-negative.")
@@ -296,7 +296,7 @@ class NuclearNormFunctional(AbstractProximalFunctional):
 
     weight: float = eqx.field(static=True)
 
-    def __init__(self, weight: float = 1.0, /):
+    def __init__(self, weight: float = 1.0, /) -> None:
         weight_ = float(weight)
         if not isfinite(weight_) or weight_ < 0.0:
             raise ValueError("weight must be finite and non-negative.")
@@ -342,7 +342,7 @@ class ProximalProblem(StrictModule):
         *,
         has_aux: bool = False,
         problem_id: str = "callable-proximal-minimization",
-    ):
+    ) -> None:
         smooth_ = (
             smooth
             if isinstance(smooth, MinimizationProblem)
@@ -423,7 +423,7 @@ class ProximalResult(StrictModule):
         status: Any,
         diagnostics: OptimizationDiagnostics,
         provenance: OptimizationProvenance,
-    ):
+    ) -> None:
         if not isinstance(diagnostics, OptimizationDiagnostics):
             raise TypeError("diagnostics must be OptimizationDiagnostics.")
         if not isinstance(provenance, OptimizationProvenance):
@@ -484,7 +484,7 @@ class ProximalState(StrictModule):
         accepted_rate: Any = 0.0,
         status: Any = OptimizationStatus.ITERATING,
         metrics: IterativeStepMetrics | None = None,
-    ):
+    ) -> None:
         self.iteration = jnp.asarray(iteration, dtype=jnp.int32)
         self.extrapolated = extrapolated
         self.momentum = jnp.asarray(momentum)
@@ -536,7 +536,7 @@ class AbstractProximalMethod(StrictModule):
         contraction: float,
         minimum_step_size: float,
         maximum_backtracking_steps: int,
-    ):
+    ) -> None:
         initial = float(initial_step_size)
         contraction_ = float(contraction)
         minimum = float(minimum_step_size)
@@ -650,7 +650,7 @@ class ProximalGradient(AbstractProximalMethod):
         contraction: float = 0.5,
         minimum_step_size: float = 1e-12,
         maximum_backtracking_steps: int = 30,
-    ):
+    ) -> None:
         self._initialize_policy(
             initial_step_size=initial_step_size,
             contraction=contraction,
@@ -681,7 +681,7 @@ class AcceleratedProximalGradient(AbstractProximalMethod):
         contraction: float = 0.5,
         minimum_step_size: float = 1e-12,
         maximum_backtracking_steps: int = 30,
-    ):
+    ) -> None:
         self._initialize_policy(
             initial_step_size=initial_step_size,
             contraction=contraction,
@@ -721,7 +721,7 @@ class ProximalNewton(AbstractProximalMethod):
         inner_steps: int = 50,
         sufficient_decrease: float = 1e-4,
         max_dense_dimension: int = 256,
-    ):
+    ) -> None:
         self._initialize_policy(
             initial_step_size=initial_step_size,
             contraction=contraction,

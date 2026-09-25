@@ -30,7 +30,7 @@ class NearestNeighborHamiltonian(StrictModule):
         /,
         *,
         hamiltonian_id: str,
-    ):
+    ) -> None:
         dimensions = tuple(physical_dimensions)
         values = tuple(jnp.asarray(term) for term in terms)
         identifier = str(hamiltonian_id)
@@ -80,7 +80,7 @@ class TEBDEvidence(StrictModule):
         *,
         trotter_order: int,
         precision_policy_id: str,
-    ):
+    ) -> None:
         self.discarded_weights = jnp.asarray(discarded_weights)
         self.cumulative_discarded_weight = jnp.sum(self.discarded_weights)
         self.norm_residual = jnp.asarray(norm_residual)

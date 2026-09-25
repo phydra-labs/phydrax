@@ -77,7 +77,7 @@ class SelfAdjointSpectralSubspacePolicy(StrictModule):
         minimum_external_gap: float = 0.0,
         differentiation: SelfAdjointSubspaceDifferentiation = "none",
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         relative = float(relative_tolerance)
         absolute = float(absolute_tolerance)
         gap = float(minimum_external_gap)

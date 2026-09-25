@@ -82,7 +82,7 @@ class ExactSelection(StrictModule):
     selected: Array
     scores: Array
 
-    def __init__(self, indices: Any, selected: Any, scores: Any, /):
+    def __init__(self, indices: Any, selected: Any, scores: Any, /) -> None:
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
         selected_ = jnp.asarray(selected, dtype=jnp.bool_)
         if indices_.ndim != 1 or selected_.shape != indices_.shape:
@@ -114,7 +114,7 @@ class FeatureSelectionDiagnostics(StrictModule):
         iterations: Any = 0,
         estimator_status: Any = (),
         method: str,
-    ):
+    ) -> None:
         if (selection is None) == (relaxed_gates is None):
             raise ValueError(
                 "Diagnostics must contain exactly one of exact selection or relaxed gates."
@@ -136,7 +136,7 @@ class ExactFeatureSelectorModel(AbstractFittedModel):
     out_size: int = eqx.field(static=True)
     _input_binding = ModelBinding.pointwise()
 
-    def __init__(self, selection: ExactSelection, /, *, input_size: int):
+    def __init__(self, selection: ExactSelection, /, *, input_size: int) -> None:
         if not isinstance(selection, ExactSelection):
             raise TypeError("selection must be an ExactSelection.")
         self.selection = selection
@@ -161,7 +161,7 @@ class ContinuousFeatureGateModel(AbstractFittedModel):
     out_size: int = eqx.field(static=True)
     _input_binding = ModelBinding.pointwise()
 
-    def __init__(self, gates: Any, /):
+    def __init__(self, gates: Any, /) -> None:
         gates_ = jnp.asarray(gates)
         if gates_.ndim != 1 or gates_.shape[0] == 0:
             raise ValueError("gates must be a nonempty vector.")
@@ -297,7 +297,9 @@ class VarianceFilterRecipe(AbstractRecipe):
     threshold: float = eqx.field(static=True)
     max_features: int | None = eqx.field(static=True)
 
-    def __init__(self, threshold: float = 0.0, /, *, max_features: int | None = None):
+    def __init__(
+        self, threshold: float = 0.0, /, *, max_features: int | None = None
+    ) -> None:
         if float(threshold) < 0.0 or (
             max_features is not None and int(max_features) <= 0
         ):
@@ -332,7 +334,7 @@ class ScoreFilterRecipe(AbstractRecipe):
         *,
         threshold: float = 0.0,
         max_features: int | None = None,
-    ):
+    ) -> None:
         if scorer is not None and not callable(scorer):
             raise TypeError("scorer must be callable.")
         if max_features is not None and int(max_features) <= 0:
@@ -369,7 +371,7 @@ class MutualInformationFilterRecipe(AbstractRecipe):
         num_bins: int = 16,
         threshold: float = 0.0,
         max_features: int | None = None,
-    ):
+    ) -> None:
         if int(num_bins) < 2 or (max_features is not None and int(max_features) <= 0):
             raise ValueError("num_bins must be at least two and max_features positive.")
         self.num_bins = int(num_bins)
@@ -475,7 +477,7 @@ class RecursiveFeatureEliminationRecipe(AbstractRecipe):
         *,
         num_features: int,
         importance_getter: Callable[[AbstractArrayModel], Array],
-    ):
+    ) -> None:
         if not isinstance(estimator, AbstractRecipe):
             raise TypeError("estimator must be an AbstractRecipe.")
         if int(num_features) <= 0:
@@ -565,7 +567,7 @@ class SequentialFeatureSelectionRecipe(AbstractRecipe):
         direction: Literal["forward", "backward"] = "forward",
         validation_fraction: float = 0.2,
         scorer: Callable[[AbstractArrayModel, MLBatch], Array] | None = None,
-    ):
+    ) -> None:
         if not isinstance(estimator, AbstractRecipe):
             raise TypeError("estimator must be an AbstractRecipe.")
         if int(num_features) <= 0 or direction not in ("forward", "backward"):
@@ -666,7 +668,7 @@ class ModelBasedSelectionRecipe(AbstractRecipe):
         threshold: float = 0.0,
         max_features: int | None = None,
         importance_getter: Callable[[AbstractArrayModel], Array],
-    ):
+    ) -> None:
         if not isinstance(estimator, AbstractRecipe):
             raise TypeError("estimator must be an AbstractRecipe.")
         if max_features is not None and int(max_features) <= 0:
@@ -709,7 +711,7 @@ class ContinuousSparseGateRecipe(AbstractRecipe):
         temperature: Any = 0.1,
         sparsity: Any = 0.5,
         scorer: Callable[[MLBatch], Array] | None = None,
-    ):
+    ) -> None:
         temperature_ = _gate_hyperparameter(temperature, "temperature")
         sparsity_ = _gate_hyperparameter(sparsity, "sparsity")
         self.temperature = eqx.error_if(

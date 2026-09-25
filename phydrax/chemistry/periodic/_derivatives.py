@@ -47,7 +47,7 @@ class PeriodicStationaryEnergyComponent(StrictModule, NonTrainableState):
         energy_function: PeriodicStationaryEnergyFunction,
         definition_id: str,
         /,
-    ):
+    ) -> None:
         name_ = str(name).strip()
         definition = str(definition_id).strip()
         if not name_ or role not in _REQUIRED_ROLES or not callable(energy_function):
@@ -104,7 +104,7 @@ class PeriodicDerivativeLedger(StrictModule, NonTrainableState):
         energy_unit: UnitDefinition,
         length_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         rows = tuple(components)
         names = tuple(value.name for value in rows)
         roles = tuple(value.role for value in rows)
@@ -215,7 +215,7 @@ class PeriodicStationaryDerivativeEvidence(StrictModule, NonTrainableState):
         stationarity_tolerance: float,
         directional_tolerance: float,
         /,
-    ):
+    ) -> None:
         values = jnp.asarray(
             (
                 stationarity_residual,
@@ -280,7 +280,7 @@ class PeriodicStationaryDerivativeResult(StrictModule, NonTrainableState):
         cell_id: str,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(ledger, PeriodicDerivativeLedger):
             raise TypeError("ledger must be PeriodicDerivativeLedger.")
         if not isinstance(evidence, PeriodicStationaryDerivativeEvidence):
@@ -353,7 +353,7 @@ class PeriodicStationaryDerivativePlan(StrictModule, NonTrainableState):
         stationarity_tolerance: float = 1.0e-9,
         directional_step: float = 1.0e-5,
         directional_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         rows = tuple(components)
         if (
             not isinstance(cell, PeriodicCell)

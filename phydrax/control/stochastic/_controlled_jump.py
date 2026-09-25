@@ -82,7 +82,7 @@ class ControlledJumpProblem(StrictModule):
         action_shape: Sequence[int],
         args: Any = None,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(process, AbstractJumpProcess):
             raise TypeError("process must implement AbstractJumpProcess.")
         state = _finite_real(initial_state, "initial_state")
@@ -113,7 +113,7 @@ class ControlledJumpPlan(StrictModule):
         *,
         intensity_tolerance: float = 1.0e-12,
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("time_grid must be a TimeGrid.")
         tolerance = float(intensity_tolerance)

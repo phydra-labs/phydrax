@@ -49,7 +49,7 @@ class LinearConnectionSpringBlock(AbstractMemberBlock):
         rest_translation: ArrayLike | None = None,
         rest_rotation: ArrayLike | None = None,
         block_id: str | None = None,
-    ):
+    ) -> None:
         pairs = jnp.asarray(node_pairs, dtype=jnp.int32)
         translation = jnp.asarray(translation_stiffness)
         rotation = jnp.asarray(rotation_stiffness, dtype=translation.dtype)
@@ -143,7 +143,7 @@ class NonlinearMomentRotationBlock(AbstractMemberBlock):
         /,
         *,
         block_id: str | None = None,
-    ):
+    ) -> None:
         pairs = jnp.asarray(node_pairs, dtype=jnp.int32)
         axis_ = jnp.asarray(axis)
         stiffness = jnp.asarray(elastic_stiffness, dtype=axis_.dtype)

@@ -48,7 +48,7 @@ class FixedGRWorldtubeSamplingPlan(StrictModule, NonTrainableState):
         event_shape: Sequence[int],
         source_id: str,
         event_fingerprint: str,
-    ):
+    ) -> None:
         shape = tuple(event_shape)
         smooth = jax.lax.stop_gradient(jnp.asarray(interpolation_smooth, dtype=jnp.bool_))
         if not isinstance(stencil, GatherStencil):
@@ -99,7 +99,9 @@ class MonotoneSlowLightWorldtube(StrictModule, NonTrainableState):
     chart_id: str = eqx.field(static=True)
     worldtube_id: str = eqx.field(static=True)
 
-    def __init__(self, snapshots: Sequence[FastLightSnapshot], /, *, worldtube_id: str):
+    def __init__(
+        self, snapshots: Sequence[FastLightSnapshot], /, *, worldtube_id: str
+    ) -> None:
         values = tuple(snapshots)
         identifier = str(worldtube_id).strip()
         if (

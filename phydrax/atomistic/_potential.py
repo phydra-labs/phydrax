@@ -49,7 +49,7 @@ class AtomisticPotentialCapabilities(StrictModule, NonTrainableState):
         local_energy_delta: bool = False,
         dynamic_species: bool = False,
         species_kind: AtomisticSpeciesKind = AtomisticSpeciesKind.ATOMIC_NUMBER,
-    ):
+    ) -> None:
         if not isinstance(species_kind, AtomisticSpeciesKind):
             raise TypeError("species_kind must be AtomisticSpeciesKind.")
         values = {
@@ -90,7 +90,7 @@ class AtomisticPotentialRequirements(StrictModule, NonTrainableState):
         directed_graph: bool = False,
         bonded_geometry: bool = False,
         reciprocal_grid: bool = False,
-    ):
+    ) -> None:
         cutoff_ = None if cutoff is None else float(cutoff)
         if cutoff_ is not None and (not math.isfinite(cutoff_) or cutoff_ <= 0.0):
             raise ValueError("Potential cutoff must be finite and positive or None.")
@@ -171,7 +171,9 @@ class AbstractAtomisticPotential(StrictModule, ParameterOwner):
         raise NotImplementedError
 
 
-def atomistic_potential_revision(potential: AbstractAtomisticPotential, /) -> NumericRevision:
+def atomistic_potential_revision(
+    potential: AbstractAtomisticPotential, /
+) -> NumericRevision:
     """Return the canonical numeric revision of a potential's current parameters.
 
     The semantic provenance names the architecture and force method; the numeric

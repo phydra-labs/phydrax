@@ -283,7 +283,7 @@ class ParaxialOpticsPlan(StrictModule, NonTrainableState):
         output_refractive_index: float,
         maximum_transverse_perturbation: float,
         maximum_angular_perturbation: float,
-    ):
+    ) -> None:
         if not isinstance(sequential_plan, SequentialOpticsPlan):
             raise TypeError("sequential_plan must be a SequentialOpticsPlan.")
         _validate_frame(input_frame, "input_frame")
@@ -376,7 +376,9 @@ class PreparedParaxialOptics(StrictModule, NonTrainableState):
     source_plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ParaxialOpticsPlan, differential_map: DifferentialRayMap, /):
+    def __init__(
+        self, plan: ParaxialOpticsPlan, differential_map: DifferentialRayMap, /
+    ) -> None:
         if not isinstance(plan, ParaxialOpticsPlan):
             raise TypeError("plan must be a ParaxialOpticsPlan.")
         if not isinstance(differential_map, DifferentialRayMap):

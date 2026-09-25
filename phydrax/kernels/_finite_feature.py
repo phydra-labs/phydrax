@@ -47,7 +47,7 @@ class FiniteFeatureKernel(AbstractFiniteFeatureKernel):
         *,
         feature_map_id: str,
         max_derivative_order: int | None = 0,
-    ):
+    ) -> None:
         if not callable(feature_map):
             raise TypeError("feature_map must be callable.")
         if not isinstance(feature_map_id, str) or not feature_map_id:

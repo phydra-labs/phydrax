@@ -76,7 +76,7 @@ class EnergyEquilibriumTrainingPair(StrictModule, NonTrainableState):
         quadrature_id: str,
         material_id: str,
         oracle_plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(conserved, ClosureSample):
             raise TypeError("conserved must be a ClosureSample.")
         if not isinstance(oracle_dual, ClosureSample):
@@ -147,7 +147,7 @@ class PreparedEnergyEquilibriumDataset(StrictModule, NonTrainableState):
         partition: LeakageSafePartition,
         normalizer: TrainOnlyNormalizer,
         /,
-    ):
+    ) -> None:
         values = tuple(pairs)
         if not values or any(
             not isinstance(value, EnergyEquilibriumTrainingPair) for value in values
@@ -336,7 +336,7 @@ class EnergyEquilibriumSupportEnvelope(StrictModule, NonTrainableState):
         quadrature_id: str,
         equilibrium_plan_id: str,
         training_preparation_id: str,
-    ):
+    ) -> None:
         bounds = tuple(
             tuple(float(endpoint) for endpoint in value)
             for value in (
@@ -484,7 +484,7 @@ class LearnedEnergyEquilibriumBindingPlan(StrictModule, NonTrainableState):
         semantic_id: str,
         training_preparation_id: str,
         parent_artifact_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(equilibrium_plan, PositiveEnergyEquilibriumPlan):
             raise TypeError("equilibrium_plan must be a PositiveEnergyEquilibriumPlan.")
         if not isinstance(schema, FlowStateSchema):
@@ -856,7 +856,7 @@ class PreparedLearnedEnergyEquilibriumBinding(StrictModule, NonTrainableState):
         numeric_revision: NumericRevision,
         plan: LearnedEnergyEquilibriumBindingPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(model, FrozenModel):
             raise TypeError("model must be a FrozenModel.")
         if not isinstance(numeric_revision, NumericRevision):

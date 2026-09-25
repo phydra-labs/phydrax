@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
-from typing import Any, final
+from typing import Any, final, NoReturn
 
 import equinox as eqx
 import jax
@@ -159,7 +159,7 @@ class NeuralImplicitCertificate(StrictModule, NonTrainableState):
         boundary_points: Array,
         clearance_points: Array,
         evidence: GeometryValidityEvidence,
-    ):
+    ) -> None:
         if field.topology_identity is not None:
             raise ValueError(
                 "Sampled neural implicit evidence carries no field topology identity."
@@ -306,7 +306,7 @@ class _NeuralImplicitKernel(GeometryKernel):
         certificate: FieldCertificate,
         capabilities: frozenset[GeometryCapability],
         source_id: str,
-    ):
+    ) -> None:
         self.network_fixed = network_fixed
         self.network_static = network_static
         self.network_treedef = network_treedef
@@ -480,7 +480,7 @@ class _NeuralImplicitKernel(GeometryKernel):
             dtype=bounds.dtype,
         )
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(self, state, num_points, /, *, key) -> NoReturn:
         del state, num_points, key
         raise NotImplementedError(
             "Neural implicit regions do not provide boundary sampling."
@@ -1049,7 +1049,7 @@ class NeuralImplicitRegion(GeometrySource):
         topology: ImplicitRegionTopology | None = None,
         policy: ImplicitSurfacePolicy = _DEFAULT_POLICY,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         bounds_ = np.asarray(bounds, dtype=np.float64)
         if (
             bounds_.ndim != 2

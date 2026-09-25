@@ -81,7 +81,7 @@ class _DiscreteDerivativeEvaluator(StrictModule, BatchEvaluator):
         backend: Literal["fd", "basis"],
         basis: Literal["poly", "fourier", "sine", "cosine"],
         periodic: bool,
-    ):
+    ) -> None:
         self.source = source
         self.pointwise = pointwise
         self.variable = str(variable)

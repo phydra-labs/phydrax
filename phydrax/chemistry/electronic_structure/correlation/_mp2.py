@@ -45,7 +45,7 @@ class MP2Result(StrictModule, NonTrainableState):
         plan_id: str,
         store_id: str,
         /,
-    ):
+    ) -> None:
         amplitude = jnp.asarray(amplitudes)
         dtype = amplitude.real.dtype
         self.correlation_energy = jnp.asarray(correlation_energy, dtype=dtype).reshape(())
@@ -98,7 +98,7 @@ class MP2Plan(StrictModule, NonTrainableState):
         same_spin_scale: float = 1.0,
         denominator_tolerance: float = 1.0e-8,
         regularization: float = 0.0,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

@@ -170,7 +170,7 @@ class SurfaceImportPolicy:
     cad_angular_deflection: float = 0.1
     cad_trim_samples_per_edge: int = 33
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         object.__setattr__(
             self, "source_length_unit", _length_unit(self.source_length_unit)
         )
@@ -231,7 +231,7 @@ class SurfaceExportPolicy:
     maximum_cells: int = 20_000_000
     maximum_fields: int = 256
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         object.__setattr__(
             self, "target_length_unit", _length_unit(self.target_length_unit)
         )
@@ -275,7 +275,7 @@ class PortableSurfaceField:
         name: str,
         association: SurfaceFieldAssociation,
         values: ArrayLike,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Portable surface field names must be non-empty.")

@@ -33,7 +33,7 @@ class LindbladProblem(StrictModule):
         /,
         *,
         problem_id: str = "lindblad",
-    ):
+    ) -> None:
         hamiltonian_ = jnp.asarray(hamiltonian)
         jumps = jnp.asarray(jump_operators)
         density = jnp.asarray(initial_density)
@@ -102,7 +102,7 @@ class LindbladSolution(StrictModule):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         values = jnp.asarray(states)
         self.states = values
         self.times = jnp.asarray(times)

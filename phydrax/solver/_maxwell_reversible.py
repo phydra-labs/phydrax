@@ -44,7 +44,7 @@ class MaxwellReversibleAdjointPlan(StrictModule):
         *,
         checkpoint_count: int = 0,
         tolerance: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(runtime, PreparedCompatibleMaxwell):
             raise TypeError("runtime must be PreparedCompatibleMaxwell.")
         count = int(steps)

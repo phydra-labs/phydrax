@@ -42,7 +42,7 @@ class CASSCFResult(StrictModule, NonTrainableState):
         successful,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(casci, CASCIResult):
             raise TypeError("casci must be CASCIResult.")
         rotation = jnp.asarray(orbital_rotation)
@@ -92,7 +92,7 @@ class CASSCFPlan(StrictModule, NonTrainableState):
         orbital_gradient_tolerance: float = 1.0e-6,
         finite_difference_step: float = 1.0e-4,
         descent_step: float = 0.1,
-    ):
+    ) -> None:
         if not isinstance(casci, CASCIPlan):
             raise TypeError("casci must be CASCIPlan.")
         weights = (

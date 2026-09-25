@@ -209,7 +209,7 @@ class CompliantRigidJointLawPlan(StrictModule, NonTrainableState):
         coordinate_scale: ArrayLike = 1.0,
         chart_tolerance: float = 1.0e-8,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers = _joint_identifiers(joint_ids)
         dimension = _coordinate_dimension(coordinate)
         stiffness_ = _positive_semidefinite_matrices(
@@ -273,7 +273,7 @@ class DissipativeRigidJointLawPlan(StrictModule, NonTrainableState):
         coordinate_scale: ArrayLike = 1.0,
         chart_tolerance: float = 1.0e-8,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers = _joint_identifiers(joint_ids)
         dimension = _coordinate_dimension(coordinate)
         damping_ = _positive_semidefinite_matrices(
@@ -330,7 +330,7 @@ class RigidJointEffortMotorPlan(StrictModule, NonTrainableState):
         effort_limit: ArrayLike,
         chart_tolerance: float = 1.0e-8,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers = _joint_identifiers(joint_ids)
         effort = _scalar_values("commanded_effort", commanded_effort, identifiers.size)
         limit = _scalar_values(
@@ -389,7 +389,7 @@ class RigidJointPDServoPlan(StrictModule, NonTrainableState):
         coordinate_scale: ArrayLike = 1.0,
         chart_tolerance: float = 1.0e-8,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers = _joint_identifiers(joint_ids)
         target = _scalar_values("target_coordinate", target_coordinate, identifiers.size)
         rate = _scalar_values("target_rate", target_rate, identifiers.size)
@@ -642,7 +642,7 @@ class _PreparedRigidJointCoordinate(StrictModule, NonTrainableState):
         coordinate: RigidJointCoordinate,
         chart_tolerance: float,
         /,
-    ):
+    ) -> None:
         joint_kind = _COORDINATE_JOINT_KINDS[coordinate]
         joint_plan = (
             graph.plan.fixed
@@ -1022,7 +1022,7 @@ class PreparedCompliantRigidJointLaw(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: CompliantRigidJointLawPlan, graph: PreparedRigidJointGraph, /
-    ):
+    ) -> None:
         if not isinstance(plan, CompliantRigidJointLawPlan):
             raise TypeError("plan must be a CompliantRigidJointLawPlan.")
         if not isinstance(graph, PreparedRigidJointGraph):
@@ -1091,7 +1091,7 @@ class PreparedDissipativeRigidJointLaw(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: DissipativeRigidJointLawPlan, graph: PreparedRigidJointGraph, /
-    ):
+    ) -> None:
         if not isinstance(plan, DissipativeRigidJointLawPlan):
             raise TypeError("plan must be a DissipativeRigidJointLawPlan.")
         if not isinstance(graph, PreparedRigidJointGraph):
@@ -1162,7 +1162,7 @@ class PreparedRigidJointEffortMotor(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: RigidJointEffortMotorPlan, graph: PreparedRigidJointGraph, /
-    ):
+    ) -> None:
         if not isinstance(plan, RigidJointEffortMotorPlan):
             raise TypeError("plan must be a RigidJointEffortMotorPlan.")
         if not isinstance(graph, PreparedRigidJointGraph):
@@ -1228,7 +1228,9 @@ class PreparedRigidJointPDServo(StrictModule, NonTrainableState):
     coordinate: _PreparedRigidJointCoordinate
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: RigidJointPDServoPlan, graph: PreparedRigidJointGraph, /):
+    def __init__(
+        self, plan: RigidJointPDServoPlan, graph: PreparedRigidJointGraph, /
+    ) -> None:
         if not isinstance(plan, RigidJointPDServoPlan):
             raise TypeError("plan must be a RigidJointPDServoPlan.")
         if not isinstance(graph, PreparedRigidJointGraph):

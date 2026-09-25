@@ -96,7 +96,7 @@ class Pennes1948EvidenceBundle(StrictModule, NonTrainableState):
         coordinate_frame: str,
         length_unit: str,
         perfusion_unit: str,
-    ):
+    ) -> None:
         rows = tuple(tuple(row) for row in records)
         if any(
             len(row) != 6 or any(not isinstance(x, str) or not x.strip() for x in row)
@@ -151,7 +151,7 @@ class Pennes1948Parameters(StrictModule):
         blood_capacity_J_per_m3_K: ArrayLike,
         arterial_temperature_K: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(x, dtype=jnp.float64)
             for x in (
@@ -222,7 +222,7 @@ class RetainedHeatProjection(StrictModule, NonTrainableState):
         source_model_id: str,
         retention_evidence_id: str,
         asset_id: str,
-    ):
+    ) -> None:
         ids = tuple(source_ids)
         source = np.asarray(source_indices)
         target = np.asarray(cell_indices)
@@ -316,7 +316,7 @@ class Pennes1948Boundary(StrictModule):
         *,
         heat_transfer_W_per_m2_K: ArrayLike,
         asset_id: str,
-    ):
+    ) -> None:
         if not np.issubdtype(np.asarray(facet_ids).dtype, np.integer):
             raise ValueError(
                 "Boundary facet IDs must be integers, not rounded coordinates."
@@ -415,7 +415,7 @@ class Pennes1948Plan(StrictModule):
         balance_relative_tolerance: float,
         balance_absolute_tolerance_J: float,
         maximum_iterations: int,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh) or mesh.ambient_dimension != 3:
             raise ValueError(
                 "Thermal volume mesh must be a three-dimensional CellMesh in m."

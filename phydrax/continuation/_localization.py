@@ -80,7 +80,7 @@ class EventLocalizationPolicy(StrictModule):
         maximum_steps: int = 40,
         secant_safeguard: float = 0.1,
         policy_id: str | None = None,
-    ):
+    ) -> None:
         corrector_ = (
             NewtonKrylov(
                 linear_policy=LinearSolvePolicy(
@@ -179,7 +179,7 @@ class EventLocalizationDiagnostics(StrictModule):
         localized_indicator: Any,
         residual_norm: Any,
         corrector_status: Any,
-    ):
+    ) -> None:
         integer_values = tuple(
             jnp.asarray(value, dtype=jnp.int32)
             for value in (
@@ -231,7 +231,7 @@ class EventLocalizationProvenance(StrictModule):
         corrector_prepared_id: str,
         corrector_numeric_version: Any,
         indicator_id: str,
-    ):
+    ) -> None:
         values = tuple(
             str(value)
             for value in (
@@ -280,7 +280,7 @@ class EventLocalizationResult(StrictModule):
         diagnostics: EventLocalizationDiagnostics,
         provenance: EventLocalizationProvenance,
         /,
-    ):
+    ) -> None:
         if point is not None and not isinstance(point, BranchPoint):
             raise TypeError("point must be a BranchPoint or None.")
         if not isinstance(diagnostics, EventLocalizationDiagnostics):

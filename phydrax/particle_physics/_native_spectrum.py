@@ -90,7 +90,7 @@ class NativeSpectrumModelPlan(StrictModule):
         minimum_log_step: float = 1e-6,
         maximum_log_step: float = 0.1,
         maximum_steps: int = 100_000,
-    ):
+    ) -> None:
         if model not in ("sm-one-loop", "mssm-third-family-one-loop"):
             raise ValueError("Unknown native particle-spectrum model.")
         scheme_ = str(scheme).strip()
@@ -164,7 +164,7 @@ class SpectrumThreshold:
         offset: ArrayLike,
         source_id: str,
         /,
-    ):
+    ) -> None:
         scale_ = float(scale)
         matrix_ = np.array(matrix, dtype=np.float64, copy=True)
         offset_ = np.array(offset, dtype=np.float64, copy=True)
@@ -842,7 +842,7 @@ class NativeSpectrumBVPPlan(StrictModule):
         maximum_iterations: int = 20,
         finite_difference_step: float = 1e-5,
         trust_radius: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(model, NativeSpectrumModelPlan):
             raise TypeError("model must be NativeSpectrumModelPlan.")
         unknown_raw = tuple(unknown_indices)
@@ -1222,7 +1222,7 @@ class SpectrumCalculatorAdapter:
         required_blocks: Sequence[str],
         approximation_id: str,
         /,
-    ):
+    ) -> None:
         provider = str(provider_id).strip()
         blocks = tuple(sorted(str(value).upper() for value in required_blocks))
         approximation = str(approximation_id).strip()

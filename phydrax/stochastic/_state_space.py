@@ -187,7 +187,7 @@ class ObservationSequence(StrictModule):
         sensor_id: str | None = None,
         discretization_id: str | None = None,
         approximation_id: str | None = None,
-    ):
+    ) -> None:
         cases = _shape(case_shape, owner="case_shape")
         case_names = _names(case_axes, owner="case_axes")
         if len(cases) != len(case_names):
@@ -314,7 +314,9 @@ class DistributionStatePrior(AbstractStatePrior):
     prior_id: str = eqx.field(static=True)
     has_log_density: bool = eqx.field(static=True)
 
-    def __init__(self, distribution: AbstractProcessDistribution, /, *, prior_id: str):
+    def __init__(
+        self, distribution: AbstractProcessDistribution, /, *, prior_id: str
+    ) -> None:
         if not isinstance(distribution, AbstractProcessDistribution):
             raise TypeError("distribution must implement AbstractProcessDistribution.")
         self.distribution = distribution
@@ -357,7 +359,7 @@ class GaussianStatePrior(AbstractStatePrior):
         *,
         state_shape: Sequence[int],
         prior_id: str = "gaussian-prior",
-    ):
+    ) -> None:
         states = _shape(state_shape, owner="state_shape")
         size = _event_size(states)
         mean_array = jnp.asarray(mean, dtype=jnp.float64)
@@ -439,7 +441,7 @@ class CategoricalStatePrior(AbstractStatePrior):
         /,
         *,
         prior_id: str = "categorical-prior",
-    ):
+    ) -> None:
         state_values = jnp.asarray(states)
         if state_values.ndim < 1 or state_values.shape[0] <= 0:
             raise ValueError("states must have one non-empty leading category axis.")
@@ -579,7 +581,7 @@ class CallableTransitionKernel(AbstractTransitionKernel, NonTrainableState):
         log_prob_fn: (
             Callable[[Array, Array, Array, Array, StateSpaceStepContext], Array] | None
         ) = None,
-    ):
+    ) -> None:
         if not callable(sample_fn):
             raise TypeError("sample_fn must be callable.")
         if log_prob_fn is not None and not callable(log_prob_fn):
@@ -640,7 +642,7 @@ class MarginalTransitionKernel(AbstractTransitionKernel):
         /,
         *,
         approximation_id: str = "marginal-transition",
-    ):
+    ) -> None:
         if not isinstance(law, AbstractMarginalTransitionLaw):
             raise TypeError("law must implement AbstractMarginalTransitionLaw.")
         self.law = law
@@ -708,7 +710,7 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         process_id: str | None = None,
         approximation_id: str | None = None,
         has_log_density: bool = True,
-    ):
+    ) -> None:
         if isinstance(
             transition, (LinearGaussianParameterization, LinearGaussianDynamics)
         ):
@@ -942,7 +944,7 @@ class CallableObservationModel(AbstractObservationModel):
         state_shape: Sequence[int],
         observation_shape: Sequence[int],
         observation_id: str,
-    ):
+    ) -> None:
         if (
             not callable(location_fn)
             or not callable(log_prob_fn)
@@ -1064,7 +1066,7 @@ class ModelObservationLocation(StrictModule):
         time_input: bool = False,
         ports: ModelPorts | None = None,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
         if not isinstance(time_input, bool):
@@ -1161,7 +1163,7 @@ class GaussianObservationModel(AbstractObservationModel):
         state_shape: Sequence[int],
         observation_shape: Sequence[int],
         observation_id: str = "gaussian-observation",
-    ):
+    ) -> None:
         if not callable(location):
             raise TypeError("location must be callable.")
         self.location_fn = location
@@ -1243,7 +1245,7 @@ class LinearGaussianObservationModel(AbstractObservationModel):
         observation_shape: Sequence[int],
         offset: ArrayLike | Callable[[Array, StateSpaceStepContext], ArrayLike] = 0.0,
         observation_id: str = "linear-gaussian-observation",
-    ):
+    ) -> None:
         self.matrix = (
             cast(Callable[[Array, StateSpaceStepContext], ArrayLike], matrix)
             if callable(matrix)
@@ -1360,7 +1362,7 @@ class StateSpaceModel(StrictModule):
         basis_id: str | None = None,
         discretization_id: str | None = None,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(prior, AbstractStatePrior):
             raise TypeError("prior must implement AbstractStatePrior.")
         if not isinstance(transition, AbstractTransitionKernel):
@@ -1517,7 +1519,7 @@ class StateSpaceProblem(StrictModule):
         problem_id: str,
         args: Any = None,
         input_signal: AbstractStateSpaceInput | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, StateSpaceModel):
             raise TypeError("model must be a StateSpaceModel.")
         if not isinstance(observations, ObservationSequence):

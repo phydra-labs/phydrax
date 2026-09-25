@@ -32,7 +32,7 @@ class GridRegion(StrictModule, NonTrainableState):
     kind: GridRegionKind = eqx.field(static=True)
     region_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: GridRegionKind, /, *, region_id: str | None = None):
+    def __init__(self, kind: GridRegionKind, /, *, region_id: str | None = None) -> None:
         if kind not in (
             "interior",
             "physical_boundary",
@@ -80,7 +80,7 @@ class DerivativeRequest(StrictModule, NonTrainableState):
         source_location: GridLocation | None = None,
         target_location: GridLocation | None = None,
         request_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("grid must be a PreparedTensorGrid.")
         name_ = str(name)

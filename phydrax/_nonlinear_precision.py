@@ -177,7 +177,7 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
         linear: MixedPrecisionPolicy | None = None,
         components: Iterable[ComponentContract] = (),
         residual_scale: float | None = None,
-    ):
+    ) -> None:
         components_ = _residual_components(components)
         scale = _residual_scale(residual_scale)
         model = None if model_dtype is None else precision_dtype_name(model_dtype)

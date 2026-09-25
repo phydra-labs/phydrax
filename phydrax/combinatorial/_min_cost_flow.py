@@ -55,7 +55,7 @@ class CapacitatedFlowSpace(AbstractCombinatorialSpace):
         balances: Any,
         capacities: Any,
         /,
-    ):
+    ) -> None:
         if not isinstance(relation, EdgeRelation):
             raise TypeError("relation must be an EdgeRelation.")
         if relation.source_size != relation.target_size:
@@ -557,7 +557,7 @@ class CycleCancelingMinCostFlow(AbstractLinearCombinatorialMethod):
         maximum_iterations: int = 10_000,
         maximum_vertices: int = 100_000,
         maximum_edges: int = 1_000_000,
-    ):
+    ) -> None:
         limits = (maximum_iterations, maximum_vertices, maximum_edges)
         if any(
             isinstance(value, bool) or not isinstance(value, Integral) for value in limits

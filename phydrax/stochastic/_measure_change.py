@@ -69,7 +69,7 @@ class DiffusionMeasureChange(StrictModule):
         *,
         proposal_model_id: str,
         target_model_id: str,
-    ):
+    ) -> None:
         log_ratio = jnp.asarray(log_likelihood_ratio, dtype=jnp.float64)
         stochastic = jnp.asarray(stochastic_integral, dtype=jnp.float64)
         quadratic = jnp.asarray(quadratic_variation, dtype=jnp.float64)
@@ -120,7 +120,7 @@ class JumpMeasureChange(StrictModule):
         *,
         proposal_model_id: str,
         target_model_id: str,
-    ):
+    ) -> None:
         log_ratio = jnp.asarray(log_likelihood_ratio, dtype=jnp.float64)
         event_term = jnp.asarray(event_log_ratio, dtype=jnp.float64)
         mark_term = jnp.asarray(mark_log_ratio, dtype=jnp.float64)

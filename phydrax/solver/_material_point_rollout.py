@@ -46,7 +46,7 @@ class MPMReplayPolicy(StrictModule, NonTrainableState):
         /,
         *,
         block_size: int | None = None,
-    ):
+    ) -> None:
         if mode not in ("full", "step", "block"):
             raise ValueError("Unknown MPM replay mode.")
         size = None if block_size is None else int(block_size)
@@ -170,7 +170,7 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
         retention: MPMRetentionMode = "final",
         checkpoint_stride: int = 1,
         replay: MPMReplayPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedMPMDynamics):
             raise TypeError("dynamics must be PreparedMPMDynamics.")
         if not isinstance(temporal_mesh, TemporalMesh):

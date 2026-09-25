@@ -42,7 +42,7 @@ class PeriodicSheetHallPlan(StrictModule, NonTrainableState):
         charge_coulomb: float,
         chemical_potential_joule: float,
         temperature_kelvin: float,
-    ):
+    ) -> None:
         energies = np.asarray(energies_joule, dtype=np.float64)
         curvature = np.asarray(chern_density, dtype=np.float64)
         weights = np.asarray(point_weights, dtype=np.float64)

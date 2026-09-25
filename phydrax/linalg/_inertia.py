@@ -44,7 +44,7 @@ class InertiaPolicy(StrictModule):
         maximum_dense_dimension: int = 512,
         materialization: MaterializationPolicy | None = None,
         precision: PrecisionRequest | None = None,
-    ):
+    ) -> None:
         absolute = float(absolute_zero_tolerance)
         relative = float(relative_zero_tolerance)
         margin = float(certification_margin)

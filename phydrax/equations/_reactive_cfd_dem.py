@@ -59,7 +59,7 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
         /,
         *,
         schema_id: str,
-    ):
+    ) -> None:
         if not isinstance(transfer, PreparedMeshParticleGridSplat):
             raise TypeError("transfer must be PreparedMeshParticleGridSplat.")
         heat = np.asarray(heat_transfer_coefficient, dtype=np.float64)
@@ -315,7 +315,7 @@ class ReactiveCFDDEMCouplingPlan(StrictModule, NonTrainableState):
         hydrodynamics=None,
         morphology=None,
         radiation=None,
-    ):
+    ) -> None:
         if not isinstance(dem, PreparedSoftSphereDEMDynamics):
             raise TypeError("dem must be PreparedSoftSphereDEMDynamics.")
         if not isinstance(conversion, PreparedParticleConversionDynamics):

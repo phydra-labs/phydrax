@@ -85,7 +85,9 @@ class ExactCoefficientDomain(StrictModule):
     modulus: int | None = eqx.field(static=True)
     domain_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: Literal["ZZ", "QQ", "GF"], modulus: int | None = None, /):
+    def __init__(
+        self, kind: Literal["ZZ", "QQ", "GF"], modulus: int | None = None, /
+    ) -> None:
         if kind not in ("ZZ", "QQ", "GF"):
             raise ValueError("Exact coefficient domain must be ZZ, QQ, or GF.")
         if kind == "GF":
@@ -162,7 +164,7 @@ class ExactSparsePolynomialSystem(StrictModule):
         support: SparsePolynomialSupport,
         coefficients: Sequence[object],
         domain: ExactCoefficientDomain = QQ,
-    ):
+    ) -> None:
         if not isinstance(support, SparsePolynomialSupport):
             raise TypeError("support must be SparsePolynomialSupport.")
         if not isinstance(domain, ExactCoefficientDomain):
@@ -255,7 +257,7 @@ def _order(value: str, /) -> MonomialOrder:
 class GroebnerBasisArguments(StrictModule):
     monomial_order: MonomialOrder = eqx.field(static=True)
 
-    def __init__(self, monomial_order: MonomialOrder = "grevlex", /):
+    def __init__(self, monomial_order: MonomialOrder = "grevlex", /) -> None:
         self.monomial_order = _order(monomial_order)
 
     def to_record(self) -> dict[str, object]:
@@ -271,7 +273,7 @@ class NormalFormArguments(StrictModule):
         polynomial: ExactSparsePolynomialSystem,
         monomial_order: MonomialOrder = "grevlex",
         /,
-    ):
+    ) -> None:
         if not isinstance(polynomial, ExactSparsePolynomialSystem):
             raise TypeError("normal-form polynomial must be exact.")
         if polynomial.equation_count != 1:
@@ -289,7 +291,7 @@ class NormalFormArguments(StrictModule):
 class EliminateArguments(StrictModule):
     variable_indices: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, variable_indices: Sequence[int], /):
+    def __init__(self, variable_indices: Sequence[int], /) -> None:
         values = tuple(
             _index(value, "elimination variable") for value in variable_indices
         )
@@ -313,7 +315,7 @@ class UnivariateResultantArguments(StrictModule):
 
     def __init__(
         self, equation_indices: Sequence[int] = (0, 1), variable_index: int = 0, /
-    ):
+    ) -> None:
         equations = tuple(
             _index(value, "resultant equation") for value in equation_indices
         )
@@ -333,7 +335,7 @@ class UnivariateDiscriminantArguments(StrictModule):
     equation_index: int = eqx.field(static=True)
     variable_index: int = eqx.field(static=True)
 
-    def __init__(self, equation_index: int = 0, variable_index: int = 0, /):
+    def __init__(self, equation_index: int = 0, variable_index: int = 0, /) -> None:
         self.equation_index = _index(equation_index, "discriminant equation")
         self.variable_index = _index(variable_index, "discriminant variable")
 
@@ -384,7 +386,7 @@ class ExactSymbolicPlan(StrictModule):
         maximum_term_count: int = 1_000_000,
         maximum_exponent_entries: int = 10_000_000,
         maximum_storage_bytes: int = 256 * 1024 * 1024,
-    ):
+    ) -> None:
         if not isinstance(system, ExactSparsePolynomialSystem):
             raise TypeError("system must be ExactSparsePolynomialSystem.")
         operation_ = ExactSymbolicOperation(operation)
@@ -468,7 +470,9 @@ class PreparedExactSymbolic(StrictModule):
     provider: Any = eqx.field(static=True)
     request_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ExactSymbolicPlan, provider: Any, request_id: str, /):
+    def __init__(
+        self, plan: ExactSymbolicPlan, provider: Any, request_id: str, /
+    ) -> None:
         if not isinstance(plan, ExactSymbolicPlan):
             raise TypeError("plan must be ExactSymbolicPlan.")
         identifier = str(request_id)
@@ -501,7 +505,7 @@ class ExactSymbolicEvidence(StrictModule):
         run_artifact_id: str,
         independently_checked: Sequence[str],
         claim: str = "exact_claimed_by_external_provider",
-    ):
+    ) -> None:
         fields = tuple(
             str(value)
             for value in (
@@ -560,7 +564,7 @@ class ExactSymbolicResult(StrictModule):
         plan_id: str,
         request_id: str,
         diagnostic: str = "",
-    ):
+    ) -> None:
         status_ = ExactSymbolicStatus(status)
         if status_ is ExactSymbolicStatus.SUCCESS:
             if output is None or evidence is None:

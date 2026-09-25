@@ -39,7 +39,7 @@ class MPMDistributedPlan(StrictModule, NonTrainableState):
         particle_capacity_per_device: int,
         halo_blocks: int = 1,
         periodic_axes: Sequence[bool] | None = None,
-    ):
+    ) -> None:
         grid = tuple(logical_grid_shape)
         block = tuple(block_shape)
         owners = np.asarray(block_owner, dtype=np.int32)
@@ -124,7 +124,7 @@ class MPMShardCheckpointManifest(StrictModule, NonTrainableState):
         shard_payload_ids: Sequence[str],
         ownership_plan_id: str,
         /,
-    ):
+    ) -> None:
         generation_ = int(generation)
         shards = tuple(str(value) for value in shard_payload_ids)
         owner = str(ownership_plan_id)

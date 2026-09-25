@@ -34,7 +34,7 @@ class ProteinEnsembleComposition:
     components: tuple[tuple[str, int], ...]
     parameter_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for value in (self.construct_id, self.chemical_state_id, self.parameter_id):
             _identifier(value, "composition identity")
         if not self.components or len({name for name, _ in self.components}) != len(
@@ -87,7 +87,7 @@ class EnthalpyReplica:
     equilibration_evidence_id: str
     pressure_condition_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for value in (
             self.basin_id,
             self.replica_id,

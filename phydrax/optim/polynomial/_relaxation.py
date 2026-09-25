@@ -69,7 +69,7 @@ class PolynomialRelaxationResources(StrictModule):
         max_psd_matrix_size: int = 512,
         max_conic_rows: int = 1_000_000,
         max_dense_entries: int = 50_000_000,
-    ):
+    ) -> None:
         limits = {
             "max_moments": _positive_limit(max_moments, "max_moments"),
             "max_psd_blocks": _positive_limit(max_psd_blocks, "max_psd_blocks"),

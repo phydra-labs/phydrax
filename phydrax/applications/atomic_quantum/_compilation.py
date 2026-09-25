@@ -79,7 +79,7 @@ class CoherentDrive(StrictModule, NonTrainableState):
         /,
         *,
         frame_euler_angles: ArrayLike = (0.0, 0.0, 0.0),
-    ):
+    ) -> None:
         lower = _identifier(lower_label, "lower_label")
         upper = _identifier(upper_label, "upper_label")
         if lower == upper:
@@ -130,7 +130,7 @@ class RadiativeTransition(StrictModule, NonTrainableState):
         lower_label: str,
         rate: float,
         /,
-    ):
+    ) -> None:
         upper = _identifier(upper_label, "upper_label")
         lower = _identifier(lower_label, "lower_label")
         if upper == lower:
@@ -164,7 +164,7 @@ class LeakageTransition(StrictModule, NonTrainableState):
         target_label: str,
         rate: float,
         /,
-    ):
+    ) -> None:
         source = _identifier(source_label, "source_label")
         target = _identifier(target_label, "target_label")
         if source == target:
@@ -228,7 +228,7 @@ class AtomicQuantumPlan(StrictModule, NonTrainableState):
         maximum_liouville_elements: int = 16_777_216,
         maximum_channels: int = 512,
         maximum_materialization_bytes: int = 134_217_728,
-    ):
+    ) -> None:
         manifolds_ = tuple(manifolds)
         drives_ = tuple(drives)
         radiative_ = tuple(radiative_transitions)
@@ -322,7 +322,7 @@ class PreparedAtomicQuantumSystem(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: AtomicQuantumPlan, /):
+    def __init__(self, plan: AtomicQuantumPlan, /) -> None:
         if not isinstance(plan, AtomicQuantumPlan):
             raise TypeError("plan must be an AtomicQuantumPlan.")
         manifold_by_label = {manifold.label: manifold for manifold in plan.manifolds}

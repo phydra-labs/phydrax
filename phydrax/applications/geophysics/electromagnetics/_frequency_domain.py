@@ -30,7 +30,7 @@ class ConductiveEMMaterial(StrictModule):
         inverse_permeability_m_H: ArrayLike,
         cell_count: int,
         /,
-    ):
+    ) -> None:
         self.conductivity_S_m = self._tensor(conductivity_S_m, cell_count, "conductivity")
         self.permittivity_F_m = self._tensor(permittivity_F_m, cell_count, "permittivity")
         self.inverse_permeability_m_H = self._tensor(
@@ -72,7 +72,7 @@ class FrequencyDomainEMSurvey(StrictModule, NonTrainableState):
         receiver_functionals: ArrayLike,
         source_indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         sources = jnp.asarray(electric_current_functionals)
         receivers = jnp.asarray(receiver_functionals)
         indices = np.asarray(source_indices)
@@ -135,7 +135,7 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
     policy: la.LinearSolvePolicy
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, mesh: CellMesh, survey: FrequencyDomainEMSurvey, /):
+    def __init__(self, mesh: CellMesh, survey: FrequencyDomainEMSurvey, /) -> None:
         space = TetrahedralNedelecSpace(mesh)
         if not isinstance(survey, FrequencyDomainEMSurvey):
             raise TypeError("Frequency-domain EM requires FrequencyDomainEMSurvey.")

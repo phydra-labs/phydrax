@@ -61,7 +61,7 @@ class NaiveBayesDiagnostics(StrictModule):
         feature_mass: Any,
         domain_valid: Any,
         method: str,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.effective_samples = jnp.asarray(effective_samples)
@@ -164,7 +164,7 @@ class GaussianNaiveBayesModel(AbstractNaiveBayesModel):
         target_schema: TargetSchema,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.means = jnp.asarray(means)
         self.variances = jnp.asarray(variances)
         self.log_priors = jnp.asarray(log_priors)
@@ -211,7 +211,7 @@ class BernoulliNaiveBayesModel(AbstractNaiveBayesModel):
         *,
         threshold: float,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.feature_log_prob = jnp.asarray(feature_log_prob)
         self.feature_log_neg_prob = jnp.asarray(feature_log_neg_prob)
         self.log_priors = jnp.asarray(log_priors)
@@ -261,7 +261,7 @@ class MultinomialNaiveBayesModel(AbstractNaiveBayesModel):
         *,
         complement: bool,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.feature_log_prob = jnp.asarray(feature_log_prob)
         self.log_priors = jnp.asarray(log_priors)
         self.labels = jnp.asarray(labels)
@@ -310,7 +310,7 @@ class CategoricalNaiveBayesModel(AbstractNaiveBayesModel):
         *,
         category_counts: tuple[int, ...],
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.feature_log_prob = jnp.asarray(feature_log_prob)
         self.log_priors = jnp.asarray(log_priors)
         self.labels = jnp.asarray(labels)
@@ -467,7 +467,7 @@ class GaussianNaiveBayesRecipe(AbstractRecipe):
         class_prior: tuple[float, ...] = (),
         var_smoothing: float = 1e-9,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.num_classes, self.class_prior, self.weight_policy = _validate_common(
             num_classes, class_prior, weight_policy
         )
@@ -544,7 +544,7 @@ class BernoulliNaiveBayesRecipe(AbstractRecipe):
         alpha: float = 1.0,
         threshold: float = 0.0,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.num_classes, self.class_prior, self.weight_policy = _validate_common(
             num_classes, class_prior, weight_policy
         )
@@ -651,7 +651,7 @@ class MultinomialNaiveBayesRecipe(AbstractRecipe):
         class_prior: tuple[float, ...] = (),
         alpha: float = 1.0,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.num_classes, self.class_prior, self.weight_policy = _validate_common(
             num_classes, class_prior, weight_policy
         )
@@ -677,7 +677,7 @@ class ComplementNaiveBayesRecipe(AbstractRecipe):
         class_prior: tuple[float, ...] = (),
         alpha: float = 1.0,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.num_classes, self.class_prior, self.weight_policy = _validate_common(
             num_classes, class_prior, weight_policy
         )
@@ -706,7 +706,7 @@ class CategoricalNaiveBayesRecipe(AbstractRecipe):
         class_prior: tuple[float, ...] = (),
         alpha: float = 1.0,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.category_counts = tuple(category_counts)
         if not self.category_counts or any(count < 2 for count in self.category_counts):
             raise ValueError(

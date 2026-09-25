@@ -36,7 +36,7 @@ class BalanceLawCheckpointPlan(StrictModule, NonTrainableState):
         /,
         *,
         realization_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(runtime, PreparedBalanceLawRuntime):
             raise TypeError("runtime must be PreparedBalanceLawRuntime.")
         if not runtime.transport.checkpoint_supported:

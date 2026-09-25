@@ -39,7 +39,7 @@ class StateVectorOperator(StrictModule):
         /,
         *,
         operator_id: str,
-    ):
+    ) -> None:
         if not callable(action) or not callable(adjoint_action):
             raise TypeError("Operator and adjoint actions must be callable.")
         self.action_function = action
@@ -95,7 +95,7 @@ class QuantumJumpProblem(StrictModule):
         *,
         geometry_precision: GeometryPrecisionPolicy | None = None,
         problem_id: str = "quantum-jump",
-    ):
+    ) -> None:
         if not isinstance(hamiltonian, StateVectorOperator):
             raise TypeError("hamiltonian must be a StateVectorOperator.")
         collapse = tuple(collapse_operators)
@@ -153,7 +153,7 @@ class QuantumTrajectoryEnsemble(StrictModule):
         maximum_statistical_error: float = 0.25,
         temporal_precision: TemporalPrecisionPolicy,
         geometry_precision: GeometryPrecisionPolicy,
-    ):
+    ) -> None:
         if not isinstance(temporal_precision, TemporalPrecisionPolicy):
             raise TypeError("temporal_precision must be TemporalPrecisionPolicy.")
         if not isinstance(geometry_precision, GeometryPrecisionPolicy):

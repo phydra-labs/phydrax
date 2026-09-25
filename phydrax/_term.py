@@ -23,7 +23,7 @@ class TermEvaluation(StrictModule):
     value: Array
     diagnostics: Any
 
-    def __init__(self, value: Any, /, *, diagnostics: Any = None):
+    def __init__(self, value: Any, /, *, diagnostics: Any = None) -> None:
         scalar = jnp.asarray(value)
         if scalar.shape != ():
             raise ValueError(f"Scalar terms must return shape (), got {scalar.shape}.")

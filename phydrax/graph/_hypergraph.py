@@ -119,7 +119,7 @@ class HypergraphBipartiteGraph(StrictModule):
         hyperedge_node_type: int,
         incidence_edge_type: int,
         reverse_incidence_edge_type: int,
-    ):
+    ) -> None:
         self.graph = graph
         self.original_nodes = jnp.asarray(original_nodes, dtype=jnp.int32)
         self.hyperedge_nodes = jnp.asarray(hyperedge_nodes, dtype=jnp.int32)
@@ -412,7 +412,7 @@ class HypergraphConvolution(StrictModule):
         reverse_incidence_edge_type: int = 1,
         normalize_hyperedges: bool = True,
         normalize_nodes: bool = True,
-    ):
+    ) -> None:
         self.input_key = input_key
         self.output_key = output_key
         self.node_type_key = str(node_type_key)

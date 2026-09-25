@@ -32,7 +32,7 @@ class BatteryModelOutput(StrictModule):
     values: Array
     domain_valid: Array
 
-    def __init__(self, values: ArrayLike, domain_valid: ArrayLike, /):
+    def __init__(self, values: ArrayLike, domain_valid: ArrayLike, /) -> None:
         values_ = jnp.asarray(values)
         valid_ = jnp.asarray(domain_valid, dtype=jnp.bool_)
         if values_.ndim < 1:
@@ -65,7 +65,7 @@ class BatterySelectedOutputs(StrictModule):
         *,
         names: tuple[str, ...],
         units: tuple[str, ...],
-    ):
+    ) -> None:
         times = jnp.asarray(times_s)
         values_ = jnp.asarray(values)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
@@ -108,7 +108,7 @@ class BatteryTermination(StrictModule):
         *,
         reason_names: tuple[str, ...],
         derivative_valid: ArrayLike = True,
-    ):
+    ) -> None:
         terminated_ = jnp.asarray(terminated, dtype=jnp.bool_)
         time = jnp.asarray(time_s)
         reason = jnp.asarray(reason_index, dtype=jnp.int32)
@@ -267,7 +267,7 @@ class BatteryExperimentResult(StrictModule):
         predictive_admission_id: str | None = None,
         distribution_id: str | None = None,
         validity_envelope_id: str | None = None,
-    ):
+    ) -> None:
         status = jnp.asarray(application_status, dtype=jnp.int32)
         if status.shape != ():
             raise ValueError("Battery application status must be one scalar code.")

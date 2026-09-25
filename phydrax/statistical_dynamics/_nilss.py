@@ -129,7 +129,7 @@ class NILSSPlan(AbstractShadowingSolvePlan):
         rank_tolerance: float = 1.0e-10,
         maximum_retained_bytes: int = 2 * 1024 * 1024 * 1024,
         maximum_workspace_bytes: int = 4 * 1024 * 1024 * 1024,
-    ):
+    ) -> None:
         values = validate_shadowing_plan(
             "nilss",
             state_dimension,
@@ -315,7 +315,7 @@ class PreparedNILSS(StrictModule, NonTrainableState):
         direction: PyTree[Array],
         initial_basis: Array,
         initial_basis_defect: ArrayLike,
-    ):
+    ) -> None:
         self.plan = plan
         self.cost = cost
         self.problem = problem

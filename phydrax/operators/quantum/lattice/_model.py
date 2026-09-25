@@ -44,7 +44,7 @@ class LocalSpacePlan(StrictModule):
         *,
         statistics: LocalStatistics = "finite",
         fermion_mode_label: str | None = None,
-    ):
+    ) -> None:
         site = str(site_id)
         labels = tuple(str(value) for value in basis_labels)
         charge_names = tuple(str(value) for value in charge_labels)
@@ -176,7 +176,7 @@ class LocalOperatorPlan(StrictModule):
         /,
         *,
         fermion_parity: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(space, LocalSpacePlan):
             raise TypeError("space must be LocalSpacePlan.")
         name = str(label)
@@ -260,7 +260,7 @@ class QuantumLatticeTerm(StrictModule):
         coefficient: ArrayLike = 1.0,
         add_adjoint: bool = False,
         label: str,
-    ):
+    ) -> None:
         values = tuple(factors)
         scalar = jnp.asarray(coefficient)
         name = str(label)
@@ -315,7 +315,7 @@ class QuantumLatticeSpecification(StrictModule):
         /,
         *,
         fermion_mode_order: FermionModeOrder | None = None,
-    ):
+    ) -> None:
         local_spaces = tuple(spaces)
         local_terms = tuple(terms)
         if not local_spaces or any(

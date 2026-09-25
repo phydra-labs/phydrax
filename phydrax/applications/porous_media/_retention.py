@@ -41,7 +41,7 @@ class VanGenuchtenMualem(StrictModule):
         residual_saturation=0.0,
         pore_connectivity=0.5,
         alpha_unit: UnitDefinition = INVERSE_PASCAL,
-    ):
+    ) -> None:
         self.alpha_Pa_inverse = _finite(
             convert_value(alpha_Pa_inverse, source=alpha_unit, target=INVERSE_PASCAL),
             "van Genuchten alpha",

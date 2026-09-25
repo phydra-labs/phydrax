@@ -47,7 +47,7 @@ class GaussianPathConstructionPlan(StrictModule, NonTrainableState):
         times: ArrayLike,
         method: GaussianPathConstructionMethod = "chronological",
         factor_rank: int | None = None,
-    ):
+    ) -> None:
         (nodes,) = promote_real("GaussianPathConstructionPlan times", times)
         nodes_host = np.asarray(jax.device_get(nodes))
         if nodes_host.ndim != 1 or nodes_host.size < 2:

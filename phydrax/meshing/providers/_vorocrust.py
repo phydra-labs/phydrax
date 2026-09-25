@@ -49,7 +49,7 @@ class VoroCrustOptions:
     relative_merge_tolerance: float = 1e-12
     require_native_output_preallocation: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not np.isfinite(self.maximum_radius) or self.maximum_radius <= 0:
             raise ValueError("maximum_radius must be positive and finite.")
         if (
@@ -501,7 +501,7 @@ class VoroCrustProvider:
         self,
         executable: str | Path = "vc_mesh",
         extractor: str | Path = "phydrax-vorocrust",
-    ):
+    ) -> None:
         self.executable = _executable(executable)
         self.extractor = _executable(extractor)
 

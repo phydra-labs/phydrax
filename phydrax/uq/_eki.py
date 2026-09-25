@@ -47,7 +47,7 @@ class EnsembleKalmanDiagnostics(StrictModule):
         parameter_update_norms: Array,
         forward_solve_count: int,
         collapse_step: int | None,
-    ):
+    ) -> None:
         self.temperature_increments = jnp.asarray(temperature_increments)
         self.residual_norms = jnp.asarray(residual_norms)
         self.ensemble_spreads = jnp.asarray(ensemble_spreads)
@@ -94,7 +94,7 @@ class EnsembleKalmanResult(StrictModule):
         duration_seconds: float,
         target_ess: float,
         inflation: float,
-    ):
+    ) -> None:
         self.problem = problem
         self.initial_unconstrained_ensemble = initial_unconstrained_ensemble
         self.unconstrained_ensemble = unconstrained_ensemble
@@ -188,7 +188,7 @@ class EnsembleKalmanConvergenceError(RuntimeError):
 
     result: EnsembleKalmanResult
 
-    def __init__(self, result: EnsembleKalmanResult):
+    def __init__(self, result: EnsembleKalmanResult) -> None:
         self.result = result
         super().__init__(
             f"Ensemble Kalman inversion did not converge: {result.termination_reason}."
@@ -434,7 +434,7 @@ def _evaluate_residuals(problem, ensemble, count):
     return residuals
 
 
-def _validate_ensemble(problem, ensemble, expected_count):
+def _validate_ensemble(problem, ensemble, expected_count) -> None:
     leaves = jax.tree_util.tree_leaves(ensemble)
     if not leaves or any(
         jnp.asarray(leaf).ndim == 0 or jnp.asarray(leaf).shape[0] != expected_count

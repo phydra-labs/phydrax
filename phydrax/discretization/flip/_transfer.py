@@ -50,7 +50,7 @@ class FLIPParticleTransferPlan(StrictModule, NonTrainableState):
         execution: SplatExecutionPolicy | None = None,
         precision: ParticlePrecisionPolicy | None = None,
         budget: ParticleGridSplatBudget | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         assignment_ = (
@@ -92,7 +92,7 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: FLIPParticleTransferPlan, particles: ParticleDiscretization, /
-    ):
+    ) -> None:
         if not isinstance(plan, FLIPParticleTransferPlan):
             raise TypeError("plan must be FLIPParticleTransferPlan.")
         if not isinstance(particles, ParticleDiscretization):

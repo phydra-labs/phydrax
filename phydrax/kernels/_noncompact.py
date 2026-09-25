@@ -65,7 +65,7 @@ class NoncompactFeatureProposal(StrictModule, NonTrainableState):
         geometry_id: str,
         proposal_id: str,
         proposal_scale: float,
-    ):
+    ) -> None:
         frequency_array = jnp.asarray(frequencies, dtype=jnp.float64)
         direction_array = jnp.asarray(directions, dtype=jnp.float64)
         phase_array = jnp.asarray(phases, dtype=jnp.float64)
@@ -150,7 +150,7 @@ class ImportanceFeatureDiagnostics(StrictModule):
         /,
         *,
         finite_importance_variance: ArrayLike = True,
-    ):
+    ) -> None:
         log_weights = jnp.asarray(log_importance_weights, dtype=jnp.float64)
         if log_weights.ndim != 1 or log_weights.shape[0] == 0:
             raise ValueError("log_importance_weights must be a nonempty vector.")
@@ -393,7 +393,7 @@ class HyperbolicRandomFeatureKernel(AbstractFiniteFeatureKernel):
         length_scale: ArrayLike,
         smoothness: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             proposal, NoncompactFeatureProposal
         ) or not proposal.geometry_id.startswith("hyperbolic-H"):
@@ -532,7 +532,7 @@ class SPDRandomFeatureKernel(AbstractFiniteFeatureKernel):
         length_scale: ArrayLike,
         smoothness: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             proposal, NoncompactFeatureProposal
         ) or not proposal.geometry_id.startswith("spd-SPD"):

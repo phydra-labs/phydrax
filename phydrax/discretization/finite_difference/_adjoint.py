@@ -34,7 +34,7 @@ class FDAdjointIdentityReport(StrictModule, NonTrainableState):
         tolerance: float,
         subject_id: str,
         /,
-    ):
+    ) -> None:
         residual_ = float(residual)
         tolerance_ = float(tolerance)
         if not np.isfinite(residual_) or not np.isfinite(tolerance_) or tolerance_ <= 0.0:
@@ -66,7 +66,7 @@ class FDActionAdjointPlan(StrictModule):
         *,
         action_id: str | None = None,
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(action):
             raise TypeError("FD adjoint action must be callable.")
         precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
@@ -163,7 +163,7 @@ class CheckpointedFDAdjointPlan(StrictModule):
         *,
         checkpointing: FDCheckpointingMode = "recompute",
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         count = int(steps)
         if (
             not callable(step)

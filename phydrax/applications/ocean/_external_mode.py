@@ -50,7 +50,7 @@ class ExternalModeSubcyclePolicy(StrictModule, NonTrainableState):
         maximum_substeps: int | None = None,
         target_courant: float = 0.8,
         minimum_spacing: float = 0.0,
-    ):
+    ) -> None:
         if kind not in ("fixed-count", "adaptive-cfl"):
             raise ValueError("Unknown external-mode subcycle policy.")
         fixed = int(fixed_count)

@@ -107,7 +107,7 @@ class RobotNameIDMap(StrictModule, NonTrainableState):
     ids: tuple[int, ...] = eqx.field(static=True)
     mapping_id: str = eqx.field(static=True)
 
-    def __init__(self, names: Sequence[str], /):
+    def __init__(self, names: Sequence[str], /) -> None:
         names_ = tuple(str(name) for name in names)
         if (
             any(not name for name in names_)
@@ -228,7 +228,7 @@ class URDFFormatEvidence(StrictModule, NonTrainableState):
         source_id: str,
         target_id: str,
         /,
-    ):
+    ) -> None:
         links_ = tuple(links)
         joints_ = tuple(joints)
         manifest = resource.manifest
@@ -358,7 +358,7 @@ class URDFImportError(AdapterError):
         *,
         report: AdapterReport | None = None,
         evidence: URDFFormatEvidence | None = None,
-    ):
+    ) -> None:
         self.report = report
         self.evidence = evidence
         super().__init__(status, message)
@@ -405,7 +405,7 @@ class _LossAccumulator:
     maximum: int
     items: list[AdapterLoss]
 
-    def __init__(self, maximum: int, /):
+    def __init__(self, maximum: int, /) -> None:
         self.maximum = int(maximum)
         self.items = []
 

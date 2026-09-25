@@ -23,7 +23,7 @@ class LangmuirSurfactantLaw:
     temperature_k: float
     maximum_surface_concentration_mol_m2: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not isfinite(self.clean_surface_tension_n_m)
             or self.clean_surface_tension_n_m <= 0
@@ -70,7 +70,7 @@ class AdsorptionKinetics:
     desorption_rate_s_inv: float
     maximum_surface_concentration_mol_m2: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not isfinite(self.adsorption_rate_m_s)
             or self.adsorption_rate_m_s < 0
@@ -116,7 +116,7 @@ class CoxVoinovWettingLaw:
     microscopic_length_m: float
     macroscopic_length_m: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not isfinite(self.equilibrium_angle_rad)
             or not 0 < self.equilibrium_angle_rad < pi

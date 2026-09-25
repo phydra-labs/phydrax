@@ -185,7 +185,7 @@ class SpmParameters(StrictModule):
         positive_open_circuit_potential: BatteryPropertyLaw,
         limiting_electrode: LimitingElectrode = "balanced",
         capacity_balance_relative_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         area = _scalar(electrode_area_m2, "electrode_area_m2")
         negative_thickness = _scalar(
             negative_electrode_thickness_m, "negative_electrode_thickness_m"
@@ -444,7 +444,7 @@ class SpmInitialCondition(StrictModule):
         negative_stoichiometry: ArrayLike,
         positive_stoichiometry: ArrayLike,
         /,
-    ):
+    ) -> None:
         negative = _scalar(negative_stoichiometry, "negative_stoichiometry")
         positive = _scalar(positive_stoichiometry, "positive_stoichiometry")
         negative = eqx.error_if(
@@ -469,7 +469,9 @@ class SpmState(StrictModule):
     negative_amount_mol: Array
     positive_amount_mol: Array
 
-    def __init__(self, negative_amount_mol: ArrayLike, positive_amount_mol: ArrayLike, /):
+    def __init__(
+        self, negative_amount_mol: ArrayLike, positive_amount_mol: ArrayLike, /
+    ) -> None:
         negative = jnp.asarray(negative_amount_mol)
         positive = jnp.asarray(positive_amount_mol)
         if negative.ndim < 1 or positive.ndim < 1:
@@ -525,7 +527,7 @@ class PrescribedCurrentSpmPlan(StrictModule, NonTrainableState):
         ledger_amount_absolute_tolerance_mol: float = 1.0e-10,
         ledger_charge_absolute_tolerance_c: float = 1.0e-5,
         ledger_relative_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         positive_count = (
             negative_shell_count if positive_shell_count is None else positive_shell_count
         )
@@ -579,7 +581,7 @@ class PreparedPrescribedCurrentSpm(StrictModule, NonTrainableState):
     positive_particle: PreparedBatteryParticle
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: PrescribedCurrentSpmPlan, /):
+    def __init__(self, plan: PrescribedCurrentSpmPlan, /) -> None:
         if not isinstance(plan, PrescribedCurrentSpmPlan):
             raise TypeError("plan must be a PrescribedCurrentSpmPlan.")
         negative = plan.negative_particle.prepare()
@@ -1070,7 +1072,7 @@ class PrescribedCurrentSpmAdapter(StrictModule, NonTrainableState):
     observable_names: tuple[str, ...] = eqx.field(static=True)
     observable_units: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, plan: PrescribedCurrentSpmPlan, /):
+    def __init__(self, plan: PrescribedCurrentSpmPlan, /) -> None:
         if not isinstance(plan, PrescribedCurrentSpmPlan):
             raise TypeError("plan must be a PrescribedCurrentSpmPlan.")
         self.plan = plan

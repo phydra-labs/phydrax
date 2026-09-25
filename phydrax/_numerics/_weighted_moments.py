@@ -148,7 +148,7 @@ class LogWeightedAccumulator(StrictModule):
         squared_weight_value_sum: Array,
         squared_weight_abs_square_sum: Array,
         count: Array,
-    ):
+    ) -> None:
         self.log_scale = jnp.asarray(log_scale)
         self.weight_sum = jnp.asarray(weight_sum)
         self.squared_weight_sum = jnp.asarray(squared_weight_sum)
@@ -356,7 +356,7 @@ class WeightedMomentsDiagnostics(StrictModule):
         entropy: Array,
         log_weight_range: Array,
         finite_count: Array,
-    ):
+    ) -> None:
         self.weight_ess = jnp.asarray(weight_ess)
         self.relative_weight_ess = jnp.asarray(relative_weight_ess)
         self.coefficient_of_variation = jnp.asarray(coefficient_of_variation)

@@ -48,7 +48,7 @@ class MACGhostFluidProjectionPlan(StrictModule, NonTrainableState):
     projection: MACFreeSurfaceProjectionPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, projection: MACFreeSurfaceProjectionPlan, /):
+    def __init__(self, projection: MACFreeSurfaceProjectionPlan, /) -> None:
         if not isinstance(projection, MACFreeSurfaceProjectionPlan):
             raise TypeError("projection must be MACFreeSurfaceProjectionPlan.")
         self.projection = projection

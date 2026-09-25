@@ -127,7 +127,7 @@ class MeanFieldIndividualConstraintEvidence(StrictModule):
         best_response_path_id: str,
         evidence_id: str,
         valid: ArrayLike = True,
-    ):
+    ) -> None:
         if not isinstance(feasibility, GameFeasibilityEvidence):
             raise TypeError("feasibility must be GameFeasibilityEvidence.")
         if feasibility.case_shape != ():
@@ -201,7 +201,7 @@ class MeanFieldAggregateConstraintDerivativeEvidence(StrictModule):
         multiplier_ids: Sequence[str],
         evidence_id: str,
         valid: ArrayLike = True,
-    ):
+    ) -> None:
         jacobian = jnp.asarray(aggregate_jacobian)
         prices = jnp.asarray(multipliers)
         if jnp.issubdtype(jacobian.dtype, jnp.complexfloating):
@@ -335,7 +335,7 @@ class ConstrainedMeanFieldGameProblem(StrictModule):
         aggregate_derivative_evidence_id: str | None = None,
         multiplier_callback_id: str | None = None,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(fixed_point_problem, MeanFieldGameFixedPointProblem):
             raise TypeError(
                 "fixed_point_problem must be a MeanFieldGameFixedPointProblem."
@@ -516,7 +516,7 @@ class ConstrainedMeanFieldGamePlan(StrictModule):
         dual_feasibility_tolerance: float | None = None,
         complementarity_tolerance: float | None = None,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(maximum_iterations, int) or maximum_iterations <= 0:
             raise ValueError("maximum_iterations must be a positive integer.")
         consistency = _nonnegative_tolerance(

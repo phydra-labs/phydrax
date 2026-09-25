@@ -58,7 +58,7 @@ class PeriodicCellFeatures(StrictModule, NonTrainableState):
         /,
         *,
         twist: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(cell, PeriodicCell):
             raise TypeError("cell must be a PeriodicCell.")
         mode_host = np.asarray(reciprocal_modes)

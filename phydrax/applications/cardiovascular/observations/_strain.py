@@ -182,7 +182,7 @@ class PreparedStrainEvaluation(StrictModule, NonTrainableState):
         require_uncertainty: bool,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         self.sample_shape = tuple(sample_shape)
         self.reference_frame_id = _identifier(reference_frame_id, "reference_frame_id")
         self.measure = measure

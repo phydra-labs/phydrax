@@ -95,7 +95,7 @@ class AminoAcidScalarDefinition(StrictModule, NonTrainableState):
         *,
         source_manifests: Sequence[ReferenceArtifactManifest],
         requested_use: Mapping[str, bool],
-    ):
+    ) -> None:
         for values, name in (
             (volume, "volume"),
             (charge, "charge"),
@@ -178,7 +178,7 @@ class ProteinResidueEnvironment(StrictModule, NonTrainableState):
         residue_mapping_id: str,
         source_manifests: Sequence[ReferenceArtifactManifest],
         requested_use: Mapping[str, bool],
-    ):
+    ) -> None:
         if isinstance(residue_position, bool) or not isinstance(residue_position, int):
             raise TypeError("residue_position must be a one-based integer.")
         if residue_position < 1:
@@ -284,7 +284,7 @@ class ProteinMutationFeatures(StrictModule, NonTrainableState):
         source_measurement_manifest_id: str,
         source_manifests: Sequence[ReferenceArtifactManifest],
         requested_use: Mapping[str, bool],
-    ):
+    ) -> None:
         array = np.asarray(values, dtype=np.float64)
         names = tuple(_identifier(value, "feature name") for value in feature_names)
         if array.ndim != 1 or array.shape != (len(names),) or not names:
@@ -399,7 +399,7 @@ class ProteinFeatureTransform(StrictModule, NonTrainableState):
         cohort_id: str,
         source_id: str,
         constant_feature_names: Sequence[str] = (),
-    ):
+    ) -> None:
         mean_array = np.asarray(mean, dtype=np.float64)
         scale_array = np.asarray(scale, dtype=np.float64)
         names = tuple(feature_names)
@@ -681,7 +681,7 @@ class DoubleMutationFeatures(StrictModule, NonTrainableState):
         pair_unit_id: str,
         pair_distance: float,
         pair_context_id: str,
-    ):
+    ) -> None:
         if not isinstance(first, ProteinMutationFeatures) or not isinstance(
             second, ProteinMutationFeatures
         ):

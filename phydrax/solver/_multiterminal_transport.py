@@ -53,7 +53,7 @@ class PeriodicLeadContactPlan(StrictModule, NonTrainableState):
         device_coupling: ArrayLike,
         contact_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(lead, PeriodicPrincipalLayerLeadPlan):
             raise TypeError("lead must be PeriodicPrincipalLayerLeadPlan.")
         coupling = np.asarray(device_coupling)
@@ -105,7 +105,7 @@ class MultiTerminalCoherentProblem(StrictModule, NonTrainableState):
         particle_continuity_tolerance: float = 1.0e-8,
         energy_continuity_tolerance_watt: float = 1.0e-12,
         numerical_broadening_joule: float = 1.0e-12,
-    ):
+    ) -> None:
         hamiltonian_ = np.asarray(hamiltonian)
         overlap_ = np.asarray(overlap)
         contacts_ = tuple(contacts)
@@ -334,7 +334,7 @@ class TransportProbePlan(StrictModule, NonTrainableState):
         /,
         *,
         residual_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         indices = tuple(int(value) for value in probe_indices)
         tolerance = float(residual_tolerance)
         if (

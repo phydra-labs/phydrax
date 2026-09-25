@@ -35,7 +35,7 @@ class LocalTestSpaceEvidence(StrictModule, NonTrainableState):
         gram_condition: float,
         orthonormal: bool,
         verified: bool,
-    ):
+    ) -> None:
         self.minimum_gram_eigenvalue = float(minimum_gram_eigenvalue)
         self.gram_condition = float(gram_condition)
         self.orthonormal = bool(orthonormal)
@@ -63,7 +63,7 @@ class LocalTestSpace(StrictModule, NonTrainableState):
         weights: ArrayLike | None = None,
         test_space_id: str,
         gram_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(component, DomainComponent):
             raise TypeError("component must be a DomainComponent.")
         basis = np.asarray(basis_values, dtype=np.float64)
@@ -121,7 +121,7 @@ class LocalizedResidualNorm(AbstractScalarTerm):
         *,
         scale: float = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(condition, AbstractResidualCondition):
             raise TypeError("condition must be an AbstractResidualCondition.")
         if not isinstance(test_space, LocalTestSpace):

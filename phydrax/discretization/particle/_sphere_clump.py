@@ -48,7 +48,7 @@ class SphereClumpTemplatePlan(StrictModule, NonTrainableState):
         *,
         center_tolerance: float = 1.0e-12,
         template_id: str | None = None,
-    ):
+    ) -> None:
         offset = np.asarray(component_offset)
         radius = np.asarray(component_radius)
         mass = np.asarray(component_mass)
@@ -137,7 +137,7 @@ class RigidSphereClumpSetPlan(StrictModule, NonTrainableState):
         *,
         fixed_mask: ArrayLike | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         templates_ = tuple(templates)
         if not templates_ or any(
             not isinstance(value, SphereClumpTemplatePlan) for value in templates_
@@ -207,7 +207,7 @@ class PreparedRigidSphereClumpSet(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: RigidSphereClumpSetPlan, particles: ParticleDiscretization, /
-    ):
+    ) -> None:
         if plan.owner_template_ids.shape != (particles.capacity,):
             raise ValueError("Clump owners must match particle capacity.")
         dimension = particles.ambient_dimension

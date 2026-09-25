@@ -83,7 +83,7 @@ class _AbstractRadialMultipolePlan3D(StrictModule, NonTrainableState):
         plane_target_top_nodes: int = 32,
         plane_opening_angle: float = 0.6,
         maximum_plane_node_argument: float = 1.0,
-    ):
+    ) -> None:
         parameter_ = float(parameter)
         maximum_argument = float(maximum_dimensionless_argument)
         maximum_plane_argument = float(maximum_plane_node_argument)
@@ -172,7 +172,7 @@ class HelmholtzMultipolePlan3D(_AbstractRadialMultipolePlan3D):
         plane_target_top_nodes: int = 32,
         plane_opening_angle: float = 0.6,
         maximum_plane_node_argument: float = 1.0,
-    ):
+    ) -> None:
         super().__init__(
             reference_sources,
             lower,
@@ -232,7 +232,7 @@ class ModifiedHelmholtzMultipolePlan3D(_AbstractRadialMultipolePlan3D):
         plane_target_top_nodes: int = 32,
         plane_opening_angle: float = 0.6,
         maximum_plane_node_argument: float = 1.0,
-    ):
+    ) -> None:
         super().__init__(
             reference_sources,
             lower,
@@ -272,7 +272,7 @@ class _AbstractPreparedRadialMultipole3D(AbstractPreparedLaplaceMultipole3D):
     projection_harmonics: Array
     equivalent_radius: float = eqx.field(static=True)
 
-    def __init__(self, plan: _AbstractRadialMultipolePlan3D, /):
+    def __init__(self, plan: _AbstractRadialMultipolePlan3D, /) -> None:
         if not isinstance(plan, _AbstractRadialMultipolePlan3D):
             raise TypeError("plan must be a radial multipole plan.")
         super().__init__(plan.substrate)
@@ -577,7 +577,7 @@ class _AbstractPreparedRadialMultipole3D(AbstractPreparedLaplaceMultipole3D):
 class PreparedHelmholtzMultipole3D(_AbstractPreparedRadialMultipole3D):
     """Prepared complete outgoing-Helmholtz multipole pipeline."""
 
-    def __init__(self, plan: HelmholtzMultipolePlan3D, /):
+    def __init__(self, plan: HelmholtzMultipolePlan3D, /) -> None:
         if not isinstance(plan, HelmholtzMultipolePlan3D):
             raise TypeError("plan must be HelmholtzMultipolePlan3D.")
         super().__init__(plan)
@@ -586,7 +586,7 @@ class PreparedHelmholtzMultipole3D(_AbstractPreparedRadialMultipole3D):
 class PreparedModifiedHelmholtzMultipole3D(_AbstractPreparedRadialMultipole3D):
     """Prepared complete screened modified-Helmholtz multipole pipeline."""
 
-    def __init__(self, plan: ModifiedHelmholtzMultipolePlan3D, /):
+    def __init__(self, plan: ModifiedHelmholtzMultipolePlan3D, /) -> None:
         if not isinstance(plan, ModifiedHelmholtzMultipolePlan3D):
             raise TypeError("plan must be ModifiedHelmholtzMultipolePlan3D.")
         super().__init__(plan)

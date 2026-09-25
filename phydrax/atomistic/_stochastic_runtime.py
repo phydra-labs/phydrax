@@ -44,7 +44,7 @@ class OverdampedAtomisticPlan(StrictModule, NonTrainableState):
         /,
         *,
         realization_id: int = 0,
-    ):
+    ) -> None:
         step = float(step_size)
         mobility_ = float(mobility)
         thermal = float(temperature)
@@ -104,7 +104,7 @@ class GeneralizedLangevinRuntimePlan(StrictModule, NonTrainableState):
         *,
         covariance_tolerance: float = 1.0e-10,
         realization_id: int = 0,
-    ):
+    ) -> None:
         transition = np.asarray(transition_matrix, dtype=np.float64)
         noise = np.asarray(noise_factor, dtype=np.float64)
         thermal = float(temperature)
@@ -181,7 +181,7 @@ class PreparedGeneralizedLangevinRuntime(StrictModule, NonTrainableState):
         plan: GeneralizedLangevinRuntimePlan,
         dynamics: PreparedAtomisticDynamics,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, GeneralizedLangevinRuntimePlan):
             raise TypeError("plan must be GeneralizedLangevinRuntimePlan.")
         if not isinstance(dynamics, PreparedAtomisticDynamics):

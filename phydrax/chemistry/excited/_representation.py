@@ -24,7 +24,7 @@ class TDAStateRepresentation(StrictModule, NonTrainableState):
     orthonormality_residual: Array
     representation_id: str = eqx.field(static=True)
 
-    def __init__(self, amplitudes: ArrayLike, /):
+    def __init__(self, amplitudes: ArrayLike, /) -> None:
         values = jnp.asarray(amplitudes)
         if values.ndim != 2 or values.shape[1] == 0:
             raise ValueError("TDA amplitudes must have shape (basis, roots).")
@@ -56,7 +56,7 @@ class RPAStateRepresentation(StrictModule, NonTrainableState):
         y_amplitudes: ArrayLike,
         left_amplitudes: ArrayLike,
         /,
-    ):
+    ) -> None:
         x = jnp.asarray(x_amplitudes)
         y = jnp.asarray(y_amplitudes, dtype=x.dtype)
         left = jnp.asarray(left_amplitudes, dtype=x.dtype)
@@ -104,7 +104,7 @@ class BiorthogonalStateRepresentation(StrictModule, NonTrainableState):
         left_amplitudes: ArrayLike,
         method: str,
         /,
-    ):
+    ) -> None:
         right = jnp.asarray(right_amplitudes)
         left = jnp.asarray(left_amplitudes, dtype=right.dtype)
         method_ = str(method).strip()
@@ -135,7 +135,9 @@ class CIStateRepresentation(StrictModule, NonTrainableState):
     orthonormality_residual: Array
     representation_id: str = eqx.field(static=True)
 
-    def __init__(self, coefficients: ArrayLike, determinant_ids: tuple[int, ...], /):
+    def __init__(
+        self, coefficients: ArrayLike, determinant_ids: tuple[int, ...], /
+    ) -> None:
         values = jnp.asarray(coefficients)
         determinants = tuple(determinant_ids)
         if values.ndim != 2 or values.shape[0] != len(determinants):

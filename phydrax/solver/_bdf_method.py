@@ -25,7 +25,7 @@ class BDFMethod(StrictModule, NonTrainableState):
     maximum_order: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_order: int = 2, /):
+    def __init__(self, maximum_order: int = 2, /) -> None:
         order = int(maximum_order)
         if order < 1 or order > _MAXIMUM_BDF_ORDER:
             raise ValueError("BDFMethod maximum_order must lie in [1, 5].")

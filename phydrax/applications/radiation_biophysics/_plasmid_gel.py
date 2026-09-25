@@ -47,7 +47,7 @@ class PlasmidGelAssay:
         /,
         *,
         calibration_covariance: ArrayLike | None = None,
-    ):
+    ) -> None:
         response = np.asarray(response_matrix, dtype=np.float64)
         offset = np.asarray(background, dtype=np.float64)
         if (
@@ -214,7 +214,7 @@ class PlasmidGelObservations:
         source: ReferenceArtifactManifest,
         lane_gain_standard_errors: ArrayLike | None = None,
         observation_covariance: ArrayLike | None = None,
-    ):
+    ) -> None:
         identifiers = tuple(observation_ids)
         preparations = tuple(preparation_ids)
         days = tuple(irradiation_day_ids)
@@ -368,7 +368,7 @@ class PlasmidFormPrediction:
         fit_independent_unit_ids: tuple[str, ...],
         fit_preparation_ids: tuple[str, ...],
         form_fraction_covariance: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(history_profile, TimedRadiationHistoryProfile):
             raise TypeError("history_profile must be TimedRadiationHistoryProfile.")
         for value, name in (

@@ -51,7 +51,7 @@ class CliffordEquivarianceCertificate(AbstractConstructionCertificate):
         output_representation_id: str,
         construction: str,
         group_scope: str = "orthogonal-euclidean",
-    ):
+    ) -> None:
         values = tuple(
             str(value)
             for value in (
@@ -102,7 +102,7 @@ class CliffordGradeLinear(StrictModule):
         *,
         use_scalar_bias: bool = True,
         key: Array = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(
             input_representation, CliffordGradeRepresentation
         ) or not isinstance(output_representation, CliffordGradeRepresentation):
@@ -195,7 +195,7 @@ class CliffordGeometricProductLayer(StrictModule):
         /,
         *,
         key: Array = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(representation, CliffordGradeRepresentation):
             raise TypeError("representation must be CliffordGradeRepresentation.")
         channels = representation.uniform_multiplicity
@@ -337,7 +337,7 @@ class CliffordEquivarianceAuditReport(StrictModule, NonTrainableState):
         reference_scale: ArrayLike,
         tolerance: ArrayLike,
         audit_set_id: str,
-    ):
+    ) -> None:
         self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
         self.maximum_residual = jnp.asarray(maximum_residual).reshape(())
         self.root_mean_square_residual = jnp.asarray(root_mean_square_residual).reshape(

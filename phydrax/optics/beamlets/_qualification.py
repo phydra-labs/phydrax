@@ -40,7 +40,7 @@ class NineRayTraceSamples(StrictModule, NonTrainableState):
         perturbation_steps: ArrayLike,
         valid: ArrayLike = True,
         /,
-    ):
+    ) -> None:
         inputs = jnp.asarray(input_phase_space)
         outputs = jnp.asarray(output_phase_space)
         steps = jnp.asarray(perturbation_steps)

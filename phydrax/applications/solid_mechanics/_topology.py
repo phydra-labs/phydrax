@@ -70,7 +70,7 @@ class TopologyMechanicsProblem(StrictModule, NonTrainableState):
         branch_evaluator: Callable | None = None,
         state_realization: Callable | None = None,
         problem_id: str = "topology-mechanics",
-    ):
+    ) -> None:
         if not callable(state_residual):
             raise TypeError("state_residual must be callable.")
         cases = tuple(load_cases)
@@ -265,7 +265,7 @@ class TopologyContinuationStage(StrictModule, NonTrainableState):
         *,
         penalty: ArrayLike | None = None,
         stage_id: str,
-    ):
+    ) -> None:
         beta_ = np.asarray(beta)
         penalty_ = None if penalty is None else np.asarray(penalty)
         identifier = str(stage_id)
@@ -306,7 +306,7 @@ class TopologyContinuationSchedule(StrictModule, NonTrainableState):
         /,
         *,
         schedule_id: str = "topology-continuation",
-    ):
+    ) -> None:
         stages_ = tuple(stages)
         if not stages_ or any(
             not isinstance(stage, TopologyContinuationStage) for stage in stages_

@@ -37,7 +37,7 @@ class HallComponentKey(StrictModule, NonTrainableState):
         valley_id: str | None = None,
         layer_id: str | None = None,
         subband_id: str | None = None,
-    ):
+    ) -> None:
         component = str(component_id).strip()
         species = str(species_id).strip()
         spin = None if twice_spin_projection is None else int(twice_spin_projection)
@@ -88,7 +88,7 @@ class MonopoleOrbitalKey(StrictModule, NonTrainableState):
         landau_level: int,
         twice_orbital_projection: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(component, HallComponentKey):
             raise TypeError("component must be HallComponentKey.")
         level = int(landau_level)
@@ -126,7 +126,7 @@ class MonopoleLandauLevel(StrictModule, NonTrainableState):
         /,
         *,
         one_body_energy: float = 0.0,
-    ):
+    ) -> None:
         flux = int(twice_monopole_strength)
         level = int(landau_level)
         energy = float(one_body_energy)
@@ -178,7 +178,7 @@ class HallChargeSector(StrictModule, NonTrainableState):
         /,
         *,
         moduli: Mapping[str, int | None] | None = None,
-    ):
+    ) -> None:
         target_values = tuple(
             sorted((str(key), int(value)) for key, value in targets.items())
         )
@@ -214,7 +214,7 @@ class HallComponentRoster(StrictModule, NonTrainableState):
     components: tuple[HallComponentKey, ...] = eqx.field(static=True)
     roster_id: str = eqx.field(static=True)
 
-    def __init__(self, components: Sequence[HallComponentKey], /):
+    def __init__(self, components: Sequence[HallComponentKey], /) -> None:
         values = tuple(components)
         if not values or any(not isinstance(value, HallComponentKey) for value in values):
             raise TypeError("components must contain HallComponentKey values.")

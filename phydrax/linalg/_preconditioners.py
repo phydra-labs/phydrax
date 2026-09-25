@@ -168,7 +168,7 @@ class PrecisionCastPreconditioner(AbstractPreconditioner):
         space: AbstractVectorSpace,
         compute_dtype: Any,
         /,
-    ):
+    ) -> None:
         if not isinstance(inner, AbstractPreconditioner):
             raise TypeError("inner must be an AbstractPreconditioner.")
         if not isinstance(space, AbstractVectorSpace):
@@ -207,7 +207,7 @@ class PrecisionCastPreconditioner(AbstractPreconditioner):
 
 
 class IdentityPreconditioner(AbstractPreconditioner, NonTrainableState):
-    def __init__(self, space: AbstractVectorSpace, /):
+    def __init__(self, space: AbstractVectorSpace, /) -> None:
         if not isinstance(space, AbstractVectorSpace):
             raise TypeError("space must be an AbstractVectorSpace.")
         self.space = space
@@ -253,7 +253,7 @@ class DiagonalPreconditioner(AbstractPreconditioner, NonTrainableState):
         space: AbstractVectorSpace | None = None,
         positive_definite: bool | None = None,
         preconditioner_id: str | None = None,
-    ):
+    ) -> None:
         values = _inexact(diagonal)
         if values.ndim != 1:
             raise ValueError("diagonal must be one-dimensional.")
@@ -332,7 +332,7 @@ class BlockDiagonalPreconditioner(AbstractPreconditioner, NonTrainableState):
         space: AbstractVectorSpace,
         positive_definite: bool = False,
         preconditioner_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(space, AbstractVectorSpace):
             raise TypeError("space must be an AbstractVectorSpace.")
         matrices = tuple(jnp.asarray(block) for block in blocks)
@@ -423,7 +423,7 @@ class LocalBlockPreconditioner(AbstractPreconditioner, NonTrainableState):
         positive_definite: bool = False,
         relaxation: float = 1.0,
         preconditioner_id: str | None = None,
-    ):
+    ) -> None:
         matrices = _inexact(blocks)
         if (
             matrices.ndim != 3
@@ -547,7 +547,7 @@ class IncompleteFactorizationPreconditioner(AbstractPreconditioner, NonTrainable
         unit_lower: bool = False,
         positive_definite: bool = False,
         preconditioner_id: str | None = None,
-    ):
+    ) -> None:
         lower_ = _inexact(lower)
         upper_ = _inexact(upper)
         if (
@@ -640,7 +640,7 @@ class LowRankWoodburyPreconditioner(AbstractPreconditioner, NonTrainableState):
         space: AbstractVectorSpace | None = None,
         positive_definite: bool = False,
         preconditioner_id: str | None = None,
-    ):
+    ) -> None:
         diagonal_ = _inexact(diagonal)
         left_ = _inexact(left)
         core_ = _inexact(core)
@@ -752,7 +752,7 @@ class OperatorPreconditioner(AbstractPreconditioner, NonTrainableState):
         *,
         positive_definite: bool = False,
         preconditioner_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if not operator.source.compatible(operator.target) or operator.batch_shape:

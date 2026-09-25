@@ -232,7 +232,7 @@ class ClusterDiagnostics(StrictModule):
         converged: Any,
         degeneracy: Any = False,
         method: str,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
@@ -265,7 +265,7 @@ class HardClusterModel(AbstractFittedModel):
         *,
         metric: MetricName = "squared-euclidean",
         method: str,
-    ):
+    ) -> None:
         self.centers = jnp.asarray(centers)
         self.active_clusters = jnp.asarray(active_clusters, dtype=jnp.bool_)
         self.in_size = self.centers.shape[-1]
@@ -316,7 +316,7 @@ class SoftClusterModel(AbstractFittedModel):
         *,
         metric: MetricName = "squared-euclidean",
         method: str,
-    ):
+    ) -> None:
         self.centers = jnp.asarray(centers)
         self.active_clusters = jnp.asarray(active_clusters, dtype=jnp.bool_)
         self.temperature = positive_scalar(

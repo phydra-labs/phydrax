@@ -33,7 +33,7 @@ class VortexParticleProperties(StrictModule):
         /,
         *,
         properties_id: str | None = None,
-    ):
+    ) -> None:
         core = None if core_radius is None else jnp.asarray(core_radius)
         volumes = None if volume is None else jnp.asarray(volume)
         if core is not None and core.ndim != 1:
@@ -143,7 +143,7 @@ class VortexParticleStateLayout(StrictModule, NonTrainableState):
         *,
         dynamic_core: bool = False,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         capacity_, dimension_ = int(capacity), int(dimension)
         if capacity_ <= 0:
             raise ValueError("Vortex-particle state capacity must be positive.")

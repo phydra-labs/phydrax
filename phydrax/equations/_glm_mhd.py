@@ -30,7 +30,7 @@ class GLMIdealMHDSystem(AbstractAdmissibleSystem, NonTrainableState):
         material: IdealGasMaterial | None = None,
         cleaning_speed: float = 1.0,
         damping_rate: float = 0.1,
-    ):
+    ) -> None:
         speed = float(cleaning_speed)
         damping = float(damping_rate)
         if (

@@ -43,7 +43,7 @@ class GraphMetricPrior(StrictModule, NonTrainableState):
         gradient_precision: float = 1.0,
         reference: ArrayLike = 0.0,
         parameter_unit_id: str = "dimensionless",
-    ):
+    ) -> None:
         measures = np.asarray(cell_measures, dtype=np.float64)
         owner, neighbor = np.asarray(edge_owner), np.asarray(edge_neighbor)
         weights = np.asarray(edge_weights, dtype=np.float64)
@@ -146,7 +146,7 @@ class TotalVariationPrior(StrictModule, NonTrainableState):
         /,
         *,
         smoothing: float = 0.0,
-    ):
+    ) -> None:
         owner, neighbor = np.asarray(edge_owner), np.asarray(edge_neighbor)
         weights = np.asarray(edge_weights, dtype=np.float64)
         scale_, smoothing_ = float(scale), float(smoothing)
@@ -209,7 +209,7 @@ class TemporalDifferencePrior(StrictModule, NonTrainableState):
         *,
         order: Literal[1, 2] = 1,
         time_unit_id: str = "s",
-    ):
+    ) -> None:
         values = np.asarray(times, dtype=np.float64)
         scale_ = float(scale)
         if (
@@ -278,7 +278,7 @@ class CrossGradientPrior(StrictModule, NonTrainableState):
         *,
         normalized: bool = False,
         epsilon: float = 0.0,
-    ):
+    ) -> None:
         matrix = np.asarray(gradient_matrix, dtype=np.float64)
         measures = np.asarray(cell_measures, dtype=np.float64)
         dimension_, scale_, epsilon_ = int(dimension), float(scale), float(epsilon)
@@ -350,7 +350,7 @@ class SPDEPrecisionPrior(StrictModule, NonTrainableState):
         /,
         *,
         logdet_precision: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(precision, AbstractLinearOperator):
             raise TypeError("SPDE precision must be a native linear operator.")
         if (

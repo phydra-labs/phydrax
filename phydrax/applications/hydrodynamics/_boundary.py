@@ -43,7 +43,7 @@ class FreeSurfaceBoundaryPlan(StrictModule, NonTrainableState):
         *,
         gas_pressure: float = 101_325.0,
         reference_pressure: float = 101_325.0,
-    ):
+    ) -> None:
         gas = float(gas_pressure)
         reference = float(reference_pressure)
         if not np.isfinite(gas) or not np.isfinite(reference):

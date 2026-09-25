@@ -59,7 +59,7 @@ class ContactGuaranteeEvidence(StrictModule):
         failure_code: ArrayLike = 0,
         margin: ArrayLike = jnp.inf,
         backend_id: str,
-    ):
+    ) -> None:
         level_value = ContactGuaranteeLevel(int(level))
         required_value = ContactGuaranteeLevel(int(required_level))
         level_ = jnp.asarray(int(level_value), dtype=jnp.int32)

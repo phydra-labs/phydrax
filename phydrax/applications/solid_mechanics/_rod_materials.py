@@ -75,7 +75,7 @@ class RodMaterialSite(StrictModule, NonTrainableState):
         component_count: int,
         rod_id: str,
         /,
-    ):
+    ) -> None:
         if material_kind not in ("stretch_shear", "bend_twist"):
             raise ValueError("Unknown rod material kind.")
         expected_owner = "segment" if material_kind == "stretch_shear" else "junction"
@@ -126,7 +126,7 @@ class RodMaterialWorkset(StrictModule, NonTrainableState):
         *,
         material_kind: RodMaterialKind,
         component_count: int,
-    ):
+    ) -> None:
         sites_ = tuple(sites)
         components = int(component_count)
         if material_kind not in ("stretch_shear", "bend_twist") or components < 1:
@@ -206,7 +206,7 @@ class RodConstitutiveControl(StrictModule):
         control_id: str,
         intrinsic_owner_id: str | None = None,
         stiffness_owner_id: str | None = None,
-    ):
+    ) -> None:
         intrinsic = jnp.asarray(intrinsic_strain)
         intrinsic_rate = jnp.asarray(intrinsic_strain_rate)
         stiffness_ = jnp.asarray(stiffness)
@@ -561,7 +561,7 @@ class LinearElasticRodMaterialPlan(StrictModule, NonTrainableState):
     component_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, stiffness: ArrayLike, /, *, plan_id: str | None = None):
+    def __init__(self, stiffness: ArrayLike, /, *, plan_id: str | None = None) -> None:
         stiffness_ = _real_array("stiffness", stiffness, 3)
         if stiffness_.shape[1] != stiffness_.shape[2]:
             raise ValueError("Rod stiffness matrices must be square.")
@@ -593,7 +593,7 @@ class PreparedLinearElasticRodMaterial(RodConstitutiveTrial, NonTrainableState):
 
     def __init__(
         self, plan: LinearElasticRodMaterialPlan, workset: RodMaterialWorkset, /
-    ):
+    ) -> None:
         if not isinstance(plan, LinearElasticRodMaterialPlan):
             raise TypeError("plan must be a LinearElasticRodMaterialPlan.")
         if not isinstance(workset, RodMaterialWorkset):
@@ -726,7 +726,7 @@ class KelvinVoigtRodMaterialPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         stiffness_ = _real_array("stiffness", stiffness, 3)
         viscosity_ = _real_array("viscosity", viscosity, 3)
         if (
@@ -768,7 +768,9 @@ class PreparedKelvinVoigtRodMaterial(RodConstitutiveTrial, NonTrainableState):
     control_size: int = eqx.field(static=True)
     material_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: KelvinVoigtRodMaterialPlan, workset: RodMaterialWorkset, /):
+    def __init__(
+        self, plan: KelvinVoigtRodMaterialPlan, workset: RodMaterialWorkset, /
+    ) -> None:
         if not isinstance(plan, KelvinVoigtRodMaterialPlan):
             raise TypeError("plan must be a KelvinVoigtRodMaterialPlan.")
         if not isinstance(workset, RodMaterialWorkset):

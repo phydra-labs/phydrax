@@ -47,7 +47,7 @@ class SimilarityNormalization(StrictModule, NonTrainableState):
     scale: Array
     normalization_id: str = eqx.field(static=True)
 
-    def __init__(self, center: ArrayLike, scale: float = 1.0, /):
+    def __init__(self, center: ArrayLike, scale: float = 1.0, /) -> None:
         center_host = np.asarray(center, dtype=np.float64)
         scale_ = float(scale)
         if center_host.ndim != 1 or center_host.size < 2:
@@ -96,7 +96,7 @@ class TrefftzResourceBudget(StrictModule, NonTrainableState):
         maximum_monomials: int = 100_000,
         maximum_basis_entries: int = 10_000_000,
         maximum_basis_bytes: int = 256 * 1024**2,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_rank,
@@ -159,7 +159,7 @@ class TrefftzResourceEvidence(StrictModule, NonTrainableState):
 
     def __init__(
         self, *, rank: int, monomials: int, basis_entries: int, basis_bytes: int
-    ):
+    ) -> None:
         self.rank = int(rank)
         self.monomials = int(monomials)
         self.basis_entries = int(basis_entries)
@@ -219,7 +219,7 @@ class TrialSpaceCertificate(AbstractConstructionCertificate):
         linear_in_coefficients: bool = True,
         validity_region: TrialValidityRegion = "all-space",
         singular_support_id: str | None = None,
-    ):
+    ) -> None:
         if equation_family not in (
             "laplace",
             "polyharmonic",
@@ -423,7 +423,7 @@ class TrialSpaceAuditReport(StrictModule, NonTrainableState):
         pde_membership_valid: ArrayLike = True,
         evaluation_accuracy_supported: ArrayLike = True,
         admissibility_report_id: str | None = None,
-    ):
+    ) -> None:
         finite_ = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
         maximum = jnp.asarray(maximum_residual, dtype=jnp.float64).reshape(())
         rms = jnp.asarray(root_mean_square_residual, dtype=jnp.float64).reshape(())
@@ -540,7 +540,7 @@ class LinearTrefftzField(_AbstractTrialSpaceField):
         out_size: int | Literal["scalar"] = "scalar",
         initial_scale: float = 0.0,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(basis, AbstractTrefftzBasis):
             raise TypeError("LinearTrefftzField requires an AbstractTrefftzBasis.")
         output_count = 1 if out_size == "scalar" else int(out_size)

@@ -242,7 +242,7 @@ class FunctionalSolver(StrictModule):
         enforcement: EnforcementProgram | None = None,
         collocation_key: Key[Array, ""] = DOC_KEY0,
         regularity_policy: RegularityPolicy = EXPLORATORY_REGULARITY_POLICY,
-    ):
+    ) -> None:
         """Create a solver from fields, scalar terms, and optional enforcement."""
         if not isinstance(regularity_policy, RegularityPolicy):
             raise TypeError("regularity_policy must be a RegularityPolicy.")

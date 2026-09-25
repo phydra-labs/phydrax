@@ -130,7 +130,7 @@ class MACFixedGridSensitivityPlan(StrictModule):
         block_size: int | None = 16,
         absolute_tolerance: float = 1e-8,
         relative_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         if derivative_mode not in ("smooth", "branchwise", "unsupported"):
             raise ValueError("Unknown MAC derivative certification mode.")
         absolute = float(absolute_tolerance)
@@ -363,7 +363,7 @@ class MACSegmentedShadowingPlan(StrictModule):
         qr_tolerance: float = 1e-10,
         neutral_tolerance: float = 1e-12,
         convergence_tolerance: float = 1e-3,
-    ):
+    ) -> None:
         if not isinstance(sensitivity_plan, MACFixedGridSensitivityPlan):
             raise TypeError("sensitivity_plan must be MACFixedGridSensitivityPlan.")
         length = int(segment_length)

@@ -59,7 +59,7 @@ class FixedClusterVortexPlan2D(StrictModule):
         leaf_size: int = 32,
         opening_angle: float = 0.5,
         maximum_reference_displacement: float = 0.1,
-    ):
+    ) -> None:
         reference = np.asarray(reference_position, dtype=np.float64)
         leaf = int(leaf_size)
         angle = float(opening_angle)

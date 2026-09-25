@@ -64,7 +64,7 @@ class RCIPPreconditioner2D(StrictModule, NonTrainableState):
         /,
         *,
         topology_id: str,
-    ):
+    ) -> None:
         coarse = jnp.asarray(coarse_matrix)
         if coarse.ndim != 2 or coarse.shape[0] != coarse.shape[1]:
             raise ValueError("RCIP coarse_matrix must be square.")

@@ -27,7 +27,7 @@ class _PreparedIntegrationRealization(StrictModule):
 
     realization: IntegrationRealization
 
-    def __init__(self, realization: IntegrationRealization, /):
+    def __init__(self, realization: IntegrationRealization, /) -> None:
         self.realization = realization
 
 

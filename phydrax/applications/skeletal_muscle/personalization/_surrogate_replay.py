@@ -37,7 +37,7 @@ class SkeletalReplayObservationOperator(StrictModule, NonTrainableState):
         observation: Callable[[ControlTrajectory], ArrayLike],
         operator_id: str,
         /,
-    ):
+    ) -> None:
         if not callable(observation):
             raise TypeError("observation must be callable.")
         identifier = str(operator_id).strip()
@@ -97,7 +97,7 @@ class SkeletalSurrogateReplayPlan(StrictModule):
         *,
         absolute_tolerance: float,
         relative_tolerance: float,
-    ):
+    ) -> None:
         if not isinstance(source_problem, ControlProblem):
             raise TypeError("source_problem must be ControlProblem.")
         if not isinstance(parameterization, AbstractControlParameterization):

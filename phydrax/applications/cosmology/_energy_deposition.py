@@ -169,7 +169,7 @@ class InjectionSpectrum(StrictModule, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         scale_factor, permutation, direction = _source_axis(
             one_plus_redshift, "Injection source 1+z"
         )
@@ -301,7 +301,7 @@ class CascadeKernelProduct(StrictModule, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         scales = np.asarray(scale_factors, dtype=np.float64)
         energies = np.asarray(energy_gev, dtype=np.float64)
         states = np.asarray(state_values, dtype=np.float64)
@@ -580,7 +580,7 @@ class SpeciesResolvedThermodynamicsHistory(StrictModule, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         _validate_common(scale, provenance, realization)
         scale_factor, permutation, direction = _source_axis(
             one_plus_redshift, "Thermodynamics source 1+z"
@@ -741,7 +741,7 @@ class ExternalEnergyDepositionProviderResult(StrictModule, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         if not isinstance(
             history, SpeciesResolvedThermodynamicsHistory
         ) or not isinstance(ledger, EnergyDepositionLedger):

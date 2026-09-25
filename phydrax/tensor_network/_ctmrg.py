@@ -45,7 +45,7 @@ class CTMRGPolicy(StrictModule):
         tolerance: float = 1e-8,
         maximum_tensor_elements: int = 100_000_000,
         maximum_workspace_bytes: int = 2**31,
-    ):
+    ) -> None:
         if any(
             not isinstance(value, Integral) or isinstance(value, bool)
             for value in (

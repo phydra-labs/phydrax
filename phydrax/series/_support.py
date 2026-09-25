@@ -96,7 +96,7 @@ class SeriesSupport(StrictModule):
         coordinate_name: str = "coordinate",
         coordinate_kind: CoordinateKind = "continuous",
         coordinate_id: str = "coordinate",
-    ):
+    ) -> None:
         coordinates_ = jnp.asarray(coordinates)
         if coordinates_.ndim < 1 or coordinates_.shape[-1] < 1:
             raise ValueError(

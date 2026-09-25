@@ -77,7 +77,7 @@ class CapstanTendonFrictionState(StrictModule, NonTrainableState):
         stress_free_lengths: ArrayLike,
         slip: ArrayLike,
         /,
-    ):
+    ) -> None:
         tension = _real_vector("tensions", tensions)
         free = _real_vector("stress_free_lengths", stress_free_lengths)
         slip_ = _real_vector("slip", slip)
@@ -262,7 +262,7 @@ class CapstanTendonFrictionPlan(StrictModule, NonTrainableState):
         method: SemismoothNewton | None = None,
         termination: NonlinearTermination | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         friction = _real_vector("friction_coefficients", friction_coefficients)
         angles = _real_vector("wrap_angles", wrap_angles)
         rigidity = _real_vector("axial_rigidity", axial_rigidity)
@@ -431,7 +431,7 @@ class PreparedCapstanTendonFriction(StrictModule, NonTrainableState):
         *,
         route_id: str,
         prepared_id: str,
-    ):
+    ) -> None:
         self.plan = plan
         self.route = route
         self.variational_inequality = variational_inequality

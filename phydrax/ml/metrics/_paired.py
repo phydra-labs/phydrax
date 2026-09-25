@@ -34,7 +34,7 @@ class PairedLossComparisonPlan(StrictModule):
         confidence: float = 0.95,
         resamples: int = 2_000,
         noninferiority_margin: float = 0.0,
-    ):
+    ) -> None:
         confidence_ = float(confidence)
         resamples_ = int(resamples)
         margin = float(noninferiority_margin)
@@ -84,7 +84,7 @@ class PairedLossComparisonResult(StrictModule):
         status: ArrayLike,
         plan: PairedLossComparisonPlan,
         grouped: bool,
-    ):
+    ) -> None:
         self.loss_difference = jnp.asarray(loss_difference)
         self.valid_mask = jnp.asarray(valid_mask, dtype=jnp.bool_)
         self.effect = jnp.asarray(effect)

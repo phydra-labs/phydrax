@@ -59,7 +59,7 @@ class BoundaryIntegralVorticityFluxPlan2D(StrictModule, NonTrainableState):
 
     def __init__(
         self, geometry: FlowPanelGeometry2D, /, *, policy: LinearSolvePolicy | None = None
-    ):
+    ) -> None:
         if not isinstance(geometry, FlowPanelGeometry2D):
             raise TypeError("geometry must be FlowPanelGeometry2D.")
         self.geometry = geometry
@@ -181,7 +181,9 @@ class WallCrossingPlan(StrictModule, NonTrainableState):
     policy: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, signed_distance, normal, /, *, policy: str, policy_id: str):
+    def __init__(
+        self, signed_distance, normal, /, *, policy: str, policy_id: str
+    ) -> None:
         if (
             not callable(signed_distance)
             or not callable(normal)
@@ -263,7 +265,9 @@ class ReducedSeparationModel(StrictModule, NonTrainableState):
     critical_shear: float = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, critical_pressure_gradient: float, critical_shear: float, /):
+    def __init__(
+        self, critical_pressure_gradient: float, critical_shear: float, /
+    ) -> None:
         self.critical_pressure_gradient, self.critical_shear = (
             float(critical_pressure_gradient),
             float(critical_shear),

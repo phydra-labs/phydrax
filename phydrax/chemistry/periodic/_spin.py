@@ -62,7 +62,7 @@ class SpinPeriodicSCFEvidence(StrictModule, NonTrainableState):
         successful: ArrayLike,
         tolerance: float,
         /,
-    ):
+    ) -> None:
         values = jnp.asarray(
             (
                 energy_residual,
@@ -156,7 +156,7 @@ class SpinPeriodicSCFResult(StrictModule, NonTrainableState):
         sector_id: str,
         pencil_id: str,
         mean_field_id: str,
-    ):
+    ) -> None:
         orbital = jnp.asarray(orbital_energies)
         occupation = jnp.asarray(occupations, dtype=orbital.real.dtype)
         coefficient = jnp.asarray(coefficients)
@@ -347,7 +347,7 @@ class SpinPeriodicSCFPlan(StrictModule, NonTrainableState):
         convergence_tolerance: float = 1.0e-10,
         maximum_iterations: int = 256,
         damping: float = 0.25,
-    ):
+    ) -> None:
         if not isinstance(mesh, ReciprocalMeshPlan):
             raise TypeError("mesh must be ReciprocalMeshPlan.")
         if not isinstance(sector, PeriodicElectronicSectorPlan):

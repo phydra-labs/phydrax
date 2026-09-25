@@ -114,7 +114,7 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
         /,
         *,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(thermodynamics, HomogeneousHelmholtzPlan):
             raise TypeError("thermodynamics must be HomogeneousHelmholtzPlan.")
         if not isinstance(thermodynamics.residual, ZeroResidualHelmholtzTerm):
@@ -311,7 +311,7 @@ class StefanMaxwellTransportPlan(StrictModule, NonTrainableState):
         maximum_species: int = 16,
         maximum_condition: float = 1.0e10,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         bound = int(maximum_species)
         condition = float(maximum_condition)
         species_count = thermodynamics.schema.species_count

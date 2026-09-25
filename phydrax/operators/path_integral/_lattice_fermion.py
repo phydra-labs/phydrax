@@ -66,7 +66,7 @@ class LatticeFermionResourcePolicy(StrictModule):
         maximum_local_inverse_bytes: int = 1_073_741_824,
         maximum_fifth_extent: int = 256,
         maximum_rational_poles: int = 256,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_sites,
@@ -152,7 +152,7 @@ class LatticeFermionResourceEvidence(StrictModule):
         /,
         *,
         fifth_extent: int = 1,
-    ):
+    ) -> None:
         if not isinstance(policy, LatticeFermionResourcePolicy):
             raise TypeError("policy must be LatticeFermionResourcePolicy.")
         policy.admit(
@@ -576,7 +576,7 @@ class FreeWilsonDiracOperator(AbstractLatticeDiracOperator):
         gamma5: ArrayLike | None = None,
         dtype: Any = jnp.complex64,
         resources: LatticeFermionResourcePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(boundary, LatticeBoundaryPhasePlan):
             raise TypeError("boundary must be LatticeBoundaryPhasePlan.")
         policy = LatticeFermionResourcePolicy() if resources is None else resources
@@ -712,7 +712,7 @@ class WilsonDiracOperator(AbstractLatticeDiracOperator):
         dtype: Any = jnp.complex64,
         gauge_field_id: str | None = None,
         resources: LatticeFermionResourcePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(boundary, LatticeBoundaryPhasePlan):
             raise TypeError("boundary must be LatticeBoundaryPhasePlan.")
         if not isinstance(representation, AbstractGaugeRepresentation):
@@ -892,7 +892,7 @@ class CloverWilsonDiracOperator(AbstractLatticeDiracOperator):
         *,
         inverse_tolerance: float = 1e-6,
         resources: LatticeFermionResourcePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(wilson, WilsonDiracOperator):
             raise TypeError("wilson must be WilsonDiracOperator.")
         policy = wilson.resource_policy if resources is None else resources
@@ -1053,7 +1053,7 @@ class EvenOddSchurOperator(AbstractLinearOperator):
         operator: AbstractLatticeDiracOperator,
         plan: EvenOddSchurPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLatticeDiracOperator):
             raise TypeError("operator must be AbstractLatticeDiracOperator.")
         if not isinstance(plan, EvenOddSchurPlan):
@@ -1270,7 +1270,7 @@ class TwistedMassDoubletOperator(AbstractLinearOperator):
         *,
         twisted_mass: float,
         resources: LatticeFermionResourcePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(wilson, AbstractLatticeDiracOperator):
             raise TypeError("wilson must be AbstractLatticeDiracOperator.")
         mu = _finite_real(twisted_mass, "twisted_mass")
@@ -1408,7 +1408,7 @@ class StaggeredDiracOperator(AbstractLatticeDiracOperator):
         dtype: Any = jnp.complex64,
         gauge_field_id: str | None = None,
         resources: LatticeFermionResourcePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(boundary, LatticeBoundaryPhasePlan):
             raise TypeError("boundary must be LatticeBoundaryPhasePlan.")
         if not isinstance(representation, AbstractGaugeRepresentation):
@@ -1543,7 +1543,7 @@ class NaikStaggeredDiracOperator(AbstractLatticeDiracOperator):
         one_link_coefficient: float = 9.0 / 8.0,
         three_link_coefficient: float = -1.0 / 24.0,
         three_link_gauge_field_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(one_link, StaggeredDiracOperator):
             raise TypeError("one_link must be StaggeredDiracOperator.")
         first = _finite_real(one_link_coefficient, "one_link_coefficient")
@@ -1687,7 +1687,7 @@ class DomainWallDiracOperator(AbstractLinearOperator):
         domain_wall_height: float,
         fermion_mass: float,
         resources: LatticeFermionResourcePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractLatticeDiracOperator):
             raise TypeError("kernel must be AbstractLatticeDiracOperator.")
         extent = int(fifth_extent)
@@ -1816,7 +1816,7 @@ class MobiusDomainWallDiracOperator(AbstractLinearOperator):
         b_coefficient: float,
         c_coefficient: float,
         resources: LatticeFermionResourcePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractLatticeDiracOperator):
             raise TypeError("kernel must be AbstractLatticeDiracOperator.")
         extent = int(fifth_extent)
@@ -1943,7 +1943,7 @@ class RationalSignApproximation(StrictModule):
         spectral_lower_bound: float,
         spectral_upper_bound: float,
         maximum_error: float,
-    ):
+    ) -> None:
         shifts_ = np.asarray(shifts, dtype=np.float64)
         weights_ = np.asarray(weights, dtype=np.float64)
         if shifts_.ndim != 1 or shifts_.size < 1 or shifts_.shape != weights_.shape:
@@ -2003,7 +2003,7 @@ class _Gamma5HermitianKernel(AbstractLinearOperator):
     representation_id: str = eqx.field(static=True)
     gauge_field_id: str = eqx.field(static=True)
 
-    def __init__(self, kernel: AbstractLatticeDiracOperator, /):
+    def __init__(self, kernel: AbstractLatticeDiracOperator, /) -> None:
         self.kernel = kernel
         self.source = kernel.source
         self.boundary_id = kernel.boundary_id
@@ -2036,7 +2036,7 @@ class _SquaredHermitianKernel(AbstractLinearOperator):
     representation_id: str = eqx.field(static=True)
     gauge_field_id: str = eqx.field(static=True)
 
-    def __init__(self, kernel: _Gamma5HermitianKernel, /):
+    def __init__(self, kernel: _Gamma5HermitianKernel, /) -> None:
         self.kernel = kernel
         self.boundary_id = kernel.boundary_id
         self.representation_id = kernel.representation_id
@@ -2112,7 +2112,7 @@ class OverlapDiracOperator(AbstractLatticeDiracOperator):
         fermion_mass: float = 0.0,
         rational_policy: RationalFunctionPolicy | None = None,
         resources: LatticeFermionResourcePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractLatticeDiracOperator):
             raise TypeError("kernel must be AbstractLatticeDiracOperator.")
         if not isinstance(approximation, RationalSignApproximation):

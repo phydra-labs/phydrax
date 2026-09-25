@@ -174,7 +174,7 @@ class DenseCircuitStateModel(AbstractFittedModel):
         *,
         initial_state: ArrayLike | None = None,
         policy: DenseQuantumProgramPolicy | None = None,
-    ):
+    ) -> None:
         if template.state_kind != "state-vector":
             raise ValueError("DenseCircuitStateModel requires a state-vector template.")
         in_size, _ = _validate_angle_model(angle_model, template)
@@ -243,7 +243,7 @@ class DenseCircuitExpectationModel(AbstractFittedModel):
         initial_state: ArrayLike | None = None,
         program_policy: DenseQuantumProgramPolicy | None = None,
         observable_policy: DenseQuantumObservablePolicy | None = None,
-    ):
+    ) -> None:
         if gradient_method not in ("autodiff", "parameter-shift"):
             raise ValueError("Unknown circuit gradient method.")
         in_size, _ = _validate_angle_model(angle_model, template)
@@ -349,7 +349,7 @@ class BinaryVariationalCircuitClassifier(AbstractFittedModel):
         negative_label: float,
         positive_label: float,
         /,
-    ):
+    ) -> None:
         if not isinstance(feature_model, DenseCircuitExpectationModel):
             raise TypeError("feature_model must be DenseCircuitExpectationModel.")
         selected_weight = jnp.asarray(weight)

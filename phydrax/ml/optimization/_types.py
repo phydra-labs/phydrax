@@ -57,7 +57,7 @@ class PredictorInputBinding(StrictModule, NonTrainableState):
         discrete_decisions: ArrayLike | None = None,
         feature_layout_id: str,
         base_structure_id: str,
-    ):
+    ) -> None:
         matrix_ = jnp.asarray(matrix)
         offset_ = jnp.asarray(offset)
         lower = jnp.asarray(decision_lower)
@@ -147,7 +147,7 @@ class PredictorOutputConstraint(StrictModule, NonTrainableState):
         sense: PredictorConstraintSense = "upper",
         semantic: PredictorOutputSemantic = "prediction",
         constraint_id: str = "learned-output-constraint",
-    ):
+    ) -> None:
         threshold_ = float(threshold)
         output = int(output_index)
         identifier = str(constraint_id)
@@ -205,7 +205,7 @@ class PredictorConstraintCompilation(StrictModule, NonTrainableState):
         binding_id: str,
         constraint_id: str,
         guarantee: PredictorCompilationGuarantee,
-    ):
+    ) -> None:
         base = int(base_variable_count)
         lower = jnp.asarray(auxiliary_lower)
         upper = jnp.asarray(auxiliary_upper)

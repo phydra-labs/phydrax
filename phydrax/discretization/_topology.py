@@ -46,7 +46,7 @@ class EntitySubset(StrictModule, NonTrainableState):
         /,
         *,
         subset_id: str | None = None,
-    ):
+    ) -> None:
         name_ = nonempty_identifier("name", name)
         mask_ = np.asarray(mask, dtype=np.bool_)
         if mask_.ndim != 1:
@@ -85,7 +85,7 @@ class EntitySet(StrictModule, NonTrainableState):
         active_mask: ArrayLike | None = None,
         subsets: Sequence[EntitySubset] = (),
         entity_set_id: str | None = None,
-    ):
+    ) -> None:
         name_ = nonempty_identifier("name", name)
         dimension = int(intrinsic_dimension)
         if dimension < 0:
@@ -169,7 +169,7 @@ class EntitySelection(StrictModule, NonTrainableState):
         *,
         active_mask: ArrayLike | None = None,
         selection_id: str | None = None,
-    ):
+    ) -> None:
         if isinstance(entities, EntitySet):
             entity_set_id = entities.entity_set_id
             active = np.asarray(entities.active_mask, dtype=np.bool_)
@@ -298,7 +298,7 @@ class OrientedIncidence(StrictModule, NonTrainableState):
         /,
         *,
         incidence_id: str | None = None,
-    ):
+    ) -> None:
         degree_ = int(degree)
         if degree_ <= 0:
             raise ValueError("Incidence degree must be positive.")
@@ -411,7 +411,7 @@ class TensorTopology(StrictModule, NonTrainableState):
         periodic: Sequence[bool] | None = None,
         active_mask: ArrayLike | None = None,
         topology_id: str | None = None,
-    ):
+    ) -> None:
         names = tuple(str(name) for name in axis_names)
         sizes = tuple(axis_sizes)
         if not names or any(not name for name in names):
@@ -468,7 +468,7 @@ class CellComplexTopology(StrictModule, NonTrainableState):
         *,
         topology_id: str | None = None,
         validate: bool = True,
-    ):
+    ) -> None:
         entities = tuple(entity_sets)
         if not entities or not all(isinstance(value, EntitySet) for value in entities):
             raise TypeError("entity_sets must contain one or more EntitySet values.")
@@ -543,7 +543,7 @@ class PointTopology(StrictModule, NonTrainableState):
         neighborhoods: SparseRelation | None = None,
         refreshable_neighborhoods: bool = False,
         topology_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(points, EntitySet) or points.intrinsic_dimension != 0:
             raise TypeError("points must be a zero-dimensional EntitySet.")
         if neighborhoods is not None:

@@ -60,7 +60,7 @@ class SegmentQueryResult(StrictModule):
     segment_index: Array
     normal: Array
 
-    def __init__(self, *, closest_point, distance, segment_index, normal):
+    def __init__(self, *, closest_point, distance, segment_index, normal) -> None:
         self.closest_point = jnp.asarray(closest_point, dtype=jnp.float64)
         self.distance = jnp.asarray(distance, dtype=jnp.float64)
         self.segment_index = jnp.asarray(segment_index, dtype=jnp.int32)
@@ -74,7 +74,9 @@ class SegmentMesh(StrictModule):
     topology: SegmentTopology
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, vertices: Array, edges: Array, *, source_id: str | None = None):
+    def __init__(
+        self, vertices: Array, edges: Array, *, source_id: str | None = None
+    ) -> None:
         vertices_host = np.asarray(vertices, dtype=np.float64)
         if (
             vertices_host.ndim != 2
@@ -149,7 +151,7 @@ class _LoopBoundaryMap(AbstractBoundaryMap):
     vertices: Array
     edges: Array
 
-    def __init__(self, vertices: Array, edges: Array):
+    def __init__(self, vertices: Array, edges: Array) -> None:
         self.vertices, self.edges = vertices, edges
 
     @property
@@ -188,7 +190,7 @@ class PlanarMeshRegion(GeometrySource):
         loops: Sequence[Sequence[int]],
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         vertices_host = np.asarray(vertices, dtype=np.float64)
         if vertices_host.ndim != 2 or vertices_host.shape[1] != 2:
             raise ValueError("vertices must have shape (num_vertices, 2).")
@@ -248,7 +250,7 @@ class _PlanarMeshRegionKernel(GeometryKernel):
     loop_offsets: Array
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, vertices, edges, loop_offsets, *, source_id):
+    def __init__(self, vertices, edges, loop_offsets, *, source_id) -> None:
         self.vertices, self.edges, self.loop_offsets, self.source_id = (
             vertices,
             edges,
@@ -478,7 +480,9 @@ class MeshRegion(GeometrySource):
     faces: Array
     feature_id: str = eqx.field(static=True)
 
-    def __init__(self, vertices: Array, faces: Array, *, feature_id: str | None = None):
+    def __init__(
+        self, vertices: Array, faces: Array, *, feature_id: str | None = None
+    ) -> None:
         mesh = TriangleMesh(vertices, faces)
         if not mesh.topology.watertight:
             raise ValueError("MeshRegion requires a watertight triangle topology.")
@@ -533,7 +537,7 @@ class _MeshRegionKernel(GeometryKernel):
     faces: Array
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, vertices, faces, *, source_id):
+    def __init__(self, vertices, faces, *, source_id) -> None:
         self.vertices, self.faces, self.source_id = vertices, faces, source_id
 
     @property
@@ -763,7 +767,9 @@ class TriangleSurface(StrictModule):
 
     mesh: TriangleMesh
 
-    def __init__(self, vertices: Array, faces: Array, *, source_id: str | None = None):
+    def __init__(
+        self, vertices: Array, faces: Array, *, source_id: str | None = None
+    ) -> None:
         self.mesh = TriangleMesh(vertices, faces, source_id=source_id)
 
     @property

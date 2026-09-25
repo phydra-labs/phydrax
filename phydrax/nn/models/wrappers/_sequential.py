@@ -33,7 +33,7 @@ class Sequential(_AbstractStructuredInputModel):
     in_size: int | tuple[int, ...] | Literal["scalar"]
     out_size: int | tuple[int, ...] | Literal["scalar"]
 
-    def __init__(self, models: Sequence[_AbstractBaseModel]):
+    def __init__(self, models: Sequence[_AbstractBaseModel]) -> None:
         if not models:
             raise ValueError("Sequential requires at least one model.")
 

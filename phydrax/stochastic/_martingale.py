@@ -108,7 +108,7 @@ class MartingaleProblem(StrictModule):
         observable_shape: Sequence[int] = (),
         bracket_density: Callable[[Array, Array], Array] | None = None,
         label: str = "martingale",
-    ):
+    ) -> None:
         if not callable(observable) or not callable(generator_observable):
             raise TypeError("observable and generator_observable must be callable.")
         if bracket_density is not None and not callable(bracket_density):

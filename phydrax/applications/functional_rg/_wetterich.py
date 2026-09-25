@@ -61,7 +61,7 @@ class ONPotentialState(StrictModule):
         potential: ArrayLike,
         wavefunction_renormalization: ArrayLike = 1.0,
         /,
-    ):
+    ) -> None:
         self.potential = jnp.asarray(potential)
         self.wavefunction_renormalization = jnp.asarray(
             wavefunction_renormalization
@@ -113,7 +113,7 @@ class ONLocalPotentialPlan(StrictModule, NonTrainableState):
         *,
         approximation: DerivativeExpansion = "lpa",
         maximum_field_nodes: int = 4096,
-    ):
+    ) -> None:
         components = int(component_count)
         dimension_ = float(dimension)
         capacity = int(maximum_field_nodes)
@@ -163,7 +163,7 @@ class PreparedONLocalPotentialFlow(StrictModule, NonTrainableState):
     second_derivative_matrix: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ONLocalPotentialPlan, field_nodes: ArrayLike, /):
+    def __init__(self, plan: ONLocalPotentialPlan, field_nodes: ArrayLike, /) -> None:
         if not isinstance(plan, ONLocalPotentialPlan):
             raise TypeError("plan must be ONLocalPotentialPlan.")
         nodes = np.asarray(field_nodes, dtype=np.float64)

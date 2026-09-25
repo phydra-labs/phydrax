@@ -84,7 +84,7 @@ class _TensorProductCallable(StrictModule):
         self,
         factors: tuple[DomainFunction, ...],
         factor_positions: tuple[tuple[int, ...], ...],
-    ):
+    ) -> None:
         self.factors = factors
         self.factor_positions = factor_positions
 
@@ -134,7 +134,7 @@ class _PartialTraceCallable(StrictModule):
         density: DomainFunction,
         subsystem_dims: tuple[int, ...],
         trace_out: tuple[int, ...],
-    ):
+    ) -> None:
         self.density = density
         self.subsystem_dims = subsystem_dims
         self.trace_out = trace_out
@@ -180,7 +180,7 @@ class _EmbeddedOperatorCallable(StrictModule):
         source: DomainFunction,
         subsystem_dims: tuple[int, ...],
         subsystem: int,
-    ):
+    ) -> None:
         self.source = source
         self.subsystem_dims = subsystem_dims
         self.subsystem = subsystem

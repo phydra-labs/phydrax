@@ -80,7 +80,7 @@ class PreparedDistributedPeriodicFourierFilter(StrictModule, NonTrainableState):
         scientific: PreparedPeriodicFourierGridFilter,
         execution: DistributedSpectralExecutionPlan,
         /,
-    ):
+    ) -> None:
         from ...equations._periodic_les import PreparedPeriodicFourierGridFilter
 
         if not isinstance(scientific, PreparedPeriodicFourierGridFilter):
@@ -207,7 +207,7 @@ class DistributedPeriodicLESPlan(StrictModule, NonTrainableState):
         schedule: DistributedPeriodicLESSchedule = "slab",
         checkpoint_count: int = 0,
         maximum_bytes: int = 2 * 1024**3,
-    ):
+    ) -> None:
         from ...equations._periodic_les import PreparedPeriodicAlgebraicLES
 
         if not isinstance(scientific, PreparedPeriodicAlgebraicLES):
@@ -269,7 +269,7 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
     preparation: DistributedPeriodicLESPreparationEvidence
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: DistributedPeriodicLESPlan, /):
+    def __init__(self, plan: DistributedPeriodicLESPlan, /) -> None:
         if not isinstance(plan, DistributedPeriodicLESPlan):
             raise TypeError("plan must be a DistributedPeriodicLESPlan.")
         plan.topology.require_available()

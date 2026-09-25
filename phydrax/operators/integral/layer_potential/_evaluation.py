@@ -39,7 +39,7 @@ class LayerEvaluationPlan2D(StrictModule, NonTrainableState):
         qbx_order: int = 6,
         qbx_radius_factor: float = 0.5,
         adaptive_plan: AdaptiveQuadraturePlan | None = None,
-    ):
+    ) -> None:
         if method not in ("direct", "adaptive", "qbx"):
             raise ValueError("Unknown layer evaluator method.")
         clearance = float(accuracy_clearance)
@@ -122,7 +122,7 @@ class LayerEvaluationReport(StrictModule, NonTrainableState):
         near_panel_count: int = 0,
         far_panel_count: int = 0,
         failed_panel_count: int = 0,
-    ):
+    ) -> None:
         if not isinstance(plan, LayerEvaluationPlan2D):
             raise TypeError("plan must be a LayerEvaluationPlan2D.")
         if not representation_id or not error_kind:
@@ -177,7 +177,7 @@ class LayerEvaluationResult(StrictModule, NonTrainableState):
         values: Array,
         target_report: LayerPotentialTargetReport,
         evaluation_report: LayerEvaluationReport,
-    ):
+    ) -> None:
         if not isinstance(target_report, LayerPotentialTargetReport):
             raise TypeError("target_report must be a LayerPotentialTargetReport.")
         if not isinstance(evaluation_report, LayerEvaluationReport):

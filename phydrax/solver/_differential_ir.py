@@ -40,7 +40,7 @@ class DeterministicDifferentialIR(StrictModule):
         state_structure: tuple[tuple[str, tuple[int, ...], str], ...],
         problem_id: str,
         equation_form: str,
-    ):
+    ) -> None:
         if not callable(explicit_rhs):
             raise TypeError("explicit_rhs must be callable.")
         if implicit_rhs is not None and not callable(implicit_rhs):

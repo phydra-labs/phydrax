@@ -70,7 +70,7 @@ class PoissonNernstPlanckPlan(StrictModule, NonTrainableState):
         *,
         fixed_charge: ArrayLike = 0.0,
         energy_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(electrostatic, CochainElectrostaticPlan):
             raise TypeError("electrostatic must be CochainElectrostaticPlan.")
         if not isinstance(closure, AbstractElectrochemicalClosure):

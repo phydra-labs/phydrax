@@ -51,7 +51,7 @@ class FiniteElementCheckpoint(StrictModule, NonTrainableState):
         /,
         *,
         materials: MaterialTransaction | None = None,
-    ):
+    ) -> None:
         prepared = str(prepared_id)
         compiled = str(compilation_id)
         time_ = jnp.asarray(time)

@@ -36,7 +36,7 @@ class HorizontalCometric(StrictModule):
         /,
         *,
         control_metric: Callable[[Array], Array] | None = None,
-    ):
+    ) -> None:
         if not callable(frame_function):
             raise TypeError("frame_function must be callable.")
         if control_metric is not None and not callable(control_metric):
@@ -244,7 +244,7 @@ class HorizontalValidationReport(StrictModule):
         finite: ArrayLike,
         minimum_frame_singular_value: ArrayLike,
         step_two_rank: ArrayLike,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.minimum_frame_singular_value = jnp.asarray(minimum_frame_singular_value)

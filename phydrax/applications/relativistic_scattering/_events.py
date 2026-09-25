@@ -30,7 +30,7 @@ class PolarizationDensity(StrictModule):
     dimension: int = eqx.field(static=True)
     basis: str = eqx.field(static=True)
 
-    def __init__(self, matrix: ArrayLike, /, *, basis: str = "helicity"):
+    def __init__(self, matrix: ArrayLike, /, *, basis: str = "helicity") -> None:
         matrix_ = jnp.asarray(matrix)
         if (
             matrix_.ndim != 2
@@ -190,7 +190,7 @@ class WeightedEventStream(StrictModule):
         *,
         active: ArrayLike | None = None,
         provenance: str,
-    ):
+    ) -> None:
         momenta_ = jnp.asarray(momenta)
         weights_ = jnp.asarray(weights)
         if momenta_.ndim != 3 or momenta_.shape[-1] != 4:
@@ -233,7 +233,9 @@ class RejectionUnweightingPlan(StrictModule, NonTrainableState):
     signed: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, support_bound: float, capacity: int, /, *, signed: bool = False):
+    def __init__(
+        self, support_bound: float, capacity: int, /, *, signed: bool = False
+    ) -> None:
         bound = float(support_bound)
         capacity_ = int(capacity)
         if not math.isfinite(bound) or bound <= 0.0 or capacity_ < 1:

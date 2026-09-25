@@ -84,7 +84,7 @@ class GaussianShellPlan(StrictModule, NonTrainableState):
         primitive_mask: ArrayLike | None = None,
         representation: GaussianShellRepresentation = GaussianShellRepresentation.CARTESIAN,
         role: str = "orbital",
-    ):
+    ) -> None:
         center = int(center_particle_id)
         angular = int(angular_momentum)
         exponent = np.asarray(exponents, dtype=np.float64).reshape((-1,))

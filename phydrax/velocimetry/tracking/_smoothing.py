@@ -43,7 +43,7 @@ class TrackSmoothingPlan(StrictModule, NonTrainableState):
         initial_velocity_variance: float = 1.0,
         covariance_regularization: float = 0.0,
         execution_method: Literal["sequential", "parallel", "auto"] = "auto",
-    ):
+    ) -> None:
         values = jnp.asarray(
             (
                 process_acceleration_variance,

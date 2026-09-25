@@ -52,7 +52,7 @@ class RegularizedCoulombContactLaw(AbstractTangentialContactLaw):
         /,
         *,
         stribeck_velocity: float | None = None,
-    ):
+    ) -> None:
         epsilon = float(velocity_threshold)
         stribeck = (
             10.0 * epsilon if stribeck_velocity is None else float(stribeck_velocity)
@@ -146,7 +146,7 @@ class AnisotropicCoulombContactLaw(AbstractTangentialContactLaw):
         velocity_threshold: float,
         tangent_scale: tuple[float, ...],
         /,
-    ):
+    ) -> None:
         epsilon = float(velocity_threshold)
         scales = tuple(float(value) for value in tangent_scale)
         if not np.isfinite(epsilon) or epsilon <= 0.0:
@@ -253,7 +253,7 @@ class RateStateFrictionContactLaw(AbstractTangentialContactLaw):
         reference_velocity: float,
         critical_slip_distance: float,
         velocity_threshold: float,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

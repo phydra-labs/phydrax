@@ -82,7 +82,7 @@ class TPSPlan(StrictModule, NonTrainableState):
         maximum_shift: int = 1,
         lineage_capacity: int = 1024,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(ensemble, AbstractPathEnsemble):
             raise TypeError("ensemble must implement AbstractPathEnsemble.")
         if not isinstance(kernel, FunctionalDynamicsKernel):
@@ -427,7 +427,7 @@ class TISPlan(StrictModule, NonTrainableState):
         move_kind: str = "two-way-shooting",
         lineage_capacity: int = 1024,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(network, InterfaceNetworkPlan):
             raise TypeError("network must be InterfaceNetworkPlan.")
         if not isinstance(kernel, FunctionalDynamicsKernel) or not isinstance(
@@ -586,7 +586,7 @@ class RETISPlan(StrictModule, NonTrainableState):
     tis: TISPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, tis: TISPlan, /, *, plan_id: str | None = None):
+    def __init__(self, tis: TISPlan, /, *, plan_id: str | None = None) -> None:
         if not isinstance(tis, TISPlan):
             raise TypeError("tis must be TISPlan.")
         identity = plan_id or canonical_fingerprint(

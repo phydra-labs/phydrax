@@ -42,7 +42,7 @@ class EmpiricalGramLinearOperator(AbstractLinearOperator):
         centered: bool = True,
         damping: float = 0.0,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(features, AbstractLinearOperator):
             raise TypeError("features must be an AbstractLinearOperator.")
         if features.batch_shape:

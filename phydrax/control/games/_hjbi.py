@@ -94,7 +94,7 @@ class DiscreteZeroSumHJBIProblem(StrictModule, NonTrainableState):
         args: Any = None,
         corner_tolerance: float = 0.0,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(spatial_grid, BoundedUniformGrid1D):
             raise TypeError("spatial_grid must be a BoundedUniformGrid1D.")
         if not isinstance(time_grid, TimeGrid):

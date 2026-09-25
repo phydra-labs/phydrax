@@ -51,7 +51,7 @@ class BoundedUniformGrid1D(StrictModule, NonTrainableState):
         upper_bound: float,
         num_points: int,
         /,
-    ):
+    ) -> None:
         lower = float(lower_bound)
         upper = float(upper_bound)
         if not np.isfinite(lower) or not np.isfinite(upper) or not lower < upper:
@@ -114,7 +114,7 @@ class DiscreteHJBProblem(StrictModule, NonTrainableState):
         args: Any = None,
         corner_tolerance: float = 0.0,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(spatial_grid, BoundedUniformGrid1D):
             raise TypeError("spatial_grid must be a BoundedUniformGrid1D.")
         if not isinstance(time_grid, TimeGrid):

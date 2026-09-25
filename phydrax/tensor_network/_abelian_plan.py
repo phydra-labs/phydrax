@@ -41,7 +41,7 @@ class AbelianContractionPlan(StrictModule):
         left_axes: Sequence[int],
         right_axes: Sequence[int],
         /,
-    ):
+    ) -> None:
         if not isinstance(left_layout, AbelianTensorLayout) or not isinstance(
             right_layout, AbelianTensorLayout
         ):
@@ -217,7 +217,7 @@ class AbelianCanonicalizationPlan(StrictModule):
     right_routes: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, state: AbelianMatrixProductState, /):
+    def __init__(self, state: AbelianMatrixProductState, /) -> None:
         if not isinstance(state, AbelianMatrixProductState):
             raise TypeError("state must be AbelianMatrixProductState.")
         left_routes = []
@@ -314,7 +314,7 @@ class AbelianTwoSiteGatePlan(StrictModule):
         maximum_bond_dimension: int,
         normalize: bool = True,
         protected_charges: Sequence[Sequence[int]] = (),
-    ):
+    ) -> None:
         if not isinstance(state, AbelianMatrixProductState):
             raise TypeError("state must be AbelianMatrixProductState.")
         site = int(left_site)
@@ -447,7 +447,7 @@ class AbelianProgramInstruction(StrictModule):
         maximum_bond_dimension: int,
         normalize: bool = False,
         protected_charges: Sequence[Sequence[int]] = (),
-    ):
+    ) -> None:
         capacity = int(maximum_bond_dimension)
         if capacity < 1:
             raise ValueError("maximum_bond_dimension must be positive.")
@@ -480,7 +480,7 @@ class AbelianProgram(StrictModule):
     instructions: tuple[AbelianProgramInstruction, ...]
     program_id: str = eqx.field(static=True)
 
-    def __init__(self, instructions: Sequence[AbelianProgramInstruction], /):
+    def __init__(self, instructions: Sequence[AbelianProgramInstruction], /) -> None:
         values = tuple(instructions)
         if any(not isinstance(item, AbelianProgramInstruction) for item in values):
             raise TypeError("instructions must contain AbelianProgramInstruction values.")

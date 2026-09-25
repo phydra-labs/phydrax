@@ -54,7 +54,7 @@ class InjectiveContinuousFlowLaw(AbstractProbabilityLaw):
         rank_tolerance: float = 1.0e-8,
         maximum_dimension: int = 64,
         law_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(latent_law, AbstractProbabilityLaw):
             raise TypeError("latent_law must be an AbstractProbabilityLaw.")
         if not callable(map) or not callable(left_inverse):

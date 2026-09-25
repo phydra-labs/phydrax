@@ -45,7 +45,7 @@ class ExcitedStateDerivativeResult(StrictModule, NonTrainableState):
         *,
         derivative_couplings: ArrayLike | None = None,
         energy_weighted_couplings: ArrayLike | None = None,
-    ):
+    ) -> None:
         gradients = jnp.asarray(energy_gradients)
         residual = jnp.asarray(residuals, dtype=gradients.real.dtype)
         couplings = (
@@ -119,7 +119,9 @@ class CallableExcitedDerivativeProvider(AbstractExcitedDerivativeProvider):
     evaluator: ExcitedDerivativeEvaluator = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluator: ExcitedDerivativeEvaluator, provider_id: str, /):
+    def __init__(
+        self, evaluator: ExcitedDerivativeEvaluator, provider_id: str, /
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()
@@ -278,7 +280,7 @@ class TDAPropertyDerivativeResult(StrictModule, NonTrainableState):
         successful,
         representation_id,
         /,
-    ):
+    ) -> None:
         energy = jnp.asarray(excitation_energy_derivatives)
         dipole = jnp.asarray(transition_dipole_derivatives, dtype=energy.dtype)
         oscillator = jnp.asarray(oscillator_strength_derivatives, dtype=energy.real.dtype)

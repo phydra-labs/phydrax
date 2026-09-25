@@ -184,7 +184,7 @@ class FiniteElementExecutionContext(StrictModule, NonTrainableState):
         lift_acceleration: object = None,
         metric_data: object = None,
         user_args: object = None,
-    ):
+    ) -> None:
         self.runtime = runtime
         self.time = jnp.asarray(time)
         self.lift = None if lift is None else jax.tree.map(jnp.asarray, lift)
@@ -214,7 +214,7 @@ class FiniteElementExecutionPolicy(StrictModule, NonTrainableState):
         realization: str = "sparse",
         local_kernel: str = "auto",
         accumulation: str = "fast",
-    ):
+    ) -> None:
         realization_ = str(realization)
         local_kernel_ = str(local_kernel)
         accumulation_ = str(accumulation)
@@ -271,7 +271,7 @@ class CellResidualAction(StrictModule, NonTrainableState):
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
         action_id: str,
-    ):
+    ) -> None:
         output = str(field_name)
         inputs = tuple(str(value) for value in input_fields)
         identifier = str(action_id)
@@ -328,7 +328,7 @@ class PairwiseVolumeFluxAction(StrictModule, NonTrainableState):
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
         action_id: str,
-    ):
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         if not field or not callable(kernel) or not identifier:
@@ -378,7 +378,7 @@ class InteriorFacetAction(StrictModule, NonTrainableState):
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
         action_id: str,
-    ):
+    ) -> None:
         output = str(output_field_name)
         inputs = tuple(str(field) for field in input_field_names)
         identifier = str(action_id)
@@ -441,7 +441,7 @@ class ExteriorFacetAction(StrictModule, NonTrainableState):
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
         action_id: str,
-    ):
+    ) -> None:
         output = str(output_field_name)
         inputs = tuple(str(field) for field in input_field_names)
         identifier = str(action_id)
@@ -489,7 +489,7 @@ class SIPGPenaltyPolicy(StrictModule, NonTrainableState):
     factor: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, factor: float, /):
+    def __init__(self, factor: float, /) -> None:
         factor_ = float(factor)
         if not np.isfinite(factor_) or factor_ <= 0.0:
             raise ValueError("SIPG penalty factor must be positive and finite.")
@@ -560,7 +560,7 @@ class SIPGBoundaryCondition(StrictModule, NonTrainableState):
         *,
         robin_coefficient: VariationalCoefficient | ArrayLike | Callable | None = None,
         penalty_policy: SIPGPenaltyPolicy | None = None,
-    ):
+    ) -> None:
         if kind not in ("dirichlet", "neumann", "robin"):
             raise ValueError("Unknown SIPG boundary kind.")
         if not isinstance(domain, IntegrationDomain) or domain.kind != "exterior_facet":
@@ -622,7 +622,7 @@ class SIPGFacetAction(StrictModule, NonTrainableState):
         boundary: SIPGBoundaryCondition | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
         action_id: str,
-    ):
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         if not field or not identifier:
@@ -692,7 +692,7 @@ class CellEnergyAction(StrictModule, NonTrainableState):
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
         action_id: str,
-    ):
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         if not field or not callable(density) or not identifier:
@@ -741,7 +741,7 @@ class LocalFunctionalAction(StrictModule, NonTrainableState):
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
         action_id: str,
-    ):
+    ) -> None:
         if not isinstance(term, LocalIntegralTerm):
             raise TypeError("term must be a variational.LocalIntegralTerm.")
         bindings = tuple(
@@ -848,7 +848,7 @@ class CellBilinearAction(StrictModule, NonTrainableState):
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
         action_id: str,
-    ):
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         if not field or not callable(kernel) or not identifier:
@@ -893,7 +893,7 @@ class PreparedOperatorAction(StrictModule, NonTrainableState):
         *,
         domain: IntegrationDomain | None = None,
         action_id: str,
-    ):
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         if not field or not identifier:
@@ -1047,7 +1047,7 @@ class FiniteElementForm(StrictModule, NonTrainableState):
         auxiliary_evaluator: Callable | None = None,
         auxiliary_id: str | None = None,
         functional: Functional | None = None,
-    ):
+    ) -> None:
         identifier = str(form_id)
         fields = (
             (str(field_name),)
@@ -1486,7 +1486,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         dirichlet_values_by_field: Mapping[str, ArrayLike | Callable[[Array], ArrayLike]]
         | None = None,
         execution_policy: FiniteElementExecutionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(form, FiniteElementForm):
             raise TypeError("form must be a FiniteElementForm.")
         if not isinstance(discretization, AbstractPreparedLocalDiscretization):

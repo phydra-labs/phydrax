@@ -206,7 +206,7 @@ def _checked_quadratic_coefficient(coefficient: cx.AxisArray, /) -> cx.AxisArray
 class _SquaredFrobeniusResidual(StrictModule, BatchEvaluator):
     residual: DomainFunction
 
-    def __init__(self, residual: DomainFunction, /):
+    def __init__(self, residual: DomainFunction, /) -> None:
         self.residual = residual
 
     def __call_batch__(
@@ -231,7 +231,7 @@ class _DensityWeightedResidual(StrictModule, BatchEvaluator):
     score: DomainFunction
     density: DomainFunction
 
-    def __init__(self, score: DomainFunction, density: DomainFunction, /):
+    def __init__(self, score: DomainFunction, density: DomainFunction, /) -> None:
         self.score = score
         self.density = density
 
@@ -333,7 +333,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         blocks: ResidualBlockLayout | None = None,
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
-    ):
+    ) -> None:
         if not isinstance(condition, AbstractResidualCondition):
             raise TypeError("ResidualPenalty requires an AbstractResidualCondition.")
         if not isinstance(source, _SOURCE_TYPES):

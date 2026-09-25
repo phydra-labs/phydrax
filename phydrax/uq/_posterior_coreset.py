@@ -42,7 +42,7 @@ class SteinThinning(StrictModule):
         beta: float = -0.5,
         offset: float = 1.0,
         length_scale: ArrayLike | None = None,
-    ):
+    ) -> None:
         count = int(num_points)
         if count <= 0:
             raise ValueError("num_points must be positive.")

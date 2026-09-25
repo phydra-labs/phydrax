@@ -38,7 +38,7 @@ class PreparedUnstructuredCollocatedOperators(StrictModule, NonTrainableState):
         discretization: UnstructuredFiniteVolumeDiscretization,
         gradient: PreparedCellPolynomialReconstruction,
         /,
-    ):
+    ) -> None:
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError("Collocated operators require unstructured FV geometry.")
         if not isinstance(gradient, PreparedCellPolynomialReconstruction):

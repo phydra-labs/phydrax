@@ -61,7 +61,7 @@ class FiniteDMRGProblem(StrictModule):
         /,
         *,
         problem_id: str = "matrix-product-ground-state",
-    ):
+    ) -> None:
         if not isinstance(initial_state, MatrixProductState):
             raise TypeError("initial_state must be a MatrixProductState.")
         if not isinstance(hamiltonian, MatrixProductOperator):
@@ -111,7 +111,7 @@ class FiniteDMRGPolicy(StrictModule):
         maximum_residual_elements: int = 100_000_000,
         maximum_history_elements: int = 10_000_000,
         eigen_policy: eigen_linalg.EigenSolvePolicy | None = None,
-    ):
+    ) -> None:
         bond = int(maximum_bond_dimension)
         sweeps = int(maximum_sweeps)
         if bond < 1 or sweeps < 1:

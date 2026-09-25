@@ -61,7 +61,7 @@ class HomogeneousSpinorQED3DState(StrictModule):
         electric_field: ArrayLike,
         mode_spinors: ArrayLike,
         /,
-    ):
+    ) -> None:
         potential = jnp.asarray(vector_potential)
         field = jnp.asarray(electric_field)
         modes = jnp.asarray(mode_spinors, dtype=jnp.complex128)
@@ -97,7 +97,7 @@ class HomogeneousSpinorQED3DPlan(StrictModule, NonTrainableState):
         external_current: Any | None = None,
         external_source_id: str | None = None,
         maximum_modes: int = 2**17,
-    ):
+    ) -> None:
         momentum = np.asarray(momenta, dtype=np.float64)
         weights = np.asarray(quadrature_weights, dtype=np.float64)
         q = np.asarray(charge, dtype=np.float64)
@@ -233,7 +233,7 @@ class HomogeneousSpinorQED3DPlan(StrictModule, NonTrainableState):
 class ZeroExternalCurrent3D(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.source_id = canonical_fingerprint({"kind": "zero-external-current-3-vector"})
 
     def __call__(self, time: ArrayLike, /) -> Array:
@@ -305,7 +305,7 @@ class FiniteSpatialSpinorQEDState(StrictModule):
         electric_field: ArrayLike,
         mode_spinors: ArrayLike,
         /,
-    ):
+    ) -> None:
         potential = jnp.asarray(vector_potential)
         field = jnp.asarray(electric_field)
         modes = jnp.asarray(mode_spinors, dtype=jnp.complex128)
@@ -347,7 +347,7 @@ class FiniteSpatialSpinorQEDPlan(StrictModule, NonTrainableState):
         skew_adjoint_tolerance: float = 1e-10,
         maximum_points: int = 8192,
         maximum_modes: int = 2**16,
-    ):
+    ) -> None:
         differential = np.asarray(derivative, dtype=np.float64)
         weights = np.asarray(spatial_weights, dtype=np.float64)
         momenta = np.asarray(canonical_momenta, dtype=np.float64)
@@ -502,7 +502,7 @@ class ZeroSpatialExternalCurrent(StrictModule, NonTrainableState):
     point_count: int = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, point_count: int, /):
+    def __init__(self, point_count: int, /) -> None:
         count = int(point_count)
         if count < 1:
             raise ValueError("point_count must be positive.")

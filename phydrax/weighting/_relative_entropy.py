@@ -379,7 +379,7 @@ def _affine_tolerance(problem, geometry, policy):
     return policy.affine_absolute_tolerance + policy.affine_relative_tolerance * scale
 
 
-def _require_dual_compatible(problem, execution):
+def _require_dual_compatible(problem, execution) -> None:
     if not isinstance(execution, MomentCalibrationExecutionPolicy):
         raise TypeError("execution must be a MomentCalibrationExecutionPolicy or None.")
     if execution.route != "dual-relative-entropy":

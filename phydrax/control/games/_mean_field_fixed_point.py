@@ -103,7 +103,7 @@ class MeanFieldGameFixedPointProblem(StrictModule):
         induced_flow_id: str,
         law_distance_id: str,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(initial_flow, EmpiricalMeanField):
             raise TypeError("initial_flow must be an EmpiricalMeanField.")
         for owner, callback in (
@@ -151,7 +151,7 @@ class MeanFieldGameFixedPointPlan(StrictModule):
         damping: float = 1.0,
         minimum_effective_sample_size: float = 2.0,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(maximum_iterations, int) or maximum_iterations <= 0:
             raise ValueError("maximum_iterations must be a positive integer.")
         tolerance = float(consistency_tolerance)

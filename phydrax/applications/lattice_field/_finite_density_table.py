@@ -40,7 +40,7 @@ class EOSGridPlan(StrictModule, NonTrainableState):
         domain: FiniteDensityDomain,
         constraint_id: str = "muQ=muS=0",
         maximum_cells: int = 1_000_000,
-    ):
+    ) -> None:
         temperatures_ = np.asarray(temperatures, dtype=np.float64)
         baryon = np.asarray(baryon_chemical_potentials, dtype=np.float64)
         if (

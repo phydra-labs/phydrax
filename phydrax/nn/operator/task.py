@@ -116,7 +116,7 @@ class OperatorQuerySpec(StrictModule):
         topology_site: OperatorTopologySite | None = None,
         quadrature: OperatorQuadraturePolicy = "optional",
         fixed_geometry: bool | None = None,
-    ):
+    ) -> None:
         resolved_name = str(name)
         if not resolved_name:
             raise ValueError("Operator query names must not be empty.")
@@ -260,7 +260,7 @@ class OperatorTask(StrictModule):
         dimension_basis: Sequence[str] = (),
         revision: str = "1",
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         resolved_id = str(task_id)
         resolved_revision = str(revision)
         if not resolved_id or not resolved_revision:

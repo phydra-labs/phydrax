@@ -82,7 +82,7 @@ class NativePanelFieldPlan3D(StrictModule):
     geometry: NativePanelGeometry3D
     field_id: str = eqx.field(static=True)
 
-    def __init__(self, geometry: NativePanelGeometry3D, /):
+    def __init__(self, geometry: NativePanelGeometry3D, /) -> None:
         if not isinstance(geometry, NativePanelGeometry3D):
             raise TypeError("geometry must be NativePanelGeometry3D.")
         self.geometry = geometry

@@ -55,7 +55,7 @@ class FiniteVolumeHaloPlan(StrictModule, NonTrainableState):
         reconstruction: Any,
         boundaries: FiniteVolumeBoundarySet,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             discretization,
             (FiniteVolumeDiscretization, MappedFiniteVolumeDiscretization),
@@ -115,7 +115,7 @@ class PreparedFiniteVolumeHaloPlan(StrictModule, NonTrainableState):
     needs_vertex_halos: bool = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: FiniteVolumeHaloPlan, /):
+    def __init__(self, plan: FiniteVolumeHaloPlan, /) -> None:
         if not isinstance(plan, FiniteVolumeHaloPlan):
             raise TypeError("plan must be a FiniteVolumeHaloPlan.")
         dimension = len(plan.discretization.cell_shape)

@@ -149,7 +149,7 @@ class QuantumSectorOperator(AbstractLinearOperator):
         prepared: PreparedQuantumLattice,
         charge_map: SectorChargeMap,
         /,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedQuantumLattice):
             raise TypeError("prepared must be PreparedQuantumLattice.")
         if not isinstance(charge_map, SectorChargeMap):

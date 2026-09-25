@@ -40,7 +40,7 @@ class FiniteFieldCoordinateMap(StrictModule, NonTrainableState):
         *,
         source_basis_id: str,
         target_basis_id: str,
-    ):
+    ) -> None:
         values = np.asarray(matrix, dtype=np.int64)
         if values.ndim != 2:
             raise ValueError("Finite-field coordinate maps must be matrices.")
@@ -80,7 +80,7 @@ class InducedTopologyMap(StrictModule, NonTrainableState):
         cohomology_maps: Sequence[FiniteFieldCoordinateMap],
         field: PrimeField,
         /,
-    ):
+    ) -> None:
         homology = tuple(homology_maps)
         cohomology = tuple(cohomology_maps)
         if tuple(value.degree for value in homology) != tuple(

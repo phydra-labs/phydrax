@@ -49,7 +49,7 @@ class ExtendedPersistenceComponent(StrictModule, NonTrainableState):
         birth_nodes: ArrayLike,
         death_nodes: ArrayLike,
         /,
-    ):
+    ) -> None:
         if kind not in (
             "ordinary",
             "relative",
@@ -110,7 +110,7 @@ class ExtendedPersistenceResult(StrictModule, NonTrainableState):
         *,
         filtration_id: str,
         field: PrimeField,
-    ):
+    ) -> None:
         self.ordinary = ordinary
         self.relative = relative
         self.extended_positive = extended_positive

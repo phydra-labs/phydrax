@@ -32,7 +32,7 @@ class CalorimeterQualificationPlan(StrictModule, NonTrainableState):
         maximum_occupancy_error: float,
         maximum_tail_quantile_error: float,
         upper_quantile: float = 0.99,
-    ):
+    ) -> None:
         tolerances = tuple(
             map(
                 float,

@@ -37,7 +37,7 @@ class ValueAxis(StrictModule):
         /,
         *,
         labels: Sequence[str] | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         size_ = int(size)
         labels_ = None if labels is None else tuple(str(label) for label in labels)
@@ -67,7 +67,7 @@ class ArrayCodomain(StrictModule):
         /,
         *,
         dtype: Any | None = None,
-    ):
+    ) -> None:
         axes_ = tuple(axes)
         if any(not isinstance(axis, ValueAxis) for axis in axes_):
             raise TypeError("ArrayCodomain axes must be ValueAxis instances.")
@@ -119,7 +119,7 @@ class FieldCodomain(StrictModule):
         support: ConditionSupport,
         value: ArrayCodomain | None = None,
         /,
-    ):
+    ) -> None:
         if value is not None and not isinstance(value, ArrayCodomain):
             raise TypeError("FieldCodomain.value must be an ArrayCodomain.")
         self.support = _validate_support(support)
@@ -131,7 +131,7 @@ class ProductCodomain(StrictModule):
 
     factors: tuple[ConditionCodomain, ...]
 
-    def __init__(self, factors: Sequence[ConditionCodomain], /):
+    def __init__(self, factors: Sequence[ConditionCodomain], /) -> None:
         factors_ = tuple(factors)
         if not factors_:
             raise ValueError("ProductCodomain requires at least one factor.")
@@ -215,7 +215,7 @@ class FieldSpec(StrictModule):
         /,
         *,
         source: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         source_ = name_ if source is None else str(source)
         if not name_ or not source_:
@@ -239,7 +239,7 @@ class ProductFieldSpec(StrictModule):
         /,
         *,
         field_spec_id: str | None = None,
-    ):
+    ) -> None:
         fields_ = tuple(fields)
         if not fields_:
             raise ValueError("ProductFieldSpec requires at least one field.")
@@ -315,7 +315,7 @@ class OperatorCapabilities(StrictModule):
         has_adjoint: bool = False,
         has_linearization: bool = False,
         uses_randomness: bool = False,
-    ):
+    ) -> None:
         linear = bool(is_linear)
         adjoint = bool(has_adjoint)
         linearization = bool(has_linearization)
@@ -387,7 +387,7 @@ class CallableConditionOperator(AbstractConditionOperator):
     function: Callable[..., Any] = eqx.field(static=True)
     capabilities: OperatorCapabilities = eqx.field(static=True)
 
-    def __init__(self, function: Callable[..., Any], /):
+    def __init__(self, function: Callable[..., Any], /) -> None:
         if not callable(function):
             raise TypeError("CallableConditionOperator requires a callable.")
         self.function = function
@@ -443,7 +443,9 @@ class OperatorLinearization(StrictModule):
     value: Any
     tangent_operator: AbstractConditionOperator
 
-    def __init__(self, value: Any, tangent_operator: AbstractConditionOperator, /):
+    def __init__(
+        self, value: Any, tangent_operator: AbstractConditionOperator, /
+    ) -> None:
         if not isinstance(tangent_operator, AbstractConditionOperator):
             raise TypeError("A linearization tangent must be a condition operator.")
         if not tangent_operator.capabilities.is_linear:
@@ -486,7 +488,7 @@ class Condition(StrictModule):
         probability_level: float | None = None,
         label: str | None = None,
         evidence: Any = None,
-    ):
+    ) -> None:
         from ._relations import validate_relation
 
         identifier = str(condition_id)

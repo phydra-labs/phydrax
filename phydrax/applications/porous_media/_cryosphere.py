@@ -29,7 +29,7 @@ class FreezeThawMaterial(StrictModule):
         ice_heat_capacity_J_kg_K: ArrayLike = 2100.0,
         latent_heat_J_kg: ArrayLike = 333700.0,
         reference_temperature_K: ArrayLike = 273.15,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -103,7 +103,7 @@ class VaporEquilibrium(StrictModule):
         latent_heat_J_kg: ArrayLike = 2.5e6,
         vapor_gas_constant_J_kg_K: ArrayLike = 461.5,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -183,7 +183,7 @@ class AtmosphericExchangePlan(StrictModule):
         air_heat_capacity_J_kg_K: ArrayLike = 1005.0,
         emissivity: ArrayLike = 0.98,
         vapor: VaporEquilibrium | None = None,
-    ):
+    ) -> None:
         area, conductance, density, capacity, emissivity_ = jnp.broadcast_arrays(
             jnp.asarray(area_m2),
             jnp.asarray(aerodynamic_conductance_m_s),

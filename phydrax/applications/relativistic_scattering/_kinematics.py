@@ -48,7 +48,7 @@ class FourMomentum(StrictModule):
 
     value: Array
 
-    def __init__(self, value: ArrayLike, /):
+    def __init__(self, value: ArrayLike, /) -> None:
         value_ = jnp.asarray(value)
         if value_.shape[-1:] != (4,):
             raise ValueError("FourMomentum requires a trailing axis of length four.")
@@ -92,7 +92,7 @@ class LorentzFrame(StrictModule, NonTrainableState):
     valid: Array
     frame_id: str = eqx.field(static=True)
 
-    def __init__(self, matrix: ArrayLike, /):
+    def __init__(self, matrix: ArrayLike, /) -> None:
         matrix_ = np.asarray(matrix, dtype=np.float64)
         if matrix_.shape != (4, 4) or np.any(~np.isfinite(matrix_)):
             raise ValueError("Lorentz frames require one finite 4x4 matrix.")
@@ -177,7 +177,7 @@ class Particle(StrictModule, NonTrainableState):
         spin_twice: int,
         antiparticle: str,
         statistics: Literal["fermion", "boson"],
-    ):
+    ) -> None:
         mass_ = float(mass)
         charge_ = float(charge)
         spin_ = int(spin_twice)
@@ -215,7 +215,7 @@ class MassShell(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     shell_id: str = eqx.field(static=True)
 
-    def __init__(self, particle: Particle, /, *, tolerance: float = 1.0e-9):
+    def __init__(self, particle: Particle, /, *, tolerance: float = 1.0e-9) -> None:
         tolerance_ = float(tolerance)
         if not isinstance(particle, Particle):
             raise TypeError("MassShell requires a Particle.")

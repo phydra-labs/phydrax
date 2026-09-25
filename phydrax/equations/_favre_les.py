@@ -65,7 +65,7 @@ class FavreLESFieldContract(StrictModule, NonTrainableState):
         filter_scale_unit: str = "m",
         specific_enthalpy_unit: str = "J/kg",
         specific_heat_capacity_unit: str = "J/(kg*K)",
-    ):
+    ) -> None:
         if not isinstance(schema_id, str) or not schema_id.strip():
             raise ValueError("Favre LES schema_id must be a non-empty string.")
         if (
@@ -192,7 +192,7 @@ class FavreLESInputs(StrictModule):
         *,
         specific_sgs_kinetic_energy: ArrayLike | None = None,
         specific_sgs_kinetic_energy_gradient: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(fields, FavreLESFieldContract):
             raise TypeError("fields must be a FavreLESFieldContract.")
         density_ = jnp.asarray(density)
@@ -352,7 +352,7 @@ class PreparedFavreLESModel(StrictModule, NonTrainableState):
         isotropic_trace_policy: _FavreIsotropicTracePolicy = "neglected",
         sgs_kinetic_energy_dissipation_coefficient: float = 1.05,
         sgs_kinetic_energy_turbulent_schmidt_number: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(algebraic_model, PreparedAlgebraicLESModel):
             raise TypeError("algebraic_model must be a PreparedAlgebraicLESModel.")
         if not isinstance(filter_scale, LESFilterScale):

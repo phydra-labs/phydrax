@@ -34,7 +34,7 @@ class DirectJKPlan(StrictModule, NonTrainableState):
     screening: GaussianScreeningPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, screening: GaussianScreeningPlan | None = None, /):
+    def __init__(self, screening: GaussianScreeningPlan | None = None, /) -> None:
         screening_ = GaussianScreeningPlan() if screening is None else screening
         if not isinstance(screening_, GaussianScreeningPlan):
             raise TypeError("screening must be GaussianScreeningPlan or None.")
@@ -64,7 +64,7 @@ class PreparedDirectJK(StrictModule, NonTrainableState):
         basis: PreparedGaussianBasis,
         screening: PreparedGaussianScreening,
         /,
-    ):
+    ) -> None:
         if screening.basis_id != basis.prepared_id:
             raise ValueError("Direct J/K screening belongs to another Gaussian basis.")
         self.plan = plan

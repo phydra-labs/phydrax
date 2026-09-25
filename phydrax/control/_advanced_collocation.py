@@ -120,7 +120,9 @@ class DirectCollocationPhase(StrictModule, NonTrainableState):
     bounds: DirectCollocationBounds | None
     phase_id: str = eqx.field(static=True)
 
-    def __init__(self, problem, plan, initial_decision, bounds=None, /, *, phase_id: str):
+    def __init__(
+        self, problem, plan, initial_decision, bounds=None, /, *, phase_id: str
+    ) -> None:
         if not isinstance(problem, TrajectoryOptimizationProblem):
             raise TypeError("phase problem must be a TrajectoryOptimizationProblem.")
         if not isinstance(plan, (DirectCollocationPlan, RadauIIAMethod)):
@@ -155,7 +157,7 @@ class DirectCollocationLink(StrictModule, NonTrainableState):
         event: ScheduledHybridGuard | None = None,
         dae_reset: DAEResetMap | None = None,
         link_id: str,
-    ):
+    ) -> None:
         if not callable(residual):
             raise TypeError("link residual must be callable.")
         lower, upper = (jnp.asarray(value) for value in bounds)
@@ -190,7 +192,7 @@ class MultiphaseDirectCollocationProblem(StrictModule, NonTrainableState):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         phases_ = tuple(phases)
         links_ = tuple(links)
         if not phases_ or any(
@@ -291,7 +293,7 @@ class ComplementarityConstraint(StrictModule, NonTrainableState):
         *,
         form: Literal["product", "fischer-burmeister"] = "product",
         constraint_id: str,
-    ):
+    ) -> None:
         if not callable(pair):
             raise TypeError("complementarity pair must be callable.")
         scale_ = float(scale)
@@ -323,7 +325,7 @@ class ComplementarityHomotopyPolicy(StrictModule, NonTrainableState):
     mu_values: tuple[float, ...] = eqx.field(static=True)
     residual_tolerance: float = eqx.field(static=True)
 
-    def __init__(self, mu_values: Sequence[float], residual_tolerance: float, /):
+    def __init__(self, mu_values: Sequence[float], residual_tolerance: float, /) -> None:
         values = tuple(float(value) for value in mu_values)
         tolerance = float(residual_tolerance)
         if (
@@ -396,7 +398,7 @@ class StochasticDirectTranscription(StrictModule, NonTrainableState):
         *,
         nonanticipativity: str = "shared-open-loop",
         transcription_id: str,
-    ):
+    ) -> None:
         weights = jnp.asarray(scenario_weights)
         if (
             weights.ndim != 1

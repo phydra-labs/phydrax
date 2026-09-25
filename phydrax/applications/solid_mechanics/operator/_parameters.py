@@ -89,7 +89,7 @@ class MechanicsParameterField(StrictModule, NonTrainableState):
         support: Sequence[Any] = (),
         active_when: Mapping[str, Sequence[Any]] | None = None,
         unit: str | None = None,
-    ):
+    ) -> None:
         resolved_name = str(name)
         if not resolved_name:
             raise ValueError("Mechanics parameter field names must be non-empty.")
@@ -247,7 +247,7 @@ class MechanicsParameterSpec(StrictModule, NonTrainableState):
         /,
         *,
         spec_id: str | None = None,
-    ):
+    ) -> None:
         resolved = tuple(fields)
         if not resolved:
             raise ValueError("MechanicsParameterSpec requires at least one field.")
@@ -365,7 +365,7 @@ class MechanicsParameterRealization(StrictModule, NonTrainableState):
         case_id: str | None = None,
         realization_id: str | None = None,
         stratum_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(spec, MechanicsParameterSpec):
             raise TypeError("spec must be a MechanicsParameterSpec.")
         if probability_weight is not None and importance_weight is not None:
@@ -438,7 +438,7 @@ class MechanicsParameterDistribution(StrictModule, NonTrainableState):
         /,
         *,
         distribution_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(spec, MechanicsParameterSpec):
             raise TypeError("spec must be a MechanicsParameterSpec.")
         resolved = tuple(realizations)

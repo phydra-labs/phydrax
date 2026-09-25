@@ -82,7 +82,7 @@ class GeophysicalFieldBinding:
         role: str = "prognostic",
         vertical: HybridPressureCoordinate | None = None,
         temporal: TemporalSupport | None = None,
-    ):
+    ) -> None:
         from ...discretization import DiscreteFieldSpace
         from ...dynamics import StateLayout
         from ...nn.operator.task import OperatorTask

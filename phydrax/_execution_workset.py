@@ -100,7 +100,7 @@ class ExecutionWorksetPlan(StrictModule, NonTrainableState):
         /,
         *,
         bucket_capacity: int = 8,
-    ):
+    ) -> None:
         identifiers = tuple(str(value).strip() for value in semantic_ids)
         signature_values = tuple(signatures)
         capacity = int(bucket_capacity)
@@ -173,7 +173,7 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
     item_slot: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ExecutionWorksetPlan, /):
+    def __init__(self, plan: ExecutionWorksetPlan, /) -> None:
         if not isinstance(plan, ExecutionWorksetPlan):
             raise TypeError("plan must be an ExecutionWorksetPlan.")
         grouped: dict[str, list[int]] = {}
@@ -551,7 +551,7 @@ class ExecutionWorksetCheckpoint(StrictModule, NonTrainableState):
         /,
         *,
         numeric_revisions: Sequence[NumericRevision],
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedExecutionWorksets):
             raise TypeError("prepared must be PreparedExecutionWorksets.")
         arrays = _item_tree(state, prepared.item_count)

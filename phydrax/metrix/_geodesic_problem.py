@@ -35,7 +35,7 @@ class MetricGeodesicResult(StrictModule):
         steps: int,
         duration: float,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
-    ):
+    ) -> None:
         endpoint_ = jnp.asarray(endpoint)
         evidence = (
             GeometryPrecisionPolicy().evidence_for(endpoint_)
@@ -65,7 +65,7 @@ class _RK4GeodesicStep(StrictModule):
         step_size: float,
         precision: GeometryPrecisionPolicy,
         /,
-    ):
+    ) -> None:
         self.metric = metric
         self.step_size = float(step_size)
         self.precision = precision

@@ -63,7 +63,7 @@ class EquilibriumWallVortexClosurePlan(StrictModule, NonTrainableState):
         y_plus_envelope: tuple[float, float] = (0.0, 1.0e5),
         maximum_mach: float = 0.3,
         maximum_clauser_parameter: float = 1.0,
-    ):
+    ) -> None:
         density_ = float(density)
         viscosity = float(kinematic_viscosity)
         height = np.asarray(wall_sample_height, dtype=np.float64)
@@ -284,7 +284,7 @@ class VortexLoadRecoveryPlan(StrictModule, NonTrainableState):
         *,
         safety_factor: float = 1.25,
         consistency_tolerance: float = 0.25,
-    ):
+    ) -> None:
         values = np.asarray(resolutions, dtype=np.float64)
         order = float(formal_order)
         safety = float(safety_factor)
@@ -468,7 +468,7 @@ class CompressibleVortexAugmentationPlan(StrictModule, NonTrainableState):
         minimum_internal_energy: float,
         maximum_mach: float,
         projection_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         solenoidal = np.asarray(solenoidal_projection, dtype=np.float64)
         dilatational = np.asarray(dilatational_projection, dtype=np.float64)
         divergence = np.asarray(divergence_operator, dtype=np.float64)

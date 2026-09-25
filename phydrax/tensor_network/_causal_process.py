@@ -31,7 +31,7 @@ class CombLegSpec(StrictModule):
         *,
         vectorization: str = "column",
         spec_id: str = "causal-process",
-    ):
+    ) -> None:
         if min(system_dimension, memory_dimension, slot_count) < 1:
             raise ValueError("Process dimensions and slot count must be positive.")
         if vectorization != "column":
@@ -59,7 +59,7 @@ class QuantumInstrument(StrictModule):
         /,
         *,
         instrument_id: str,
-    ):
+    ) -> None:
         values = jnp.asarray(kraus)
         outcomes = jnp.asarray(outcome_active, dtype=jnp.bool_)
         active = jnp.asarray(kraus_active, dtype=jnp.bool_)
@@ -112,7 +112,7 @@ class CausalProcessResult(StrictModule):
         /,
         *,
         process_id: str,
-    ):
+    ) -> None:
         self.final_system_state = jnp.asarray(final_system_state)
         self.probability = jnp.asarray(probability)
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
@@ -136,7 +136,7 @@ class CausalProcessTensor(StrictModule):
         /,
         *,
         process_id: str,
-    ):
+    ) -> None:
         state = jnp.asarray(initial_state)
         composite = spec.system_dimension * spec.memory_dimension
         if state.shape != (composite, composite):

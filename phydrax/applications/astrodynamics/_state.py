@@ -28,7 +28,7 @@ class CartesianOrbitState(StrictModule):
         velocity: ArrayLike,
         context: AstrodynamicsContext,
         /,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         position_ = jnp.asarray(position)
@@ -75,7 +75,7 @@ class CartesianOrbitTrajectory(StrictModule, NonTrainableState):
         *,
         trajectory_id: str | None = None,
         provider_status: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         times_ = jnp.asarray(times)

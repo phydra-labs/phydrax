@@ -77,7 +77,7 @@ class ArrayArtifactProvenance:
         profile_ids: Sequence[str],
         unit_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         producer = _identifier(producer_id, "producer_id")
         sources = _identifiers(source_ids, "source_ids")
         profiles = _identifiers(profile_ids, "profile_ids")

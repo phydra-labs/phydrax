@@ -56,7 +56,7 @@ class MultivaluedCutCellDiffusionPlan(StrictModule, NonTrainableState):
         /,
         *,
         dirichlet_face_indices: Sequence[int] = (),
-    ):
+    ) -> None:
         if not isinstance(complex_, MultivaluedCutCellComplex):
             raise TypeError("Cut-cell diffusion requires MultivaluedCutCellComplex.")
         cell_count = complex_.component_count

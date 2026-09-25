@@ -75,7 +75,7 @@ class MechanicalLoadAction(StrictModule, NonTrainableState):
         /,
         *,
         action_id: str | None = None,
-    ):
+    ) -> None:
         from ..applications.solid_mechanics._loads import AbstractMechanicalLoad
         from ..integration._deformed_measure import DeformedMeasurePlan
 
@@ -338,7 +338,7 @@ class _NeuralMechanicalLoadRealization(StrictModule, NonTrainableState):
         state: MechanicalLoadState,
         trace_id: str,
         /,
-    ):
+    ) -> None:
         self.action = action
         self.coordinate_trace = coordinate_trace
         self.state = state

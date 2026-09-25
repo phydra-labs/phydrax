@@ -30,7 +30,7 @@ class SampleAxis(StrictModule):
     dim: str
     source: UncertaintySource
 
-    def __init__(self, dim: str, source: UncertaintySource):
+    def __init__(self, dim: str, source: UncertaintySource) -> None:
         if not isinstance(dim, str) or not dim:
             raise ValueError("SampleAxis.dim must be a non-empty string.")
         self.dim = dim
@@ -57,7 +57,7 @@ class PredictionInterval(StrictModule):
         nominal_coverage: float,
         simultaneous: bool = False,
         calibrated: bool = False,
-    ):
+    ) -> None:
         if not isinstance(lower, cx.AxisArray) or not isinstance(upper, cx.AxisArray):
             raise TypeError(
                 "PredictionInterval bounds must be phydrax.axes.AxisArray objects."
@@ -98,7 +98,7 @@ class PredictiveField(StrictModule):
         conditional_variance: cx.AxisArray | None = None,
         valid: cx.AxisArray | None = None,
         precision: PredictivePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(samples, cx.AxisArray):
             raise TypeError("PredictiveField.samples must be a phydrax.axes.AxisArray.")
         axes = tuple(sample_axes)

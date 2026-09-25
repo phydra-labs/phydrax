@@ -31,7 +31,7 @@ class MPMParticleDomainPlan(StrictModule, NonTrainableState):
         *,
         periodic: Sequence[bool] | None = None,
         support_margin: float | Sequence[float],
-    ):
+    ) -> None:
         bounds_ = np.asarray(bounds, dtype=np.float64)
         if (
             bounds_.ndim != 2

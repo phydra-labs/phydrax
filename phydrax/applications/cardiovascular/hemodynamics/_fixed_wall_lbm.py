@@ -240,7 +240,7 @@ class FixedWallLBMPlan(StrictModule, NonTrainableState):
         *,
         limits: HemodynamicsValidityLimits | None = None,
         trt_magic_parameter: float = 3.0 / 16.0,
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("discretization must be LatticeBoltzmannDiscretization.")
         if discretization.velocity_set.name != "D3Q19":
@@ -467,7 +467,7 @@ class PreparedFixedWallLBM(StrictModule, NonTrainableState):
         scope: FixedWallScope,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.method = method
         self.boundary = boundary

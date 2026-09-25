@@ -82,7 +82,7 @@ class MemberNetworkTolerances(StrictModule, NonTrainableState):
         minimum_length: float = 1.0e-12,
         maximum_rotation: float = 3.0,
         strict_cable_margin: float = 1.0e-7,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -126,7 +126,7 @@ class MemberNetworkInputs(StrictModule):
         initial_strain: ArrayLike | None = None,
         initial_temperature: ArrayLike | None = None,
         cable_active: ArrayLike | None = None,
-    ):
+    ) -> None:
         prescribed_positions_ = jnp.asarray(prescribed_positions)
         dtype = prescribed_positions_.dtype
         self.prescribed_positions = prescribed_positions_
@@ -165,7 +165,7 @@ class MemberNetworkProblem(StrictModule, NonTrainableState):
         *,
         tolerances: MemberNetworkTolerances | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(definition, MemberNetworkDefinition):
             raise TypeError("definition must be a MemberNetworkDefinition.")
         if not isinstance(assembly, MemberNetworkAssembly):

@@ -36,7 +36,7 @@ class MappedCoverValidationPlan(StrictModule, NonTrainableState):
         pairing_points: int = 256,
         tolerance: float = 1.0e-8,
         sampler: str = "latin_hypercube",
-    ):
+    ) -> None:
         ambient = int(ambient_points)
         pairing = int(pairing_points)
         tolerance_ = float(tolerance)
@@ -64,7 +64,7 @@ class MappedCoverEvidence(StrictModule, NonTrainableState):
         coverage: SubdomainCoverEvidence,
         pairings: tuple[PairedSupportEvidence, ...],
         /,
-    ):
+    ) -> None:
         self.coverage = coverage
         self.pairings = tuple(pairings)
         self.verified = coverage.verified and all(value.verified for value in pairings)

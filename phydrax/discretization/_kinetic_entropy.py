@@ -49,7 +49,7 @@ class KineticEntropyRootPlan(StrictModule, NonTrainableState):
         positivity_margin: float = 1.0e-7,
         minimum_root: float = 1.0,
         maximum_root: float = 4.0,
-    ):
+    ) -> None:
         if strategy not in ("exact", "asymptotic", "hybrid"):
             raise ValueError(f"Unknown kinetic entropy root strategy {strategy!r}.")
         steps = int(maximum_steps)

@@ -72,7 +72,7 @@ class TwistedKahlerDiracOperator(AbstractPseudofermionDiracOperator):
         layout: TwistedSYMCoordinateLayout,
         links: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(theory, TwistedN2SYMPlan):
             raise TypeError("theory must be TwistedN2SYMPlan.")
         if not isinstance(layout, TwistedSYMCoordinateLayout):
@@ -215,7 +215,7 @@ class RegulatedTwistedDiracOperator(AbstractPseudofermionDiracOperator):
         kahler_dirac: TwistedKahlerDiracOperator,
         regulator_mass: float,
         /,
-    ):
+    ) -> None:
         if not isinstance(kahler_dirac, TwistedKahlerDiracOperator):
             raise TypeError("kahler_dirac must be TwistedKahlerDiracOperator.")
         mass = float(regulator_mass)

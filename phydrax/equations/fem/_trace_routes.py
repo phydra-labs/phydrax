@@ -54,7 +54,7 @@ class PreparedDGTraceRoute(StrictModule, NonTrainableState):
         component_transform: ArrayLike = (),
         coordinate_transform: ArrayLike = (),
         route_id: str,
-    ):
+    ) -> None:
         if route_kind not in ("conforming", "mortar", "boundary", "periodic"):
             raise ValueError("Unknown DG trace route kind.")
         owner = jnp.asarray(owner_dofs, dtype=jnp.int32)
@@ -131,7 +131,7 @@ class PreparedDGMortarBatch(StrictModule, NonTrainableState):
     route_ids: tuple[str, ...] = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
 
-    def __init__(self, routes, /):
+    def __init__(self, routes, /) -> None:
         values = tuple(routes)
         if not values or any(
             not isinstance(route, PreparedDGTraceRoute)
@@ -206,7 +206,7 @@ class PreparedDGBoundaryBatch(StrictModule, NonTrainableState):
     route_ids: tuple[str, ...] = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
 
-    def __init__(self, routes, /):
+    def __init__(self, routes, /) -> None:
         values = tuple(routes)
         if (
             not values

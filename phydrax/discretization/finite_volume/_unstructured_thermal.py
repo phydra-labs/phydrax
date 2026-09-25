@@ -34,7 +34,7 @@ class UnstructuredThermalBoundaryCondition(StrictModule, NonTrainableState):
         kind: UnstructuredThermalBoundaryKind = "adiabatic",
         value=0.0,
         /,
-    ):
+    ) -> None:
         if kind not in ("adiabatic", "temperature", "heat_flux"):
             raise ValueError("Unknown unstructured thermal boundary kind.")
         value_ = float(value)
@@ -89,7 +89,7 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
             UnstructuredThermalBoundaryCondition | UnstructuredThermalBoundaryKind,
         ]
         | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError("Thermal diffusion requires unstructured FV geometry.")
         conductivity0 = float(phase0_conductivity)

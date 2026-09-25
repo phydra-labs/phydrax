@@ -39,7 +39,7 @@ class HybridFlowLaw(StrictModule):
         /,
         *,
         mode_id: str,
-    ):
+    ) -> None:
         probabilities = jnp.asarray(mode_probabilities, dtype=jnp.float64)
         laws = tuple(conditional_laws)
         if probabilities.ndim != 1 or probabilities.size == 0:
@@ -125,7 +125,7 @@ class TrajectoryFlowLaw(AbstractProbabilityLaw):
         *,
         support_tolerance: float = 1.0e-8,
         law_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(coefficient_law, AbstractProbabilityLaw) or not isinstance(
             layout, TrajectoryEventLayout
         ):
@@ -206,7 +206,7 @@ class FiniteFieldFlowLaw(StrictModule):
         field_space_id: str,
         query_evidence: Any = None,
         law_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(coefficient_law, AbstractProbabilityLaw):
             raise TypeError("coefficient_law must be an AbstractProbabilityLaw.")
         if not callable(decoder):
@@ -289,7 +289,7 @@ class ConditionalFiniteFieldFlowLaw(StrictModule):
         /,
         *,
         field_space_id: str,
-    ):
+    ) -> None:
         if (
             not callable(source_encoder)
             or not callable(conditional_coefficient_law)

@@ -91,7 +91,7 @@ class ControlledTransitionKernel(AbstractTransitionKernel, NonTrainableState):
     approximation_id: str = eqx.field(static=True)
     has_log_density: bool = eqx.field(static=True)
 
-    def __init__(self, result: SchrodingerBridgeResult, /):
+    def __init__(self, result: SchrodingerBridgeResult, /) -> None:
         from ._solver import require_converged_bridge, SchrodingerBridgeResult
 
         if not isinstance(result, SchrodingerBridgeResult):

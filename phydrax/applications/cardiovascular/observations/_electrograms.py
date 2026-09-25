@@ -169,7 +169,7 @@ class ActivationTimePlan(StrictModule, NonTrainableState):
     threshold_mv: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, timebase: SampleTimeAxis, /, *, threshold_mv: float):
+    def __init__(self, timebase: SampleTimeAxis, /, *, threshold_mv: float) -> None:
         _require_temporal_capacity(timebase)
         threshold = _finite_scalar(threshold_mv, "threshold_mv")
         self.timebase = timebase
@@ -325,7 +325,7 @@ class ActionPotentialDurationPlan(StrictModule, NonTrainableState):
         activation_threshold_mv: float,
         resting_potential_mv: float,
         repolarization_fraction: float = 0.9,
-    ):
+    ) -> None:
         _require_temporal_capacity(timebase)
         threshold = _finite_scalar(activation_threshold_mv, "activation_threshold_mv")
         resting = _finite_scalar(resting_potential_mv, "resting_potential_mv")
@@ -490,7 +490,7 @@ class ExtracellularSourceDensity(StrictModule):
         *,
         unit: str,
         source_id: str,
-    ):
+    ) -> None:
         labels = _labels(source_labels, "source_labels")
         trace = _trace_matrix(
             values, timebase, len(labels), "Extracellular source density"
@@ -563,7 +563,7 @@ class ElectricalGaugePlan(StrictModule, NonTrainableState):
         /,
         *,
         reference_id: str,
-    ):
+    ) -> None:
         labels = _labels(electrode_labels, "electrode_labels")
         weights_host = np.asarray(reference_weights, dtype=np.float64)
         if weights_host.shape != (len(labels),) or np.any(~np.isfinite(weights_host)):
@@ -633,7 +633,7 @@ class FIRFilterPlan(StrictModule, NonTrainableState):
         /,
         *,
         filter_id: str,
-    ):
+    ) -> None:
         _require_temporal_capacity(timebase)
         host = np.asarray(coefficients, dtype=np.float64)
         if host.ndim != 1 or host.size < 1 or np.any(~np.isfinite(host)):
@@ -748,7 +748,7 @@ class ElectrogramPlan(StrictModule, NonTrainableState):
         /,
         *,
         transfer_id: str,
-    ):
+    ) -> None:
         sources = _labels(source_labels, "source_labels")
         if not _same_timebase(timebase, filter_plan.timebase):
             raise ValueError("Electrogram and filter time bases must match.")
@@ -863,7 +863,7 @@ class TorsoObservationPlan(StrictModule, NonTrainableState):
         /,
         *,
         transfer_id: str,
-    ):
+    ) -> None:
         sources = _labels(source_labels, "source_labels")
         matrix = np.asarray(transfer_matrix, dtype=np.float64)
         if matrix.shape != (len(gauge.electrode_labels), len(sources)):
@@ -972,7 +972,7 @@ class ECGLeadFieldPlan(StrictModule, NonTrainableState):
         *,
         lead_field_id: str,
         reciprocity_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         labels = _labels(lead_labels, "lead_labels")
         matrix = np.asarray(lead_matrix, dtype=np.float64)
         if matrix.shape != (len(labels), len(torso.electrode_labels)):

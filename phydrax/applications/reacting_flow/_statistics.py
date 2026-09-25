@@ -50,7 +50,7 @@ class ReactiveClosureTargetPlan(StrictModule):
         /,
         *,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(
             system,
             (
@@ -191,7 +191,7 @@ class ReactiveFlowStatisticsPlan(StrictModule):
         system: HomogeneousMixtureEulerSystem
         | HomogeneousMixtureCompressibleNavierStokesSystem,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             system,
             (

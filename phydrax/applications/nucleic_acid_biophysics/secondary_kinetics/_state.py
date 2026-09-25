@@ -21,7 +21,7 @@ class StrandComplexPartition:
     strand_ids: tuple[str, ...]
     complexes: tuple[tuple[str, ...], ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         strands = tuple(self.strand_ids)
         if not strands or len(set(strands)) != len(strands):
             raise ValueError("A partition requires unique declared strand identities.")
@@ -107,7 +107,7 @@ class SecondaryStructureState:
         pairs: tuple[tuple[NucleotideKey, NucleotideKey], ...] = (),
         *,
         partition: StrandComplexPartition | None = None,
-    ):
+    ) -> None:
         keys = construct.nucleotide_keys
         index = {key: i for i, key in enumerate(keys)}
         if any(

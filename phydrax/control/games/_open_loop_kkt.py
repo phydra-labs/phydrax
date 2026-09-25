@@ -111,7 +111,7 @@ class NonlinearOpenLoopGameProblem(StrictModule):
         constraints: OpenLoopGameConstraints | None = None,
         args: Any = None,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(dynamics, DiscreteControlDynamics):
             raise TypeError("dynamics must be DiscreteControlDynamics.")
         if not isinstance(time_grid, TimeGrid):

@@ -95,7 +95,7 @@ class CharacteristicWorldtubeHistory(StrictModule, NonTrainableState):
         /,
         *,
         history_name: str = "characteristic-worldtube",
-    ):
+    ) -> None:
         times = np.asarray(retarded_times)
         radius = np.asarray(inverse_radius)
         ell = np.asarray(mode_l)
@@ -231,7 +231,7 @@ class CharacteristicEvolutionPlan(StrictModule, NonTrainableState):
         absolute_tolerance: float = 1.0e-10,
         relative_tolerance: float = 1.0e-8,
         plan_name: str = "bondi-sachs-characteristic-evolution",
-    ):
+    ) -> None:
         time_count = _positive_capacity(time_capacity, "time_capacity", minimum=3)
         radial_count = _positive_capacity(radial_capacity, "radial_capacity", minimum=2)
         mode_count = _positive_capacity(mode_capacity, "mode_capacity")

@@ -43,7 +43,7 @@ class EnvelopeNonlinearResponsePlan(StrictModule):
         self_steepening: bool = False,
         maximum_response_elements: int = 1_000_000,
         source_id: str,
-    ):
+    ) -> None:
         coefficient = float(nonlinear_coefficient)
         fraction = float(raman_fraction)
         maximum = int(maximum_response_elements)

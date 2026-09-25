@@ -35,7 +35,7 @@ class DesignParameterization(StrictModule):
         reference: DesignState,
         parameter_ids: Sequence[ParameterId] | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(reference, DesignState):
             raise TypeError("reference must be a DesignState.")
         identifiers = (
@@ -158,7 +158,7 @@ class DesignBindingGraph(StrictModule):
         schema: ParameterSchema,
         bindings: Mapping[str, ParameterId | ParameterBinding],
         /,
-    ):
+    ) -> None:
         if not isinstance(schema, ParameterSchema):
             raise TypeError("schema must be a ParameterSchema.")
         names = tuple(bindings)
@@ -218,7 +218,7 @@ class DesignEvaluation(StrictModule):
         objective: ArrayLike,
         constraints: ArrayLike,
         valid: ArrayLike,
-    ):
+    ) -> None:
         objective_ = jnp.asarray(objective, dtype=jnp.float64)
         constraints_ = jnp.asarray(constraints, dtype=jnp.float64)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
@@ -260,7 +260,7 @@ class ReducedDesignProblem(StrictModule):
         constraints: Sequence[
             Callable[[DesignState, frozendict[str, Array]], ArrayLike]
         ] = (),
-    ):
+    ) -> None:
         if not isinstance(parameterization, DesignParameterization):
             raise TypeError("parameterization must be a DesignParameterization.")
         if not isinstance(binding_graph, DesignBindingGraph):

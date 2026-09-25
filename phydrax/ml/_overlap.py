@@ -40,7 +40,7 @@ class OverlapScoreConfig(StrictModule, NonTrainableState):
         smooth: float = 0.0,
         alpha: float = 0.5,
         beta: float = 0.5,
-    ):
+    ) -> None:
         if kind not in ("dice", "jaccard", "tversky"):
             raise ValueError("kind must be 'dice', 'jaccard', or 'tversky'.")
         if class_reduction not in ("micro", "macro", "support_weighted"):

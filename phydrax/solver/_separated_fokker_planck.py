@@ -40,7 +40,7 @@ class SeparatedFokkerPlanckPlan(StrictModule):
         validation_operator: Any = None,
         reference: str = "coordinate",
         state_var: str = "x",
-    ):
+    ) -> None:
         if not isinstance(field, SeparatedLogDensityField):
             raise TypeError("field must be a SeparatedLogDensityField.")
         if not isinstance(realization, IntegrationRealization) or not isinstance(

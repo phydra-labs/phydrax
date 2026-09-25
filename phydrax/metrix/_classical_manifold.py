@@ -52,7 +52,7 @@ class PoincareBallManifold(AbstractGeodesicManifold):
         *,
         curvature: float = 1.0,
         tolerance: float = 1e-6,
-    ):
+    ) -> None:
         self.dimension = _dimension(dimension, "Poincare dimension")
         self.curvature = _positive_scalar(curvature, "curvature")
         self.tolerance = _positive_scalar(tolerance, "tolerance")
@@ -203,7 +203,7 @@ class HyperboloidManifold(AbstractGeodesicManifold):
         *,
         curvature: float = 1.0,
         tolerance: float = 1e-6,
-    ):
+    ) -> None:
         self.dimension = _dimension(dimension, "Hyperboloid dimension")
         self.curvature = _positive_scalar(curvature, "curvature")
         self.tolerance = _positive_scalar(tolerance, "tolerance")
@@ -343,7 +343,7 @@ class ProbabilitySimplexManifold(AbstractGeodesicManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7):
+    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7) -> None:
         self.dimension = _dimension(dimension, "Simplex dimension", minimum=2)
         self.tolerance = _positive_scalar(tolerance, "tolerance")
         self.manifold_id = f"manifold:probability-simplex:{self.dimension}"

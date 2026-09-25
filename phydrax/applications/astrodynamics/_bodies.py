@@ -34,7 +34,7 @@ class CelestialBodyCatalog(StrictModule, NonTrainableState):
         /,
         *,
         active_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         identifiers = tuple(str(value).strip() for value in body_ids)
         if not identifiers or any(not value for value in identifiers):
             raise ValueError("body_ids must be non-empty identifiers.")

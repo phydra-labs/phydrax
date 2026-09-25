@@ -32,7 +32,7 @@ class MPSCanonicalEvidence(StrictModule):
         *,
         center: int,
         tolerance: float,
-    ):
+    ) -> None:
         self.left_residuals = jnp.asarray(left_residuals)
         self.right_residuals = jnp.asarray(right_residuals)
         self.center_norm = jnp.asarray(center_norm)
@@ -65,7 +65,7 @@ class LPDOCanonicalEvidence(StrictModule):
         *,
         center: int,
         tolerance: float,
-    ):
+    ) -> None:
         self.left_residuals = jnp.asarray(left_residuals)
         self.right_residuals = jnp.asarray(right_residuals)
         self.raw_trace = jnp.asarray(raw_trace)

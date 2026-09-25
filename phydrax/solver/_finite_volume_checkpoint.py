@@ -204,7 +204,7 @@ class FiniteVolumeCheckpointPlan(StrictModule):
         *,
         runtime: PreparedFiniteVolumeRuntime | None = None,
         partition: PreparedDistributedBlockAMRHierarchy | None = None,
-    ):
+    ) -> None:
         if isinstance(case, PreparedBlockAMRRuntime):
             if runtime is not None:
                 raise ValueError(

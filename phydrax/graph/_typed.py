@@ -263,7 +263,7 @@ class RelationalGraphConvolution(StrictModule):
         output_key: str | None = None,
         flow: GraphFlow = "source_to_target",
         normalize: bool = False,
-    ):
+    ) -> None:
         weights = jnp.asarray(relation_weights, dtype=jnp.float64)
         if weights.ndim not in (1, 2, 3):
             raise ValueError(

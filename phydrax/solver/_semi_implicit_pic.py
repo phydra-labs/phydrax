@@ -101,7 +101,7 @@ class SemiImplicitPICPlan(StrictModule, NonTrainableState):
         theta: float = 0.5,
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 200,
-    ):
+    ) -> None:
         if not isinstance(maxwell, PreparedCompatibleMaxwell):
             raise TypeError("maxwell must be PreparedCompatibleMaxwell.")
         if not isinstance(transfer, PreparedPICParticleCochainTransfer):
@@ -307,7 +307,7 @@ class PICGaussCorrectionPlan(StrictModule, NonTrainableState):
         iterations: int = 4,
         learning_rate: float = 1.0e-3,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         self.transfer = transfer
         self.iterations = int(iterations)
         self.learning_rate = float(learning_rate)

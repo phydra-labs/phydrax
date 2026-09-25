@@ -32,7 +32,7 @@ class WeaklyCompressibleSPHStateLayout(StrictModule, NonTrainableState):
         *,
         density_evolved: bool,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
         capacity = particles.capacity

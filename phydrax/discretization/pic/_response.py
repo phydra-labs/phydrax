@@ -39,7 +39,7 @@ class PICParticleResponsePlan(StrictModule, NonTrainableState):
     transfer: PreparedPICParticleCochainTransfer
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, transfer: PreparedPICParticleCochainTransfer, /):
+    def __init__(self, transfer: PreparedPICParticleCochainTransfer, /) -> None:
         if not isinstance(transfer, PreparedPICParticleCochainTransfer):
             raise TypeError("transfer must be PreparedPICParticleCochainTransfer.")
         if transfer.bridge.dimension != 3:

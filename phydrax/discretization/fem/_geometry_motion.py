@@ -63,7 +63,7 @@ class FiniteElementMeshMotionPolicy:
     solve_absolute_tolerance: float = 1.0e-12
     maximum_solve_steps: int = 500
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for name, value in (
             ("minimum_absolute_jacobian", self.minimum_absolute_jacobian),
             ("minimum_relative_jacobian", self.minimum_relative_jacobian),
@@ -113,7 +113,7 @@ class FiniteElementBoundaryRealization(StrictModule):
         refresh_required: Any,
         status: Any,
         mapping_id: str,
-    ):
+    ) -> None:
         proposed = jnp.asarray(proposed_points, dtype=jnp.float64)
         safe = jnp.asarray(points, dtype=proposed.dtype)
         if proposed.ndim != 2 or safe.shape != proposed.shape:
@@ -147,7 +147,7 @@ class FiniteElementGeometryEvidence(StrictModule):
         minimum_absolute_jacobian: Any,
         minimum_relative_jacobian: Any,
         maximum_displacement_ratio: Any,
-    ):
+    ) -> None:
         self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
         self.orientation_preserved = jnp.asarray(
             orientation_preserved, dtype=jnp.bool_
@@ -184,7 +184,7 @@ class FiniteElementMeshMotionEvidence(StrictModule):
         plan_id: str,
         topology_id: str,
         geometry_layout_id: str,
-    ):
+    ) -> None:
         self.boundary = boundary
         self.geometry = geometry
         self.extension_status = jnp.asarray(extension_status, dtype=jnp.int32)
@@ -217,7 +217,7 @@ class FiniteElementMeshRealization(StrictModule):
         runtime: FiniteElementRuntimeData,
         evidence: FiniteElementMeshMotionEvidence,
         /,
-    ):
+    ) -> None:
         proposed = jnp.asarray(proposed_coordinates, dtype=jnp.float64)
         safe = jnp.asarray(coordinates, dtype=proposed.dtype)
         if proposed.ndim != 2 or safe.shape != proposed.shape:
@@ -322,7 +322,7 @@ class FiniteElementMeshMotionPlan(StrictModule):
         /,
         *,
         policy: FiniteElementMeshMotionPolicy = _DEFAULT_MESH_MOTION_POLICY,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be FiniteElementDiscretization.")
         if not isinstance(boundary_provider, FiniteElementBoundaryProvider):

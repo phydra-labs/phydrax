@@ -27,7 +27,7 @@ class TensorBSplineSplatAssignment(AbstractStructuredSplatAssignment):
     capabilities: SplatAssignmentCapabilities = eqx.field(static=True)
     assignment_id: str = eqx.field(static=True)
 
-    def __init__(self, degree: int, /):
+    def __init__(self, degree: int, /) -> None:
         degree_ = int(degree)
         if degree_ not in (1, 2, 3):
             raise ValueError(

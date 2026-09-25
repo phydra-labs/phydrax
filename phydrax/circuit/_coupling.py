@@ -34,7 +34,7 @@ class FieldPortModel(AbstractScatteringComponent):
         *,
         descriptor: LinearDescriptorSystem | None = None,
         model_id: str,
-    ):
+    ) -> None:
         if not isinstance(component, AbstractScatteringComponent):
             raise TypeError("component must be AbstractScatteringComponent.")
         if descriptor is not None and not isinstance(descriptor, LinearDescriptorSystem):

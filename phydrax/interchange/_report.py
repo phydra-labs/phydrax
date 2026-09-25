@@ -52,7 +52,7 @@ class AdapterLoss(StrictModule, NonTrainableState):
         *,
         changes_interpretation: bool,
         affected_capability_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         path_ = str(path).strip()
         rationale_ = str(rationale).strip()
         if not path_ or not rationale_:
@@ -97,7 +97,7 @@ class AdapterFormatProfile(StrictModule, NonTrainableState):
         /,
         *,
         qualifiers: Mapping[str, str] | Sequence[tuple[str, str]] = (),
-    ):
+    ) -> None:
         format_ = str(format).strip()
         if not format_:
             raise ValueError("Adapter format profiles require a non-empty format.")
@@ -129,7 +129,7 @@ class AdapterRequirement(StrictModule, NonTrainableState):
         *,
         required: bool = True,
         rationale: str = "",
-    ):
+    ) -> None:
         semantic_id_ = str(semantic_id).strip()
         rationale_ = str(rationale).strip()
         if not semantic_id_:
@@ -155,7 +155,7 @@ class AdapterCapability(StrictModule, NonTrainableState):
     detail: str = eqx.field(static=True)
     capability_id: str = eqx.field(static=True)
 
-    def __init__(self, semantic_id: str, /, *, detail: str = ""):
+    def __init__(self, semantic_id: str, /, *, detail: str = "") -> None:
         semantic_id_ = str(semantic_id).strip()
         detail_ = str(detail).strip()
         if not semantic_id_:
@@ -179,7 +179,7 @@ class AdapterWaiver(StrictModule, NonTrainableState):
     rationale: str = eqx.field(static=True)
     waiver_id: str = eqx.field(static=True)
 
-    def __init__(self, loss: AdapterLoss | str, rationale: str, /):
+    def __init__(self, loss: AdapterLoss | str, rationale: str, /) -> None:
         loss_id_ = loss.loss_id if isinstance(loss, AdapterLoss) else str(loss).strip()
         rationale_ = str(rationale).strip()
         if not loss_id_ or not rationale_:
@@ -221,7 +221,7 @@ class AdapterNegotiationResult(StrictModule, NonTrainableState):
         *,
         losses: Sequence[AdapterLoss] = (),
         waivers: Sequence[AdapterWaiver] = (),
-    ):
+    ) -> None:
         requirements_ = _requirements(requirements)
         capabilities_ = _capabilities(capabilities)
         losses_ = _losses(losses)
@@ -352,7 +352,7 @@ class AdapterReport(StrictModule, NonTrainableState):
         capabilities: Sequence[AdapterCapability] = (),
         waivers: Sequence[AdapterWaiver] = (),
         stages: Sequence[AdapterReport] = (),
-    ):
+    ) -> None:
         status_ = AdapterStatus(status)
         source_format_ = str(source_format).strip()
         target_format_ = str(target_format).strip()
@@ -473,7 +473,7 @@ class AdapterError(ValueError):
 
     status: AdapterStatus
 
-    def __init__(self, status: AdapterStatus, message: str, /):
+    def __init__(self, status: AdapterStatus, message: str, /) -> None:
         self.status = AdapterStatus(status)
         super().__init__(str(message))
 

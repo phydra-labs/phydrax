@@ -100,7 +100,7 @@ class MetricStressObservables(StrictModule):
         frame_id: str,
         frame_realization_id: str,
         source_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(geometry, ADMGridGeometry):
             raise TypeError("geometry must be ADMGridGeometry.")
         if not isinstance(total_stress_energy, StressEnergyProjection):
@@ -204,7 +204,7 @@ class EventShowerHadronizationObservables(StrictModule):
         hadronization_profile_id: str,
         source_ids: Sequence[str],
         successful: ArrayLike,
-    ):
+    ) -> None:
         counts = _real_array(event_counts, "event_counts").reshape((-1,))
         weights = _real_array(event_weights, "event_weights", dtype=counts.dtype).reshape(
             (-1,)
@@ -362,7 +362,7 @@ class QuantumCoherenceObservables(StrictModule):
         unit_contract_id: str,
         source_ids: Sequence[str],
         successful: ArrayLike,
-    ):
+    ) -> None:
         occupation_ = _real_array(occupation, "occupation")
         coherence_r = _real_array(
             coherence_real, "coherence_real", dtype=occupation_.dtype
@@ -512,7 +512,7 @@ class RadiationObservables(StrictModule):
         unit_contract_id: str,
         source_ids: Sequence[str],
         successful: ArrayLike,
-    ):
+    ) -> None:
         coordinates = _real_array(spectral_coordinates, "spectral_coordinates").reshape(
             (-1,)
         )
@@ -648,7 +648,7 @@ class FullDarkSectorLedgerObservables(StrictModule):
         component_names: Sequence[str],
         source_evidence_ids: Sequence[str],
         successful: ArrayLike,
-    ):
+    ) -> None:
         names = _identifiers(component_names, "ledger component name")
         component = tuple(
             _real_array(value, name).reshape((-1,))
@@ -778,7 +778,7 @@ class FullDarkSectorObservableBundle(StrictModule):
         *,
         stage_id: str,
         epoch_manifest_id: str,
-    ):
+    ) -> None:
         products = (
             metric_stress,
             event_shower_hadronization,
@@ -890,7 +890,7 @@ class FullDarkSectorObservationPlan(StrictModule, NonTrainableState):
         radiation: LinearObservationPlan,
         ledgers: LinearObservationPlan,
         /,
-    ):
+    ) -> None:
         plans = (
             metric_stress,
             event_shower_hadronization,

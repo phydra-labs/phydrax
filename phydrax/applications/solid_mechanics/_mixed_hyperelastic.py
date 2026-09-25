@@ -154,7 +154,7 @@ class MixedHyperelasticLaw(StrictModule):
         *,
         bulk_modulus: float | None = None,
         minimum_jacobian: float = 0.0,
-    ):
+    ) -> None:
         if not callable(isochoric_energy):
             raise TypeError("isochoric_energy must be callable.")
         if not callable(volumetric_constraint):
@@ -337,7 +337,7 @@ class MixedHyperelasticModel(StrictModule):
 
     law: MixedHyperelasticLaw
 
-    def __init__(self, law: MixedHyperelasticLaw, /):
+    def __init__(self, law: MixedHyperelasticLaw, /) -> None:
         if not isinstance(law, MixedHyperelasticLaw):
             raise TypeError("law must be MixedHyperelasticLaw.")
         self.law = law
@@ -648,7 +648,7 @@ class MixedAugmentedLagrangianPlan(StrictModule, NonTrainableState):
         maximum_penalty: float = 1.0e12,
         constraint_reduction: float = 0.25,
         constraint_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(law, MixedHyperelasticLaw):
             raise TypeError("law must be MixedHyperelasticLaw.")
         if law.bulk_modulus is not None:

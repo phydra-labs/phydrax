@@ -61,7 +61,7 @@ class PolynomialSpectralFunction(AbstractSpectralFunction):
 
     coefficients: Array
 
-    def __init__(self, coefficients: ArrayLike, /):
+    def __init__(self, coefficients: ArrayLike, /) -> None:
         values = jnp.asarray(coefficients)
         if values.ndim != 1 or values.shape[0] == 0:
             raise ValueError("coefficients must be a non-empty rank-one array.")
@@ -110,7 +110,7 @@ class FermiDiracSpectralFunction(AbstractSpectralFunction):
         chemical_potential: ArrayLike,
         temperature: ArrayLike,
         /,
-    ):
+    ) -> None:
         chemical = _real_scalar(chemical_potential, "chemical_potential")
         thermal = _real_scalar(temperature, "temperature")
         if chemical.dtype != thermal.dtype:
@@ -148,7 +148,7 @@ class FermiDiracSpectralFunction(AbstractSpectralFunction):
 class ExponentialSpectralFunction(AbstractSpectralFunction):
     """Matrix exponential spectral function."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.function_id = "exponential"
 
     def value(self, eigenvalue: ArrayLike, /) -> Array:
@@ -167,7 +167,7 @@ class ExponentialSpectralFunction(AbstractSpectralFunction):
 class LogarithmSpectralFunction(AbstractSpectralFunction):
     """Principal real matrix logarithm on certified positive spectra."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.function_id = "logarithm"
 
     def value(self, eigenvalue: ArrayLike, /) -> Array:
@@ -190,7 +190,7 @@ class LogarithmSpectralFunction(AbstractSpectralFunction):
 class SquareRootSpectralFunction(AbstractSpectralFunction):
     """Principal real square root on certified positive spectra."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.function_id = "square-root"
 
     def value(self, eigenvalue: ArrayLike, /) -> Array:
@@ -213,7 +213,7 @@ class SquareRootSpectralFunction(AbstractSpectralFunction):
 class InverseSquareRootSpectralFunction(AbstractSpectralFunction):
     """Inverse principal square root on certified positive spectra."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.function_id = "inverse-square-root"
 
     def value(self, eigenvalue: ArrayLike, /) -> Array:
@@ -240,7 +240,7 @@ class FractionalPowerSpectralFunction(AbstractSpectralFunction):
     power: float = eqx.field(static=True)
     integer_power: bool = eqx.field(static=True)
 
-    def __init__(self, power: float, /):
+    def __init__(self, power: float, /) -> None:
         exponent = float(power)
         if not math.isfinite(exponent):
             raise ValueError("power must be finite.")
@@ -275,7 +275,7 @@ class ResolventSpectralFunction(AbstractSpectralFunction):
 
     shift: Array
 
-    def __init__(self, shift: ArrayLike, /):
+    def __init__(self, shift: ArrayLike, /) -> None:
         value = _real_scalar(shift, "shift")
         self.shift = value
         self.function_id = f"resolvent:{value.dtype}"
@@ -324,7 +324,7 @@ class SelfAdjointSpectralOperatorPolicy(StrictModule):
         absolute_tolerance: float = 1e-10,
         differentiation: SpectralFunctionDifferentiation = "none",
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         relative = float(relative_tolerance)
         absolute = float(absolute_tolerance)
         if any(not math.isfinite(value) or value < 0.0 for value in (relative, absolute)):

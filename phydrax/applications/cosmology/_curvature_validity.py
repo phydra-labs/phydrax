@@ -42,7 +42,7 @@ class LocalCurvatureValidityPlan(StrictModule, NonTrainableState):
         light_speed: float,
         geometry_error_budget: float,
         support_kind: str,
-    ):
+    ) -> None:
         speed = float(light_speed)
         budget = float(geometry_error_budget)
         kind = str(support_kind).strip()

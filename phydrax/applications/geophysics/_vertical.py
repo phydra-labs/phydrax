@@ -38,7 +38,7 @@ class HybridPressureCoordinate(StrictModule, NonTrainableState):
         reference_pressure: float = 100000.0,
         a_is_pressure: bool = False,
         dtype: Any = None,
-    ):
+    ) -> None:
         dtype_ = (
             np.dtype(np.float64 if jax.config.x64_enabled else np.float32)
             if dtype is None

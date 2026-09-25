@@ -32,7 +32,7 @@ class CalorimeterClusteringPlan(StrictModule, NonTrainableState):
         /,
         *,
         cluster_capacity: int,
-    ):
+    ) -> None:
         if not isinstance(geometry, CalorimeterGeometry):
             raise TypeError("geometry must be CalorimeterGeometry.")
         mapping = np.asarray(cell_to_cluster)

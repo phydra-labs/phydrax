@@ -64,7 +64,7 @@ class GRRayStatusEvidence(StrictModule):
         qualified: ArrayLike,
         derivative_valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value, dtype=jnp.bool_)
             for value in (

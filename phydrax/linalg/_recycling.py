@@ -39,7 +39,7 @@ class RecyclingSubspace(StrictModule):
         image_basis: ArrayLike,
         operator_id: str,
         recycling_id: str,
-    ):
+    ) -> None:
         if not isinstance(source, AbstractVectorSpace) or not isinstance(
             target, AbstractVectorSpace
         ):
@@ -146,7 +146,7 @@ class RecyclingState(StrictModule):
         update_count: Any = 0,
         update_status: Any = RecyclingUpdateStatus.CURRENT,
         extraction: str = "harmonic-ritz",
-    ):
+    ) -> None:
         if not isinstance(source, AbstractVectorSpace) or not isinstance(
             target, AbstractVectorSpace
         ):

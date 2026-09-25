@@ -228,7 +228,7 @@ class DAEAdaptivePolicy(StrictModule):
         maximum_accepted_steps: int = 4096,
         maximum_attempts: int = 8192,
         maximum_consecutive_rejections: int = 12,
-    ):
+    ) -> None:
         relative = _inexact(relative_tolerance)
         absolute = _inexact(absolute_tolerance)
         relative_host = np.asarray(relative, dtype=np.float64)
@@ -335,7 +335,7 @@ class DAETemporalReusePolicy(StrictModule):
         maximum_jacobian_age: int = 2,
         maximum_alpha_ratio: float = 1.25,
         refresh_after_iterations: int | None = 3,
-    ):
+    ) -> None:
         age = int(maximum_jacobian_age)
         ratio = float(maximum_alpha_ratio)
         iterations = (
@@ -367,7 +367,7 @@ class DAEReplayPolicy(StrictModule):
         *,
         chunk_size: int | None = None,
         memory_budget_bytes: int | None = None,
-    ):
+    ) -> None:
         if checkpointing not in ("full", "chunked"):
             raise ValueError("checkpointing must be 'full' or 'chunked'.")
         chunk = None if chunk_size is None else int(chunk_size)
@@ -403,7 +403,7 @@ class DAERegularityPolicy(StrictModule):
         interval: int = 1,
         condition_limit: float | None = None,
         failure: DAERegularityFailureMode = "record",
-    ):
+    ) -> None:
         if mode not in ("solver-evidence", "periodic"):
             raise ValueError("mode must be 'solver-evidence' or 'periodic'.")
         interval_ = int(interval)
@@ -449,7 +449,7 @@ class DAESolvePolicy(StrictModule):
         regularity: DAERegularityPolicy | None = None,
         max_step_ratio: float = 2.0,
         failure: DAEFailureMode = "status",
-    ):
+    ) -> None:
         temporal_method = BDFMethod() if method is None else method
         if not isinstance(temporal_method, (BDFMethod, ThetaMethod)):
             raise TypeError("method must be BDFMethod, ThetaMethod, or None.")
@@ -547,7 +547,7 @@ class DifferentialAlgebraicProblem(StrictModule):
         initialization: DAEInitializationSpec | Literal["structural"] | None = None,
         discretization_bundle: DiscretizationBundle | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         from ..dynamics._dae_structural import ReducedDAECompilation
 
         structural = system if isinstance(system, ReducedDAECompilation) else None
@@ -700,7 +700,7 @@ class DAESolvePlan(StrictModule):
         /,
         *,
         event_plan: Any = None,
-    ):
+    ) -> None:
         if not isinstance(problem, DifferentialAlgebraicProblem):
             raise TypeError("problem must be a DifferentialAlgebraicProblem.")
         if not isinstance(time_grid, TimeGrid):
@@ -973,7 +973,7 @@ class PreparedDAESolve(StrictModule):
         stage_solve: PreparedNonlinearSolve,
         events: Any,
         /,
-    ):
+    ) -> None:
         if (
             plan.problem_id != problem.problem_id
             or plan.system_id != problem.system.system_id
@@ -1032,7 +1032,7 @@ class DAEStepHistory(StrictModule):
         valid: Array,
         count: Array,
         save_step_indices: Array,
-    ):
+    ) -> None:
         capacity = jnp.asarray(step_sizes).size
         shape = (capacity,)
         for values, name in (
@@ -1101,7 +1101,7 @@ class DAEAttemptHistory(StrictModule):
         residual_certifications: Array,
         valid: Array,
         count: Array,
-    ):
+    ) -> None:
         shape = jnp.asarray(proposed_step_sizes).shape
         if len(shape) != 1:
             raise ValueError("DAE attempt history must be one-dimensional.")
@@ -1178,7 +1178,7 @@ class DAERegularityEvidence(StrictModule):
         stage_valid: Array,
         consistency_operator: str,
         stage_operator: str,
-    ):
+    ) -> None:
         shape = jnp.asarray(stage_status).shape
         if (
             jnp.asarray(stage_rank).shape != shape
@@ -1212,7 +1212,7 @@ class DAEReplayEvidence(StrictModule):
         selected_chunk_size: int,
         estimated_memory_bytes: int,
         checkpointing: DAEReplayMode,
-    ):
+    ) -> None:
         self.accepted_steps = jnp.asarray(accepted_steps, dtype=jnp.int32)
         self.selected_chunk_size = int(selected_chunk_size)
         self.estimated_memory_bytes = int(estimated_memory_bytes)
@@ -1266,7 +1266,7 @@ class DAEContinuation(StrictModule):
         initialization_id: str,
         nonlinear_method_id: str,
         stage_linear_plan_id: str,
-    ):
+    ) -> None:
         states_ = jnp.asarray(states)
         rates_ = jnp.asarray(state_rates)
         if states_.shape != rates_.shape or states_.shape[0] != 6:
@@ -1382,7 +1382,7 @@ class DifferentialAlgebraicSolution(StrictModule):
         initialization_linear_plan_id: str,
         method_id: str,
         adaptive: bool,
-    ):
+    ) -> None:
         validated = validate_solution_arrays(
             times,
             states,

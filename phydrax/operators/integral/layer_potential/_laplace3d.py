@@ -27,7 +27,7 @@ class LaplaceLayerKernel3D(StrictModule):
 
     _kernel_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._kernel_id = canonical_fingerprint(
             {
                 "kind": "laplace-layer-kernel-3d",
@@ -83,7 +83,7 @@ class LaplaceLayerPotential3D(_AbstractTrialSpaceField):
         *,
         kind: Literal["single", "double"] = "single",
         density: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(panelization, SurfacePanelization3D):
             raise TypeError("panelization must be SurfacePanelization3D.")
         if kind not in ("single", "double"):

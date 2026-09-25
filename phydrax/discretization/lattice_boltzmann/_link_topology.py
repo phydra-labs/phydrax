@@ -94,7 +94,7 @@ class LatticeBoltzmannFaceBoundary(StrictModule, NonTrainableState):
         body_id: str | None = None,
         link_fraction: float | None = None,
         flow_direction: FlowDirection = "any",
-    ):
+    ) -> None:
         axis_, side_ = _face(axis, side)
         if not isinstance(owner, LatticeBoltzmannLinkOwner):
             raise TypeError("owner must be a LatticeBoltzmannLinkOwner.")
@@ -173,7 +173,7 @@ class LatticeBoltzmannBodyBoundary(StrictModule, NonTrainableState):
     owner: LatticeBoltzmannLinkOwner = eqx.field(static=True)
     declaration_id: str = eqx.field(static=True)
 
-    def __init__(self, body_id: str, owner: LatticeBoltzmannLinkOwner, /):
+    def __init__(self, body_id: str, owner: LatticeBoltzmannLinkOwner, /) -> None:
         body = str(body_id)
         if not body:
             raise ValueError("body_id must be non-empty.")
@@ -205,7 +205,7 @@ class LatticeBoltzmannCornerRule(StrictModule, NonTrainableState):
         faces: Sequence[BoundaryFace],
         source_face: BoundaryFace,
         /,
-    ):
+    ) -> None:
         normalized = tuple(_face(axis, side) for axis, side in faces)
         if len(normalized) < 2 or len(set(normalized)) != len(normalized):
             raise ValueError("A corner rule requires at least two unique faces.")
@@ -229,7 +229,7 @@ class LatticeBoltzmannBoundaryStageState(StrictModule):
     populations: Array
     written: Array
 
-    def __init__(self, populations: ArrayLike, written: ArrayLike, /):
+    def __init__(self, populations: ArrayLike, written: ArrayLike, /) -> None:
         values = jnp.asarray(populations)
         marks = jnp.asarray(written, dtype=jnp.bool_)
         if values.shape != marks.shape:
@@ -265,7 +265,7 @@ class CompiledLatticeBoltzmannLinkTopology(StrictModule, NonTrainableState):
         /,
         *,
         topology_id: str,
-    ):
+    ) -> None:
         owners = np.asarray(owner, dtype=np.int8)
         if owners.ndim < 2:
             raise ValueError(

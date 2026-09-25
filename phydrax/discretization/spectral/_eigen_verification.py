@@ -39,7 +39,7 @@ class SpectralEigenResolutionPolicy(StrictModule, NonTrainableState):
         /,
         *,
         subspace_tolerance: float = 1e-5,
-    ):
+    ) -> None:
         general_ = GeneralEigenResolutionPolicy() if general is None else general
         tolerance = float(subspace_tolerance)
         if not isinstance(general_, GeneralEigenResolutionPolicy):

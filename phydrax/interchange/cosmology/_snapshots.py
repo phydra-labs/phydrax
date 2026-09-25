@@ -57,7 +57,7 @@ class ConceptSnapshotImport(StrictModule, NonTrainableState):
         source_time_unit: str,
         source_length_unit: str,
         source_mass_unit: str,
-    ):
+    ) -> None:
         if not isinstance(snapshot, CosmologySnapshotProduct):
             raise TypeError("snapshot must be CosmologySnapshotProduct.")
         if not isinstance(source, ReferenceArtifactManifest):

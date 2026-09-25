@@ -40,7 +40,7 @@ class CrossingConePlan(StrictModule):
         maximum_iterations: int = 4096,
         residual_tolerance: float = 1e-8,
         maximum_matrix_entries: int = 1_000_000,
-    ):
+    ) -> None:
         identity = np.asarray(identity_vector, dtype=np.float64)
         blocks = np.asarray(block_vectors, dtype=np.float64)
         dimensions = np.asarray(scaling_dimensions, dtype=np.float64)

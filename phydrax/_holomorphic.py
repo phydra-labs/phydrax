@@ -35,7 +35,7 @@ class ComplexAffineNormalization(StrictModule, NonTrainableState):
     matrix: Array
     normalization_id: str = eqx.field(static=True)
 
-    def __init__(self, center: ArrayLike, matrix: ArrayLike, /):
+    def __init__(self, center: ArrayLike, matrix: ArrayLike, /) -> None:
         center_ = np.asarray(center, dtype=np.complex128).reshape((-1,))
         matrix_ = np.asarray(matrix, dtype=np.complex128)
         if center_.size == 0 or matrix_.shape != (center_.size, center_.size):
@@ -132,7 +132,7 @@ class HolomorphicMapCertificate(AbstractConstructionCertificate):
         parameter_mode: str = "real-cartesian",
         complex_algebra_id: str | None = None,
         construction_dependencies: Sequence[str] = (),
-    ):
+    ) -> None:
         input_size = int(complex_input_size)
         output_size = int(complex_output_size)
         derivative_order = int(maximum_derivative_order)
@@ -201,7 +201,7 @@ class HolomorphicJet(StrictModule):
     value: Array
     derivatives: tuple[Array, ...]
 
-    def __init__(self, value: ArrayLike, derivatives: Sequence[ArrayLike], /):
+    def __init__(self, value: ArrayLike, derivatives: Sequence[ArrayLike], /) -> None:
         value_ = jnp.asarray(value)
         derivatives_ = tuple(jnp.asarray(item) for item in derivatives)
         if any(item.shape != value_.shape for item in derivatives_):

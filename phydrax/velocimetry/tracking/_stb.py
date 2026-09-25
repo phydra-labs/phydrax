@@ -59,7 +59,7 @@ class STBPlan(StrictModule, NonTrainableState):
         promotion_steps: int = 2,
         minimum_active_amplitude: float = 0.0,
         observation_variance: float = 1.0e-4,
-    ):
+    ) -> None:
         if not isinstance(ipr, IPRPlan):
             raise TypeError("ipr must be IPRPlan.")
         if not isinstance(shake, ShakePlan):

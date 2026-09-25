@@ -36,7 +36,7 @@ class BinnedLikelihoodPlan(StrictModule, NonTrainableState):
         *,
         nuisance_names: Sequence[str],
         channel_names: Sequence[str],
-    ):
+    ) -> None:
         nominal = np.asarray(nominal_expectation, dtype=np.float64)
         effects = np.asarray(nuisance_effects, dtype=np.float64)
         constraints = np.asarray(constraint_standard_deviations, dtype=np.float64)

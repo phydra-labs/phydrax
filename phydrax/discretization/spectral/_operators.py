@@ -46,7 +46,7 @@ class PreparedSpectralOperator(StrictModule, NonTrainableState):
         axis_actions: Sequence[str],
         classification: str,
         exact: bool = True,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if not isinstance(source_space, DiscreteFieldSpace) or not isinstance(

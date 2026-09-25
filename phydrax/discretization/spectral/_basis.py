@@ -117,7 +117,7 @@ class SpectralModeLayout(StrictModule, NonTrainableState):
         conjugate_indices: ArrayLike | None = None,
         nyquist_mask: ArrayLike | None = None,
         mode_ids: tuple[str, ...] | None = None,
-    ):
+    ) -> None:
         numbers_host = np.asarray(mode_numbers, dtype=np.int64).reshape((-1,))
         if numbers_host.size == 0 or len(set(numbers_host.tolist())) != numbers_host.size:
             raise ValueError("Spectral mode numbers must be non-empty and unique.")
@@ -248,7 +248,7 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
         derivative_exact: bool = True,
         derivative_residual: float = 0.0,
         modal_transform: ModalTransform | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, AbstractSpectralBasisPlan):
             raise TypeError("plan must be an AbstractSpectralBasisPlan.")
         if not isinstance(domain, AxisDomain):
@@ -531,7 +531,7 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
 class FourierBasisPlan(AbstractSpectralBasisPlan):
     """Complex exponential basis on a periodic interval."""
 
-    def __init__(self, mode_count: int):
+    def __init__(self, mode_count: int) -> None:
         count = int(mode_count)
         if count < 2:
             raise ValueError("Fourier bases require at least two modes.")
@@ -604,7 +604,7 @@ class FourierBasisPlan(AbstractSpectralBasisPlan):
 class SineBasisPlan(AbstractSpectralBasisPlan):
     """Cell-centered sine basis with homogeneous Dirichlet endpoint semantics."""
 
-    def __init__(self, mode_count: int):
+    def __init__(self, mode_count: int) -> None:
         count = int(mode_count)
         if count < 2:
             raise ValueError("Sine bases require at least two modes.")
@@ -663,7 +663,7 @@ class SineBasisPlan(AbstractSpectralBasisPlan):
 class CosineBasisPlan(AbstractSpectralBasisPlan):
     """Endpoint-including cosine basis with homogeneous Neumann semantics."""
 
-    def __init__(self, mode_count: int):
+    def __init__(self, mode_count: int) -> None:
         count = int(mode_count)
         if count < 2:
             raise ValueError("Cosine bases require at least two modes.")
@@ -732,7 +732,7 @@ class ChebyshevBasisPlan(AbstractSpectralBasisPlan):
         /,
         *,
         maximum_construction_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         count = int(mode_count)
         maximum = int(maximum_construction_bytes)
         if count < 2 or maximum <= 0:
@@ -853,7 +853,7 @@ class LegendreBasisPlan(AbstractSpectralBasisPlan):
         *,
         node_rule: Literal["gauss", "radau", "lobatto"] = "gauss",
         maximum_construction_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         count = int(mode_count)
         maximum = int(maximum_construction_bytes)
         if count < 2 or maximum <= 0:

@@ -46,7 +46,7 @@ class MeshingScope(StrictModule, NonTrainableState):
         entity_set_id: str,
         entity_ids: ArrayLike,
         /,
-    ):
+    ) -> None:
         source = str(source_id).strip()
         revision = str(source_revision).strip()
         entity_set = str(entity_set_id).strip()
@@ -227,7 +227,7 @@ class ScopeResolutionReport(StrictModule, NonTrainableState):
         *,
         matched_names: tuple[str, ...] = (),
         unmatched_names: tuple[str, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(scope, MeshingScope):
             raise TypeError("scope must be MeshingScope.")
         expression = str(query).strip()

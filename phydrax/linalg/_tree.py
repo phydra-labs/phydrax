@@ -43,7 +43,7 @@ class TreeTopology(StrictModule, NonTrainableState):
     size: int = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
 
-    def __init__(self, parent_index: Sequence[int], /):
+    def __init__(self, parent_index: Sequence[int], /) -> None:
         parents = tuple(parent_index)
         count = len(parents)
         if not count:
@@ -106,7 +106,7 @@ class TreeLinearOperator(_AbstractCostedLinearOperator):
         *,
         space: AbstractVectorSpace | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(topology, TreeTopology):
             raise TypeError("topology must be a prepared TreeTopology.")
         arrays = tuple(map(jnp.asarray, (diagonal, lower, upper)))

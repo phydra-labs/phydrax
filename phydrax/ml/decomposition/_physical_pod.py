@@ -48,7 +48,7 @@ class PhysicalPODPlan(StrictModule, NonTrainableState):
         retained_energy: float = 1.0,
         centered: bool = True,
         minimum_singular_value: float = 0.0,
-    ):
+    ) -> None:
         rank = int(maximum_rank)
         energy = float(retained_energy)
         threshold = float(minimum_singular_value)

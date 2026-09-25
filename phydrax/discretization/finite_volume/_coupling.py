@@ -256,7 +256,7 @@ class UnstructuredFiniteVolumeCouplingPlan(StrictModule, NonTrainableState):
         sliding: PeriodicSlidingInterfacePlan | None = None,
         topology_event_capacity: int = 0,
         topology_event_policy: str = "disabled",
-    ):
+    ) -> None:
         motion_ = _optional_plan(motion, FixedConnectivityMotionPlan, "motion")
         embedded_boundary_ = _optional_plan(
             embedded_boundary, EmbeddedBoundaryPlan, "embedded_boundary"
@@ -491,7 +491,7 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
         /,
         *,
         sliding_coupling: PeriodicSlidingCoupling | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, UnstructuredFiniteVolumeCouplingPlan):
             raise TypeError("plan must be UnstructuredFiniteVolumeCouplingPlan.")
         if not isinstance(

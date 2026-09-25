@@ -113,7 +113,7 @@ class VortexFMMPlan(AbstractVortexVelocityPlan):
         maximum_far_interactions: int | None = None,
         maximum_near_interactions: int | None = None,
         precision: VortexPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         reference = np.asarray(reference_position, dtype=np.float64)
         lower_array = np.asarray(lower, dtype=np.float64)
         upper_array = np.asarray(upper, dtype=np.float64)
@@ -302,7 +302,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
         plan: VortexFMMPlan,
         compatibility: VortexVelocityCompatibility,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.compatibility = compatibility
         self.dimension = plan.dimension

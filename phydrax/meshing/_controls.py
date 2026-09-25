@@ -46,7 +46,7 @@ class ProtectedFeature(StrictModule, NonTrainableState):
         *,
         maximum_deviation: float = 0.0,
         hard: bool = True,
-    ):
+    ) -> None:
         if not isinstance(scope, MeshingScope):
             raise TypeError("scope must be MeshingScope.")
         if not isinstance(feature_kind, FeatureKind):
@@ -83,7 +83,7 @@ class RegionSeed(StrictModule, NonTrainableState):
         material_id: str,
         role: _organization.RegionRole,
         /,
-    ):
+    ) -> None:
         coordinates = np.asarray(point, dtype=np.float64)
         region = str(region_name).strip()
         material = str(material_id).strip()
@@ -117,7 +117,7 @@ class HoleSeed(StrictModule, NonTrainableState):
     scope: MeshingScope
     seed_id: str = eqx.field(static=True)
 
-    def __init__(self, point: ArrayLike, scope: MeshingScope, /):
+    def __init__(self, point: ArrayLike, scope: MeshingScope, /) -> None:
         coordinates = np.asarray(point, dtype=np.float64)
         if (
             coordinates.ndim != 1
@@ -155,7 +155,7 @@ class RegionControl(StrictModule, NonTrainableState):
         /,
         *,
         meshing_enabled: bool = True,
-    ):
+    ) -> None:
         if not isinstance(scope, MeshingScope):
             raise TypeError("scope must be MeshingScope.")
         region = str(region_name).strip()
@@ -198,7 +198,7 @@ class PatchControl(StrictModule, NonTrainableState):
         /,
         *,
         required: bool = True,
-    ):
+    ) -> None:
         value = str(name).strip()
         if not value:
             raise ValueError("Patch control name must be non-empty.")
@@ -234,7 +234,7 @@ class LayerSchedule(StrictModule, NonTrainableState):
     thicknesses: tuple[float, ...] = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, thicknesses: ArrayLike, /):
+    def __init__(self, thicknesses: ArrayLike, /) -> None:
         values = np.asarray(thicknesses)
         if values.ndim != 1 or values.size == 0:
             raise ValueError("thicknesses must be one non-empty vector.")
@@ -324,7 +324,7 @@ class SweptLayerControl(StrictModule, NonTrainableState):
         /,
         *,
         termination: LayerTerminationPolicy = LayerTerminationPolicy.REJECT,
-    ):
+    ) -> None:
         scopes = (source_scope, target_scope, volume_scope)
         if not all(isinstance(scope, MeshingScope) for scope in scopes):
             raise TypeError("Swept-layer scopes must be MeshingScope values.")
@@ -395,7 +395,7 @@ class PeriodicConstraint(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
         conforming_required: bool = True,
-    ):
+    ) -> None:
         if not isinstance(source_scope, MeshingScope) or not isinstance(
             target_scope, MeshingScope
         ):

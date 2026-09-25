@@ -91,7 +91,7 @@ class ContactSolvePolicy(StrictModule, NonTrainableState):
         initial_trust_radius: float = 1.0,
         maximum_trust_radius: float = 1.0e4,
         minimum_trust_radius: float = 1.0e-12,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -182,7 +182,7 @@ class ContactDynamicsState(StrictModule, NonTrainableState):
         replay_epoch: ContactCandidateEpoch | None = None,
         friction_state: ContactFrictionState | None = None,
         state_version: ArrayLike = 0,
-    ):
+    ) -> None:
         if not isinstance(mechanics, FiniteElementDynamicsState):
             raise TypeError("mechanics must be FiniteElementDynamicsState.")
         if replay_epoch is not None and not isinstance(

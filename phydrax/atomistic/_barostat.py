@@ -36,7 +36,7 @@ class IsotropicMonteCarloBarostatPlan(StrictModule, NonTrainableState):
         /,
         *,
         realization_id: int = 0,
-    ):
+    ) -> None:
         maximum = float(maximum_log_volume_change)
         realization = int(realization_id)
         if not math.isfinite(maximum) or maximum <= 0.0 or realization < 0:

@@ -241,7 +241,7 @@ class ConditionalCoordinateVelocity(StrictModule):
     representation_id: str = eqx.field(static=True)
     condition_names: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, support, decoder, condition_names, network):
+    def __init__(self, support, decoder, condition_names, network) -> None:
         if (
             not isinstance(decoder, AbstractCoordinateDecoder)
             or decoder.support_id != support.support_id

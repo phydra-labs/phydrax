@@ -63,7 +63,7 @@ class EnvelopePropagationPlan(StrictModule):
         maximum_spectral_edge_fraction: float = 1e-6,
         maximum_refinement_error: float = 1e-5,
         maximum_workspace_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         if not isinstance(time_space, PulseTimeSpace):
             raise TypeError("time_space must be PulseTimeSpace.")
         if time_space.topology != "periodic-cell":
@@ -177,7 +177,7 @@ class AdaptiveEnvelopePolicy(StrictModule):
         minimum_step: float,
         maximum_step: float,
         maximum_attempts: int,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

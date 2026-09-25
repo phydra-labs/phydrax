@@ -57,7 +57,7 @@ class SpectralModalTransferReport(StrictModule, NonTrainableState):
         source_space_id: str,
         target_space_id: str,
         removed_mode_count: int,
-    ):
+    ) -> None:
         source = tuple(source_shape)
         target = tuple(target_shape)
         actions = tuple(str(action) for action in axis_actions)
@@ -140,7 +140,7 @@ class SpectralModalTransferPlan(StrictModule, NonTrainableState):
         | SphericalSpectralDiscretization
         | LatticeHarmonicDiscretization,
         /,
-    ):
+    ) -> None:
         tensor_pair = isinstance(source, TensorSpectralDiscretization) and isinstance(
             target, TensorSpectralDiscretization
         )
@@ -468,7 +468,7 @@ class PreparedSpectralModalTransfer(StrictModule, NonTrainableState):
         transfer: FieldTransfer | FunctionLinearOperator,
         report: SpectralModalTransferReport,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, SpectralModalTransferPlan):
             raise TypeError("plan must be a SpectralModalTransferPlan.")
         if not isinstance(transfer, (FieldTransfer, FunctionLinearOperator)):

@@ -44,7 +44,7 @@ class KineticPopulationFieldSpec(StrictModule, NonTrainableState):
         *,
         positive: bool = True,
         checkpoint_required: bool = True,
-    ):
+    ) -> None:
         if not name:
             raise ValueError("Population field name must be non-empty.")
         if role not in ("particle", "internal-energy", "thermal"):
@@ -63,7 +63,7 @@ class KineticPopulationLayout(StrictModule, NonTrainableState):
     fields: tuple[KineticPopulationFieldSpec, ...]
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, fields: tuple[KineticPopulationFieldSpec, ...], /):
+    def __init__(self, fields: tuple[KineticPopulationFieldSpec, ...], /) -> None:
         items = tuple(fields)
         if not items or any(
             not isinstance(item, KineticPopulationFieldSpec) for item in items
@@ -119,7 +119,7 @@ class CompressibleKineticPopulationState(StrictModule):
         layout: KineticPopulationLayout,
         model_id: str,
         rule_id: str,
-    ):
+    ) -> None:
         if not isinstance(layout, KineticPopulationLayout):
             raise TypeError("layout must be a KineticPopulationLayout.")
         model_identifier = str(model_id).strip()
@@ -216,7 +216,7 @@ class CompressibleKineticSupportTuple(StrictModule, NonTrainableState):
         transport_id: str,
         precision_id: str,
         execution_id: str,
-    ):
+    ) -> None:
         if model_kind not in (
             "guided-d3q39",
             "entropic-d3q343",

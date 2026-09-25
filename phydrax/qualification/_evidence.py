@@ -112,7 +112,7 @@ class SupportDependency(StrictModule, NonTrainableState):
     support_tuple_id: str = eqx.field(static=True)
     dependency_id: str = eqx.field(static=True)
 
-    def __init__(self, profile_id: str, support_tuple_id: str, /):
+    def __init__(self, profile_id: str, support_tuple_id: str, /) -> None:
         self.profile_id = _identifier(profile_id, "dependency profile ID")
         self.support_tuple_id = _identifier(
             support_tuple_id, "dependency support-tuple ID"
@@ -169,7 +169,7 @@ class ObservedResourceRecord(StrictModule, NonTrainableState):
         measurements: Mapping[str, int | float],
         observed_at: int,
         raw_artifact_ids: Sequence[str],
-    ):
+    ) -> None:
         self.subject_id = _identifier(subject_id, "resource subject ID")
         self.build_id = _identifier(build_id, "resource build ID")
         self.environment_id = _identifier(environment_id, "resource environment ID")
@@ -263,7 +263,7 @@ class ForecastResourceRecord(StrictModule, NonTrainableState):
         source_record_ids: Sequence[str],
         issued_at: int,
         expires_at: int,
-    ):
+    ) -> None:
         estimates_ = _measurements(estimates, "resource estimates")
         if not isinstance(uncertainty_bounds, Mapping):
             raise TypeError("uncertainty_bounds must be a mapping.")
@@ -432,7 +432,7 @@ class QualificationEvidence(StrictModule, NonTrainableState):
         requalification_triggers: Sequence[str] = (),
         observed_resource_record_ids: Sequence[str] = (),
         forecast_resource_record_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         kind = _identifier(evidence_kind, "evidence kind")
         if kind not in _EVIDENCE_KINDS:
             raise ValueError(
@@ -695,7 +695,7 @@ class QualificationCoverageReport(StrictModule, NonTrainableState):
         inconclusive_predicate_ids: Sequence[str],
         gaps: Sequence[tuple[str, str, Sequence[str]]],
         matched_evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         passed = _identifiers(
             passed_predicate_ids, "passed predicate IDs", allow_empty=True
         )
@@ -853,7 +853,7 @@ class QualificationMatrix(StrictModule, NonTrainableState):
         self,
         predicates: Mapping[str, Mapping[str, str]],
         /,
-    ):
+    ) -> None:
         if not isinstance(predicates, Mapping) or not predicates:
             raise TypeError("Qualification predicates must be a non-empty mapping.")
         normalized: list[tuple[str, tuple[tuple[str, str], ...]]] = []

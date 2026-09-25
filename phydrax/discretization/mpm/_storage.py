@@ -51,7 +51,7 @@ class DenseMPMNodalStoragePlan(AbstractMPMNodalStoragePlan):
     grid_shape: tuple[int, ...] = eqx.field(static=True)
     storage_id: str = eqx.field(static=True)
 
-    def __init__(self, grid_shape, /):
+    def __init__(self, grid_shape, /) -> None:
         shape = tuple(grid_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("grid_shape must contain positive dimensions.")
@@ -79,7 +79,7 @@ class BlockSparseMPMNodalStoragePlan(AbstractMPMNodalStoragePlan):
     topology_plan: SparseBlockTopologyPlan
     storage_id: str = eqx.field(static=True)
 
-    def __init__(self, topology_plan: SparseBlockTopologyPlan, /):
+    def __init__(self, topology_plan: SparseBlockTopologyPlan, /) -> None:
         if not isinstance(topology_plan, SparseBlockTopologyPlan):
             raise TypeError("topology_plan must be SparseBlockTopologyPlan.")
         self.topology_plan = topology_plan

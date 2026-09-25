@@ -47,7 +47,7 @@ class CosmologicalPopulationPlan(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, capacity: int, dimension: int, /):
+    def __init__(self, capacity: int, dimension: int, /) -> None:
         capacity_ = int(capacity)
         dimension_ = int(dimension)
         if capacity_ <= 0 or dimension_ not in (1, 2, 3):
@@ -134,7 +134,7 @@ class StochasticStarFormationPlan(StrictModule, NonTrainableState):
         star_mass: float,
         maximum_events: int,
         process_id: int = 1,
-    ):
+    ) -> None:
         mass = float(star_mass)
         events = int(maximum_events)
         process = int(process_id)
@@ -336,7 +336,7 @@ class StochasticThermalFeedbackPlan(StrictModule, NonTrainableState):
         heating_energy_per_mass: float,
         maximum_events: int,
         process_id: int = 2,
-    ):
+    ) -> None:
         energy = float(heating_energy_per_mass)
         events = int(maximum_events)
         process = int(process_id)

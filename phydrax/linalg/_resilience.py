@@ -66,7 +66,7 @@ class EquilibrationPolicy(StrictModule):
         materialization: MaterializationPolicy | None = None,
         left_scale: ArrayLike | None = None,
         right_scale: ArrayLike | None = None,
-    ):
+    ) -> None:
         if mode not in ("none", "ruiz", "symmetric-ruiz", "explicit"):
             raise ValueError("Unknown equilibration mode.")
         steps = int(max_steps)
@@ -122,7 +122,7 @@ class RefinementPolicy(StrictModule):
         max_steps: int = 3,
         tolerance: TolerancePolicy | None = None,
         minimum_improvement: float = 0.999,
-    ):
+    ) -> None:
         steps = int(max_steps)
         tolerance_ = TolerancePolicy(relative=1e-10) if tolerance is None else tolerance
         improvement = float(minimum_improvement)
@@ -142,7 +142,7 @@ class ResilienceResourcePolicy(StrictModule):
 
     max_workspace_bytes: int = eqx.field(static=True)
 
-    def __init__(self, *, max_workspace_bytes: int = 512 * 1024 * 1024):
+    def __init__(self, *, max_workspace_bytes: int = 512 * 1024 * 1024) -> None:
         limit = int(max_workspace_bytes)
         if limit < 1:
             raise ValueError("max_workspace_bytes must be positive.")
@@ -166,7 +166,7 @@ class ResilientSolvePolicy(StrictModule):
         refinement: RefinementPolicy | None = None,
         failure: FailurePolicy | None = None,
         resources: ResilienceResourcePolicy | None = None,
-    ):
+    ) -> None:
         base_ = LinearSolvePolicy() if base is None else base
         equilibration_ = EquilibrationPolicy() if equilibration is None else equilibration
         refinement_ = RefinementPolicy() if refinement is None else refinement
@@ -203,7 +203,7 @@ class ResilientCostEstimate(StrictModule):
         itemsize: int,
         materializes: bool,
         /,
-    ):
+    ) -> None:
         n, size = int(dimension), int(itemsize)
         self.dimension = n
         self.transformation_storage_bytes = 2 * n * size
@@ -234,7 +234,7 @@ class DiagonalSystemTransform(StrictModule):
         column_spread: Array,
         mode: EquilibrationMode,
         transform_id: str,
-    ):
+    ) -> None:
         self.left_scale = jnp.asarray(left_scale)
         self.right_scale = jnp.asarray(right_scale)
         self.converged = jnp.asarray(converged, dtype=jnp.bool_)
@@ -264,7 +264,7 @@ class ResilientSolvePlan(StrictModule):
         policy: ResilientSolvePolicy,
         base_template: LinearSolveTemplate,
         cost: ResilientCostEstimate,
-    ):
+    ) -> None:
         self.policy = policy
         self.base_template = base_template
         self.cost = cost
@@ -324,7 +324,7 @@ class PreparedResilientSolve(StrictModule):
         condition_before: Array,
         condition_after: Array,
         numeric_version: Any,
-    ):
+    ) -> None:
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
         if version.ndim != 0:
             raise ValueError("numeric_version must be scalar.")
@@ -361,7 +361,7 @@ class ResilientSolveDiagnostics(StrictModule):
     row_spread: Array
     column_spread: Array
 
-    def __init__(self, **values: Any):
+    def __init__(self, **values: Any) -> None:
         self.initial_residual_norm = jnp.asarray(values["initial_residual_norm"])
         self.residual_norm = jnp.asarray(values["residual_norm"])
         self.relative_residual = jnp.asarray(values["relative_residual"])
@@ -388,7 +388,7 @@ class ResilientSolveProvenance(StrictModule):
     numeric_version: Array
     base_numeric_version: Array
 
-    def __init__(self, prepared: PreparedResilientSolve, /):
+    def __init__(self, prepared: PreparedResilientSolve, /) -> None:
         self.plan_id = prepared.plan.plan_id
         self.prepared_id = prepared.prepared_id
         self.operator_id = prepared.problem.operator.operator_id
@@ -416,7 +416,7 @@ class ResilientSolveResult(StrictModule):
         provenance: ResilientSolveProvenance,
         base_result: LinearSolveResult,
         /,
-    ):
+    ) -> None:
         self.value = value
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.diagnostics = diagnostics

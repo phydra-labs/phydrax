@@ -38,7 +38,7 @@ class SphericalSpinOperatorPlan(StrictModule, NonTrainableState):
         /,
         *,
         physical_units: bool = True,
-    ):
+    ) -> None:
         if kind not in ("raise", "lower"):
             raise ValueError("Spherical spin operator kind must be 'raise' or 'lower'.")
         self.kind = kind
@@ -72,7 +72,7 @@ class PreparedSphericalSpinOperator(StrictModule, NonTrainableState):
         plan: SphericalSpinOperatorPlan,
         discretization: SphericalSpectralDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, SphericalSpinOperatorPlan):
             raise TypeError("plan must be a SphericalSpinOperatorPlan.")
         if not isinstance(discretization, SphericalSpectralDiscretization):

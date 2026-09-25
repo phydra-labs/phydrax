@@ -35,7 +35,7 @@ class StructuredCochainResourcePolicy(StrictModule):
         maximum_incidence_routes: int = 20_000_000,
         maximum_coordinate_values: int = 20_000_000,
         maximum_preparation_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         values = (
             maximum_entities,
             maximum_incidence_routes,
@@ -71,7 +71,7 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
         /,
         *,
         resources: StructuredCochainResourcePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("Structured cochain bridge requires PreparedTensorGrid.")
         resource_policy = (

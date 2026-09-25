@@ -36,7 +36,7 @@ class DiagnosticXRayExperimentPlan(StrictModule, NonTrainableState):
         transport: PhotonTransportPlan,
         detector: PlanarXRayDetectorPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, DiagnosticXRaySourcePlan):
             raise TypeError("source must be DiagnosticXRaySourcePlan.")
         if not isinstance(transport, PhotonTransportPlan):

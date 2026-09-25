@@ -53,7 +53,7 @@ class CertifiedImplicitBody(StrictModule, NonTrainableState):
         simplex_certificate: SimplexCertificate,
         certificate_id: str,
         /,
-    ):
+    ) -> None:
         identifier = str(certificate_id)
         if (
             not isinstance(body, EmbeddedLevelSetBody)
@@ -120,7 +120,7 @@ class AdaptiveImplicitSamplingPlan(StrictModule, NonTrainableState):
         *,
         maximum_depth: int = 6,
         interval_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         hierarchy = canonicalize_patch_hierarchy(topology)
         bodies_ = tuple(bodies)
         depth = int(maximum_depth)

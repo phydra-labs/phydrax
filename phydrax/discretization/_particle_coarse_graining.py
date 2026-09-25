@@ -62,7 +62,7 @@ class ParticleCoarseGrainingPlan(StrictModule, NonTrainableState):
         *,
         quadrature_order: int = 4,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(splat, ParticleGridSplatPlan):
             raise TypeError("splat must be a ParticleGridSplatPlan.")
         order = int(quadrature_order)
@@ -105,7 +105,7 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
         particles: ParticleDiscretization,
         pair_capacity: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ParticleCoarseGrainingPlan):
             raise TypeError("plan must be a ParticleCoarseGrainingPlan.")
         if not isinstance(particles, ParticleDiscretization):

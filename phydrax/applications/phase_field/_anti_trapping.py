@@ -46,7 +46,7 @@ class AntiTrappingCurrentPlan(StrictModule, NonTrainableState):
         *,
         gradient_tolerance: float = 1.0e-12,
         calibration_id: str,
-    ):
+    ) -> None:
         values = tuple(
             np.asarray(value)
             for value in (

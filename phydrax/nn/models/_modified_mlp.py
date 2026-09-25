@@ -85,7 +85,7 @@ class ModifiedMLP(_AbstractBaseModel):
         initializer: str = "glorot_normal",
         scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         r"""Construct a modified MLP.
 
         **Arguments:**

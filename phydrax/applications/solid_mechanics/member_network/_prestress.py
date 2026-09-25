@@ -79,7 +79,7 @@ class PrestressFabricationPolicy(StrictModule):
         force_tolerance: float = 1.0e-6,
         require_stability: bool = True,
         require_sequence: bool = True,
-    ):
+    ) -> None:
         minimum = jnp.asarray(minimum_rest_length)
         maximum = jnp.asarray(maximum_rest_length, dtype=minimum.dtype)
         stroke_minimum = jnp.asarray(minimum_stroke, dtype=minimum.dtype)

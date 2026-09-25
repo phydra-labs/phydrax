@@ -73,7 +73,7 @@ class FiniteVolumeDecompositionPlan(StrictModule, NonTrainableState):
         halo_width: int,
         periodic: Sequence[bool] | None = None,
         grid_revision: str | None = None,
-    ):
+    ) -> None:
         shape = tuple(global_shape)
         splits = tuple(split_factors)
         names = tuple(str(value) for value in axis_names)
@@ -154,7 +154,7 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
         *,
         devices: Sequence[jax.Device] | None = None,
         execution_group: ExecutionGroup | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, FiniteVolumeDecompositionPlan):
             raise TypeError("plan must be a FiniteVolumeDecompositionPlan.")
         available = tuple(

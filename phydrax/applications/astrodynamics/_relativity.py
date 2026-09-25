@@ -36,7 +36,7 @@ class Schwarzschild1PNForce(AbstractAstrodynamicsForce):
         /,
         *,
         speed_of_light: ArrayLike = _SPEED_OF_LIGHT,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         mu_host = np.asarray(mu)
@@ -117,7 +117,7 @@ class LenseThirringRelativity(AbstractAstrodynamicsForce):
         *,
         gravitational_constant=_GRAVITATIONAL_CONSTANT,
         speed_of_light=_SPEED_OF_LIGHT,
-    ):
+    ) -> None:
         spin = jnp.asarray(spin_angular_momentum)
         if spin.shape != (3,):
             raise ValueError("Spin angular momentum must have shape (3,).")

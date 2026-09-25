@@ -79,7 +79,7 @@ class EmbeddedBoundaryStabilizationPolicy(StrictModule, NonTrainableState):
         maximum_recipients: int = 4,
         absolute_tolerance: float = 1.0e-12,
         relative_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         minimum = float(minimum_volume_fraction)
         if not isinstance(maximum_recipients, (int, np.integer)) or isinstance(
             maximum_recipients, (bool, np.bool_)
@@ -178,7 +178,7 @@ class EmbeddedBoundaryPlan(StrictModule, NonTrainableState):
         field_id: str,
         body_tag: int = 0,
         stabilization_policy: EmbeddedBoundaryStabilizationPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError("Embedded boundaries require unstructured FV geometry.")
         if discretization.cell_dimension != 2 or not isinstance(

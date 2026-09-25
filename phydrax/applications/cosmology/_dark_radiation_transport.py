@@ -85,7 +85,7 @@ class DarkRadiationTransportProfile(StrictModule, NonTrainableState):
         *,
         checkpoint_product: str,
         output_product: str,
-    ):
+    ) -> None:
         kind = _identifier(representation, "representation")
         support = _identifiers(supported_physics, "supported_physics")
         refusals = _identifiers(refusal_conditions, "refusal_conditions")
@@ -154,7 +154,7 @@ class DarkRadiationLedgerSourceAdapter(StrictModule, NonTrainableState):
         ledger_plan: DarkRadiationLedgerPlan,
         packet_plan: DarkRadiationPacketPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(ledger_plan, DarkRadiationLedgerPlan):
             raise TypeError("ledger_plan must be DarkRadiationLedgerPlan.")
         if not isinstance(packet_plan, DarkRadiationPacketPlan):
@@ -489,7 +489,7 @@ class DarkRadiationGravitySource(StrictModule, NonTrainableState):
         frame_id: str,
         unit_contract_id: str,
         frame_realization_id: str,
-    ):
+    ) -> None:
         if not isinstance(projection, StressEnergyProjection):
             raise TypeError("projection must be StressEnergyProjection.")
         if not isinstance(exchange, DarkRadiationFourForce):
@@ -885,7 +885,7 @@ class DarkRadiationM1Checkpoint(StrictModule, NonTrainableState):
         topology_id: str,
         partition_id: str,
         epoch_manifest_id: str,
-    ):
+    ) -> None:
         if not isinstance(frame, LocalRelativisticFramePlan):
             raise TypeError("frame must be LocalRelativisticFramePlan.")
         values = jnp.asarray(state)

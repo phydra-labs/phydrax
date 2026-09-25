@@ -49,7 +49,7 @@ class FLIPSolidBoundaryPlan(StrictModule, NonTrainableState):
         no_slip: bool,
         bisection_steps: int = 12,
         field_id: str,
-    ):
+    ) -> None:
         if not callable(signed_distance) or not callable(wall_velocity):
             raise TypeError("Solid boundary providers must be callable.")
         steps = int(bisection_steps)

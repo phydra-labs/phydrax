@@ -54,7 +54,7 @@ class CaputoFractionalProblem(StrictModule):
         initial_derivative: ArrayLike | None = None,
         args: Any = None,
         problem_id: str = "caputo-fractional-problem",
-    ):
+    ) -> None:
         if not callable(vector_field):
             raise TypeError("vector_field must be callable.")
         state = jnp.asarray(initial_state)

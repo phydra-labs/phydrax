@@ -87,7 +87,7 @@ class MACSharpInterfaceProjectionResult(StrictModule):
 
 
 class _UnionFind:
-    def __init__(self, size: int):
+    def __init__(self, size: int) -> None:
         self.parent = list(range(size))
 
     def find(self, value: int) -> int:
@@ -211,7 +211,7 @@ class MACSharpInterfaceProjectionPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-9,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if not isinstance(boundaries, PreparedMACBoundaryPlan):
@@ -786,7 +786,7 @@ class MACMovingSharpInterfaceEpochPlan(StrictModule, NonTrainableState):
         *,
         geometry_family_id: str,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not callable(provider):
             raise TypeError("provider must be callable.")
         identifier = str(geometry_family_id)
@@ -899,7 +899,7 @@ class MACImmersedInterfaceProjectionPlan(StrictModule, NonTrainableState):
         /,
         *,
         jump_id: str,
-    ):
+    ) -> None:
         if not isinstance(sharp, MACSharpInterfaceProjectionPlan):
             raise TypeError("sharp must be MACSharpInterfaceProjectionPlan.")
         if not callable(jump_source):
@@ -966,7 +966,7 @@ class MACInterfaceMethodSelector(StrictModule, NonTrainableState):
         method: MACInterfaceEnforcement,
         plan: object,
         /,
-    ):
+    ) -> None:
         if method not in (
             "regularized-delta",
             "divergence-free",

@@ -62,7 +62,7 @@ class ParticleMeshGravityPlan(StrictModule):
         gravity: PreparedNewtonianSelfGravity,
         transfer: PreparedParticleGridSplat,
         /,
-    ):
+    ) -> None:
         if not isinstance(gravity, PreparedNewtonianSelfGravity):
             raise TypeError("gravity must be PreparedNewtonianSelfGravity.")
         if not isinstance(transfer, PreparedParticleGridSplat):

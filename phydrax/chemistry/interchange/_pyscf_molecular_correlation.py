@@ -68,7 +68,7 @@ class PySCFMolecularCoupledClusterGradientProvider(
         frozen_orbitals: tuple[int, ...] = (),
         scf_tolerance: float = 1.0e-11,
         scf_maximum_iterations: int = 128,
-    ):
+    ) -> None:
         if not callable(molecule_builder):
             raise TypeError("molecule_builder must be callable.")
         if not isinstance(coupled_cluster, CoupledClusterPlan):

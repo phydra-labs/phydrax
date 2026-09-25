@@ -94,7 +94,7 @@ class WaveAMRPhysicsPlan(StrictModule, NonTrainableState):
         reduced_planck_constant: float = 1.0,
         scale: CosmologyScaleContract = CODE_COSMOLOGY_SCALE,
         dtype: Any = np.complex128,
-    ):
+    ) -> None:
         mass = float(boson_mass)
         gravity = float(gravitational_constant)
         hbar = float(reduced_planck_constant)
@@ -160,7 +160,7 @@ class WaveAMRAdaptivityPlan(StrictModule, NonTrainableState):
         current_absolute_tolerance: float = 1.0e-10,
         phase_defect_tolerance: float = 0.75,
         winding_absolute_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -247,7 +247,7 @@ class WaveAMRDiscretizationPlan(StrictModule, NonTrainableState):
         norm_relative_tolerance: float = 1.0e-8,
         self_adjoint_tolerance: float = 1.0e-10,
         maximum_phase_radians: float = 0.75,
-    ):
+    ) -> None:
         if not isinstance(hierarchy, PreparedFDAMRHierarchy):
             raise TypeError("hierarchy must be PreparedFDAMRHierarchy.")
         boundary_ = PeriodicWaveBoundaryDescriptor() if boundary is None else boundary
@@ -490,7 +490,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
         topology: BlockHierarchyTopology,
         background: FLRWBackground,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, WaveAMRDiscretizationPlan):
             raise TypeError("plan must be WaveAMRDiscretizationPlan.")
         if not isinstance(physics, WaveAMRPhysicsPlan):

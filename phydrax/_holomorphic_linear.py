@@ -49,7 +49,7 @@ class HolomorphicMultiIndexSet(StrictModule, NonTrainableState):
         *,
         require_downward_closed: bool = False,
         maximum_count: int = 10_000,
-    ):
+    ) -> None:
         dimension = int(complex_dimension)
         if isinstance(maximum_count, bool):
             raise TypeError("maximum_count must be an integer.")
@@ -155,7 +155,7 @@ class HolomorphicMultiJet(StrictModule):
         derivatives: Sequence[ArrayLike],
         index_set: HolomorphicMultiIndexSet,
         /,
-    ):
+    ) -> None:
         if not isinstance(index_set, HolomorphicMultiIndexSet):
             raise TypeError("index_set must be HolomorphicMultiIndexSet.")
         value_ = jnp.asarray(value)
@@ -212,7 +212,7 @@ class HolomorphicLinearFrameCertificate(AbstractConstructionCertificate):
         basis_construction: str,
         construction_dependencies: Sequence[str] = (),
         coefficient_mode: str = "real-cartesian-linear-frame",
-    ):
+    ) -> None:
         input_size = int(complex_input_size)
         output_size = int(complex_output_size)
         coefficient_count = int(real_coefficient_count)

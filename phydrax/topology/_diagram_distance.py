@@ -42,7 +42,7 @@ class DiagramDistanceResult(StrictModule, NonTrainableState):
         method: str,
         source_diagram_id: str,
         target_diagram_id: str,
-    ):
+    ) -> None:
         self.distance = jnp.asarray(distance)
         self.assignment = jnp.asarray(assignment, dtype=jnp.int32)
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)

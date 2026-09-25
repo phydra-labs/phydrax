@@ -57,7 +57,7 @@ class TwistedN2SYMPlan(StrictModule):
         lattice_spacing: float = 1.0,
         maximum_field_elements: int = 10_000_000,
         maximum_fermion_elements: int = 10_000_000,
-    ):
+    ) -> None:
         shape = tuple(lattice_shape)
         if len(shape) != 2:
             raise ValueError("TwistedN2SYMPlan requires exactly two lattice axes.")
@@ -135,7 +135,7 @@ class TwistedSYMCoordinateLayout(StrictModule):
     coordinate_shape: tuple[int, ...] = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, prepared: PreparedTwistedSYMAction, /):
+    def __init__(self, prepared: PreparedTwistedSYMAction, /) -> None:
         if not isinstance(prepared, PreparedTwistedSYMAction):
             raise TypeError("prepared must be PreparedTwistedSYMAction.")
         shape = prepared.plan.lattice_shape + (
@@ -225,7 +225,7 @@ class BoundedEuclideanStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
-    def __init__(self, coordinate_bound: float, /, *, geometry_id: str):
+    def __init__(self, coordinate_bound: float, /, *, geometry_id: str) -> None:
         bound = float(coordinate_bound)
         if not np.isfinite(bound) or bound <= 0.0:
             raise ValueError("coordinate_bound must be positive and finite.")

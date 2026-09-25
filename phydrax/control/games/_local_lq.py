@@ -165,7 +165,7 @@ class LocalAffineGamePolicy(AbstractInputPolicy, NonTrainableState):
         dynamics_id: str,
         case_shape: tuple[int, ...] = (),
         policy_id: str,
-    ):
+    ) -> None:
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("time_grid must be a TimeGrid.")
         if not isinstance(input_layout, InputLayout):

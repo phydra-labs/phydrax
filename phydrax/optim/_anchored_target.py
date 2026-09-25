@@ -87,7 +87,7 @@ class AnchoredResponseModel(StrictModule):
         *,
         correction: Literal["additive", "multiplicative"] = "additive",
         minimum_denominator: Any = None,
-    ):
+    ) -> None:
         if not callable(predict):
             raise TypeError("predict must be callable.")
         if correction not in ("additive", "multiplicative"):
@@ -179,7 +179,7 @@ class AnchoredTargetProblem(StrictModule):
         constraint_scales: Any = 1.0,
         realization: Literal["deterministic", "frozen"] = "deterministic",
         problem_id: str = "anchored-target",
-    ):
+    ) -> None:
         if not callable(evaluate):
             raise TypeError("evaluate must be callable.")
         if not isinstance(model, AnchoredResponseModel):
@@ -264,7 +264,7 @@ class AnchoredTargetMethod(StrictModule):
         step_tolerance: float = 1e-10,
         maximum_steps: int = 64,
         maximum_evaluations: int = 32,
-    ):
+    ) -> None:
         inner = BoundedGaussNewton() if inner_method is None else inner_method
         termination = (
             OptimizationTermination(

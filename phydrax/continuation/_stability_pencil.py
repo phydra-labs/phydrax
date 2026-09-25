@@ -58,7 +58,7 @@ class ContinuationStabilityPencil(StrictModule, NonTrainableState):
         lift: Callable[[Array], Any] | None = None,
         project: Callable[[Any], Array] | None = None,
         pencil_id: str,
-    ):
+    ) -> None:
         if not callable(provider):
             raise TypeError("pencil provider must be callable.")
         if stability_space is not None and not isinstance(
@@ -181,7 +181,7 @@ class GeneralizedPencilStabilityAnalyzer(AbstractStabilityAnalyzer):
         *,
         zero_tolerance: float = 1.0e-8,
         pair_tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         if not isinstance(pencil, ContinuationStabilityPencil):
             raise TypeError("pencil must be a ContinuationStabilityPencil.")
         policy_ = GeneralEigenSolvePolicy() if policy is None else policy
@@ -375,7 +375,7 @@ class HopfContinuationAdapter(StrictModule, NonTrainableState):
         omega_min: float = 1.0e-8,
         spectral_isolation_tolerance: float = 1.0e-6,
         problem_id: str,
-    ):
+    ) -> None:
         if not callable(physical_residual) or not callable(parameter_plane):
             raise TypeError(
                 "Hopf physical residual and parameter plane must be callable."

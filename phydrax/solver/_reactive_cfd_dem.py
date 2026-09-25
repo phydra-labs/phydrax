@@ -70,7 +70,7 @@ class ReactiveParticleCouplingSchedulePlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 1,
         coupling_tolerance: float = 1.0e-6,
         relaxation: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(conversion_solver, ParticleConversionSolverPlan):
             raise TypeError("conversion_solver must be a ParticleConversionSolverPlan.")
         substeps = int(dem_substeps)

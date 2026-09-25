@@ -63,7 +63,7 @@ class SubspaceCorrectionTerm(StrictModule):
         prolongation: AbstractLinearOperator,
         local_solver: PreconditionerSource,
         /,
-    ):
+    ) -> None:
         if not isinstance(restriction, AbstractLinearOperator) or not isinstance(
             prolongation, AbstractLinearOperator
         ):
@@ -360,7 +360,7 @@ class AdditiveSubspaceCorrectionPreconditioner(AbstractPreconditioner):
         properties: PreconditionerProperties | None = None,
         builder_id: str | None = None,
         preconditioner_id: str | None = None,
-    ):
+    ) -> None:
         terms_ = _validate_terms(terms)
         local_operators = _local_setup_operators(terms_, setup_operator)
         _validate_prepared_terms(terms_, local_operators)
@@ -448,7 +448,7 @@ class MultiplicativeSubspaceCorrectionPreconditioner(AbstractPreconditioner):
         properties: PreconditionerProperties | None = None,
         builder_id: str | None = None,
         preconditioner_id: str | None = None,
-    ):
+    ) -> None:
         if sweep not in ("forward", "backward", "symmetric"):
             raise ValueError("sweep must be 'forward', 'backward', or 'symmetric'.")
         terms_ = _validate_terms(terms)
@@ -640,7 +640,7 @@ class AdditiveSubspaceCorrectionBuilder(AbstractPreconditionerBuilder):
         /,
         *,
         properties: PreconditionerProperties | None = None,
-    ):
+    ) -> None:
         terms_ = _validate_terms(terms)
         if properties is not None and not isinstance(
             properties, PreconditionerProperties
@@ -762,7 +762,7 @@ class MultiplicativeSubspaceCorrectionBuilder(AbstractPreconditionerBuilder):
         *,
         sweep: SubspaceCorrectionSweep = "forward",
         properties: PreconditionerProperties | None = None,
-    ):
+    ) -> None:
         if sweep not in ("forward", "backward", "symmetric"):
             raise ValueError("sweep must be 'forward', 'backward', or 'symmetric'.")
         terms_ = _validate_terms(terms)

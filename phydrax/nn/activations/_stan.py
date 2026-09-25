@@ -31,7 +31,7 @@ class Stan(StrictModule, ParameterOwner):
         shape: int | Sequence[int] | None = None,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         r"""**Arguments:**
 
         - `shape`: Shape of $\beta$ (use `None` for a scalar).

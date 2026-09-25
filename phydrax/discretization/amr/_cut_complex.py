@@ -74,7 +74,7 @@ class _Fragment:
 
 
 class _UnionFind:
-    def __init__(self, size: int):
+    def __init__(self, size: int) -> None:
         self.parent = list(range(size))
 
     def root(self, value: int) -> int:
@@ -99,7 +99,7 @@ class EmbeddedLevelSetBody(StrictModule, NonTrainableState):
     body_tag: int = eqx.field(static=True)
     body_id: str = eqx.field(static=True)
 
-    def __init__(self, level_set: LevelSet, field_id: str, body_tag: int, /):
+    def __init__(self, level_set: LevelSet, field_id: str, body_tag: int, /) -> None:
         field = str(field_id)
         tag = int(body_tag)
         if not callable(level_set) or not field or tag < 0:
@@ -129,7 +129,7 @@ class EmbeddedLevelSetBodySet(StrictModule, NonTrainableState):
         *,
         operation: str = "union",
         body_signs: Sequence[int] | None = None,
-    ):
+    ) -> None:
         bodies_ = tuple(sorted(bodies, key=lambda body: body.body_tag))
         operation_ = str(operation)
         signs = (1,) * len(bodies_) if body_signs is None else tuple(body_signs)
@@ -232,7 +232,7 @@ class MultivaluedCutCellEvidence(StrictModule, NonTrainableState):
         maximum_volume_closure_defect: float,
         maximum_face_closure_defect: float,
         tolerance: float,
-    ):
+    ) -> None:
         counts = (
             leaf_cell_count,
             regular_cell_count,
@@ -344,7 +344,7 @@ class MultivaluedCutCellComplex(StrictModule, NonTrainableState):
         face_measures: ArrayLike,
         evidence: MultivaluedCutCellEvidence,
         body_set_id: str,
-    ):
+    ) -> None:
         if not isinstance(hierarchy, CanonicalPatchHierarchy) or not isinstance(
             mesh, CellMesh
         ):
@@ -1024,7 +1024,7 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
         *,
         subdivision: int = 1,
         predicate_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         hierarchy = canonicalize_patch_hierarchy(topology)
         map_id = str(coordinate_map_id)
         subdivision_ = int(subdivision)

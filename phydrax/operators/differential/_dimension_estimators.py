@@ -53,7 +53,7 @@ class DimensionSamplingPolicy(StrictModule):
         replace: bool = False,
         probabilities: ArrayLike | None = None,
         policy_id: str | None = None,
-    ):
+    ) -> None:
         dimension = int(total_dimension)
         count = int(subset_size)
         if dimension < 1 or count < 1:
@@ -129,7 +129,7 @@ class DimensionOperatorSamples(StrictModule):
         values: ArrayLike,
         policy: DimensionSamplingPolicy,
         /,
-    ):
+    ) -> None:
         if not isinstance(policy, DimensionSamplingPolicy):
             raise TypeError("policy must be a DimensionSamplingPolicy.")
         sampled_indices = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))

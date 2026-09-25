@@ -68,7 +68,7 @@ class MultiphaseFLIPPlan(StrictModule, NonTrainableState):
         drag: ArrayLike | None = None,
         maximum_phases: int | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(transfer, PreparedFLIPParticleTransfer):
             raise TypeError("transfer must be PreparedFLIPParticleTransfer.")
         rho = np.asarray(densities, dtype=np.float64)

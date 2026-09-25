@@ -53,7 +53,7 @@ class ExteriorHelmholtzDirichletResult2D(StrictModule):
         discretization: object,
         coupling: float,
         boundary_residual_norm: Array,
-    ):
+    ) -> None:
         if not isinstance(potential, HelmholtzCombinedField2D):
             raise TypeError("potential must be HelmholtzCombinedField2D.")
         if not isinstance(linear_result, LinearSolveResult):

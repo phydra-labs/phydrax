@@ -64,7 +64,7 @@ class InteractionPartition(StrictModule, NonTrainableState):
         *,
         admissibility_mask: ArrayLike | None = None,
         partition_id: str | None = None,
-    ):
+    ) -> None:
         low = np.asarray(low_mask, dtype=np.bool_)
         if low.ndim < 1 or low.size < 1:
             raise ValueError("low_mask must be a non-empty modal array.")
@@ -331,7 +331,7 @@ def _select_model(
 
 
 class NonlinearInteractions(AbstractInteractionModel):
-    def __init__(self):
+    def __init__(self) -> None:
         self.kind = "nl"
         self.model_id = canonical_fingerprint({"kind": "triad-selection", "model": "nl"})
 
@@ -348,7 +348,7 @@ class NonlinearInteractions(AbstractInteractionModel):
 
 
 class QuasilinearInteractions(AbstractInteractionModel):
-    def __init__(self):
+    def __init__(self) -> None:
         self.kind = "ql"
         self.model_id = canonical_fingerprint({"kind": "triad-selection", "model": "ql"})
 
@@ -365,7 +365,7 @@ class QuasilinearInteractions(AbstractInteractionModel):
 
 
 class GeneralizedQuasilinearInteractions(AbstractInteractionModel):
-    def __init__(self):
+    def __init__(self) -> None:
         self.kind = "gql"
         self.model_id = canonical_fingerprint({"kind": "triad-selection", "model": "gql"})
 
@@ -385,7 +385,7 @@ class InteractionContinuationStage(StrictModule, NonTrainableState):
     coordinate: float = eqx.field(static=True)
     stage_id: str = eqx.field(static=True)
 
-    def __init__(self, coordinate: float, /, *, stage_id: str | None = None):
+    def __init__(self, coordinate: float, /, *, stage_id: str | None = None) -> None:
         value = float(coordinate)
         if not np.isfinite(value) or value < 0.0 or value > 1.0:
             raise ValueError("Interaction continuation coordinates must lie in [0, 1].")
@@ -412,7 +412,7 @@ class InteractionContinuationSchedule(StrictModule, NonTrainableState):
         /,
         *,
         schedule_id: str | None = None,
-    ):
+    ) -> None:
         stages = tuple(
             value
             if isinstance(value, InteractionContinuationStage)

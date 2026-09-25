@@ -65,7 +65,7 @@ class CompositeMACProjectionPlan(StrictModule, NonTrainableState):
         *,
         linear_policy: LinearSolvePolicy | None = None,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not divergence.source.compatible(gradient.target) or not (
             divergence.target.compatible(gradient.source)
         ):

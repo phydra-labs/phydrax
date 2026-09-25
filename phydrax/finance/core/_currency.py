@@ -70,7 +70,7 @@ class Currency(StrictModule):
     minor_unit: int = eqx.field(static=True)
     currency_id: str = eqx.field(static=True)
 
-    def __init__(self, code: str, minor_unit: int, /):
+    def __init__(self, code: str, minor_unit: int, /) -> None:
         if not isinstance(code, str):
             raise TypeError("currency code must be a string.")
         if (
@@ -106,7 +106,7 @@ class CurrencyAmount(StrictModule):
     currency: Currency = eqx.field(static=True)
     atoms: Array
 
-    def __init__(self, currency: Currency, atoms: Any, /):
+    def __init__(self, currency: Currency, atoms: Any, /) -> None:
         if not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency.")
         self.currency = currency
@@ -132,7 +132,7 @@ class MonetaryArray(StrictModule):
         currency_index: ArrayLike,
         valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         if not jnp.issubdtype(values_.dtype, jnp.floating):
             raise TypeError("monetary values must have a floating dtype.")
@@ -261,7 +261,7 @@ class FXPair(StrictModule):
     quote: Currency = eqx.field(static=True)
     pair_id: str = eqx.field(static=True)
 
-    def __init__(self, base: Currency, quote: Currency, /):
+    def __init__(self, base: Currency, quote: Currency, /) -> None:
         if not isinstance(base, Currency) or not isinstance(quote, Currency):
             raise TypeError("FX pair endpoints must be Currency values.")
         if base.currency_id == quote.currency_id:

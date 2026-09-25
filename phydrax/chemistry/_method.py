@@ -84,7 +84,7 @@ class DensityFunctionalPlan(StrictModule, NonTrainableState):
         long_range_exchange_fraction: float = 0.0,
         range_separation: float = 0.0,
         nonlocal_correlation_id: str | None = None,
-    ):
+    ) -> None:
         name_ = _identifier(name, "functional name")
         family_ = _identifier(family, "functional family")
         normalized = tuple(
@@ -213,7 +213,7 @@ class HartreeFockMethodPlan(AbstractElectronicMethodPlan):
         self,
         reference: ElectronicReferenceKind = ElectronicReferenceKind.RESTRICTED,
         /,
-    ):
+    ) -> None:
         _assign_method(self, ElectronicMethodFamily.HARTREE_FOCK, "hf", reference)
 
 
@@ -229,7 +229,7 @@ class KohnShamMethodPlan(AbstractElectronicMethodPlan):
         functional: DensityFunctionalPlan,
         reference: ElectronicReferenceKind = ElectronicReferenceKind.RESTRICTED,
         /,
-    ):
+    ) -> None:
         if not isinstance(functional, DensityFunctionalPlan):
             raise TypeError("functional must be DensityFunctionalPlan.")
         _assign_method(
@@ -254,7 +254,7 @@ class MP2MethodPlan(AbstractElectronicMethodPlan):
         /,
         *,
         spin_scaling_id: str | None = None,
-    ):
+    ) -> None:
         definitions = (
             ()
             if spin_scaling_id is None
@@ -275,7 +275,7 @@ class CoupledClusterMethodPlan(AbstractElectronicMethodPlan):
         level: str = "ccsd",
         reference: ElectronicReferenceKind = ElectronicReferenceKind.RESTRICTED,
         /,
-    ):
+    ) -> None:
         level_ = _identifier(level, "coupled-cluster level").lower()
         if level_ not in ("ccsd", "ccsd(t)"):
             raise ValueError("Coupled-cluster level must be ccsd or ccsd(t).")
@@ -294,7 +294,7 @@ class ConfigurationInteractionMethodPlan(AbstractElectronicMethodPlan):
         level: str = "fci",
         reference: ElectronicReferenceKind = ElectronicReferenceKind.RESTRICTED,
         /,
-    ):
+    ) -> None:
         level_ = _identifier(level, "configuration-interaction level").lower()
         if level_ not in ("cis", "cisd", "fci", "selected-ci"):
             raise ValueError("Unknown configuration-interaction level.")
@@ -320,7 +320,7 @@ class MulticonfigurationMethodPlan(AbstractElectronicMethodPlan):
         /,
         *,
         active_space_id: str,
-    ):
+    ) -> None:
         method_ = _identifier(method, "multiconfiguration method").lower()
         if method_ not in ("casci", "casscf", "dmrg-casci", "dmrg-casscf"):
             raise ValueError("Unknown multiconfiguration method.")
@@ -345,7 +345,7 @@ class ADCMethodPlan(AbstractElectronicMethodPlan):
         order: str = "adc(2)",
         reference: ElectronicReferenceKind = ElectronicReferenceKind.RESTRICTED,
         /,
-    ):
+    ) -> None:
         order_ = _identifier(order, "ADC order").lower()
         if order_ not in ("adc(2)", "adc(2)-x", "adc(3)"):
             raise ValueError("ADC order must be adc(2), adc(2)-x, or adc(3).")
@@ -366,7 +366,7 @@ class ExternalElectronicMethodPlan(AbstractElectronicMethodPlan):
         /,
         *,
         definition_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         _assign_method(
             self,
             ElectronicMethodFamily.CUSTOM_EXTERNAL,

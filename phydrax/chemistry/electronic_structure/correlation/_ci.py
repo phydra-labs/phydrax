@@ -166,7 +166,7 @@ class CASCIResult(StrictModule, NonTrainableState):
         plan_id: str,
         store_id: str,
         /,
-    ):
+    ) -> None:
         energies_ = jnp.asarray(energies)
         coefficients_ = jnp.asarray(coefficients)
         residuals_ = jnp.asarray(residuals, dtype=energies_.real.dtype)
@@ -216,7 +216,7 @@ class CASCIPlan(StrictModule, NonTrainableState):
         root_count: int = 1,
         maximum_determinants: int = 100_000,
         residual_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         active = tuple(active_orbitals)
         alpha = int(active_alpha_electrons)
         beta = int(active_beta_electrons)
@@ -345,7 +345,7 @@ class FCIPlan(StrictModule, NonTrainableState):
         root_count: int = 1,
         maximum_determinants: int = 100_000,
         residual_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         alpha = int(alpha_electrons)
         beta = int(beta_electrons)
         roots = int(root_count)

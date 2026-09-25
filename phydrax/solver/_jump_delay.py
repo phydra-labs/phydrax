@@ -55,7 +55,7 @@ class JumpDelayProblem(StrictModule):
         *,
         mark_shape: Sequence[int] = (),
         problem_id: str = "jump-delay-problem",
-    ):
+    ) -> None:
         if not isinstance(delay_problem, DelayDifferentialProblem):
             raise TypeError("delay_problem must be a DelayDifferentialProblem.")
         if not callable(jump):

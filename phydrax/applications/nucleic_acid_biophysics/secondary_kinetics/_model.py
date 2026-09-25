@@ -68,7 +68,7 @@ class AssociationConvention:
         concentration_unit: UnitDefinition = MOLE_PER_CUBIC_METER,
         volume: float | None = None,
         volume_unit: UnitDefinition = CUBIC_METER,
-    ):
+    ) -> None:
         concentration = _positive(
             standard_concentration
             * conversion_factor(concentration_unit, MOLE_PER_CUBIC_METER),
@@ -348,7 +348,7 @@ class SecondaryRateLaw:
     association_prefactor: float
     time_unit: UnitDefinition = SECOND
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.name not in ("metropolis", "symmetric_barrier", "association_metropolis"):
             raise ValueError("Unknown secondary kinetic rate law.")
         _positive(self.unimolecular_prefactor, "unimolecular prefactor")

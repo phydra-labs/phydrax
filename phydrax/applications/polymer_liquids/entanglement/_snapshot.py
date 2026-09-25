@@ -36,7 +36,7 @@ class PrimitivePathSnapshotPlan(StrictModule, NonTrainableState):
         maximum_chains: int,
         maximum_beads_per_chain: int,
         maximum_bond_length: float,
-    ):
+    ) -> None:
         particles = int(maximum_particles)
         chains = int(maximum_chains)
         beads = int(maximum_beads_per_chain)
@@ -116,7 +116,7 @@ class PreparedPrimitivePathSnapshot(StrictModule, NonTrainableState):
         layout: PolymerChainLayoutPlan,
         chain_ids: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, PrimitivePathSnapshotPlan):
             raise TypeError("plan must be PrimitivePathSnapshotPlan.")
         if not isinstance(dynamics, PreparedAtomisticDynamics):

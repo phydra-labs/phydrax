@@ -33,7 +33,7 @@ class OperatorPairing(AbstractPairing):
         inverse_action: Callable[[PyTree[Any]], PyTree[Array]] | None = None,
         prepared_inverse: PreparedLinearSolve | None = None,
         pairing_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:

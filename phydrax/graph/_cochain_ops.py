@@ -301,7 +301,7 @@ class CochainExteriorDerivative(StrictModule):
         input_key: str,
         output_key: str,
         boundary_policy: CochainBoundaryKind = "absolute",
-    ):
+    ) -> None:
         self.degree = int(degree)
         self.input_key = str(input_key)
         self.output_key = str(output_key)
@@ -335,7 +335,7 @@ class CochainCodifferential(StrictModule):
         input_key: str,
         output_key: str,
         boundary_policy: CochainBoundaryKind = "absolute",
-    ):
+    ) -> None:
         self.degree = int(degree)
         self.input_key = str(input_key)
         self.output_key = str(output_key)
@@ -371,7 +371,7 @@ class CochainHodgeLaplacian(StrictModule):
         output_key: str,
         component: HodgeLaplacianComponent = "complete",
         boundary_policy: CochainBoundaryKind = "absolute",
-    ):
+    ) -> None:
         if component not in ("lower", "upper", "complete"):
             raise ValueError("Unknown Hodge Laplacian component.")
         self.degree = int(degree)
@@ -409,7 +409,7 @@ class CochainHarmonicProjection(StrictModule):
         input_key: str,
         output_key: str,
         boundary_policy: CochainBoundaryKind = "absolute",
-    ):
+    ) -> None:
         self.degree = int(degree)
         self.input_key = str(input_key)
         self.output_key = str(output_key)

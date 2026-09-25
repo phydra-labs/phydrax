@@ -57,7 +57,7 @@ class PartialFractionRationalFunction(StrictModule):
         *,
         polynomial_coefficients: ArrayLike | tuple[float, ...] = (0.0,),
         function_id: str | None = None,
-    ):
+    ) -> None:
         poles_ = _numeric_vector(poles, "poles", nonempty=True)
         residues_ = _numeric_vector(residues, "residues", nonempty=True)
         polynomial_ = _numeric_vector(
@@ -131,7 +131,7 @@ class RationalFunctionResourcePolicy(StrictModule):
         *,
         max_matvec_count: int | None = None,
         max_workspace_bytes: int | None = None,
-    ):
+    ) -> None:
         self.max_matvec_count = _optional_nonnegative_int(
             max_matvec_count, "max_matvec_count"
         )
@@ -153,7 +153,7 @@ class RationalFunctionPolicy(StrictModule):
         shifted: ShiftedSolvePolicy | None = None,
         resources: RationalFunctionResourcePolicy | None = None,
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         shifted_ = ShiftedSolvePolicy() if shifted is None else shifted
         resources_ = RationalFunctionResourcePolicy() if resources is None else resources
         failure_ = FailurePolicy() if failure is None else failure

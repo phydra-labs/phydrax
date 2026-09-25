@@ -36,7 +36,7 @@ class PosteriorCapabilities(StrictModule):
         observation_variance: bool,
         observation_sampling: bool,
         gauss_newton_residual: bool,
-    ):
+    ) -> None:
         has_factorized_prior = bool(factorized_prior)
         self.factorized_prior = has_factorized_prior
         self.automatic_prior_sampling = has_factorized_prior
@@ -96,7 +96,7 @@ class PosteriorDiagnostics(StrictModule):
         jit_evaluation_matches: bool,
         vmap_evaluation_matches: bool,
         failures: tuple[str, ...],
-    ):
+    ) -> None:
         self.capabilities = capabilities
         self.initial_log_density = jnp.asarray(initial_log_density)
         self.gradient_norm = jnp.asarray(gradient_norm)

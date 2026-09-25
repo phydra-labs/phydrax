@@ -178,7 +178,7 @@ class RodStrainBasisPlan(StrictModule, NonTrainableState):
         maximum_condition_number: float = 1.0e8,
         basis_kind: RodStrainBasisKind = "explicit",
         label: str | None = None,
-    ):
+    ) -> None:
         dimension_ = _dimension(dimension)
         indices = _component_indices(dimension_, components)
         raw_coefficients = np.asarray(polynomial_coefficients)

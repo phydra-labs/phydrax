@@ -75,7 +75,7 @@ class FiniteVolumeTopologyArtifactEvidence(StrictModule, NonTrainableState):
         coverage_error: ArrayLike,
         conservation_defect: ArrayLike,
         evidence_id: str,
-    ):
+    ) -> None:
         identifier = _required_identifier(evidence_id, "evidence_id")
         passed_ = jnp.asarray(passed)
         status_ = jnp.asarray(status, dtype=jnp.int32)
@@ -180,7 +180,7 @@ class FiniteVolumeTopologyArtifacts(StrictModule, NonTrainableState):
         topology_artifact_id: str | None = None,
         metrics_artifact_id: str | None = None,
         operators_artifact_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(epoch, TopologyEpoch):
             raise TypeError("epoch must be TopologyEpoch.")
         prepared = _required_identifier(prepared_id, "prepared_id")
@@ -285,7 +285,7 @@ class FiniteVolumeTopologyEventRequest(StrictModule, NonTrainableState):
         *,
         payload_id: str | None = None,
         reason: str = "",
-    ):
+    ) -> None:
         event_kind = _enum_member(kind, TopologyEventKind, "kind")
         input_epoch = _required_identifier(input_epoch_id, "input_epoch_id")
         requested_spec = _required_identifier(requested_spec_id, "requested_spec_id")
@@ -337,7 +337,7 @@ class FiniteVolumeTopologyEvent(StrictModule, NonTrainableState):
         result_id: str | None,
         payload_id: str | None,
         /,
-    ):
+    ) -> None:
         sequence_ = _host_nonnegative_integer(sequence, "sequence")
         accepted_step_ = _host_nonnegative_integer(accepted_step, "accepted_step")
         time_, _ = _host_finite_time(time, "time")
@@ -483,7 +483,7 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
         capacity: int,
         time: ArrayLike = 0.0,
         _storage: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(initial_epoch, TopologyEpoch):
             raise TypeError("initial_epoch must be TopologyEpoch.")
         if not isinstance(initial_artifacts, FiniteVolumeTopologyArtifacts):
@@ -1643,7 +1643,7 @@ class FiniteVolumeRemeshArtifact:
     payload_ids: tuple[str | None, ...] = ()
     target_geometry: Any = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.transition, CellMeshTransition):
             raise TypeError("transition must be CellMeshTransition.")
         if not isinstance(self.candidate_epoch, TopologyEpoch):
@@ -1915,7 +1915,7 @@ class FiniteVolumeTopologyEventTransaction:
         remap_tolerance: float = 1e-10,
         remap_limits: Any = None,
         remap_provenance: str = "topology-event",
-    ):
+    ) -> None:
         if not isinstance(journal, FiniteVolumeTopologyEventJournal):
             raise TypeError("journal must be FiniteVolumeTopologyEventJournal.")
         if not isinstance(requests, (tuple, list)) or not requests:
@@ -2201,7 +2201,7 @@ class FiniteVolumeTopologyEventScheduler:
         /,
         *,
         maximum_requests: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(journal, FiniteVolumeTopologyEventJournal):
             raise TypeError("journal must be FiniteVolumeTopologyEventJournal.")
         if maximum_requests is not None and (

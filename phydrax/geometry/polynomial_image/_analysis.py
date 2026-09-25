@@ -58,7 +58,7 @@ class PolynomialImageAnalysisPolicy(StrictModule, NonTrainableState):
         maximum_monomials: int = 2_048,
         maximum_design_entries: int = 20_000_000,
         maximum_svd_bytes: int = 1_073_741_824,
-    ):
+    ) -> None:
         rank_tolerance = float(rank_relative_tolerance)
         ambiguity = float(rank_ambiguity_factor)
         absolute = float(heldout_absolute_tolerance)
@@ -135,7 +135,7 @@ class PolynomialImageAnalysisPlan(StrictModule, NonTrainableState):
         lower_bounds: ArrayLike | float = -1.0,
         upper_bounds: ArrayLike | float = 1.0,
         policy: PolynomialImageAnalysisPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(polynomial_map, SparsePolynomialMap):
             raise TypeError("polynomial_map must be a SparsePolynomialMap.")
         if not isinstance(target_support, TargetMonomialSupport):
@@ -278,7 +278,7 @@ class PreparedPolynomialImageAnalysis(StrictModule, NonTrainableState):
         /,
         *,
         numeric_version: ArrayLike = 0,
-    ):
+    ) -> None:
         if not isinstance(plan, PolynomialImageAnalysisPlan):
             raise TypeError("plan must be a PolynomialImageAnalysisPlan.")
         if not isinstance(polynomial_map, SparsePolynomialMap):

@@ -53,7 +53,7 @@ class SIDMCrossSectionPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     kernel: TwoBodyDifferentialKernelPlan
 
-    def __init__(self, cross_section_per_mass: float, /):
+    def __init__(self, cross_section_per_mass: float, /) -> None:
         value = float(cross_section_per_mass)
         if not np.isfinite(value) or value < 0.0:
             raise ValueError(
@@ -94,7 +94,7 @@ class SIDMCollisionPolicy(StrictModule, NonTrainableState):
         maximum_particle_probability: float = 0.25,
         minimum_knudsen_number: float = 1.0,
         maximum_events_per_half_step: int,
-    ):
+    ) -> None:
         maximum = float(maximum_pair_probability)
         maximum_particle = float(maximum_particle_probability)
         minimum_knudsen = float(minimum_knudsen_number)
@@ -273,7 +273,7 @@ class CosmologicalSIDMPlan(StrictModule):
         *,
         execution: ParticleExecutionPolicy | None = None,
         time: FLRWDistancePlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(particle_mesh, CosmologicalParticleMeshPlan):
             raise TypeError("particle_mesh must be CosmologicalParticleMeshPlan.")
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):

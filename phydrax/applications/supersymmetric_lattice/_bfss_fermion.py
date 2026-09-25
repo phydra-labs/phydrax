@@ -64,7 +64,7 @@ class BFSSFermionPlan(StrictModule):
         maximum_rational_error: float = 1e-5,
         maximum_fermion_dimension: int = 4096,
         antisymmetry_tolerance: float = 1e-9,
-    ):
+    ) -> None:
         if not isinstance(bosonic_plan, BFSSPlan):
             raise TypeError("bosonic_plan must be BFSSPlan.")
         gamma = np.asarray(gamma_matrices, dtype=np.complex128)
@@ -188,7 +188,7 @@ class BFSSFermionOperator(StrictModule):
         plan: BFSSFermionPlan,
         configuration: BFSSConfiguration,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, BFSSFermionPlan):
             raise TypeError("plan must be BFSSFermionPlan.")
         if not isinstance(configuration, BFSSConfiguration):

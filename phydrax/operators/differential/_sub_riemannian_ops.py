@@ -54,7 +54,7 @@ class _HorizontalGradientCallable(StrictModule):
         deps: tuple[str, ...],
         variable: str,
         /,
-    ):
+    ) -> None:
         positions = {label: position for position, label in enumerate(deps)}
         self.differential = differential
         self.cometric = cometric
@@ -94,7 +94,7 @@ class _SubLaplacianCallable(StrictModule):
         deps: tuple[str, ...],
         variable: str,
         /,
-    ):
+    ) -> None:
         positions = {label: position for position, label in enumerate(deps)}
         self.function = function
         self.cometric = cometric

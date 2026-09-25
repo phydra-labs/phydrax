@@ -77,7 +77,7 @@ class AtomisticLabelSet(StrictModule, NonTrainableState):
         /,
         *,
         parent: "AtomisticLabelSet | None" = None,
-    ):
+    ) -> None:
         values = tuple(records)
         if not values or any(
             not isinstance(value, AtomisticLabelRecord) for value in values
@@ -248,7 +248,7 @@ class AtomisticLearningCampaignPlan(StrictModule, NonTrainableState):
         training: AtomisticTrainingPolicy,
         committee_reduction: CommitteeReductionPolicy,
         /,
-    ):
+    ) -> None:
         if not isinstance(system, PreparedAtomisticSystem):
             raise TypeError("system must be PreparedAtomisticSystem.")
         if not isinstance(provider, AbstractExternalAtomisticProvider):
@@ -303,7 +303,7 @@ class AtomisticLearningCampaignState(StrictModule, NonTrainableState):
         *,
         committee: CommitteeAtomisticPotential | None = None,
         round_index: int = 0,
-    ):
+    ) -> None:
         if not isinstance(labels, AtomisticLabelSet):
             raise TypeError("labels must be AtomisticLabelSet.")
         if committee is not None and not isinstance(

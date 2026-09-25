@@ -57,7 +57,7 @@ class SmoothingPatchLayout(StrictModule, NonTrainableState):
         rule_points: ArrayLike,
         rule_weights: ArrayLike,
         /,
-    ):
+    ) -> None:
         owners = np.asarray(owner_entities, dtype=np.int32)
         routes = np.asarray(dof_routes, dtype=np.int32)
         route_valid = np.asarray(dof_valid, dtype=np.bool_)
@@ -166,7 +166,7 @@ class SmoothingEvidence(StrictModule, NonTrainableState):
         /,
         *,
         energy_evidence: SmoothingEnergyEvidence = "none",
-    ):
+    ) -> None:
         positive = jnp.asarray(positive_measure, dtype=jnp.bool_)
         closure = jnp.asarray(closure_defect)
         partition = jnp.asarray(partition_defect)

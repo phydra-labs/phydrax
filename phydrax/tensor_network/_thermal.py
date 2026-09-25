@@ -44,7 +44,7 @@ class FiniteThermalPolicy(StrictModule):
         term_tolerance: float = 1e-9,
         hermiticity_tolerance: float = 1e-9,
         maximum_history_elements: int = 1_000_000,
-    ):
+    ) -> None:
         bond = int(maximum_bond_dimension)
         order = int(maximum_order)
         history = int(maximum_history_elements)

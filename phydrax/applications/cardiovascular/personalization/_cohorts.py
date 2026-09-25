@@ -83,7 +83,7 @@ class DeidentifiedCohortIdentity:
         deidentification_policy_id: str,
         deidentification_receipt_id: str,
         /,
-    ):
+    ) -> None:
         group = _identifier(group_id, "deidentified group_id")
         collapsed = "".join(
             character for character in group.lower() if character.isalnum()

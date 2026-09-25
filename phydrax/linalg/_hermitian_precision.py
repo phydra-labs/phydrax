@@ -57,7 +57,7 @@ class HermitianPrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: Any | None = None,
         decision_dtype: Any | None = None,
         output_dtype: Any | None = None,
-    ):
+    ) -> None:
         compute = (
             None if compute_dtype is None else real_precision_dtype_name(compute_dtype)
         )

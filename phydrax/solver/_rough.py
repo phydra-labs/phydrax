@@ -69,7 +69,7 @@ class RoughDifferentialProblem(StrictModule):
         geometry: AbstractStateGeometry | None = None,
         time_dependent: bool = False,
         problem_id: str = "rough-differential-problem",
-    ):
+    ) -> None:
         if not callable(vector_fields):
             raise TypeError("vector_fields must be callable.")
         dimension = int(driver_dimension)
@@ -373,7 +373,7 @@ class RoughEuler(AbstractRoughSolver):
     solver_id: str = eqx.field(static=True)
     required_depth: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.solver_name = "RoughEuler"
         self.solver_id = "rough-solver:rough-euler"
         self.required_depth = 1
@@ -401,7 +401,7 @@ class Davie(AbstractRoughSolver):
     solver_id: str = eqx.field(static=True)
     required_depth: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.solver_name = "Davie"
         self.solver_id = "rough-solver:davie"
         self.required_depth = 2
@@ -450,7 +450,7 @@ class RoughDifferentialSolution(StrictModule):
         state_geometry_id: str,
         statistics: Mapping[str, ArrayLike],
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(control, AbstractRoughControl):
             raise TypeError("control must be an AbstractRoughControl.")
         if not isinstance(solver, AbstractRoughSolver):

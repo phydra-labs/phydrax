@@ -44,7 +44,7 @@ class ExplicitPolygonH1PrecisionPolicy(StrictModule, NonTrainableState):
         output_dtype: Any | None = None,
         certification_dtype: Any = "float64",
         compensated_accumulation: bool = True,
-    ):
+    ) -> None:
         geometry = real_precision_dtype_name(geometry_dtype)
         basis = real_precision_dtype_name(basis_dtype)
         factorization = real_precision_dtype_name(

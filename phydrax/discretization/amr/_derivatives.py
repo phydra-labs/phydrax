@@ -42,7 +42,7 @@ class BlockAMRDerivativePolicy(StrictModule, NonTrainableState):
         minimum_topology_margin: float = 1.0e-8,
         minimum_transversality: float = 1.0e-8,
         relaxation_temperature: float = 0.05,
-    ):
+    ) -> None:
         topology = float(minimum_topology_margin)
         transversality = float(minimum_transversality)
         temperature = float(relaxation_temperature)
@@ -88,7 +88,7 @@ class BlockAMRDerivativeEvidence(StrictModule, NonTrainableState):
         /,
         *,
         reason: str,
-    ):
+    ) -> None:
         if not isinstance(policy, BlockAMRDerivativePolicy):
             raise TypeError("Derivative evidence requires BlockAMRDerivativePolicy.")
         margin = jnp.asarray(topology_margin)
@@ -139,7 +139,7 @@ class FrozenCutCellTransitionDerivativePlan(StrictModule, NonTrainableState):
         *,
         topology_margin: float,
         policy: BlockAMRDerivativePolicy | None = None,
-    ):
+    ) -> None:
         policy_ = BlockAMRDerivativePolicy("frozen-history") if policy is None else policy
         margin = float(topology_margin)
         if not isinstance(transition, MultivaluedCutCellTransition):
@@ -217,7 +217,7 @@ class EventAwareCutCellDerivativePlan(StrictModule, NonTrainableState):
         /,
         *,
         policy: BlockAMRDerivativePolicy | None = None,
-    ):
+    ) -> None:
         from ...solver._hybrid_event import HybridEventPlan
 
         policy_ = BlockAMRDerivativePolicy("event-aware") if policy is None else policy
@@ -287,7 +287,7 @@ class RelaxedHierarchyBlendPlan(StrictModule, NonTrainableState):
     policy: BlockAMRDerivativePolicy
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, policy: BlockAMRDerivativePolicy | None = None, /):
+    def __init__(self, policy: BlockAMRDerivativePolicy | None = None, /) -> None:
         policy_ = BlockAMRDerivativePolicy("relaxed") if policy is None else policy
         if not isinstance(policy_, BlockAMRDerivativePolicy) or policy_.mode != "relaxed":
             raise ValueError("Relaxed hierarchy blend requires relaxed policy.")
@@ -333,7 +333,7 @@ class MappedGeometryDerivativePlan(StrictModule, NonTrainableState):
         /,
         *,
         topology_margin: float,
-    ):
+    ) -> None:
         margin = float(topology_margin)
         if not isinstance(geometry, CanonicalMappedGeometryPlan):
             raise TypeError("Mapped geometry derivatives require mapped geometry plan.")

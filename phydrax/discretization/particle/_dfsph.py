@@ -38,7 +38,7 @@ class DFSPHStateLayout(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     width: int = eqx.field(static=True)
 
-    def __init__(self, capacity: int, dimension: int, /):
+    def __init__(self, capacity: int, dimension: int, /) -> None:
         self.capacity = int(capacity)
         self.dimension = int(dimension)
         self.width = 2 * self.dimension + 2
@@ -94,7 +94,7 @@ class DFSPHMethodPlan(StrictModule, NonTrainableState):
         density_tolerance: float = 1e-4,
         relaxation: float = 0.5,
         qualification: ParticleQualificationProfile | None = None,
-    ):
+    ) -> None:
         if (
             reference_density <= 0.0
             or divergence_iterations <= 0
@@ -173,7 +173,7 @@ class PreparedDFSPH(StrictModule, NonTrainableState):
         external_acceleration: Callable[[Array, Array, Array, Any], Array] | None = None,
         execution: ParticleExecutionPolicy | None = None,
         precision: ParticlePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         self.particles = particles
         self.neighborhood = neighborhood
         self.kernel = kernel

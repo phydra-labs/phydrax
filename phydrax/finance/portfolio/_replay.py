@@ -69,7 +69,7 @@ class PortfolioReplayMarket(StrictModule):
         *,
         base_currency: Currency,
         benchmark_returns: ArrayLike | None = None,
-    ):
+    ) -> None:
         assets_ = tuple(assets)
         currencies_ = tuple(currencies)
         if not assets_ or any(not isinstance(item, AssetReference) for item in assets_):
@@ -150,7 +150,7 @@ class ReplayCostInputs(StrictModule):
     commissions: Array
     tax_costs: Array
 
-    def __init__(self, commissions: ArrayLike, tax_costs: ArrayLike, /):
+    def __init__(self, commissions: ArrayLike, tax_costs: ArrayLike, /) -> None:
         commission = _array(commissions, "commissions", ndim=1)
         taxes = _array(tax_costs, "tax_costs", ndim=1).astype(commission.dtype)
         if taxes.shape != commission.shape:

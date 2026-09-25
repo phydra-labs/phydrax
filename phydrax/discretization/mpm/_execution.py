@@ -59,7 +59,7 @@ class MPMExecutionPlan(StrictModule, NonTrainableState):
         field_capacity: int,
         block_capacity: int,
         contact_pair_capacity: int,
-    ):
+    ) -> None:
         identifiers = (str(backend), str(device_mesh), str(precision_policy_id))
         capacities = tuple(
             (
@@ -138,7 +138,7 @@ class MPMCapacityCertificate(StrictModule, NonTrainableState):
     numerical_defect_p99: float = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
-    def __init__(self, execution: MPMExecutionPlan, /, **metrics):
+    def __init__(self, execution: MPMExecutionPlan, /, **metrics) -> None:
         if not isinstance(execution, MPMExecutionPlan):
             raise TypeError("execution must be MPMExecutionPlan.")
         required = (

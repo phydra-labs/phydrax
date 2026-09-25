@@ -175,7 +175,7 @@ class DarkSectorEpochPlan(StrictModule, NonTrainableState):
         backend_id: str = "jax",
         conservation_atol: float = 1.0e-10,
         conservation_rtol: float = 1.0e-10,
-    ):
+    ) -> None:
         capacities = tuple(
             _positive(value, f"{name}_capacity")
             for name, value in zip(
@@ -371,7 +371,7 @@ class DarkSectorEpochState(StrictModule):
         conservation_in: ArrayLike,
         conservation_out: ArrayLike,
         status: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(plan, DarkSectorEpochPlan):
             raise TypeError("plan must be DarkSectorEpochPlan.")
         epoch = _nonnegative(epoch_sequence, "epoch_sequence")
@@ -470,7 +470,7 @@ class DarkSectorEpochResult(StrictModule):
         backpressured: ArrayLike,
         rolled_back: ArrayLike,
         evidence_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(state, DarkSectorEpochState):
             raise TypeError("state must be DarkSectorEpochState.")
         complete_ = _scalar_bool(complete, "complete")
@@ -529,7 +529,7 @@ class DarkSectorResumePoint:
         *,
         exact_compile_replay: bool,
         repartitioned: bool,
-    ):
+    ) -> None:
         source_id = None if source_manifest is None else source_manifest.epoch_manifest_id
         object.__setattr__(self, "state", state)
         object.__setattr__(self, "tip", tip)
@@ -812,7 +812,7 @@ class DarkSectorRunCoordinator:
         *,
         worker_id: str,
         eligible_worker_ids: Sequence[str] | None = None,
-    ):
+    ) -> None:
         if not isinstance(graph_repository, EventGraphRepository):
             raise TypeError("graph_repository must be EventGraphRepository.")
         if not isinstance(plan, DarkSectorEpochPlan):

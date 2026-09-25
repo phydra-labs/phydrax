@@ -33,7 +33,7 @@ class GaussianScreeningPlan(StrictModule, NonTrainableState):
         *,
         maximum_displacement: float = 0.25,
         maximum_quartets: int = 16_777_216,
-    ):
+    ) -> None:
         threshold_ = float(threshold)
         displacement = float(maximum_displacement)
         capacity = int(maximum_quartets)
@@ -83,7 +83,7 @@ class PreparedGaussianScreening(StrictModule, NonTrainableState):
         basis: PreparedGaussianBasis,
         positions: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, GaussianScreeningPlan):
             raise TypeError("plan must be GaussianScreeningPlan.")
         if not isinstance(basis, PreparedGaussianBasis):

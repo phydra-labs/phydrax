@@ -40,7 +40,7 @@ class ImagePair2D(StrictModule, NonTrainableState):
         delta_t: Array | float = 1.0,
         pair_id: str | None = None,
         provenance: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(geometry, ImagePlaneSupport):
             raise TypeError("geometry must be an ImagePlaneSupport.")
         first_ = jnp.asarray(first)
@@ -117,7 +117,7 @@ class DenseDisplacementField2D(StrictModule, NonTrainableState):
         geometry_id: str,
         field_id: str | None = None,
         provenance: Sequence[str] = (),
-    ):
+    ) -> None:
         positions = jnp.asarray(positions_rc)
         displacement = jnp.asarray(displacement_rc)
         if jnp.issubdtype(positions.dtype, jnp.complexfloating) or jnp.issubdtype(

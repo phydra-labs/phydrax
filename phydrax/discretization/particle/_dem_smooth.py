@@ -40,7 +40,7 @@ class SmoothPenaltyNormalPlan(AbstractDEMNormalContactPlan):
         force_smoothing: float,
         cutoff_multiple: float = 12.0,
         normal_law_id: str | None = None,
-    ):
+    ) -> None:
         values = np.asarray(stiffness)
         gap = float(gap_smoothing)
         force = float(force_smoothing)
@@ -169,7 +169,7 @@ class SmoothCoulombTangentialPlan(AbstractDEMTangentialContactPlan):
         direction_smoothing: float,
         projection_order: int = 4,
         tangential_law_id: str | None = None,
-    ):
+    ) -> None:
         values = np.asarray(stiffness)
         epsilon = float(direction_smoothing)
         order = int(projection_order)

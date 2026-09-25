@@ -81,7 +81,7 @@ class CornerBlockInversePreconditioner2D(StrictModule, NonTrainableState):
         /,
         *,
         levels: int = 3,
-    ):
+    ) -> None:
         matrix_ = jnp.asarray(matrix)
         if matrix_.ndim != 2 or matrix_.shape[0] != matrix_.shape[1]:
             raise ValueError("Corner block matrix must be square.")

@@ -76,7 +76,7 @@ class FrozenLawBestResponseProblem(StrictModule):
         *,
         supplied_law_id: str,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(base_problem, MeanFieldBSDEProblem):
             raise TypeError("base_problem must be a MeanFieldBSDEProblem.")
         if not isinstance(adapter, MeanFieldBSDEControlAdapter):

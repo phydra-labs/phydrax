@@ -56,7 +56,7 @@ class KahlerMetricJet(StrictModule):
         mixed_derivative: ArrayLike,
         sample_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         metric_ = np.asarray(metric, dtype=np.complex128)
         holomorphic = np.asarray(holomorphic_derivative, dtype=np.complex128)
         antiholomorphic = np.asarray(antiholomorphic_derivative, dtype=np.complex128)
@@ -209,7 +209,7 @@ class HarmonicKodairaSpencerPlan(StrictModule):
         *,
         harmonic_tolerance: float = 1e-10,
         rank_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         algebraic = np.asarray(algebraic_representatives, dtype=np.complex128)
         closure = np.asarray(closure_operator, dtype=np.complex128)
         coclosure = np.asarray(coclosure_operator, dtype=np.complex128)
@@ -462,7 +462,7 @@ class ComplexModuliPatch:
         domain_normals: ArrayLike,
         domain_offsets: ArrayLike,
         /,
-    ):
+    ) -> None:
         label_ = _identifier(label, "moduli patch label")
         mapping = np.asarray(global_to_local, dtype=np.complex128)
         offset_ = np.asarray(offset, dtype=np.complex128)
@@ -606,7 +606,7 @@ class PeriodTransportPlan(StrictModule):
         initial_periods: ArrayLike,
         pairing: ArrayLike,
         /,
-    ):
+    ) -> None:
         connection = np.asarray(connection_samples, dtype=np.complex128)
         steps = np.asarray(step_sizes, dtype=np.float64)
         initial = np.asarray(initial_periods, dtype=np.complex128)
@@ -702,7 +702,7 @@ class KahlerModuliPlan(StrictModule):
         intersection_tensor: ArrayLike,
         cone_normals: ArrayLike,
         /,
-    ):
+    ) -> None:
         labels = tuple(_identifier(value, "divisor label") for value in divisor_labels)
         intersections = np.asarray(intersection_tensor, dtype=np.float64)
         cone = np.asarray(cone_normals, dtype=np.float64)
@@ -933,7 +933,7 @@ class ProjectiveVarietyPlan(StrictModule):
         *,
         toric_charge_matrix: ArrayLike | None = None,
         maximum_monomials: int = 100_000,
-    ):
+    ) -> None:
         if kind not in (
             "hypersurface",
             "complete-intersection",

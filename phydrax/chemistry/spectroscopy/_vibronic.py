@@ -46,7 +46,7 @@ class DuschinskyResult(StrictModule, NonTrainableState):
         initial_vibration_id: str,
         final_vibration_id: str,
         /,
-    ):
+    ) -> None:
         matrix = jnp.asarray(rotation)
         shift = jnp.asarray(displacement, dtype=matrix.dtype)
         count = matrix.shape[0] if matrix.ndim == 2 else -1
@@ -208,7 +208,7 @@ class FranckCondonResult(StrictModule, NonTrainableState):
         transition_dipoles: ArrayLike | None = None,
         photon_energies: ArrayLike | None = None,
         emission_rates: ArrayLike | None = None,
-    ):
+    ) -> None:
         quanta = jnp.asarray(final_quanta, dtype=jnp.int32)
         overlaps = jnp.asarray(overlap_amplitudes)
         factors_ = jnp.asarray(factors, dtype=overlaps.real.dtype)
@@ -293,7 +293,7 @@ class DuschinskyFranckCondonPlan(StrictModule, NonTrainableState):
         *,
         quadrature_order: int = 12,
         maximum_quadrature_points: int = 2_000_000,
-    ):
+    ) -> None:
         if not isinstance(duschinsky, DuschinskyResult):
             raise TypeError("duschinsky must be DuschinskyResult.")
         initial = jnp.asarray(initial_angular_frequencies)

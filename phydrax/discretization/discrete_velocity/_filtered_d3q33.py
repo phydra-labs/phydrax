@@ -49,7 +49,7 @@ class FilteredD3Q33Plan(StrictModule, NonTrainableState):
         *,
         gas_constant: float = 1.0,
         filter_strength: float = 1.0 / 16.0,
-    ):
+    ) -> None:
         selected_rule = d3q33_filtered_rule() if rule is None else rule
         if not isinstance(selected_rule, CompressibleVelocityRule):
             raise TypeError("rule must be a CompressibleVelocityRule.")

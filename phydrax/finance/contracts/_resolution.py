@@ -53,7 +53,7 @@ class ContractResolutionContext(StrictModule, NonTrainableState):
         /,
         *,
         cashflow_capacity: int,
-    ):
+    ) -> None:
         if not isinstance(reference_data, ReferenceDataSnapshot):
             raise TypeError("reference_data must be a ReferenceDataSnapshot.")
         calendar_values = tuple(calendars)
@@ -131,7 +131,7 @@ class ResolvedContract(AbstractResolvedContract):
         exercise: ExerciseSchedule | None = None,
         resolution_status: int
         | ContractResolutionStatus = ContractResolutionStatus.SUCCESS,
-    ):
+    ) -> None:
         if not isinstance(definition, AbstractContract):
             raise TypeError("definition must be an AbstractContract.")
         if not isinstance(cashflows, CashflowBatch):
@@ -223,7 +223,7 @@ class ContractResolutionPlan(StrictModule, NonTrainableState):
         definition: AbstractContract,
         context: ContractResolutionContext,
         /,
-    ):
+    ) -> None:
         if not isinstance(definition, AbstractContract):
             raise TypeError("definition must be an AbstractContract.")
         if not isinstance(context, ContractResolutionContext):

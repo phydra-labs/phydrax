@@ -41,7 +41,7 @@ class CompressibleOperatorCase:
     angle_of_attack: float
     sequence_coordinate: float | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         identifiers = (
             self.case_id,
             self.geometry_id,
@@ -104,7 +104,7 @@ class CompressibleOperatorDatasetPlan(StrictModule, NonTrainableState):
         geometry_input_name: str = "geometry",
         condition_input_name: str = "conditions",
         query_name: str = "flow",
-    ):
+    ) -> None:
         conditions = tuple(str(name) for name in condition_names)
         geometry_name = str(geometry_input_name)
         condition_name = str(condition_input_name)

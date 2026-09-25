@@ -142,7 +142,7 @@ class PreparedCineTiming(StrictModule, NonTrainableState):
         timebase_id: str,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         times = jax.lax.stop_gradient(jnp.asarray(sample_times_ms))
         phase_ = jax.lax.stop_gradient(jnp.asarray(phase, dtype=times.dtype))
         duration = jax.lax.stop_gradient(

@@ -67,7 +67,7 @@ class IPRPlan(StrictModule, NonTrainableState):
         duplicate_distance: float = 0.05,
         minimum_candidate_intensity: float = 0.0,
         minimum_loss_reduction: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(detection, ParticleDetectionPlan):
             raise TypeError("detection must be ParticleDetectionPlan.")
         if not isinstance(association, MultiViewAssociationPlan):

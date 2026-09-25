@@ -81,7 +81,9 @@ class NativePanelFieldPlan2D(StrictModule):
     basis_degree: int = eqx.field(static=True)
     field_id: str = eqx.field(static=True)
 
-    def __init__(self, geometry: NativePanelGeometry2D, /, *, basis_degree: int = 0):
+    def __init__(
+        self, geometry: NativePanelGeometry2D, /, *, basis_degree: int = 0
+    ) -> None:
         if not isinstance(geometry, NativePanelGeometry2D) or int(basis_degree) not in (
             0,
             1,

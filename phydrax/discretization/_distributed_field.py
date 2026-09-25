@@ -69,7 +69,9 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
     message_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, entity_owner: ArrayLike, adjacency: ArrayLike, part_count: int, /):
+    def __init__(
+        self, entity_owner: ArrayLike, adjacency: ArrayLike, part_count: int, /
+    ) -> None:
         owner = np.asarray(entity_owner)
         pairs = np.asarray(adjacency)
         parts = int(part_count)
@@ -270,7 +272,7 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
         /,
         *,
         operator_name: str,
-    ):
+    ) -> None:
         if not isinstance(halo, DistributedHaloPlan):
             raise TypeError("Distributed local operator requires a halo plan.")
         if not callable(local_action) or not callable(local_transpose):

@@ -86,7 +86,7 @@ class PowerImportError(AdapterError):
 
     report: AdapterReport
 
-    def __init__(self, report: AdapterReport, message: str):
+    def __init__(self, report: AdapterReport, message: str) -> None:
         self.report = report
         super().__init__(report.status, message)
 
@@ -96,7 +96,9 @@ _DEFAULT_LIMITS = PowerParserLimits()
 
 
 class _Import:
-    def __init__(self, format: str, texts: Sequence[str], limits: PowerParserLimits):
+    def __init__(
+        self, format: str, texts: Sequence[str], limits: PowerParserLimits
+    ) -> None:
         self.format = format
         self.limits = limits
         self.losses: list[AdapterLoss] = []

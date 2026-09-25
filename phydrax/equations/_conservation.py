@@ -118,7 +118,7 @@ class ConservationProblemIR(StrictModule):
         source=None,
         source_id: str | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         field = str(field_name)
         if not name_ or not field:
@@ -238,7 +238,7 @@ class CompiledConservationProblem(StrictModule):
             | PreparedNodalDGConservationDynamics
         ),
         /,
-    ):
+    ) -> None:
         if isinstance(discretization, TensorSpectralDiscretization):
             state_space_name = discretization.modal_space.name
         elif isinstance(discretization, TensorSBPDiscretization):

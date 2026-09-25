@@ -43,7 +43,7 @@ class RandomizedMomentBatch(StrictModule):
         left: tuple[IntegrationRealization, ...],
         right: tuple[IntegrationRealization, ...] | None = None,
         /,
-    ):
+    ) -> None:
         if len(left) < 2:
             raise ValueError("Randomized moments require at least two realizations.")
         if any(not isinstance(item, IntegrationRealization) for item in left):
@@ -99,7 +99,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         scale: ArrayLike = 1.0,
         label: str | None = None,
         precision: IntegrationPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(condition, AbstractMomentCondition):
             raise TypeError(
                 "RandomizedMomentPenalty requires an AbstractMomentCondition."

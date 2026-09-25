@@ -36,7 +36,7 @@ class SignaturePDEKernel(AbstractPositiveDefiniteKernel):
         *,
         polynomial_order: int = 5,
         pair_block_size: int = 64,
-    ):
+    ) -> None:
         if not isinstance(static_kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("static_kernel must be a positive-definite kernel.")
         if static_kernel.input_ndim != 1:

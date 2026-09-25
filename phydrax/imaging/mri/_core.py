@@ -118,7 +118,9 @@ class CoilSensitivityField(StrictModule, NonTrainableState):
     coil_ids: tuple[str, ...] = eqx.field(static=True)
     field_id: str = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, coil_ids: tuple[str, ...], /, *, field_id: str):
+    def __init__(
+        self, values: ArrayLike, coil_ids: tuple[str, ...], /, *, field_id: str
+    ) -> None:
         identifiers = _coil_identities(coil_ids)
         values_ = np.asarray(values)
         if (
@@ -148,7 +150,7 @@ class CoilNoiseCovariance(StrictModule, NonTrainableState):
     coil_ids: tuple[str, ...] = eqx.field(static=True)
     covariance_id: str = eqx.field(static=True)
 
-    def __init__(self, covariance: ArrayLike, coil_ids: tuple[str, ...], /):
+    def __init__(self, covariance: ArrayLike, coil_ids: tuple[str, ...], /) -> None:
         identifiers = _coil_identities(coil_ids)
         matrix = np.asarray(covariance)
         if (
@@ -194,7 +196,7 @@ class CartesianMRIEncodingPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, coils: CoilSensitivityField, sampling_mask: ArrayLike | None = None, /
-    ):
+    ) -> None:
         shape = coils.values.shape[1:]
         mask = (
             np.ones(shape, dtype=np.bool_)
@@ -249,7 +251,7 @@ class NonuniformMRIEncodingPlan(StrictModule, NonTrainableState):
         /,
         *,
         chunk_size: int = 256,
-    ):
+    ) -> None:
         if tuple(coils.coil_ids) != tuple(support.coil_ids):
             raise ValueError("Coil sensitivity and k-space coil identities differ.")
         chunk = int(chunk_size)
@@ -450,7 +452,7 @@ class OffResonanceMRIEncodingPlan(StrictModule, NonTrainableState):
         /,
         *,
         translations: ArrayLike | None = None,
-    ):
+    ) -> None:
         field = np.asarray(off_resonance_hz)
         if (
             field.shape != base.coils.values.shape[1:]
@@ -533,7 +535,7 @@ class QuantitativeMRIPlan(StrictModule, NonTrainableState):
     repetition_time: float = eqx.field(static=True)
     echo_time: float = eqx.field(static=True)
 
-    def __init__(self, repetition_time: float, echo_time: float, /):
+    def __init__(self, repetition_time: float, echo_time: float, /) -> None:
         repetition = float(repetition_time)
         echo = float(echo_time)
         if (

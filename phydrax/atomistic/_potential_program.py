@@ -26,10 +26,10 @@ from ._graph import (
 )
 from ._potential import (
     AbstractAtomisticPotential,
+    atomistic_potential_revision,
     AtomisticPotentialCapabilities,
     AtomisticPotentialRequirements,
     AtomisticSpeciesKind,
-    atomistic_potential_revision,
 )
 from ._sites import AtomisticInteractionSiteState
 from ._system import PreparedAtomisticSystem
@@ -157,7 +157,7 @@ class LearnedGraphPotentialTerm(AbstractAtomisticEnergyTerm):
         name: str = "learned",
         force_group: int = 0,
         allow_periodic: bool = False,
-    ):
+    ) -> None:
         if not isinstance(potential, AbstractAtomisticPotential):
             raise TypeError("potential must implement AbstractAtomisticPotential.")
         identifier = str(name).strip()
@@ -228,7 +228,7 @@ class PreparedLearnedGraphPotentialTerm(AbstractPreparedAtomisticEnergyTerm):
 
     def __init__(
         self, plan: LearnedGraphPotentialTerm, system: PreparedAtomisticSystem, /
-    ):
+    ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name
@@ -283,7 +283,7 @@ class AtomisticPotentialProgram(StrictModule):
         /,
         *,
         coefficients: ArrayLike | None = None,
-    ):
+    ) -> None:
         values = tuple(terms)
         if not values or any(
             not isinstance(value, AbstractAtomisticEnergyTerm) for value in values
@@ -441,7 +441,7 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
         /,
         *,
         graph_execution: AtomisticGraphExecutionPlan | None,
-    ):
+    ) -> None:
         if not isinstance(plan, AtomisticPotentialProgram):
             raise TypeError("plan must be an AtomisticPotentialProgram.")
         if not isinstance(system, PreparedAtomisticSystem):

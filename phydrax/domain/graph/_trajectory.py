@@ -219,7 +219,7 @@ class GraphTrajectoryDatasetDomain(JointFactor):
         sampling: GraphTrajectorySampling = "case_time_uniform",
         layout: LayoutPlan | None = None,
         validate: bool = True,
-    ):
+    ) -> None:
         """Create a finite graph-trajectory domain.
 
         Parameters:

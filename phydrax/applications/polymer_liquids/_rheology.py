@@ -33,7 +33,7 @@ class PolymerStressCorrelationPlan(StrictModule, NonTrainableState):
         minimum_origins: int = 8,
         maximum_relative_standard_error: float = 0.5,
         maximum_stationarity_drift: float = 0.25,
-    ):
+    ) -> None:
         frames = int(maximum_frames)
         lag = int(maximum_lag)
         blocks = int(block_count)

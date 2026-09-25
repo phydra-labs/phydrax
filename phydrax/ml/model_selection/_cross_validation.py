@@ -84,7 +84,7 @@ class ScoreRecord(StrictModule):
         status: Any,
         effective_weight: Any,
         raw: Any,
-    ):
+    ) -> None:
         self.value = value
         self.valid = valid
         self.status = status
@@ -303,7 +303,7 @@ class FoldEvaluation(StrictModule):
         *,
         fit_key: Any,
         prediction_key: Any,
-    ):
+    ) -> None:
         self.fold = fold
         self.fit_result = fit_result
         self.scorer_result = scorer_result
@@ -416,7 +416,7 @@ class CrossValidationResult(StrictModule):
         *,
         key: Any,
         derivative_contract: DerivativeContract,
-    ):
+    ) -> None:
         fit_valid = jnp.all(
             jnp.stack([jnp.all(jnp.asarray(fold.fit_result.valid)) for fold in folds])
         )
@@ -546,7 +546,7 @@ class OutOfFoldPredictionResult(StrictModule):
         valid: Any,
         status: Any,
         /,
-    ):
+    ) -> None:
         self.predictions = jnp.asarray(predictions)
         self.sample_mask = jnp.asarray(sample_mask, dtype=jnp.bool_)
         self.fold_ids = jnp.asarray(fold_ids, dtype=jnp.int32)
@@ -721,7 +721,7 @@ class CrossValidator(StrictModule):
     split_plan: AbstractSplitPlan
     scorer: Any
 
-    def __init__(self, split_plan: AbstractSplitPlan, scorer: Any, /):
+    def __init__(self, split_plan: AbstractSplitPlan, scorer: Any, /) -> None:
         if not isinstance(split_plan, AbstractSplitPlan):
             raise TypeError("split_plan must be an AbstractSplitPlan.")
         if not callable(scorer) and not isinstance(scorer, _Scorer):

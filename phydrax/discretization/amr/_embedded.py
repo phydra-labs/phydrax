@@ -51,7 +51,7 @@ class VariablePatchEmbeddedBoundaryEvidence(StrictModule, NonTrainableState):
         maximum_volume_closure_defect: float,
         maximum_face_closure_defect: float,
         /,
-    ):
+    ) -> None:
         volume_defect = float(maximum_volume_closure_defect)
         face_defect = float(maximum_face_closure_defect)
         if (
@@ -135,7 +135,7 @@ class VariablePatchEmbeddedBoundaryPlan(StrictModule, NonTrainableState):
         fluid_sign: Literal["positive", "negative"] = "positive",
         minimum_volume_fraction: float = 0.1,
         closure_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         identifier = str(geometry_plan_id)
         body = str(body_id)
         threshold = float(minimum_volume_fraction)

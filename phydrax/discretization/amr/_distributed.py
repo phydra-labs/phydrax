@@ -143,7 +143,7 @@ class _BlockAMRLevelLayout(StrictModule, NonTrainableState):
         *,
         mesh: Mesh | None,
         axis_name: str,
-    ):
+    ) -> None:
         identities = tuple(
             tuple(local_block_slots[part, local_block_valid[part]])
             for part in range(local_block_slots.shape[0])
@@ -224,7 +224,7 @@ class _PackedBlockRoutePlan(StrictModule, NonTrainableState):
         *,
         mesh: Mesh | None,
         axis_name: str,
-    ):
+    ) -> None:
         self.send_local_indices = _place_by_part(
             send_local_indices, mesh, axis_name, dtype=jnp.int32
         )
@@ -491,7 +491,7 @@ class _DistributedFillPatchLevel(StrictModule, NonTrainableState):
         *,
         mesh: Mesh | None,
         axis_name: str,
-    ):
+    ) -> None:
         placed = tuple(_place_by_part(value, mesh, axis_name) for value in arrays)
         (
             self.source_class,
@@ -851,7 +851,7 @@ class DistributedBlockAMRResourceEvidence(StrictModule, NonTrainableState):
         interface: Sequence[_PackedBlockRoutePlan],
         fill_routes: Sequence[_DistributedFillPatchLevel],
         /,
-    ):
+    ) -> None:
         layouts_ = tuple(layouts)
         same = tuple(same_level)
         coarse = tuple(coarse_fine)
@@ -936,7 +936,7 @@ class BlockAMRPartitionPlan(StrictModule, NonTrainableState):
         /,
         *,
         axis_name: str = "block_parts",
-    ):
+    ) -> None:
         parts = int(part_count)
         axis = str(axis_name).strip()
         if not isinstance(hierarchy, BlockHierarchyPlan):
@@ -1000,7 +1000,7 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
         *,
         costs: Sequence[ArrayLike | None] | None = None,
         execution_group: ExecutionGroup | None = None,
-    ):
+    ) -> None:
         if not isinstance(partition, BlockAMRPartitionPlan):
             raise TypeError("partition must be BlockAMRPartitionPlan.")
         if isinstance(topology_result, BlockTopologyCompileResult):
@@ -1945,7 +1945,7 @@ class BlockAMRStableIDMigrationPlan(StrictModule, NonTrainableState):
         source: PreparedDistributedBlockAMRHierarchy,
         target: PreparedDistributedBlockAMRHierarchy,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, PreparedDistributedBlockAMRHierarchy) or not isinstance(
             target, PreparedDistributedBlockAMRHierarchy
         ):

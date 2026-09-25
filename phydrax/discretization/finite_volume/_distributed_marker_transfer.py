@@ -44,7 +44,7 @@ class DistributedMarkerOwnershipPlan(StrictModule, NonTrainableState):
         /,
         *,
         rank_count: int,
-    ):
+    ) -> None:
         ids = np.asarray(marker_ids)
         owner = np.asarray(owner_rank)
         support = np.asarray(support_rank)
@@ -124,7 +124,7 @@ class DistributedMACMarkerTransfer(StrictModule, NonTrainableState):
         ownership: DistributedMarkerOwnershipPlan,
         rank: int,
         /,
-    ):
+    ) -> None:
         if local.markers.capacity != ownership.marker_ids.size or not np.array_equal(
             np.asarray(local.markers.plan.marker_ids),
             np.asarray(ownership.marker_ids),

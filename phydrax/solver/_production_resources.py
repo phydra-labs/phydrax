@@ -34,7 +34,7 @@ class ProductionResourceBudget(StrictModule, NonTrainableState):
         maximum_host_bytes: int,
         maximum_device_bytes: int,
         maximum_output_queue_bytes: int,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_compile_units,
@@ -130,7 +130,7 @@ def prepare_production_resource_forecast(
 class PreparedCompilationService:
     """Single-process in-memory executable cache keyed by semantic program IDs."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._executables: dict[str, Any] = {}
 
     @property

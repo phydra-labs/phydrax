@@ -50,7 +50,7 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
         batch: AtomisticBatch,
         execution: AtomisticGraphExecutionPlan,
         /,
-    ):
+    ) -> None:
         revision = atomistic_potential_revision(potential)
         self.architecture_id = potential.architecture_id
         self.potential_revision_id = revision.revision_id

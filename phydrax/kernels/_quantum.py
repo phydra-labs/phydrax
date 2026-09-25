@@ -36,7 +36,7 @@ class ExactQuantumStateFidelityKernel(AbstractPositiveDefiniteKernel):
         /,
         *,
         normalization_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         if not isinstance(state_model, AbstractArrayModel):
             raise TypeError("state_model must be an AbstractArrayModel.")
         if not isinstance(state_model.in_size, int) or not isinstance(

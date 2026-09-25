@@ -126,7 +126,7 @@ class PromotionRepository:
     restoring the entire repository to an older filesystem snapshot.
     """
 
-    def __init__(self, path: str | Path, /):
+    def __init__(self, path: str | Path, /) -> None:
         self.path = str(path)
         with closing(self._connect()) as connection:
             connection.executescript("""
@@ -301,7 +301,7 @@ class PromotionRepository:
         return state
 
 
-def _validate_index(index, trust_policy, distribution_id, at_time):
+def _validate_index(index, trust_policy, distribution_id, at_time) -> None:
     if not isinstance(index, ReleaseIndex) or not distribution_id:
         raise ValueError(
             "An active promotion requires an exact signed index and distribution."

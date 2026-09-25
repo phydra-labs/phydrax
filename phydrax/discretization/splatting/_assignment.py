@@ -50,7 +50,7 @@ class SplatAssignmentCapabilities(StrictModule, NonTrainableState):
         source_geometry_kind: str = "point",
         domain_differentiable: bool = False,
         maximum_support_radius_cells: float = 2.0,
-    ):
+    ) -> None:
         reproduction = int(polynomial_reproduction_order)
         derivative = int(maximum_explicit_derivative_order)
         if reproduction < 0 or derivative < 0:
@@ -121,7 +121,7 @@ class SplatAssignmentState(StrictModule):
         first_moments: ArrayLike,
         second_moments: ArrayLike,
         gradient_sums: ArrayLike,
-    ):
+    ) -> None:
         indices_ = jnp.asarray(indices)
         weights_ = jnp.asarray(weights)
         gradients = jnp.asarray(weight_gradients)
@@ -453,7 +453,7 @@ class MultilinearSplatAssignment(AbstractStructuredSplatAssignment):
     capabilities: SplatAssignmentCapabilities = eqx.field(static=True)
     assignment_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         capabilities = SplatAssignmentCapabilities(
             partition_of_unity=True,
             nonnegative_weights=True,

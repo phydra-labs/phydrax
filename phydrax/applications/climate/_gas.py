@@ -91,7 +91,7 @@ class GasBoxModel(StrictModule):
         alpha_bounds: tuple[float, float] = (1.0e-4, 1.0e4),
         solve_iterations: int = 64,
         solve_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         fractions_ = np.asarray(fractions, dtype=np.float64)
         rates = np.asarray(decay_rates, dtype=np.float64)
         background_ = np.asarray(background, dtype=np.float64)

@@ -131,7 +131,7 @@ class SurfacePanelization3D(StrictModule, NonTrainableState):
         *,
         quadrature_order: int = 8,
         geometry: CompiledGeometry | None = None,
-    ):
+    ) -> None:
         if not isinstance(atlas, BoundaryAtlas):
             raise TypeError("SurfacePanelization3D requires a BoundaryAtlas.")
         if atlas.ambient_dimension != 3 or atlas.reference_dimension != 2:
@@ -279,7 +279,7 @@ class SurfaceTargetReport3D(AbstractTrialSpaceAdmissibility):
         *,
         target_side: Literal["interior", "exterior", "boundary"],
         accuracy_clearance: float = 0.0,
-    ):
+    ) -> None:
         values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim == 1:
             values = values[None, :]

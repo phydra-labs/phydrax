@@ -74,7 +74,7 @@ class ConstructionStage(StrictModule, NonTrainableState):
         load_factor: float = 1.0,
         require_tangent_stability: bool = False,
         stage_id: str,
-    ):
+    ) -> None:
         rules = jnp.asarray(installation_rule, dtype=jnp.int32)
         count = problem.definition.structure.member_count
         if rules.shape != (count,) or bool(

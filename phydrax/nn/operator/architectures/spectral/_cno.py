@@ -60,7 +60,7 @@ class ConvolutionSupportPlan(StrictModule):
         *,
         basis_identities: Sequence[str] = (),
         minimum_observed_mass: float = 1.0e-8,
-    ):
+    ) -> None:
         policies = tuple(axis_policies)
         valid = {
             "periodic_fourier",
@@ -311,7 +311,7 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
         circular: bool = True,
         extension_modes: Sequence[ConvolutionAxisPolicy] | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         super().__init__(
             spatial_ndim=spatial_ndim,
             in_channels=in_channels,
@@ -492,7 +492,7 @@ class _CNOBlock(StrictModule):
         circular: bool,
         extension_modes: Sequence[ConvolutionAxisPolicy],
         key: Key[Array, ""],
-    ):
+    ) -> None:
         first_key, second_key, skip_key = jr.split(key, 3)
         self.first = AntiAliasedConvND(
             spatial_ndim=spatial_ndim,
@@ -605,7 +605,7 @@ class CNO(AbstractOperatorModel):
         source_key: str | None = None,
         support_plan: ConvolutionSupportPlan | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
         self.spatial_ndim = int(spatial_ndim)
@@ -827,7 +827,7 @@ class UNO(AbstractOperatorModel):
         source_key: str | None = None,
         support_plan: ConvolutionSupportPlan | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
         self.spatial_ndim = int(spatial_ndim)

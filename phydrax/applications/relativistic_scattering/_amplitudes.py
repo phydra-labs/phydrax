@@ -46,7 +46,7 @@ class ScatteringProcess(StrictModule, NonTrainableState):
         *,
         symmetry_factor: float = 1.0,
         perturbative_order: str = "tree",
-    ):
+    ) -> None:
         incoming_ = tuple(incoming)
         outgoing_ = tuple(outgoing)
         factor = float(symmetry_factor)

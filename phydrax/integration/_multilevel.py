@@ -118,7 +118,7 @@ class MultilevelSampleBatch(StrictModule):
         coarse_valid: ArrayLike | None = None,
         pair_ids: ArrayLike | None = None,
         provenance: str,
-    ):
+    ) -> None:
         level = int(level_index)
         if level < 0:
             raise ValueError("level_index must be non-negative.")

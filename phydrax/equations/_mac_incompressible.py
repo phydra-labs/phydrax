@@ -135,7 +135,7 @@ class CompiledMACIncompressibleDynamics(StrictModule):
         /,
         *,
         compilation_id: str,
-    ):
+    ) -> None:
         discretization = momentum.operators.discretization
         residual_key = DiscretizationKey(
             "mac_incompressible_form",

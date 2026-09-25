@@ -58,7 +58,7 @@ class GlobalBlockPMPPlan(StrictModule):
         sample_count: int,
         significant_digits: int = 17,
         maximum_fit_error: float = 1e-6,
-    ):
+    ) -> None:
         if not isinstance(blocks, PreparedGlobalScalarBlocks):
             raise TypeError("blocks must be PreparedGlobalScalarBlocks.")
         minimum = tuple(float(value) for value in minimum_dimensions)
@@ -241,7 +241,7 @@ class HalfLineSOSWitness:
         /,
         *,
         matrix_dimension: int = 1,
-    ):
+    ) -> None:
         constant = tuple(tuple(str(value) for value in row) for row in constant_gram)
         linear = tuple(tuple(str(value) for value in row) for row in linear_gram)
         dimension = int(matrix_dimension)
@@ -542,7 +542,7 @@ class BootstrapNavigatorLevel:
         coordinates: Sequence[float],
         navigator_values: Sequence[float],
         /,
-    ):
+    ) -> None:
         derivative = int(derivative_order)
         spin = int(spin_cutoff)
         points = tuple(float(value) for value in coordinates)

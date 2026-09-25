@@ -55,7 +55,7 @@ class FunctionalDifferentialContext(StrictModule):
         parameters: Array | None,
         period: Array | None,
         /,
-    ):
+    ) -> None:
         self.args = args
         self.parameters = parameters
         self.period = period
@@ -110,7 +110,7 @@ class FunctionalDifferentialBoundaryProblem(StrictModule):
         observation_residual: FunctionalTrajectoryResidual | None = None,
         parameter_shape: Sequence[int] | None = None,
         unknown_period: bool = False,
-    ):
+    ) -> None:
         if not callable(vector_field):
             raise TypeError("vector_field must be callable.")
         if isinstance(num_arguments, bool) or int(num_arguments) != num_arguments:
@@ -247,7 +247,7 @@ class FunctionalCollocationPlan(StrictModule):
         root_finder: Any = None,
         least_squares_solver: Any = None,
         adjoint: Any = None,
-    ):
+    ) -> None:
         if isinstance(degree, bool) or int(degree) != degree:
             raise TypeError("degree must be an integer.")
         degree_ = int(degree)
@@ -336,7 +336,7 @@ class _FunctionalPolynomialInterpolation(StrictModule):
         values: Array,
         period: Array | None,
         state_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.mesh = mesh
         self.reference_nodes = reference_nodes
         self.barycentric_weights = barycentric_weights
@@ -533,7 +533,7 @@ class FunctionalDifferentialSolution(StrictModule):
         backend_result: Any,
         resolved_method: str,
         nonlinear_solver: str,
-    ):
+    ) -> None:
         interpolation = _interpolation(problem, plan, unknowns)
         times = interpolation.physical_mesh
         states = interpolation.evaluate(times)

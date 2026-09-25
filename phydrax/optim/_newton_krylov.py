@@ -99,7 +99,7 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
         minimum_forcing: float = 1e-6,
         maximum_forcing: float = 0.5,
         forcing_power: float = 0.5,
-    ):
+    ) -> None:
         policy = (
             _default_newton_linear_policy() if linear_policy is None else linear_policy
         )

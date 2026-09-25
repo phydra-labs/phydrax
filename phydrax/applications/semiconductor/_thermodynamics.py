@@ -182,7 +182,7 @@ class BandThermodynamics(StrictModule):
         density_unit: UnitDefinition = PER_CUBIC_METER,
         temperature_unit: UnitDefinition = KELVIN,
         energy_temperature_unit: UnitDefinition = _ENERGY_PER_TEMPERATURE,
-    ):
+    ) -> None:
         self.name = _text(name, "band material name")
         self.energy_reference = _text(energy_reference, "electronic energy reference")
         self.provenance = _text(provenance, "band parameter provenance")
@@ -271,7 +271,7 @@ class BandThermodynamics(StrictModule):
             & (gap > 0)
         )
 
-    def admit_temperature(self, temperature):
+    def admit_temperature(self, temperature) -> None:
         """Host-only admission of SI temperatures before topology/solver preparation."""
         if not np.all(np.asarray(self.temperature_valid(temperature))):
             raise ValueError("Temperature is outside the admitted band material domain.")
@@ -707,7 +707,7 @@ class IncompleteIonization(StrictModule):
         acceptor_degeneracy,
         provenance: str,
         energy_unit: UnitDefinition = JOULE,
-    ):
+    ) -> None:
         self.donor_binding_energy = _positive_scalar(
             donor_binding_energy, energy_unit, JOULE, "donor binding energy"
         )
@@ -722,7 +722,7 @@ class IncompleteIonization(StrictModule):
         )
         self.provenance = _text(provenance, "ionization parameter provenance")
 
-    def admit(self, bands: BandThermodynamics):
+    def admit(self, bands: BandThermodynamics) -> None:
         """Host-only check that both impurity levels stay strictly inside the gap."""
         if not isinstance(bands, BandThermodynamics):
             raise TypeError("Impurity admission requires BandThermodynamics.")

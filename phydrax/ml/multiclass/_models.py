@@ -80,7 +80,9 @@ class CompositionDiagnostics(StrictModule):
     component_count: int = eqx.field(static=True)
     method: str = eqx.field(static=True)
 
-    def __init__(self, component_valid: Any, component_status: Any, /, *, method: str):
+    def __init__(
+        self, component_valid: Any, component_status: Any, /, *, method: str
+    ) -> None:
         validity = jnp.asarray(component_valid, dtype=jnp.bool_)
         statuses = jnp.asarray(component_status, dtype=jnp.int32)
         self.component_valid = validity
@@ -275,7 +277,7 @@ class OneVsRestModel(AbstractFittedModel):
         models: tuple[AbstractArrayModel, ...],
         labels: Array,
         target_schema: TargetSchema,
-    ):
+    ) -> None:
         _validate_binary_models(models, same_input=True)
         if len(models) < 2 or len(models) != jnp.asarray(labels).shape[0]:
             raise ValueError("One-vs-rest components must align with class labels.")
@@ -312,7 +314,9 @@ class OneVsRestRecipe(AbstractRecipe):
     base_recipe: AbstractRecipe
     num_classes: int | None = eqx.field(static=True)
 
-    def __init__(self, base_recipe: AbstractRecipe, /, *, num_classes: int | None = None):
+    def __init__(
+        self, base_recipe: AbstractRecipe, /, *, num_classes: int | None = None
+    ) -> None:
         if not isinstance(base_recipe, AbstractRecipe):
             raise TypeError("base_recipe must be an AbstractRecipe.")
         self.base_recipe = base_recipe
@@ -358,7 +362,7 @@ class OneVsOneModel(AbstractFittedModel):
         pairs: tuple[tuple[int, int], ...],
         labels: Array,
         target_schema: TargetSchema,
-    ):
+    ) -> None:
         if len(models) != len(pairs) or not models:
             raise ValueError("One-vs-one models must align with class pairs.")
         _validate_binary_models(models, same_input=True)
@@ -416,7 +420,9 @@ class OneVsOneRecipe(AbstractRecipe):
     base_recipe: AbstractRecipe
     num_classes: int | None = eqx.field(static=True)
 
-    def __init__(self, base_recipe: AbstractRecipe, /, *, num_classes: int | None = None):
+    def __init__(
+        self, base_recipe: AbstractRecipe, /, *, num_classes: int | None = None
+    ) -> None:
         if not isinstance(base_recipe, AbstractRecipe):
             raise TypeError("base_recipe must be an AbstractRecipe.")
         self.base_recipe = base_recipe
@@ -472,7 +478,7 @@ class OutputCodeModel(AbstractFittedModel):
         codebook: tuple[tuple[int, ...], ...],
         labels: Array,
         target_schema: TargetSchema,
-    ):
+    ) -> None:
         _validate_binary_models(models, same_input=True)
         if (
             not codebook
@@ -532,7 +538,7 @@ class OutputCodeRecipe(AbstractRecipe):
         /,
         *,
         num_classes: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(base_recipe, AbstractRecipe):
             raise TypeError("base_recipe must be an AbstractRecipe.")
         self.base_recipe = base_recipe
@@ -615,7 +621,7 @@ class MultilabelModel(AbstractFittedModel):
 
     def __init__(
         self, models: tuple[AbstractArrayModel, ...], target_schema: TargetSchema
-    ):
+    ) -> None:
         _validate_binary_models(models, same_input=True)
         self.models = tuple(models)
         self.target_schema = target_schema
@@ -648,7 +654,7 @@ class MultilabelModel(AbstractFittedModel):
 class MultilabelRecipe(AbstractRecipe):
     base_recipe: AbstractRecipe
 
-    def __init__(self, base_recipe: AbstractRecipe, /):
+    def __init__(self, base_recipe: AbstractRecipe, /) -> None:
         if not isinstance(base_recipe, AbstractRecipe):
             raise TypeError("base_recipe must be an AbstractRecipe.")
         self.base_recipe = base_recipe
@@ -725,7 +731,7 @@ class ClassifierChainModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         in_size: int,
-    ):
+    ) -> None:
         _validate_binary_models(models, same_input=False)
         if any(
             model.in_size != int(in_size) + index for index, model in enumerate(models)
@@ -781,7 +787,7 @@ class SmoothClassifierChainModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         in_size: int,
-    ):
+    ) -> None:
         _validate_binary_models(models, same_input=False)
         if any(
             model.in_size != int(in_size) + index for index, model in enumerate(models)
@@ -879,7 +885,7 @@ def _fit_chain(
 class ClassifierChainRecipe(AbstractRecipe):
     base_recipe: AbstractRecipe
 
-    def __init__(self, base_recipe: AbstractRecipe, /):
+    def __init__(self, base_recipe: AbstractRecipe, /) -> None:
         if not isinstance(base_recipe, AbstractRecipe):
             raise TypeError("base_recipe must be an AbstractRecipe.")
         self.base_recipe = base_recipe
@@ -891,7 +897,7 @@ class ClassifierChainRecipe(AbstractRecipe):
 class SmoothClassifierChainRecipe(AbstractRecipe):
     base_recipe: AbstractRecipe
 
-    def __init__(self, base_recipe: AbstractRecipe, /):
+    def __init__(self, base_recipe: AbstractRecipe, /) -> None:
         if not isinstance(base_recipe, AbstractRecipe):
             raise TypeError("base_recipe must be an AbstractRecipe.")
         self.base_recipe = base_recipe

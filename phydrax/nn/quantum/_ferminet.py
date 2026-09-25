@@ -504,7 +504,7 @@ class FermiNet(StrictModule, ParameterOwner):
         resource_plan: ElectronicVMCResourcePlan | None = None,
         minimum_envelope_decay: float = 1e-6,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(nuclei, AtomicStructure):
             raise TypeError("nuclei must be an AtomicStructure.")
         if nuclei.has_periodic_metadata:

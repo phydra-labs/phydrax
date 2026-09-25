@@ -70,7 +70,7 @@ class AnnihilationProcessDescriptor(StrictModule):
         /,
         *,
         self_conjugate: bool = True,
-    ):
+    ) -> None:
         if not isinstance(self_conjugate, bool):
             raise TypeError("self_conjugate must be a boolean.")
         mass = _positive_scalar(mass_gev, "dark-matter mass in GeV")
@@ -101,7 +101,7 @@ class DecayProcessDescriptor(StrictModule):
     process_id: str = eqx.field(static=True)
     kind: DarkMatterProcessKind = eqx.field(static=True, default="decay")
 
-    def __init__(self, mass_gev: ArrayLike, lifetime_s: ArrayLike, /):
+    def __init__(self, mass_gev: ArrayLike, lifetime_s: ArrayLike, /) -> None:
         mass = _positive_scalar(mass_gev, "dark-matter mass in GeV")
         lifetime = _positive_scalar(lifetime_s, "dark-matter lifetime in s")
         self.mass_gev = mass
@@ -122,7 +122,7 @@ class ExactLineTable(StrictModule, NonTrainableState):
     multiplicity: Array
     table_id: str = eqx.field(static=True)
 
-    def __init__(self, energy_gev: ArrayLike, multiplicity: ArrayLike, /):
+    def __init__(self, energy_gev: ArrayLike, multiplicity: ArrayLike, /) -> None:
         energy_host = np.asarray(energy_gev, dtype=np.float64)
         multiplicity_host = np.asarray(multiplicity, dtype=np.float64)
         if energy_host.ndim != 1 or multiplicity_host.shape != energy_host.shape:
@@ -160,7 +160,7 @@ class YieldUncertainty(StrictModule, NonTrainableState):
         continuum_standard_deviation: ArrayLike,
         line_standard_deviation: ArrayLike,
         /,
-    ):
+    ) -> None:
         continuum_host = np.asarray(continuum_standard_deviation, dtype=np.float64)
         line_host = np.asarray(line_standard_deviation, dtype=np.float64)
         if continuum_host.ndim != 1 or line_host.ndim != 1:
@@ -211,7 +211,7 @@ class ParticleYieldSpectrum(StrictModule, NonTrainableState):
         /,
         *,
         product_species: str,
-    ):
+    ) -> None:
         if not isinstance(continuum, SpectralField):
             raise TypeError("continuum must be a SpectralField.")
         if not isinstance(lines, ExactLineTable) or not isinstance(
@@ -456,7 +456,7 @@ class ExternalYieldProviderResult(StrictModule, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         if not isinstance(spectrum, ParticleYieldSpectrum) or not isinstance(
             manifest, ReferenceArtifactManifest
         ):

@@ -44,7 +44,7 @@ class IncrementalPCAModel(AbstractFittedModel):
         *,
         total_weight,
         chunks_seen: int,
-    ):
+    ) -> None:
         self.subspace = model
         self.total_weight = jnp.asarray(total_weight)
         self.in_size = model.in_size
@@ -281,7 +281,7 @@ class IncrementalPCA(AbstractRecipe):
         chunk_size: int | None = None,
         weight_policy: WeightPolicy = "statistical",
         previous: IncrementalPCAModel | None = None,
-    ):
+    ) -> None:
         self.n_components = int(n_components)
         self.chunk_size = None if chunk_size is None else int(chunk_size)
         self.weight_policy = weight_policy

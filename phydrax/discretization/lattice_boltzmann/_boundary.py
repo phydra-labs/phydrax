@@ -61,7 +61,7 @@ class LatticeBoltzmannGeometrySnapshot(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("Geometry snapshot requires an LBM discretization.")
         mask = np.asarray(fluid_mask, dtype=np.bool_)
@@ -122,7 +122,7 @@ class LatticeBoltzmannBoundaryPlan(StrictModule, NonTrainableState):
         *,
         geometry: LatticeBoltzmannGeometrySnapshot | None = None,
         moving_faces: Sequence[WallFace] = (),
-    ):
+    ) -> None:
         if geometry is not None and not isinstance(
             geometry, LatticeBoltzmannGeometrySnapshot
         ):
@@ -170,7 +170,7 @@ class PreparedLatticeBoltzmannBoundary(StrictModule, NonTrainableState):
         discretization: LatticeBoltzmannDiscretization,
         plan: LatticeBoltzmannBoundaryPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("Boundary preparation requires an LBM discretization.")
         if not isinstance(plan, LatticeBoltzmannBoundaryPlan):
@@ -313,7 +313,7 @@ class LatticeBoltzmannBoundaryParameters(StrictModule):
         body_linear_velocities: ArrayLike | None = None,
         body_angular_velocities: ArrayLike | None = None,
         time_step: ArrayLike = 1.0,
-    ):
+    ) -> None:
         self.halo_populations = (
             None if halo_populations is None else jnp.asarray(halo_populations)
         )
@@ -369,7 +369,7 @@ class StagedLatticeBoltzmannBoundaryPlan(StrictModule, NonTrainableState):
         velocity_parameter_ids: Sequence[str] = (),
         pressure_parameter_ids: Sequence[str] = (),
         convective_parameter_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(topology, CompiledLatticeBoltzmannLinkTopology):
             raise TypeError("topology must be CompiledLatticeBoltzmannLinkTopology.")
         self.topology = topology
@@ -757,7 +757,7 @@ class PreparedStagedLatticeBoltzmannBoundary(StrictModule, NonTrainableState):
         velocity_parameter_ids: Sequence[str] = (),
         pressure_parameter_ids: Sequence[str] = (),
         convective_parameter_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("discretization must be LatticeBoltzmannDiscretization.")
         if not isinstance(topology, CompiledLatticeBoltzmannLinkTopology):

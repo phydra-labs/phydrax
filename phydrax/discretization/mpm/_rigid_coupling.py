@@ -176,7 +176,7 @@ class RigidMPMCouplingPlan(StrictModule, NonTrainableState):
         baumgarte_factor: float = 0.1,
         geometry_tolerance: float = 1.0e-12,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         particle = np.asarray(particle_indices)
         body = np.asarray(body_indices)
         if (
@@ -398,7 +398,7 @@ class PreparedRigidMPMCoupling(StrictModule, NonTrainableState):
         dynamics: PreparedMPMDynamics,
         bodies: PreparedRigidBodySet,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, RigidMPMCouplingPlan):
             raise TypeError("plan must be RigidMPMCouplingPlan.")
         if not isinstance(dynamics, PreparedMPMDynamics):

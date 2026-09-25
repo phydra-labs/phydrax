@@ -97,7 +97,7 @@ class KernelCertificate(StrictModule):
         scope: CertificateScope = "numerical",
         complete: bool = False,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         from ._subspaces import LinearSubspace
 
         if not isinstance(operator, AbstractLinearOperator):
@@ -209,7 +209,7 @@ class SpectralInterval(StrictModule):
         *,
         evidence: CertificateEvidence = "asserted",
         scope: CertificateScope = "numerical",
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         coordinate_dtype = _coordinate_dtype(operator.source)
@@ -282,7 +282,7 @@ class StabilityLowerBound(StrictModule):
         *,
         evidence: CertificateEvidence = "asserted",
         scope: CertificateScope = "numerical",
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         coordinate_dtype = _coordinate_dtype(operator.source)

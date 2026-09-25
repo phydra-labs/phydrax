@@ -73,7 +73,7 @@ class DiagramMonteCarloPlan(StrictModule, NonTrainableState):
         maximum_diagrams: int = 4_096,
         maximum_neighbors: int = 256,
         maximum_order: int = 32,
-    ):
+    ) -> None:
         probabilities = np.asarray(
             (insertion_probability, removal_probability, worm_probability),
             dtype=np.float64,
@@ -266,7 +266,7 @@ class PreparedDiagramMonteCarlo(StrictModule, NonTrainableState):
         plan_id: str,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         self.orders = orders
         self.vertex_counts = vertex_counts
         self.complex_weights = complex_weights

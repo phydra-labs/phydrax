@@ -293,7 +293,7 @@ class BatchedFiberFactor(StrictModule):
         compatibility_tolerance: Any = 1e-8,
         factor_id: str | None = None,
         numeric_version: int = 0,
-    ):
+    ) -> None:
         shape, k, m = _factor_layout(right_inverse, "right_inverse")
         if constraint is not None:
             other_shape, rows, columns = _factor_layout(constraint, "constraint")
@@ -433,7 +433,7 @@ class AnalyticFiberProjectionUnit(StrictModule):
         exactness_scope: FiberExactnessScope = "continuum",
         unit_id: str | None = None,
         numeric_version: int = 0,
-    ):
+    ) -> None:
         if not callable(action) or not callable(target) or not callable(lift):
             raise TypeError("Analytic fiber action, target, and lift must be callable.")
         if not isinstance(residual_domain, Domain):
@@ -503,7 +503,7 @@ class RealizedFiberProjectionUnit(StrictModule):
         condition_ids: Sequence[str] = (),
         evidence: Any = None,
         unit_id: str | None = None,
-    ):
+    ) -> None:
         if (
             not callable(action)
             or not callable(target)
@@ -591,7 +591,7 @@ class SeparableFiberProjectionUnit(StrictModule):
         evidence: Any = None,
         exactness_scope: FiberExactnessScope = "realization",
         unit_id: str | None = None,
-    ):
+    ) -> None:
         if (
             not callable(action)
             or not callable(target)
@@ -681,7 +681,7 @@ class FiberProjectionState(StrictModule):
         evidence: Sequence[Any] = (),
         prepared_id: str | None = None,
         numeric_version: int = 0,
-    ):
+    ) -> None:
         values = tuple(units)
         if not values or any(
             not isinstance(
@@ -756,7 +756,7 @@ class _FiberProjectedEvaluator(StrictModule, BatchEvaluator, DerivativeRuleProvi
     derivative_action: FiberDerivativeAction | None
     field_name: str = eqx.field(static=True)
 
-    def __init__(self, fields, state, context, field_name, derivative_action, /):
+    def __init__(self, fields, state, context, field_name, derivative_action, /) -> None:
         self.fields, self.state, self.context, self.field_name = (
             frozendict(fields),
             state,

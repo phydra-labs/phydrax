@@ -58,7 +58,7 @@ class MemberSizingConstraint(StrictModule):
         lower: Any = -jnp.inf,
         upper: Any = jnp.inf,
         constraint_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         self.function = function
@@ -85,7 +85,7 @@ class ContinuousMemberSizingProblem(StrictModule):
         bounds: Bounds | None = None,
         constraints: Sequence[MemberSizingConstraint] = (),
         problem_id: str = "continuous-member-sizing",
-    ):
+    ) -> None:
         if not callable(evaluate_design):
             raise TypeError("evaluate_design must be callable.")
         objective_ = (

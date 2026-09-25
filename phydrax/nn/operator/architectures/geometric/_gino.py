@@ -78,7 +78,7 @@ class GINO(AbstractOperatorModel):
         query_chunk_size: int | None = 256,
         assume_uniform_measure: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         shape = tuple(latent_shape)
         if len(shape) != int(coord_dim):
             raise ValueError("latent_shape rank must match coord_dim.")

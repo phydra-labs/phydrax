@@ -94,7 +94,7 @@ class RigidContactParticipant(AbstractContactParticipant):
         /,
         *,
         body_count: int,
-    ):
+    ) -> None:
         if not isinstance(plan, CollisionSurfacePlan):
             raise TypeError("plan must be CollisionSurfacePlan.")
         vertices = jnp.asarray(local_vertices)

@@ -250,7 +250,7 @@ class CallableDrivingPath(AbstractDifferentiableDrivingPath):
         path_id: str,
         breakpoints: ArrayLike,
         breakpoint_mask: ArrayLike,
-    ):
+    ) -> None:
         if not callable(value) or not callable(derivative):
             raise TypeError(
                 "Declared driving-path value and derivative must be callable."
@@ -339,7 +339,7 @@ class PiecewiseLinearDrivingPath(_AbstractSampledDrivingPath):
         time_mask: ArrayLike,
         value_mask: ArrayLike,
         path_id: str,
-    ):
+    ) -> None:
         (
             times_,
             values_,
@@ -432,7 +432,7 @@ class CausalBackwardHermiteDrivingPath(_AbstractSampledDrivingPath):
         time_mask: ArrayLike,
         value_mask: ArrayLike,
         path_id: str,
-    ):
+    ) -> None:
         (
             times_,
             values_,
@@ -539,7 +539,7 @@ class OfflineCubicDrivingPath(_AbstractSampledDrivingPath):
         time_mask: ArrayLike,
         value_mask: ArrayLike,
         path_id: str,
-    ):
+    ) -> None:
         (
             times_,
             values_,
@@ -675,7 +675,7 @@ class FixedBSplineDrivingPath(AbstractDifferentiableDrivingPath):
         /,
         *,
         path_id: str,
-    ):
+    ) -> None:
         if not isinstance(grid, BSplineGrid):
             raise TypeError("grid must be a BSplineGrid.")
         if grid.degree < 1:

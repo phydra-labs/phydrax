@@ -42,7 +42,7 @@ class AntoineSaturationPressurePlan(StrictModule, NonTrainableState):
         *,
         temperature_interval,
         pressure_scale=133.322,
-    ):
+    ) -> None:
         a, b, c, scale = (
             float(coefficient_a),
             float(coefficient_b),

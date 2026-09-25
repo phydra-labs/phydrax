@@ -38,7 +38,7 @@ class GeospatialDependencyError(ImportError):
 
     report: AdapterReport
 
-    def __init__(self, package: str, source_id: str):
+    def __init__(self, package: str, source_id: str) -> None:
         self.report = AdapterReport(
             AdapterStatus.OPTIONAL_DEPENDENCY_UNAVAILABLE,
             "qualified-geospatial-grid",
@@ -76,7 +76,7 @@ class XarrayGridExport(StrictModule, NonTrainableState):
     region: tuple[float, float, float, float] = eqx.field(static=True)
     report: AdapterReport = eqx.field(static=True)
 
-    def __init__(self, dataarray, grid_id, export_id, region, report):
+    def __init__(self, dataarray, grid_id, export_id, region, report) -> None:
         self.dataarray = dataarray
         self.grid_id = grid_id
         self.export_id = export_id
@@ -98,7 +98,9 @@ class PyGMTRenderResult(StrictModule, NonTrainableState):
     render_id: str = eqx.field(static=True)
     provenance_json: str = eqx.field(static=True)
 
-    def __init__(self, figure, manifest, report, grid_id, render_id, provenance_json):
+    def __init__(
+        self, figure, manifest, report, grid_id, render_id, provenance_json
+    ) -> None:
         self.figure = figure
         self.manifest = manifest
         self.report = report

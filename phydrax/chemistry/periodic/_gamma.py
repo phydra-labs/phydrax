@@ -68,7 +68,7 @@ class GammaSCFEvidence(StrictModule, NonTrainableState):
         /,
         *,
         factorization_tolerance: float | None = None,
-    ):
+    ) -> None:
         residuals = jnp.asarray(
             (
                 energy_residual,
@@ -188,7 +188,7 @@ class GammaSCFResult(StrictModule, NonTrainableState):
         energy_unit: UnitDefinition,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         energies = jnp.asarray(orbital_energies)
         occupations_ = jnp.asarray(occupations, dtype=energies.real.dtype)
         coefficients_ = jnp.asarray(coefficients)
@@ -431,7 +431,7 @@ class GammaFFTDFPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 200,
         damping: float = 0.3,
         maximum_grid_points: int = 512,
-    ):
+    ) -> None:
         if (
             not isinstance(cell, PeriodicCell)
             or cell.rank != 3
@@ -737,7 +737,7 @@ class GammaGDFPlan(StrictModule, NonTrainableState):
         maximum_factorization_residual: float = 1.0e-8,
         maximum_iterations: int = 200,
         damping: float = 0.2,
-    ):
+    ) -> None:
         one = jnp.asarray(one_body)
         overlap_ = jnp.asarray(overlap, dtype=one.dtype)
         electrons = float(electron_count)

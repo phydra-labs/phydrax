@@ -31,7 +31,7 @@ class BoundedResidualAdaptationPolicy(StrictModule, NonTrainableState):
         learning_rate: float = 1.0e-2,
         maximum_update_norm: float = 1.0,
         gradient_clip_norm: float = 10.0,
-    ):
+    ) -> None:
         count = int(iterations)
         if count < 0:
             raise ValueError("iterations must be nonnegative.")

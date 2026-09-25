@@ -200,7 +200,7 @@ class Broyden(AbstractNonlinearMethod):
         maximum_line_search_steps: int = 20,
         denominator_tolerance: float = 1e-12,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if kind not in ("good", "bad"):
             raise ValueError("kind must be 'good' or 'bad'.")
         memory_ = int(memory)
@@ -557,7 +557,7 @@ class Chord(AbstractNonlinearMethod):
         maximum_dimension: int = 512,
         maximum_line_search_steps: int = 20,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         linear_ = LinearSolvePolicy(DenseLU()) if linear is None else linear
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(linear_, LinearSolvePolicy):

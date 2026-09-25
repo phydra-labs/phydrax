@@ -32,7 +32,7 @@ class GaussianProcessCondition(StrictModule):
         covariance: ArrayLike,
         variance: ArrayLike,
         output_dims: tuple[str | None, ...],
-    ):
+    ) -> None:
         points = _as_design(query_points)
         mean_array = _as_vector(mean, name="conditioned GP mean")
         covariance_array = jnp.asarray(covariance, dtype=jnp.float64)
@@ -112,7 +112,7 @@ class GaussianProcessConditioner(StrictModule):
         covariance: ArrayLike,
         variance: ArrayLike,
         output_dims: tuple[str | None, ...],
-    ):
+    ) -> None:
         points = _as_design(query_points)
         projection = jnp.asarray(residual_projection, dtype=jnp.float64)
         covariance_array = jnp.asarray(covariance, dtype=jnp.float64)

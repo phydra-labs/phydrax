@@ -71,7 +71,7 @@ class AffineSection(AbstractSection):
         *,
         state_layout: StateLayout,
         section_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         normal_values = jnp.asarray(normal)
@@ -140,7 +140,7 @@ class CallableSection(AbstractSection):
         *,
         state_layout: StateLayout,
         section_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         if not isinstance(state_layout, StateLayout):

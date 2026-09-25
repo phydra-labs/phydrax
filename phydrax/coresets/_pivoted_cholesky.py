@@ -33,7 +33,7 @@ class RandomizedPivotedCholesky(StrictModule):
         /,
         *,
         kernel: AbstractPositiveDefiniteKernel | None = None,
-    ):
+    ) -> None:
         count = int(num_points)
         if count <= 0:
             raise ValueError("num_points must be positive.")

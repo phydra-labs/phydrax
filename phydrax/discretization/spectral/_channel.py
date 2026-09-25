@@ -47,7 +47,7 @@ class ChannelMeanConstraint(StrictModule, NonTrainableState):
         kind: ChannelMeanConstraintKind = "pressure_gradient",
         values: ArrayLike = (0.0, 0.0),
         /,
-    ):
+    ) -> None:
         if kind not in ("pressure_gradient", "bulk_flux"):
             raise ValueError("Unknown channel mean constraint kind.")
         raw_values = jnp.asarray(values)
@@ -94,7 +94,7 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
         route: ChannelStokesRoute = "ultraspherical_banded",
         maximum_factor_bytes: int = 512 * 1024**2,
         constraint_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         families = tuple(axis.family for axis in discretization.axes)
@@ -250,7 +250,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
     block_size: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ChannelStokesPlan, shift: ArrayLike, /):
+    def __init__(self, plan: ChannelStokesPlan, shift: ArrayLike, /) -> None:
         if not isinstance(plan, ChannelStokesPlan):
             raise TypeError("plan must be a ChannelStokesPlan.")
         raw_shift = jnp.asarray(shift)

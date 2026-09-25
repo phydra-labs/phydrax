@@ -144,7 +144,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
 
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.plan_id = canonical_fingerprint({"kind": "equation-owned-viscous-flux"})
 
     @staticmethod

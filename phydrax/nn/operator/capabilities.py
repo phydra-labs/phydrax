@@ -143,7 +143,7 @@ class OperatorCapabilitySpec:
     autoregressive_rollout: bool = False
     requires_structured_tensors: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.source_geometries or not self.query_geometries:
             raise ValueError(
                 "Operator capabilities must declare source and query geometries."
@@ -181,7 +181,7 @@ class OperatorTrainingRequirement:
     corpus_description: str = ""
     claim_scope: str = "task-specific operator learning"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.regime == "pretrained_system" and not self.pretrained_weights_required:
             raise ValueError("pretrained_system regimes require pretrained weights.")
         if self.regime == "task_distribution" and not self.corpus_description.strip():
@@ -210,7 +210,7 @@ class OperatorProblemSpec:
     requires_encode_once_decode_many: bool = False
     rollout_steps: int = 1
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.source_query_relation not in (
             None,
             "coincident",

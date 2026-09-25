@@ -85,7 +85,7 @@ class PathwiseTradeValues(StrictModule):
         realization_id: str,
         coupling_id: str,
         value_state_id: str,
-    ):
+    ) -> None:
         nodes = _time_grid(times)
         marks = jnp.asarray(values, dtype=jnp.float64)
         if marks.ndim != 3 or marks.shape[1] != nodes.shape[0]:
@@ -132,7 +132,7 @@ class PathWeighting(StrictModule):
         *,
         iid: bool,
         weighting_id: str,
-    ):
+    ) -> None:
         values = jnp.asarray(weights, dtype=jnp.float64)
         mask = jnp.asarray(valid)
         if mask.dtype != jnp.dtype(jnp.bool_):
@@ -190,7 +190,7 @@ class DiscountFactorPath(StrictModule):
         *,
         curve_id: str,
         pricing_law_id: str,
-    ):
+    ) -> None:
         nodes = _time_grid(times)
         discounts = jnp.asarray(values, dtype=jnp.float64)
         if discounts.ndim not in (1, 2) or discounts.shape[-1] != nodes.shape[0]:
@@ -247,7 +247,7 @@ class WrongWayRiskLink(StrictModule):
         *,
         measure_change_id: str | None = None,
         link_id: str,
-    ):
+    ) -> None:
         if mode not in ("shared_factor", "measure_change"):
             raise ValueError("Unsupported wrong-way-risk mode.")
         factors = tuple(_identifier(value, "factor_id") for value in factor_ids)
@@ -307,7 +307,7 @@ class ExposureSimulationPlan(StrictModule):
         pricing_law_id: str,
         discount_curve_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(netting_set, NettingSet):
             raise TypeError("netting_set must be a NettingSet.")
         if not isinstance(collateral, PreparedCollateralAgreement):

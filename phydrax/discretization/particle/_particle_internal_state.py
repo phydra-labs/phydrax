@@ -276,7 +276,7 @@ class ParticleConversionStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
-    def __init__(self, state_id: str, /):
+    def __init__(self, state_id: str, /) -> None:
         identifier = str(state_id)
         if not identifier:
             raise ValueError("state_id must be nonempty.")

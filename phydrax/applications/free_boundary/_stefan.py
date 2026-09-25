@@ -57,7 +57,7 @@ class OnePhaseStefanParameters(StrictModule, NonTrainableState):
         domain_length: ArrayLike,
         final_time: ArrayLike,
         jacobian_floor: ArrayLike = 1.0e-6,
-    ):
+    ) -> None:
         self.diffusivity = _positive_scalar(diffusivity, "diffusivity")
         self.conductivity = _positive_scalar(conductivity, "conductivity")
         self.volumetric_latent_heat = _positive_scalar(
@@ -87,7 +87,7 @@ class StefanBoundaryData(StrictModule, NonTrainableState):
         initial_temperature: Callable[[Array], Array],
         boundary_temperature: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         if not callable(initial_temperature) or not callable(boundary_temperature):
             raise TypeError("Stefan temperature data must be callable.")
         self.initial_temperature = initial_temperature
@@ -111,7 +111,7 @@ class StefanCollocationBatch(StrictModule, NonTrainableState):
         boundary_times: ArrayLike,
         interface_times: ArrayLike,
         initial_reference: ArrayLike,
-    ):
+    ) -> None:
         interior = jnp.asarray(interior_reference, dtype=jnp.float64)
         ambient = jnp.asarray(ambient_points, dtype=jnp.float64)
         boundary = jnp.asarray(boundary_times, dtype=jnp.float64).reshape((-1,))
@@ -154,7 +154,7 @@ class ExplicitFrontStefanPINN(StrictModule):
 
     def __init__(
         self, temperature: Callable[[Array], Array], front: Callable[[Array], Array], /
-    ):
+    ) -> None:
         if not callable(temperature) or not callable(front):
             raise TypeError("Explicit Stefan fields must be callable.")
         self.temperature = temperature
@@ -170,7 +170,7 @@ class ImplicitLevelSetStefanPINN(StrictModule):
         temperature: Callable[[Array], Array],
         level_set: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         if not callable(temperature) or not callable(level_set):
             raise TypeError("Implicit Stefan fields must be callable.")
         self.temperature = temperature
@@ -186,7 +186,7 @@ class ReferenceMapStefanPINN(StrictModule):
         reference_temperature: Callable[[Array], Array],
         coordinate_map: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         if not callable(reference_temperature) or not callable(coordinate_map):
             raise TypeError("Reference-map Stefan fields must be callable.")
         self.reference_temperature = reference_temperature
@@ -211,7 +211,7 @@ class StefanLoss(StrictModule):
         interface_temperature: ArrayLike,
         stefan_balance: ArrayLike,
         geometry: ArrayLike = 0.0,
-    ):
+    ) -> None:
         self.pde = jnp.asarray(pde).reshape(())
         self.initial = jnp.asarray(initial).reshape(())
         self.fixed_boundary = jnp.asarray(fixed_boundary).reshape(())
@@ -242,7 +242,7 @@ class StefanRepresentationComparison(StrictModule, NonTrainableState):
 
     def __init__(
         self, explicit: StefanLoss, implicit: StefanLoss, reference: StefanLoss, /
-    ):
+    ) -> None:
         losses = jnp.asarray((explicit.total, implicit.total, reference.total))
         names = ("explicit_front", "implicit_level_set", "reference_map")
         self.explicit = explicit

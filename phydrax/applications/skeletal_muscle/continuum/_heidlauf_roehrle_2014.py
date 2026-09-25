@@ -84,7 +84,9 @@ class HeidlaufRoehrle2014Parameters(StrictModule):
     d1: Array
     maximum_active_nominal_stress_pa: Array
 
-    def __init__(self, c10_pa, c01_pa, b1_pa, d1, maximum_active_nominal_stress_pa, /):
+    def __init__(
+        self, c10_pa, c01_pa, b1_pa, d1, maximum_active_nominal_stress_pa, /
+    ) -> None:
         values = tuple(
             _scalar(value, name)
             for name, value in (
@@ -149,7 +151,7 @@ class HeidlaufRoehrle2014StressInput(StrictModule, NonTrainableState):
         /,
         *,
         source_successful=True,
-    ):
+    ) -> None:
         gamma = _scalar(normalized_active_stress, "normalized_active_stress")
         token = jnp.asarray(source_state_token)
         if token.shape != (8,) or token.dtype != jnp.uint32:
@@ -273,7 +275,7 @@ class HeidlaufRoehrle2014ActiveStressField(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         if not callable(evaluate) or not isinstance(provenance, SemanticProvenance):
             raise TypeError(
                 "An active stress field requires a callable and semantic provenance."
@@ -324,7 +326,7 @@ class HeidlaufRoehrle2014Plan(StrictModule, NonTrainableState):
         /,
         *,
         minimum_jacobian: float = 1.0e-8,
-    ):
+    ) -> None:
         self.material_id = _identifier(material_id, "material_id")
         self.active_stress_source_id = _identifier(
             active_stress_source_id, "active_stress_source_id"

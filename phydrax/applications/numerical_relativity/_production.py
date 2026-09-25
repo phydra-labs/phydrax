@@ -143,7 +143,7 @@ class FixedGridZ4cProductionMethod(AbstractFixedStepMethod, NonTrainableState):
     runtime: FixedGridZ4cRuntime
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, runtime: FixedGridZ4cRuntime, /):
+    def __init__(self, runtime: FixedGridZ4cRuntime, /) -> None:
         if not isinstance(runtime, FixedGridZ4cRuntime):
             raise TypeError("runtime must be FixedGridZ4cRuntime.")
         self.runtime = runtime
@@ -446,7 +446,7 @@ class NumericalRelativitySupportBinding(StrictModule, NonTrainableState):
         profile_id: str,
         support: SupportTuple,
         /,
-    ):
+    ) -> None:
         if scope not in ("scientific", "deployment"):
             raise ValueError("Support scope must be scientific or deployment.")
         profile = _identifier(profile_id, "Support profile ID")
@@ -496,7 +496,7 @@ class NumericalRelativityArtifactBinding(StrictModule, NonTrainableState):
     intended_use: str = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
-    def __init__(self, artifact: NeutralBlackHoleArtifact, /):
+    def __init__(self, artifact: NeutralBlackHoleArtifact, /) -> None:
         if (
             not isinstance(artifact, NeutralBlackHoleArtifact)
             or not artifact.report.valid
@@ -589,7 +589,7 @@ class NumericalRelativityCommittedOutputReceipt(StrictModule, NonTrainableState)
         state: ProductionScientificState,
         artifacts: Sequence[NumericalRelativityArtifactBinding],
         /,
-    ):
+    ) -> None:
         if not isinstance(state, (Z4cProductionState, GRRMHDProductionState)):
             raise TypeError("Committed output state has an unsupported runtime type.")
         bindings = tuple(artifacts)
@@ -672,7 +672,7 @@ class NumericalRelativityOutputCommitter:
         ],
         writer_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(production, NumericalRelativityProductionPlan):
             raise TypeError("production must be NumericalRelativityProductionPlan.")
         if not callable(writer):
@@ -833,7 +833,7 @@ class NumericalRelativityProductionLimits(StrictModule, NonTrainableState):
         maximum_output_artifacts: int,
         maximum_output_bytes: int,
         maximum_cancellation_detail_bytes: int,
-    ):
+    ) -> None:
         if not isinstance(execution_policy, ExecutionPolicy):
             raise TypeError("execution_policy must be ExecutionPolicy.")
         resource_request = execution_policy.resources
@@ -923,7 +923,7 @@ class NumericalRelativityDomainBinding(StrictModule, NonTrainableState):
         topology_id: str,
         precision_id: str,
         input_artifacts: Sequence[NeutralBlackHoleArtifact] = (),
-    ):
+    ) -> None:
         identifiers = tuple(
             _identifier(value, name)
             for value, name in zip(
@@ -987,7 +987,7 @@ class NumericalRelativityRestartManifest(StrictModule, NonTrainableState):
         prepared: PreparedProductionRun,
         checkpoint_id: str,
         /,
-    ):
+    ) -> None:
         production._require_prepared(prepared)
         checkpoint = _identifier(checkpoint_id, "Restart checkpoint ID")
         self.production_id = production.production_id
@@ -1048,7 +1048,7 @@ class NumericalRelativityOutputManifest(StrictModule, NonTrainableState):
         receipt: NumericalRelativityCommittedOutputReceipt,
         result: ProductionRunResult,
         /,
-    ):
+    ) -> None:
         production._require_prepared(prepared)
         if not isinstance(committer, NumericalRelativityOutputCommitter):
             raise TypeError(
@@ -1138,7 +1138,7 @@ class NumericalRelativityFailureManifest(StrictModule, NonTrainableState):
         /,
         *,
         terminal_checkpoint_id: str,
-    ):
+    ) -> None:
         production._require_prepared(prepared)
         if not isinstance(failure, ProductionFailureRecord):
             raise TypeError("failure must be a ProductionFailureRecord.")
@@ -1227,7 +1227,7 @@ class NumericalRelativityCancellationManifest(StrictModule, NonTrainableState):
         receipt: CheckpointCommitReceipt,
         reason: str,
         /,
-    ):
+    ) -> None:
         production._require_prepared(prepared)
         if not isinstance(state, ProductionRunState) or state.status != "canceled":
             raise ValueError(
@@ -1382,7 +1382,7 @@ class NumericalRelativityProductionPlan(StrictModule):
         checkpoint_policy: CheckpointGenerationPolicy,
         limits: NumericalRelativityProductionLimits,
         /,
-    ):
+    ) -> None:
         if not isinstance(domain, NumericalRelativityDomainBinding):
             raise TypeError("domain must be NumericalRelativityDomainBinding.")
         bindings = tuple(support_bindings)

@@ -58,7 +58,7 @@ class SmoothCompressibleD2VCheckpointPlan(StrictModule, NonTrainableState):
         *,
         boundary_history_names: Sequence[str] = (),
         source_history_names: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedSmoothCompressibleD2V17SpatialDynamics):
             raise TypeError(
                 "dynamics must be PreparedSmoothCompressibleD2V17SpatialDynamics."

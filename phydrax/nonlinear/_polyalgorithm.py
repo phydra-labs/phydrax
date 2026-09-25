@@ -112,7 +112,7 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
         *,
         selector_id: str = "root-polyalgorithm",
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         methods_ = tuple(methods)
         if not methods_ or not all(
             isinstance(method, AbstractNonlinearMethod) for method in methods_
@@ -363,7 +363,7 @@ class FastRoot(AbstractNonlinearMethod):
         *,
         dense_dimension: int = 64,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         dimension = int(dense_dimension)
         if dimension < 1:
             raise ValueError("dense_dimension must be positive.")
@@ -435,7 +435,7 @@ class RobustRoot(AbstractNonlinearMethod):
 
     algorithm: RootPolyalgorithm
 
-    def __init__(self, *, precision: NonlinearPrecisionPolicy | None = None):
+    def __init__(self, *, precision: NonlinearPrecisionPolicy | None = None) -> None:
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, NonlinearPrecisionPolicy):
             raise TypeError("precision must be NonlinearPrecisionPolicy or None.")

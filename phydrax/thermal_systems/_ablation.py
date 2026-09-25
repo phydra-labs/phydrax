@@ -42,7 +42,7 @@ class AblationSurfaceModel:
     emissivity: float
     absorptivity: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         positive = (
             self.density_kg_m3,
             self.areal_heat_capacity_j_m2_k,

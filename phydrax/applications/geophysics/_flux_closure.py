@@ -176,7 +176,7 @@ def column_flux_space(dry_mass: Any, support_id: str, /):
     return space, measure
 
 
-def _check_measure(space, measure):
+def _check_measure(space, measure) -> None:
     if not isinstance(space, DiscreteFieldSpace) or not isinstance(
         measure, DiscreteMeasure
     ):
@@ -210,7 +210,7 @@ class ColumnFluxBinding:
     forcing_id: str
     measure_unit: Any = _MASS_AREA
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _check_measure(self.field, self.measure)
         if self.measure.weights.size < 2:
             raise ValueError("Flux closure needs at least two layers.")
@@ -343,7 +343,7 @@ class ColumnFluxBinding:
         self.validate_batch(batch)
         return batch
 
-    def validate_batch(self, batch):
+    def validate_batch(self, batch) -> None:
         """Require actual runtime coordinates/measures and interval conditioning."""
         mass = self.measure.weights
         edges = jnp.concatenate((jnp.zeros(1), jnp.cumsum(mass))) / jnp.sum(mass)
@@ -401,7 +401,7 @@ class ConservativeColumnTransfer:
     thermodynamics_id: str
     measure_unit: Any = _MASS_AREA
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _check_measure(self.transfer.source, self.source_measure)
         _check_measure(self.transfer.target, self.target_measure)
         if self.measure_unit != _MASS_AREA or not self.thermodynamics_id:

@@ -102,7 +102,7 @@ class frozendict(StrictModule, Mapping[_KT, _VT]):
     # `_KeyedValues` would not survive a structural update.
     _values: tuple[_VT, ...]
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         supplied = dict(*args, **kwargs)
         mapping = {_canonical_key(key): value for key, value in supplied.items()}
         keys = tuple(sorted(mapping, key=_canonical_key_token))

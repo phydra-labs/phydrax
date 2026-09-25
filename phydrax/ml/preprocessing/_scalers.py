@@ -146,7 +146,7 @@ class FittedStandardScaler(_AbstractAffineTransform):
         *,
         schema: FeatureSchema,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.in_size = len(schema.names)
         self.out_size = len(schema.names)
         self.center = jnp.asarray(center)
@@ -172,7 +172,7 @@ class StandardScaler(AbstractRecipe):
         with_mean: bool = True,
         with_std: bool = True,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if weight_policy not in ("none", "statistical", "measure", "product"):
             raise ValueError("Unsupported weight policy.")
         self.with_mean = bool(with_mean)
@@ -246,7 +246,7 @@ class FittedMinMaxScaler(_AbstractAffineTransform):
         case_shape: tuple[int, ...],
         feature_range: tuple[float, float],
         clip: bool,
-    ):
+    ) -> None:
         self.in_size = len(schema.names)
         self.out_size = len(schema.names)
         self.center = jnp.asarray(center)
@@ -274,7 +274,7 @@ class MinMaxScaler(AbstractRecipe):
         *,
         clip: bool = False,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         lower, upper = (float(feature_range[0]), float(feature_range[1]))
         if not jnp.isfinite(lower) or not jnp.isfinite(upper) or not upper > lower:
             raise ValueError("feature_range must contain finite increasing bounds.")
@@ -347,7 +347,7 @@ class FittedMaxAbsScaler(_AbstractAffineTransform):
         *,
         schema: FeatureSchema,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.in_size = len(schema.names)
         self.out_size = len(schema.names)
         self.center = jnp.zeros_like(scale)
@@ -363,7 +363,7 @@ class FittedMaxAbsScaler(_AbstractAffineTransform):
 class MaxAbsScaler(AbstractRecipe):
     weight_policy: WeightPolicy = eqx.field(static=True)
 
-    def __init__(self, *, weight_policy: WeightPolicy = "statistical"):
+    def __init__(self, *, weight_policy: WeightPolicy = "statistical") -> None:
         if weight_policy not in ("none", "statistical", "measure", "product"):
             raise ValueError("Unsupported weight policy.")
         self.weight_policy = weight_policy
@@ -417,7 +417,7 @@ class FittedRobustScaler(_AbstractAffineTransform):
         schema: FeatureSchema,
         case_shape: tuple[int, ...],
         quantile_range: tuple[float, float],
-    ):
+    ) -> None:
         self.in_size = len(schema.names)
         self.out_size = len(schema.names)
         self.center = jnp.asarray(center)
@@ -446,7 +446,7 @@ class RobustScaler(AbstractRecipe):
         with_scaling: bool = True,
         quantile_range: tuple[float, float] = (25.0, 75.0),
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         low, high = float(quantile_range[0]), float(quantile_range[1])
         if not 0.0 <= low < high <= 100.0:
             raise ValueError("quantile_range must be an increasing interval in [0, 100].")
@@ -516,7 +516,7 @@ class FittedNormScaler(AbstractFittedModel):
 
     def __init__(
         self, size: int, /, *, norm: Literal["l1", "l2", "max"], schema: FeatureSchema
-    ):
+    ) -> None:
         self.in_size = int(size)
         self.out_size = int(size)
         self.norm = norm
@@ -582,7 +582,7 @@ class NormScaler(AbstractRecipe):
         norm: Literal["l1", "l2", "max"] = "l2",
         *,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if norm not in ("l1", "l2", "max"):
             raise ValueError("norm must be 'l1', 'l2', or 'max'.")
         if weight_policy not in ("none", "statistical", "measure", "product"):

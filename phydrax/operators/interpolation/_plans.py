@@ -39,7 +39,7 @@ class SmolyakInterpolationPlan(StrictModule):
         axis_rules: (
             SmolyakInterpolationRule | Sequence[SmolyakInterpolationRule] | None
         ) = "auto",
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         level_ = int(level)
         if dimension_ < 1 or level_ < 1:
@@ -96,7 +96,7 @@ class AdaptiveSmolyakInterpolationPlan(StrictModule):
         max_indices: int = 64,
         max_nodes: int = 100_000,
         max_rounds: int = 32,
-    ):
+    ) -> None:
         fixed = SmolyakInterpolationPlan(
             dimension,
             initial_level,

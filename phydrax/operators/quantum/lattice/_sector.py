@@ -27,7 +27,7 @@ class SectorBasisResourcePolicy(StrictModule):
     maximum_table_bytes: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, *, maximum_dimension: int, maximum_table_bytes: int):
+    def __init__(self, *, maximum_dimension: int, maximum_table_bytes: int) -> None:
         dimension = int(maximum_dimension)
         table_bytes = int(maximum_table_bytes)
         if dimension < 1 or table_bytes < 1:
@@ -99,7 +99,7 @@ class _FixedChargeCoordinateBasis(AbstractSectorBasis):
         *,
         kind: str,
         identity: object,
-    ):
+    ) -> None:
         if not isinstance(resources, SectorBasisResourcePolicy):
             raise TypeError("resources must be SectorBasisResourcePolicy.")
         sites = tuple(str(value) for value in site_ids)
@@ -300,7 +300,7 @@ class FixedAbelianChargeBasis(AbstractSectorBasis):
         /,
         *,
         resources: SectorBasisResourcePolicy,
-    ):
+    ) -> None:
         sites = tuple(str(value) for value in site_ids)
         labels = tuple(str(value) for value in charge_labels)
         vectors = tuple(
@@ -556,7 +556,7 @@ class FixedCardinalityFermionBasis(_FixedChargeCoordinateBasis):
         /,
         *,
         resources: SectorBasisResourcePolicy,
-    ):
+    ) -> None:
         if not isinstance(mode_order, FermionModeOrder):
             raise TypeError("mode_order must be FermionModeOrder.")
         particles = int(particle_count)
@@ -589,7 +589,7 @@ class FixedSpinProjectionBasis(_FixedChargeCoordinateBasis):
         /,
         *,
         resources: SectorBasisResourcePolicy,
-    ):
+    ) -> None:
         spins = tuple(twice_spins)
         if not spins or any(value < 1 for value in spins):
             raise ValueError("twice_spins must contain positive integers.")
@@ -621,7 +621,7 @@ class FixedBosonNumberBasis(_FixedChargeCoordinateBasis):
         /,
         *,
         resources: SectorBasisResourcePolicy,
-    ):
+    ) -> None:
         bounds = tuple(cutoffs)
         if not bounds or any(value < 2 for value in bounds):
             raise ValueError("Boson cutoffs must retain at least states zero and one.")
@@ -656,7 +656,7 @@ class SectorChargeMap(StrictModule):
         target: AbstractSectorBasis,
         charge_delta: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, AbstractSectorBasis) or not isinstance(
             target, AbstractSectorBasis
         ):

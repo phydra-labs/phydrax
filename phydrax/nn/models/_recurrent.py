@@ -169,7 +169,7 @@ class RecurrentSequenceModel(StrictModule, ParameterOwner):
         *,
         readout: Callable | None = None,
         return_mode: RecurrentReturnMode = "sequence",
-    ):
+    ) -> None:
         if not isinstance(cell, AbstractRecurrentCell):
             raise TypeError("cell must implement AbstractRecurrentCell.")
         if readout is not None and not callable(readout):
@@ -246,7 +246,7 @@ class BidirectionalRecurrentSequenceModel(StrictModule, ParameterOwner):
         readout: Callable | None = None,
         merge: BidirectionalMerge = "concatenate",
         return_mode: RecurrentReturnMode = "sequence",
-    ):
+    ) -> None:
         if not isinstance(forward_cell, AbstractRecurrentCell) or not isinstance(
             backward_cell, AbstractRecurrentCell
         ):

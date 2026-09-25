@@ -225,7 +225,7 @@ class PlantRuntimeState(StrictModule):
         state_schema_id: str,
         execution_signature_id: str,
         /,
-    ):
+    ) -> None:
         self.payload = payload
         self.time = jnp.asarray(time)
         self.step_index = jnp.asarray(step_index, dtype=jnp.int32)
@@ -253,7 +253,7 @@ class PlantParameters(StrictModule):
         schema_id: str,
         numeric_revision: NumericRevision,
         /,
-    ):
+    ) -> None:
         if not isinstance(numeric_revision, NumericRevision):
             raise TypeError("numeric_revision must be a NumericRevision.")
         self.values = values
@@ -274,7 +274,7 @@ class PlantStepContext(StrictModule):
         target_time: ArrayLike,
         step_index: ArrayLike,
         /,
-    ):
+    ) -> None:
         source = jnp.asarray(source_time)
         target = jnp.asarray(target_time)
         index = jnp.asarray(step_index, dtype=jnp.int32)
@@ -350,7 +350,7 @@ class PlantCheckpoint(StrictModule):
         state_schema_id: str,
         execution_signature_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(state, PlantRuntimeState):
             raise TypeError("PlantCheckpoint state must be a PlantRuntimeState.")
         self.state = state
@@ -1051,7 +1051,7 @@ class ArrayDiscreteSystemPlant(AbstractDiscretePlant):
         require_finite_state: bool = True,
         require_finite_controls: bool = True,
         require_finite_parameters: bool = True,
-    ):
+    ) -> None:
         if not isinstance(system, DiscreteSystem):
             raise TypeError("system must be a DiscreteSystem.")
         if not callable(initializer):

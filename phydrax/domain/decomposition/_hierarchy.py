@@ -27,7 +27,7 @@ class SubdomainLevel(StrictModule):
         /,
         *,
         coefficient: float = 1.0,
-    ):
+    ) -> None:
         name = str(level_id)
         coefficient_ = float(coefficient)
         if not name:
@@ -56,7 +56,7 @@ class SubdomainHierarchy(StrictModule):
         /,
         *,
         hierarchy_id: str,
-    ):
+    ) -> None:
         levels_ = tuple(levels)
         if not levels_ or any(not isinstance(level, SubdomainLevel) for level in levels_):
             raise TypeError(

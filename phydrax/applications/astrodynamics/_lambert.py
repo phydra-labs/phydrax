@@ -41,7 +41,7 @@ class LambertPlan(StrictModule, NonTrainableState):
         maximum_x: float = 64.0,
         long_way: bool = False,
         plane_normal: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 1.0),
-    ):
+    ) -> None:
         for name, value in (
             ("max_revolutions", max_revolutions),
             ("grid_size", grid_size),

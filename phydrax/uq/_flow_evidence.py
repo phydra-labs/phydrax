@@ -53,7 +53,7 @@ class FlowNUTSEvidenceResult(StrictModule):
         block_length: int,
         num_posterior_samples: int,
         num_proposal_samples: int,
-    ):
+    ) -> None:
         self.log_evidence = jnp.asarray(log_evidence).reshape(())
         self.bridge_residual = jnp.asarray(bridge_residual).reshape(())
         self.posterior_overlap_ess = jnp.asarray(posterior_overlap_ess).reshape(())
@@ -89,7 +89,7 @@ class FlowNUTSModeInitialization(StrictModule):
         selected_indices: Array,
         selected_weights: Array,
         nearest_selected_distances: Array,
-    ):
+    ) -> None:
         indices = jnp.asarray(selected_indices, dtype=jnp.int32)
         self.initial_positions = initial_positions
         self.selected_indices = indices

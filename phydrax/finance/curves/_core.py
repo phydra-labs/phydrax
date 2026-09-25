@@ -110,7 +110,7 @@ class CurveGrid(StrictModule):
     times: Array
     grid_id: str = eqx.field(static=True)
 
-    def __init__(self, times: ArrayLike, /):
+    def __init__(self, times: ArrayLike, /) -> None:
         times_ = _real_vector(times, "times")
         concrete = _concrete_numpy(times_)
         if concrete is None:
@@ -146,7 +146,7 @@ class InterpolationPolicy(StrictModule):
         *,
         left_extrapolation: ExtrapolationMode | str,
         right_extrapolation: ExtrapolationMode | str,
-    ):
+    ) -> None:
         self.method = _enum(method, InterpolationMethod, "method")
         self.left_extrapolation = _enum(
             left_extrapolation, ExtrapolationMode, "left_extrapolation"
@@ -177,7 +177,7 @@ class CurveDefinition(StrictModule):
         representation: CurveRepresentation | str,
         grid: CurveGrid,
         interpolation: InterpolationPolicy,
-    ):
+    ) -> None:
         if not isinstance(valuation_date, FinanceDate):
             raise TypeError("valuation_date must be a FinanceDate.")
         if currency is not None and not isinstance(currency, Currency):
@@ -401,7 +401,7 @@ class CurveSensitivity(StrictModule):
         *,
         input_ids: tuple[str, ...],
         quantity: CurveQuantity,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         jacobian_ = jnp.asarray(jacobian)
         if jacobian_.shape != values_.shape + (len(input_ids),):
@@ -430,7 +430,7 @@ class PreparedCurve(StrictModule):
         *,
         node_quote_jacobian: ArrayLike | None = None,
         quote_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(definition, CurveDefinition):
             raise TypeError("definition must be a CurveDefinition.")
         nodes = _real_vector(node_values, "node_values")
@@ -722,7 +722,7 @@ class CurveSet(StrictModule):
     curves: tuple[PreparedCurve, ...]
     curve_ids: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, curves: tuple[PreparedCurve, ...], /):
+    def __init__(self, curves: tuple[PreparedCurve, ...], /) -> None:
         curves_ = tuple(curves)
         if not curves_:
             raise ValueError("CurveSet requires at least one curve.")

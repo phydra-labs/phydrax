@@ -35,7 +35,7 @@ class TensorType(StrictModule):
         /,
         *,
         density_weight: float = 0.0,
-    ):
+    ) -> None:
         variance_ = tuple(variance)
         invalid = tuple(
             value for value in variance_ if value not in ("contravariant", "covariant")

@@ -204,7 +204,9 @@ class AbstractRefinementTransfer(StrictModule):
 class IdentityStateTransfer(AbstractRefinementTransfer):
     """Identity transfer for levels sharing one state layout."""
 
-    def __init__(self, state_shape: Sequence[int], /, *, transfer_id: str | None = None):
+    def __init__(
+        self, state_shape: Sequence[int], /, *, transfer_id: str | None = None
+    ) -> None:
         shape = _shape(state_shape, "state_shape")
         self.fine_shape = shape
         self.coarse_shape = shape
@@ -240,7 +242,7 @@ class TensorGridStateTransfer(AbstractRefinementTransfer):
         boundary: TensorGridBoundary = "endpoint",
         restriction: TensorGridRestriction = "injection",
         transfer_id: str | None = None,
-    ):
+    ) -> None:
         fine = _shape(fine_shape, "fine_shape")
         coarse = _shape(coarse_shape, "coarse_shape")
         if len(fine) != len(coarse):
@@ -311,7 +313,7 @@ class SpectralCoefficientStateTransfer(AbstractRefinementTransfer):
         *,
         axis: int = 0,
         transfer_id: str | None = None,
-    ):
+    ) -> None:
         fine = _shape(fine_shape, "fine_shape")
         coarse = _shape(coarse_shape, "coarse_shape")
         if len(fine) != len(coarse):

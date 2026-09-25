@@ -54,7 +54,7 @@ class LinearCoefficientConstraint(StrictModule):
         /,
         *,
         constraint_id: str,
-    ):
+    ) -> None:
         matrix_values = jnp.asarray(matrix)
         rhs_values = jnp.asarray(rhs)
         if matrix_values.ndim != 2 or rhs_values.shape != (matrix_values.shape[0],):
@@ -89,7 +89,7 @@ class CoefficientStructure(StrictModule):
         allowed: ArrayLike | None = None,
         constraint: LinearCoefficientConstraint | None = None,
         structure_id: str | None = None,
-    ):
+    ) -> None:
         resolved_groups = tuple(
             tuple((int(output), int(feature)) for output, feature in group)
             for group in groups
@@ -290,7 +290,7 @@ class StructuredSequentialThresholdedLeastSquares(AbstractSparseRegression):
         normalize_targets: bool = False,
         tolerance: float = 1e-8,
         max_coefficients: int = 2048,
-    ):
+    ) -> None:
         threshold_value = float(threshold)
         ridge_value = float(ridge)
         tolerance_value = float(tolerance)

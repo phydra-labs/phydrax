@@ -201,7 +201,7 @@ class TrajectoryDatasetDomain(JointFactor):
         time_label: str = "t",
         measure: TrajectoryMeasure = "case_time_probability",
         sampling: TrajectorySampling = "case_time_uniform",
-    ):
+    ) -> None:
         """Create a finite dataset of row-conditioned trajectories.
 
         Parameters:

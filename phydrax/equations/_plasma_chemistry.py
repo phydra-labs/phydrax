@@ -34,7 +34,7 @@ class ReactionTemperatureSpec(StrictModule, NonTrainableState):
         /,
         *,
         mode_index: int = -1,
-    ):
+    ) -> None:
         index = int(mode_index)
         if kind not in ("heavy", "mode", "electron", "geometric-mean") or (
             kind == "mode" and index < 0
@@ -100,7 +100,7 @@ class PreparedPlasmaMechanism(StrictModule, NonTrainableState):
         /,
         *,
         mode_energy_per_progress: ArrayLike,
-    ):
+    ) -> None:
         specifications = tuple(temperatures)
         mode_energy = np.asarray(mode_energy_per_progress, dtype=np.float64)
         if (

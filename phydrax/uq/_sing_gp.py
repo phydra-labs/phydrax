@@ -44,7 +44,7 @@ class SINGSparseGPDrift(StrictModule):
         *,
         output_mixing: ArrayLike | None = None,
         drift_id: str | None = None,
-    ):
+    ) -> None:
         points = jnp.asarray(inducing_points)
         selected = tuple(kernels)
         mean = jnp.asarray(whitened_mean)

@@ -59,7 +59,7 @@ class BSDETerm(AbstractSamplingTerm):
         fixed_paths: BSDEPathBatch | None = None,
         fixed_paths_key: Key[Array, ""] = jr.key(0),
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(problem, BSDEProblem):
             raise TypeError("problem must be a BSDEProblem.")
         if not isinstance(value_name, str) or not value_name:

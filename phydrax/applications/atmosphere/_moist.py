@@ -80,7 +80,7 @@ class MoistThermodynamicPlan(StrictModule, NonTrainableState):
         maximum_temperature: float = 400.0,
         maximum_steps: int = 24,
         energy_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         constants = dict(
             dry_gas_constant=float(dry_gas_constant),
             vapor_gas_constant=float(vapor_gas_constant),

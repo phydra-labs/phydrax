@@ -85,7 +85,7 @@ class ParticleBoundaryCorrection(StrictModule):
         diagnostics: BufferedParticleCorrectionDiagnostics,
         correction_id: str,
         anchor_position: PyTree[Any],
-    ):
+    ) -> None:
         if not callable(score_terms):
             raise TypeError("score_terms must be callable.")
         if not isinstance(diagnostics, BufferedParticleCorrectionDiagnostics):
@@ -144,7 +144,7 @@ class BufferedParticleBoundaryPlan(StrictModule):
         minimum_ess: float,
         maximum_paired_buffer_error: float,
         accept_approximate: bool = False,
-    ):
+    ) -> None:
         if not isinstance(window_plan, StateSpaceWindowPlan):
             raise TypeError("window_plan must be StateSpaceWindowPlan.")
         if not callable(provider):
@@ -186,7 +186,7 @@ class BufferedParticleGradientEstimator(AbstractStochasticGradientEstimator):
         correction: ExactStateSpaceBoundaryCorrection | ParticleBoundaryCorrection,
         window_plan: StateSpaceWindowPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(parameterized, ParameterizedStateSpaceProblem):
             raise TypeError("parameterized must be ParameterizedStateSpaceProblem.")
         if not isinstance(

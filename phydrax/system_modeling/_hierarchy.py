@@ -9,7 +9,7 @@ class Component:
     name: str
     children: tuple["Component", ...] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name or len({x.name for x in self.children}) != len(self.children):
             raise ValueError("Component hierarchy invalid.")
 

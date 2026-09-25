@@ -53,7 +53,7 @@ class Dropout(_AbstractBaseModel):
         p: float,
         mode: Literal["elementwise", "feature"] = "feature",
         inference: bool = False,
-    ):
+    ) -> None:
         probability = float(p)
         if not 0.0 <= probability < 1.0:
             raise ValueError("Dropout p must satisfy 0 <= p < 1.")

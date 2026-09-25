@@ -47,7 +47,7 @@ class PreparedSphericalVectorOperators(StrictModule, NonTrainableState):
         /,
         *,
         mean_policy: Literal["reject", "project"] = "reject",
-    ):
+    ) -> None:
         if not isinstance(space, SphericalSpectralDiscretization):
             raise TypeError("space must be a prepared spherical spectral discretization.")
         if space.layout.spin != 0 or not space.layout.reality:

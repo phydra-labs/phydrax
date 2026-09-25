@@ -58,7 +58,7 @@ class LinearControlCompilationPolicy(StrictModule):
 
     representation: ControlQPRepresentation = eqx.field(static=True)
 
-    def __init__(self, representation: ControlQPRepresentation = "dense", /):
+    def __init__(self, representation: ControlQPRepresentation = "dense", /) -> None:
         if representation not in ("dense", "sparse"):
             raise ValueError("representation must be 'dense' or 'sparse'.")
         self.representation = representation
@@ -246,7 +246,7 @@ class LinearQuadraticControlProblem(StrictModule):
         time_grid: TimeGrid | None = None,
         problem_id: str = "control:linear-quadratic",
         dynamics_id: str = "control:dynamics:affine-discrete",
-    ):
+    ) -> None:
         a = jnp.asarray(dynamics_matrices)
         if a.ndim < 3 or a.shape[-1] != a.shape[-2]:
             raise ValueError(
@@ -682,7 +682,7 @@ class LinearControlDecisionLayout(StrictModule):
     control_size: int = eqx.field(static=True)
     num_variables: int = eqx.field(static=True)
 
-    def __init__(self, horizon: int, state_size: int, control_size: int, /):
+    def __init__(self, horizon: int, state_size: int, control_size: int, /) -> None:
         if horizon < 1 or state_size < 1 or control_size < 1:
             raise ValueError("horizon, state_size, and control_size must be positive.")
         state_end = (horizon + 1) * state_size
@@ -772,7 +772,7 @@ class LinearControlBoundLayout(StrictModule):
         specification: LinearQuadraticControlProblem,
         decision: LinearControlDecisionLayout,
         /,
-    ):
+    ) -> None:
         if not isinstance(specification, LinearQuadraticControlProblem):
             raise TypeError("specification must be a LinearQuadraticControlProblem.")
         if not isinstance(decision, LinearControlDecisionLayout):
@@ -807,7 +807,7 @@ class LinearControlConstraintLayout(StrictModule):
     num_equalities: int = eqx.field(static=True)
     num_inequalities: int = eqx.field(static=True)
 
-    def __init__(self, specification: LinearQuadraticControlProblem, /):
+    def __init__(self, specification: LinearQuadraticControlProblem, /) -> None:
         if not isinstance(specification, LinearQuadraticControlProblem):
             raise TypeError("specification must be a LinearQuadraticControlProblem.")
         horizon = specification.horizon
@@ -1296,7 +1296,7 @@ class PreparedLinearControlQP(StrictModule):
         compilation: LinearControlQPCompilation,
         prepared: PreparedConvexProgram,
         /,
-    ):
+    ) -> None:
         if not isinstance(compilation, LinearControlQPCompilation):
             raise TypeError("compilation must be a LinearControlQPCompilation.")
         if not isinstance(prepared, PreparedConvexProgram):

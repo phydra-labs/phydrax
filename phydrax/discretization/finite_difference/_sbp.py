@@ -94,7 +94,7 @@ class SBPFamily(StrictModule, NonTrainableState):
     norm_boundary_weights: tuple[float, ...] = eqx.field(static=True)
     family_id: str = eqx.field(static=True)
 
-    def __init__(self, interior_order: SBPInteriorOrder, /):
+    def __init__(self, interior_order: SBPInteriorOrder, /) -> None:
         order = int(interior_order)
         if order not in (2, 4, 6, 8):
             raise ValueError("Diagonal-norm SBP interior order must be 2, 4, 6, or 8.")
@@ -249,7 +249,7 @@ class SBPDerivativePlan(StrictModule, NonTrainableState):
         /,
         *,
         interior_order: SBPInteriorOrder = 2,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("grid must be a PreparedTensorGrid.")
         axis_ = str(axis)
@@ -294,7 +294,7 @@ class CompatibleSBPSecondDerivative(AbstractLinearOperator):
         /,
         *,
         coefficient: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(first_derivative, PreparedSBPOperator):
             raise TypeError("first_derivative must be a PreparedSBPOperator.")
         coefficient_ = jnp.broadcast_to(
@@ -395,7 +395,7 @@ class PreparedSBPOperator(StrictModule, NonTrainableState):
     stability_report: FDStabilityReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: SBPDerivativePlan, /):
+    def __init__(self, plan: SBPDerivativePlan, /) -> None:
         if not isinstance(plan, SBPDerivativePlan):
             raise TypeError("plan must be an SBPDerivativePlan.")
         grid = plan.grid
@@ -619,7 +619,7 @@ class SATBoundaryPlan(StrictModule, NonTrainableState):
         lower_penalty: float = 0.0,
         upper_penalty: float = 0.0,
         stability_report: FDStabilityReport | None = None,
-    ):
+    ) -> None:
         if not isinstance(sbp, PreparedSBPOperator):
             raise TypeError("sbp must be a PreparedSBPOperator.")
         if lower_kind not in (
@@ -784,7 +784,7 @@ class SATInterfacePlan(StrictModule, NonTrainableState):
         /,
         *,
         flux: SATInterfaceFlux = "central",
-    ):
+    ) -> None:
         if not isinstance(left, PreparedSBPOperator) or not isinstance(
             right, PreparedSBPOperator
         ):

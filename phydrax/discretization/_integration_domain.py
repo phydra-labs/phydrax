@@ -46,7 +46,7 @@ class IntegrationDomain(StrictModule, NonTrainableState):
         neighbor_trace_permutations: ArrayLike | None = None,
         periodic_face_mask: ArrayLike | None = None,
         selection_id: str | None = None,
-    ):
+    ) -> None:
         kind_ = str(kind)
         if kind_ not in ("cell", "exterior_facet", "interior_facet"):
             raise ValueError("Unsupported integration-domain kind.")

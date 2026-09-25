@@ -61,7 +61,9 @@ class _SymmetricJacobiLinearOperator(AbstractLinearOperator):
     operator: AbstractLinearOperator
     inverse_sqrt_diagonal: Array
 
-    def __init__(self, operator: AbstractLinearOperator, inverse_sqrt_diagonal: Array, /):
+    def __init__(
+        self, operator: AbstractLinearOperator, inverse_sqrt_diagonal: Array, /
+    ) -> None:
         _validate_setup_operator(operator)
         diagonal = jnp.asarray(inverse_sqrt_diagonal)
         if diagonal.shape != (operator.source.size,):
@@ -162,7 +164,7 @@ class ChebyshevPreconditioner(AbstractPreconditioner, NonTrainableState):
         builder_id: str,
         setup_operator_id: str,
         preconditioner_id: str,
-    ):
+    ) -> None:
         _validate_setup_operator(effective_operator)
         alpha_ = jnp.asarray(alpha)
         beta_ = jnp.asarray(beta)
@@ -337,7 +339,7 @@ class ChebyshevPreconditionerBuilder(AbstractPreconditionerBuilder):
         margin: float = 0.05,
         scaling: ChebyshevScaling = "none",
         properties: PreconditionerProperties | None = None,
-    ):
+    ) -> None:
         degree_ = int(degree)
         estimation_steps_ = int(estimation_steps)
         margin_ = float(margin)

@@ -107,7 +107,7 @@ class HelmholtzPlaneWaveBasis(AbstractTrefftzBasis):
         *,
         normalization: SimilarityNormalization | None = None,
         resources: TrefftzResourceBudget | None = None,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         wavenumber_ = float(wavenumber)
         if dimension_ < 2:

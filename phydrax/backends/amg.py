@@ -121,7 +121,7 @@ class PyAMGCLPolicy(StrictModule):
         *,
         solver: str = "bicgstab",
         config: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         solver_ = str(solver)
         if not solver_:
             raise ValueError("PyAMGCL solver must be non-empty.")
@@ -139,7 +139,7 @@ class AmgXPolicy(StrictModule):
     config: CanonicalConfig = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, config: Mapping[str, Any] | None = None, /):
+    def __init__(self, config: Mapping[str, Any] | None = None, /) -> None:
         config_ = _canonical_config(_DEFAULT_AMGX_CONFIG if config is None else config)
         self.config = config_
         self.policy_id = canonical_fingerprint({"kind": "amgx-policy", "config": config_})
@@ -209,7 +209,7 @@ class AmgXPlan(StrictModule):
 
 
 class _PyAMGCLRuntime:
-    def __init__(self, module: Any, matrix: Any, solver: Any):
+    def __init__(self, module: Any, matrix: Any, solver: Any) -> None:
         self.module = module
         self.matrix = matrix
         self.solver = solver
@@ -223,7 +223,7 @@ class _AmgXRuntime:
         resources: Any,
         matrix: Any,
         solver: Any,
-    ):
+    ) -> None:
         self.module = module
         self.config = config
         self.resources = resources

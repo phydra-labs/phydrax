@@ -40,7 +40,7 @@ class ContactGraphPlan(StrictModule, NonTrainableState):
                 index = parent[index]
             return index
 
-        def union(left, right):
+        def union(left, right) -> None:
             left_root = root(left)
             right_root = root(right)
             if left_root != right_root:
@@ -88,7 +88,7 @@ class ContactBlockPreconditionerPlan(StrictModule, NonTrainableState):
         *,
         regularization: float = 1.0e-10,
         coarse_weight: float = 0.5,
-    ):
+    ) -> None:
         regularization_ = float(regularization)
         coarse = float(coarse_weight)
         if regularization_ <= 0.0 or not np.isfinite(regularization_):

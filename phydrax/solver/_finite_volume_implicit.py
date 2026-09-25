@@ -71,7 +71,7 @@ class FiniteVolumeImplicitStage(StrictModule):
         step_size: ArrayLike,
         dynamics_args: Any = None,
         /,
-    ):
+    ) -> None:
         self.previous_state = jnp.asarray(previous_state)
         self.time = jnp.asarray(time).reshape(())
         self.step_size = jnp.asarray(step_size).reshape(())
@@ -81,7 +81,7 @@ class FiniteVolumeImplicitStage(StrictModule):
 class _FiniteVolumeBackwardEulerResidual(StrictModule):
     dynamics: ImplicitFVDynamics
 
-    def __init__(self, dynamics: ImplicitFVDynamics, /):
+    def __init__(self, dynamics: ImplicitFVDynamics, /) -> None:
         self.dynamics = dynamics
 
     def __call__(self, candidate: Array, stage: FiniteVolumeImplicitStage, /) -> Array:
@@ -151,7 +151,7 @@ class FiniteVolumeBackwardEulerPlan(StrictModule):
         method: ImplicitFVMethod | None = None,
         termination: NonlinearTermination | None = None,
         nonlinear_precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             dynamics,
             (
@@ -293,7 +293,7 @@ class PreparedFiniteVolumeBackwardEulerStep(StrictModule):
         stage: FiniteVolumeImplicitStage,
         nonlinear: PreparedNonlinearSolve,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, FiniteVolumeBackwardEulerPlan):
             raise TypeError("plan must be FiniteVolumeBackwardEulerPlan.")
         if not isinstance(stage, FiniteVolumeImplicitStage):

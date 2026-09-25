@@ -34,7 +34,7 @@ class TravelTimeGraphPlan(StrictModule, NonTrainableState):
     iteration_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, node_positions_m: ArrayLike, edge_nodes: ArrayLike, /):
+    def __init__(self, node_positions_m: ArrayLike, edge_nodes: ArrayLike, /) -> None:
         positions = np.asarray(node_positions_m, dtype=np.float64)
         edges = np.asarray(edge_nodes)
         if (
@@ -162,7 +162,7 @@ class EventLocationPlan(StrictModule, NonTrainableState):
         standard_deviation_s: ArrayLike,
         phase_velocity_m_s: ArrayLike,
         /,
-    ):
+    ) -> None:
         stations = jnp.asarray(station_positions_m)
         arrivals, deviation, velocity = jnp.broadcast_arrays(
             jnp.asarray(observed_arrival_s),
@@ -238,7 +238,7 @@ class MomentTensorRadiationPlan(StrictModule, NonTrainableState):
     p_polarizations: Array
     s_polarizations: Array
 
-    def __init__(self, source_to_receiver_directions: ArrayLike, /):
+    def __init__(self, source_to_receiver_directions: ArrayLike, /) -> None:
         directions = jnp.asarray(source_to_receiver_directions)
         if directions.ndim != 2 or directions.shape[1] != 3:
             raise ValueError("Moment-tensor directions must have shape (receivers,3).")

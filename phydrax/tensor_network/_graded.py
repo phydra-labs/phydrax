@@ -32,7 +32,7 @@ class FermionGrading(StrictModule):
     generator_parities: tuple[int, ...] = eqx.field(static=True)
     grading_id: str = eqx.field(static=True)
 
-    def __init__(self, group: AbelianGroup, generator_parities: Sequence[int], /):
+    def __init__(self, group: AbelianGroup, generator_parities: Sequence[int], /) -> None:
         if not isinstance(group, AbelianGroup):
             raise TypeError("group must be AbelianGroup.")
         parities = tuple(generator_parities)
@@ -84,7 +84,9 @@ class GradedLeg(StrictModule):
     sector_parities: tuple[int, ...] = eqx.field(static=True)
     graded_leg_id: str = eqx.field(static=True)
 
-    def __init__(self, leg: AbelianLeg, grading: FermionGrading, /, *, mode_label: str):
+    def __init__(
+        self, leg: AbelianLeg, grading: FermionGrading, /, *, mode_label: str
+    ) -> None:
         if not isinstance(leg, AbelianLeg) or not isinstance(grading, FermionGrading):
             raise TypeError("leg and grading must be AbelianLeg and FermionGrading.")
         if leg.group.group_id != grading.group.group_id:
@@ -118,7 +120,7 @@ class GradedTensor(StrictModule):
     grading_id: str = eqx.field(static=True)
     graded_tensor_id: str = eqx.field(static=True)
 
-    def __init__(self, tensor: AbelianTensor, legs: Sequence[GradedLeg], /):
+    def __init__(self, tensor: AbelianTensor, legs: Sequence[GradedLeg], /) -> None:
         if not isinstance(tensor, AbelianTensor):
             raise TypeError("tensor must be AbelianTensor.")
         values = tuple(legs)
@@ -216,7 +218,7 @@ class GradedContractionPlan(StrictModule):
         contracted_modes: Sequence[str],
         mode_order: Sequence[str],
         /,
-    ):
+    ) -> None:
         if not isinstance(left, GradedTensor) or not isinstance(right, GradedTensor):
             raise TypeError("left and right must be GradedTensor values.")
         if left.grading_id != right.grading_id:

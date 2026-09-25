@@ -39,7 +39,7 @@ class StructuredAxis(StrictModule, NonTrainableState):
     upper_endpoint_included: bool = eqx.field(static=True)
     axis_id: str = eqx.field(static=True)
 
-    def __init__(self, axis: AxisDiscretization, /):
+    def __init__(self, axis: AxisDiscretization, /) -> None:
         if not isinstance(axis, AxisDiscretization):
             raise TypeError("axis must be an AxisDiscretization.")
         nodes = np.asarray(axis.nodes, dtype=np.float64)
@@ -197,7 +197,7 @@ class TensorEntityLayout(StrictModule, NonTrainableState):
         axes: Sequence[StructuredAxis],
         axis_entities: Sequence[AxisEntityKind],
         /,
-    ):
+    ) -> None:
         names = tuple(str(name) for name in axis_names)
         axes_ = tuple(axes)
         entities = tuple(axis_entities)

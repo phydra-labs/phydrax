@@ -35,7 +35,7 @@ AssemblyKind = Literal["partition-of-unity", "broken"]
 class PatchScope(StrictModule):
     patch_id: str = eqx.field(static=True)
 
-    def __init__(self, patch_id: str, /):
+    def __init__(self, patch_id: str, /) -> None:
         value = str(patch_id)
         if not value:
             raise ValueError("patch_id must be non-empty.")
@@ -45,7 +45,7 @@ class PatchScope(StrictModule):
 class PairScope(StrictModule):
     pairing_id: str = eqx.field(static=True)
 
-    def __init__(self, pairing_id: str, /):
+    def __init__(self, pairing_id: str, /) -> None:
         value = str(pairing_id)
         if not value:
             raise ValueError("pairing_id must be non-empty.")
@@ -53,7 +53,7 @@ class PairScope(StrictModule):
 
 
 class GlobalScope(StrictModule):
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
 
@@ -66,7 +66,7 @@ class ScopedFunctionalTerm(StrictModule):
     term: AbstractScalarTerm
     scope: TermScope
 
-    def __init__(self, term: AbstractScalarTerm, scope: TermScope, /):
+    def __init__(self, term: AbstractScalarTerm, scope: TermScope, /) -> None:
         if not isinstance(term, AbstractScalarTerm):
             raise TypeError("term must be an AbstractScalarTerm.")
         if not isinstance(scope, (PatchScope, PairScope, GlobalScope)):
@@ -128,7 +128,7 @@ class FunctionalDecompositionProblem(StrictModule):
         | Sequence[AbstractScalarTerm | ScopedFunctionalTerm] = (),
         enforcement: EnforcementProgram | None = None,
         collocation_key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(cover, SubdomainCover):
             raise TypeError("cover must be a SubdomainCover.")
         if not isinstance(family, LocalFieldFamily):

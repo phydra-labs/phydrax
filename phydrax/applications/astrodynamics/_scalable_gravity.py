@@ -39,7 +39,7 @@ class CloseEncounterPolicy(StrictModule, NonTrainableState):
         *,
         collision_mode="fail",
         restitution=1.0,
-    ):
+    ) -> None:
         if collision_mode not in ("fail", "merge", "bounce"):
             raise ValueError("Unknown collision mode.")
         self.encounter_distance = jnp.asarray(encounter_distance).reshape(())
@@ -114,7 +114,7 @@ class PreparedOctree3D(StrictModule, NonTrainableState):
         *,
         leaf_capacity=8,
         maximum_depth=24,
-    ):
+    ) -> None:
         for name, value in (
             ("leaf_capacity", leaf_capacity),
             ("maximum_depth", maximum_depth),
@@ -188,7 +188,7 @@ class BarnesHutGravityPlan3D(StrictModule, NonTrainableState):
         gravitational_constant=1.0,
         opening_angle=0.5,
         softening=1.0e-15,
-    ):
+    ) -> None:
         if not isinstance(tree, PreparedOctree3D):
             raise TypeError("tree must be PreparedOctree3D.")
         mass = jnp.asarray(masses)

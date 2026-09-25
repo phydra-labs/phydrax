@@ -114,7 +114,7 @@ class MatrixGaussianDiffusion(AbstractItoScoreDiffusion):
         offset: ArrayLike = 0.0,
         terminal_time: float = 1.0,
         process_id: str | None = None,
-    ):
+    ) -> None:
         matrix = jnp.asarray(drift_matrix)
         factor = jnp.asarray(dispersion)
         if jnp.iscomplexobj(matrix) or jnp.iscomplexobj(factor):
@@ -222,7 +222,7 @@ class StateDependentItoDiffusion(AbstractItoScoreDiffusion):
         noise_dimension: int,
         terminal_time: float = 1.0,
         process_id: str,
-    ):
+    ) -> None:
         if not callable(drift) or not callable(diffusion_factor):
             raise TypeError("drift and diffusion_factor must be callable.")
         size = int(dimension)

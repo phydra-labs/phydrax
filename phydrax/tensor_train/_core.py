@@ -116,7 +116,7 @@ class TTRoundingEvidence(StrictModule):
         max_ranks: Sequence[int],
         requested_relative_tolerance: float,
         /,
-    ):
+    ) -> None:
         discarded = jnp.asarray(per_cut_discarded_frobenius)
         selected = jnp.asarray(selected_ranks, dtype=jnp.int32)
         norm = jnp.asarray(input_frobenius_norm)
@@ -159,7 +159,7 @@ class TensorTrain(StrictModule):
     ranks: tuple[int, ...] = eqx.field(static=True)
     tensor_id: str = eqx.field(static=True)
 
-    def __init__(self, cores: Sequence[ArrayLike], /):
+    def __init__(self, cores: Sequence[ArrayLike], /) -> None:
         arrays = tuple(jnp.asarray(core) for core in cores)
         if not arrays or any(core.ndim != 3 for core in arrays):
             raise ValueError("TensorTrain requires nonempty rank-three cores.")
@@ -371,7 +371,7 @@ class TensorTrainCompressionResult(StrictModule):
     tensor: TensorTrain
     evidence: TTRoundingEvidence
 
-    def __init__(self, tensor: TensorTrain, evidence: TTRoundingEvidence, /):
+    def __init__(self, tensor: TensorTrain, evidence: TTRoundingEvidence, /) -> None:
         self.tensor = tensor
         self.evidence = evidence
 
@@ -385,7 +385,7 @@ class TensorTrainOperator(StrictModule):
     ranks: tuple[int, ...] = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
-    def __init__(self, cores: Sequence[ArrayLike], /):
+    def __init__(self, cores: Sequence[ArrayLike], /) -> None:
         arrays = tuple(jnp.asarray(core) for core in cores)
         if not arrays or any(core.ndim != 4 for core in arrays):
             raise ValueError("TensorTrainOperator requires nonempty rank-four cores.")
@@ -744,7 +744,7 @@ class TensorTrainOperatorCompressionResult(StrictModule):
         operator: TensorTrainOperator,
         evidence: TTRoundingEvidence,
         /,
-    ):
+    ) -> None:
         self.operator = operator
         self.evidence = evidence
 

@@ -72,7 +72,7 @@ class MeanForceData(StrictModule, NonTrainableState):
         valid: ArrayLike | None = None,
         metrics: tuple[CollectiveVariableMetric, ...] | None = None,
         source_id: str,
-    ):
+    ) -> None:
         center = np.asarray(centers, dtype=np.float64)
         gradient = np.asarray(free_energy_gradients, dtype=np.float64)
         if center.ndim != 2 or center.shape[0] == 0 or gradient.shape != center.shape:
@@ -165,7 +165,7 @@ class RestrainedMeanForcePlan(StrictModule, NonTrainableState):
         /,
         *,
         metrics: tuple[CollectiveVariableMetric, ...] | None = None,
-    ):
+    ) -> None:
         center = np.asarray(centers, dtype=np.float64)
         if center.ndim != 2 or center.shape[0] == 0:
             raise ValueError("Restrained centers require shape (window, cv).")
@@ -287,7 +287,7 @@ class FreeEnergyTrainingPolicy(StrictModule, NonTrainableState):
         learning_rate: float = 1.0e-3,
         validation_interval: int = 10,
         patience: int | None = None,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         rate = float(learning_rate)
         interval = int(validation_interval)
@@ -541,7 +541,7 @@ class LearnedFreeEnergyBiasPlan(AbstractAtomisticBiasPlan):
         bias_fraction: float = 1.0,
         trusted_uncertainty: float = 0.0,
         rejected_uncertainty: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(variables, AbstractCollectiveVariableProgram):
             raise TypeError("variables must implement AbstractCollectiveVariableProgram.")
         members = tuple(models)
@@ -621,7 +621,7 @@ class PreparedLearnedFreeEnergyBias(AbstractPreparedAtomisticBias):
         plan: LearnedFreeEnergyBiasPlan,
         dynamics: PreparedAtomisticDynamics,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, LearnedFreeEnergyBiasPlan):
             raise TypeError("plan must be LearnedFreeEnergyBiasPlan.")
         if not isinstance(dynamics, PreparedAtomisticDynamics):

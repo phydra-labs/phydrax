@@ -135,7 +135,7 @@ class GeometryOperatorDiagnostics(StrictModule):
         target_mass_before_projection: Array | None,
         target_mass_after_projection: Array | None,
         conservation_correction: Array | None,
-    ):
+    ) -> None:
         self.processor = processor
         self.latent_coordinates = jnp.asarray(latent_coordinates)
         self.latent_measure = jnp.asarray(latent_measure)
@@ -182,7 +182,7 @@ class TensorGridProcessor(StrictModule):
         source_key: str = "latent",
         conditioning_channels: Sequence[tuple[str, int]] = (),
         supports_diagnostics: bool = False,
-    ):
+    ) -> None:
         self.model = model
         self.geometry = geometry
         self.channels = int(channels)
@@ -375,7 +375,7 @@ class _GeometryOperatorCore(StrictModule):
         latent_support_radius: float | None = None,
         conserve_mass: bool = False,
         conservation_source_key: str | None = None,
-    ):
+    ) -> None:
         encoders_ = tuple(encoders)
         channels_ = tuple(source_channels)
         keys_ = tuple(str(value) for value in source_keys)

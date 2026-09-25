@@ -57,7 +57,7 @@ class FunctionalSolveConfig:
         None
     )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         iterations = int(self.num_iter)
         log_every = int(self.log_every)
         flush_every = int(self.tensorboard_flush_every)

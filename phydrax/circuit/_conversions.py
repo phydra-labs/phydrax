@@ -306,7 +306,7 @@ class ScatteringMNAComponent(AbstractMNAComponent):
         /,
         *,
         component_id: str = "scattering-to-mna",
-    ):
+    ) -> None:
         if not isinstance(component, AbstractScatteringComponent):
             raise TypeError("component must be AbstractScatteringComponent.")
         if not all(

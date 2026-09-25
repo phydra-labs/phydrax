@@ -141,7 +141,7 @@ class StructuredFiniteVolumeFieldReconstructionKernel(
         *,
         location_tolerance: float,
         field_space_id: str,
-    ):
+    ) -> None:
         axes = tuple(np.asarray(values, dtype=np.float64) for values in edges)
         if not axes or any(
             values.ndim != 1
@@ -367,7 +367,7 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
         /,
         *,
         field_space_id: str,
-    ):
+    ) -> None:
         if not isinstance(locator, AbstractCellLocator):
             raise TypeError("locator must be an AbstractCellLocator.")
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):

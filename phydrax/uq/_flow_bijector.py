@@ -29,7 +29,7 @@ class AffineFlowBijector(AbstractBijector, ParameterOwner):
         /,
         *,
         architecture_id: str = "native-affine-flow",
-    ):
+    ) -> None:
         shift_ = np.asarray(shift)
         scale_ = np.asarray(scale)
         if shift_.shape != scale_.shape or not shift_.shape:

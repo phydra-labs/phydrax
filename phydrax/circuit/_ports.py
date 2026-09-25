@@ -26,7 +26,7 @@ class ElectricalWaveReference(StrictModule):
 
     def __init__(
         self, z0: ArrayLike, /, *, convention: WaveConvention = "kurokawa-power"
-    ):
+    ) -> None:
         if convention != "kurokawa-power":
             raise ValueError("Only the 'kurokawa-power' convention is supported.")
         impedance = jnp.asarray(z0)
@@ -64,7 +64,7 @@ class ModalWaveReference(StrictModule):
         normalization: str = "unit-flux",
         orientation: str = "into-component",
         reference_plane: ArrayLike = 0.0,
-    ):
+    ) -> None:
         identities = {
             "basis_id": str(basis_id),
             "mode_id": str(mode_id),
@@ -99,7 +99,7 @@ class WaveChannelAddress(StrictModule):
     port_id: PortId = eqx.field(static=True)
     coordinate_id: str = eqx.field(static=True)
 
-    def __init__(self, port_id: PortId, coordinate_id: str, /):
+    def __init__(self, port_id: PortId, coordinate_id: str, /) -> None:
         port, coordinate = str(port_id), str(coordinate_id)
         if not port or not coordinate:
             raise ValueError("Wave channel address IDs must be non-empty.")
@@ -120,7 +120,7 @@ class WavePort(StrictModule):
         /,
         *,
         coordinate_ids: Sequence[str] | None = None,
-    ):
+    ) -> None:
         identifier = str(port_id)
         if not identifier:
             raise ValueError("port_id must be non-empty.")

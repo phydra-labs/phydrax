@@ -57,7 +57,7 @@ class GraphEikonalRoute(StrictModule, NonTrainableState):
         /,
         *,
         maximum_sweeps: int | None = None,
-    ):
+    ) -> None:
         nodes = np.asarray(node_ids, dtype=np.int64)
         edges = np.asarray(edge_ids, dtype=np.int64)
         incidence = np.asarray(edge_nodes, dtype=np.int32)
@@ -111,7 +111,7 @@ class FiniteElementEikonalRoute(StrictModule, NonTrainableState):
         /,
         *,
         maximum_sweeps: int | None = None,
-    ):
+    ) -> None:
         nodes = np.asarray(node_ids, dtype=np.int64)
         element_id_values = np.asarray(element_ids, dtype=np.int64)
         cells = np.asarray(elements, dtype=np.int32)
@@ -172,7 +172,7 @@ class AnisotropicEikonalPlan(StrictModule, NonTrainableState):
         *,
         residual_tolerance_ms: float = 1.0e-7,
         path_tie_tolerance_ms: float = 1.0e-7,
-    ):
+    ) -> None:
         if not isinstance(route, (GraphEikonalRoute, FiniteElementEikonalRoute)):
             raise TypeError(
                 "route must be GraphEikonalRoute or FiniteElementEikonalRoute."

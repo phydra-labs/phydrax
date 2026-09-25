@@ -236,7 +236,7 @@ class Z4cSystem(StrictModule, NonTrainableState):
         damping_coupling: float = 0.0,
         einstein_coupling: float = 8.0 * pi,
         constraint_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         if scale.gravitational_constant != 1 or scale.speed_of_light != 1:

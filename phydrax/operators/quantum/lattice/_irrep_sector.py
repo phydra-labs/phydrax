@@ -79,7 +79,7 @@ class FiniteGroupIrrepPlan(StrictModule):
         antiunitary_generators: Sequence[str] = (),
         projective: bool = False,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         label_ = _identifier(label, "irrep label")
         if not isinstance(generator_matrices, Mapping) or not generator_matrices:
             raise TypeError("generator_matrices must be a non-empty mapping.")

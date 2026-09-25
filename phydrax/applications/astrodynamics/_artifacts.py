@@ -105,7 +105,7 @@ class AstrodynamicsDataStore(StrictModule, NonTrainableState):
     root: str = eqx.field(static=True)
     store_id: str = eqx.field(static=True)
 
-    def __init__(self, root: str | Path, /):
+    def __init__(self, root: str | Path, /) -> None:
         path = Path(root).expanduser().resolve()
         if not path.is_dir():
             raise ValueError(
@@ -158,7 +158,7 @@ class AstronomyCoefficientTable(StrictModule, NonTrainableState):
         coefficients: dict[str, object],
         provenance: AstrodynamicsDataProvenance,
         /,
-    ):
+    ) -> None:
         names = tuple(sorted(str(name) for name in coefficients))
         values = tuple(
             jax.lax.stop_gradient(jnp.asarray(coefficients[name], dtype=jnp.float64))

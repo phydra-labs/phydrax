@@ -57,7 +57,7 @@ class NonanalyticPhononCorrection(StrictModule, NonTrainableState):
         cell_id: str,
         charge_neutrality_tolerance: float = 1.0e-8,
         dielectric_symmetry_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         born = np.asarray(born_effective_charges, dtype=np.float64)
         dielectric = np.asarray(dielectric_tensor, dtype=np.float64)
         if born.ndim != 3 or born.shape[1:] != (3, 3) or dielectric.shape != (3, 3):
@@ -137,7 +137,7 @@ class PhononDispersionResult(StrictModule, NonTrainableState):
         ifc_id,
         unit_system_id,
         /,
-    ):
+    ) -> None:
         self.fractional_qpoints = jnp.asarray(qpoints)
         self.cartesian_qpoints = jnp.asarray(
             cartesian, dtype=self.fractional_qpoints.dtype
@@ -188,7 +188,9 @@ class PhononGroupVelocityResult(StrictModule, NonTrainableState):
     successful: Array
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, velocities, projected, cluster_ids, successful, dispersion_id, /):
+    def __init__(
+        self, velocities, projected, cluster_ids, successful, dispersion_id, /
+    ) -> None:
         self.velocities = jnp.asarray(velocities)
         self.projected_velocity_matrices = jnp.asarray(projected)
         self.cluster_ids = jnp.asarray(cluster_ids, dtype=jnp.int32)
@@ -227,7 +229,7 @@ class HarmonicPhononPlan(StrictModule, NonTrainableState):
         maximum_qpoints: int = 32768,
         maximum_dense_eigen_work: int = 10_000_000_000,
         acoustic_tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         if not isinstance(ifc2, SecondOrderForceConstants):
             raise TypeError("ifc2 must be SecondOrderForceConstants.")
         if not isinstance(units, AtomisticUnitSystem):
@@ -289,7 +291,7 @@ class PreparedHarmonicPhonons(StrictModule, NonTrainableState):
     family: PreparedPeriodicTranslationFamily
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, family, /):
+    def __init__(self, plan, family, /) -> None:
         self.plan = plan
         self.family = family
         self.prepared_id = canonical_fingerprint(

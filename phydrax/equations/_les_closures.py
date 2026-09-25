@@ -75,7 +75,7 @@ class ResolvedLESFilter(StrictModule, NonTrainableState):
         scale_rule: _LESScaleRule,
         commutation_status: _LESCommutationStatus,
         repeated_filter_semantics: _LESRepeatedFilterSemantics,
-    ):
+    ) -> None:
         if not isinstance(name, str):
             raise TypeError("Resolved LES filter name must be a string.")
         normalized = name.strip()
@@ -165,7 +165,7 @@ class LESFilterScale(StrictModule):
 
     directional_widths: Array
 
-    def __init__(self, directional_widths: ArrayLike, /):
+    def __init__(self, directional_widths: ArrayLike, /) -> None:
         widths = jnp.asarray(directional_widths)
         if not jnp.issubdtype(widths.dtype, jnp.inexact):
             widths = widths.astype(inexact_result_type(widths))
@@ -203,7 +203,7 @@ class LESParameterProvenance(StrictModule, NonTrainableState):
         *,
         source_kind: _LESParameterSourceKind,
         evidence_ids: tuple[str, ...],
-    ):
+    ) -> None:
         if not isinstance(resolved_filter, ResolvedLESFilter):
             raise TypeError("resolved_filter must be a ResolvedLESFilter.")
         if not isinstance(discretization_id, str) or not isinstance(regime, str):
@@ -251,7 +251,7 @@ class AlgebraicLESInputs(StrictModule):
         velocity_gradient: ArrayLike,
         filter_scale: LESFilterScale,
         /,
-    ):
+    ) -> None:
         if not isinstance(filter_scale, LESFilterScale):
             raise TypeError("filter_scale must be a LESFilterScale.")
         gradient = jnp.asarray(velocity_gradient)
@@ -306,7 +306,7 @@ class PreparedAlgebraicLESModel(StrictModule, NonTrainableState):
         model: AbstractAlgebraicLESModel,
         provenance: LESParameterProvenance,
         /,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractAlgebraicLESModel):
             raise TypeError("model must be an AbstractAlgebraicLESModel.")
         if not isinstance(provenance, LESParameterProvenance):
@@ -346,7 +346,7 @@ class SmagorinskyLESPlan(AbstractAlgebraicLESModel):
     formula: _LESFormula = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, coefficient: ArrayLike, /):
+    def __init__(self, coefficient: ArrayLike, /) -> None:
         self.coefficient = _validated_coefficient(coefficient, "Smagorinsky")
         self.formula = "smagorinsky"
         self.model_id = _formula_id(self.formula)
@@ -359,7 +359,7 @@ class WALELESPlan(AbstractAlgebraicLESModel):
     formula: _LESFormula = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, coefficient: ArrayLike, /):
+    def __init__(self, coefficient: ArrayLike, /) -> None:
         self.coefficient = _validated_coefficient(coefficient, "WALE")
         self.formula = "wale"
         self.model_id = _formula_id(self.formula)
@@ -372,7 +372,7 @@ class VremanLESPlan(AbstractAlgebraicLESModel):
     formula: _LESFormula = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, coefficient: ArrayLike, /):
+    def __init__(self, coefficient: ArrayLike, /) -> None:
         self.coefficient = _validated_coefficient(coefficient, "Vreman")
         self.formula = "vreman"
         self.model_id = _formula_id(self.formula)
@@ -385,7 +385,7 @@ class AMDLESPlan(AbstractAlgebraicLESModel):
     formula: _LESFormula = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, coefficient: ArrayLike, /):
+    def __init__(self, coefficient: ArrayLike, /) -> None:
         self.coefficient = _validated_coefficient(coefficient, "AMD")
         self.formula = "amd"
         self.model_id = _formula_id(self.formula)

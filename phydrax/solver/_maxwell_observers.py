@@ -73,7 +73,7 @@ class FieldProbePlan(AbstractMaxwellObserverPlan):
         /,
         *,
         weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         if field not in ("electric", "magnetic"):
             raise ValueError("Probe field must be 'electric' or 'magnetic'.")
         indices_ = np.asarray(indices)
@@ -124,7 +124,7 @@ class PreparedFieldProbe(AbstractPreparedMaxwellObserver):
     weights: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: FieldProbePlan, /):
+    def __init__(self, plan: FieldProbePlan, /) -> None:
         self.field = plan.field
         self.indices = plan.indices
         self.weights = plan.weights
@@ -177,7 +177,7 @@ class DFTObserverPlan(AbstractMaxwellObserverPlan):
         *,
         start_time: float = 0.0,
         stop_time: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(probe, FieldProbePlan):
             raise TypeError("probe must be a FieldProbePlan.")
         frequencies = jnp.asarray(angular_frequencies, dtype=jnp.float64)
@@ -223,7 +223,7 @@ class PreparedDFTObserver(AbstractPreparedMaxwellObserver):
     stop_time: float | None = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: DFTObserverPlan, probe: PreparedFieldProbe, /):
+    def __init__(self, plan: DFTObserverPlan, probe: PreparedFieldProbe, /) -> None:
         self.probe = probe
         self.angular_frequencies = plan.angular_frequencies
         self.start_time = plan.start_time
@@ -275,7 +275,7 @@ class PoyntingFluxPlan(StrictModule):
     measures: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, normals: ArrayLike, measures: ArrayLike, /):
+    def __init__(self, normals: ArrayLike, measures: ArrayLike, /) -> None:
         normals_ = jnp.asarray(normals, dtype=jnp.float64)
         measures_ = jnp.asarray(measures, dtype=jnp.float64)
         if normals_.ndim != 2 or normals_.shape[1] != 3:
@@ -329,7 +329,7 @@ class SynchronizedEnergyObserverPlan(AbstractMaxwellObserverPlan):
         electric_weights: ArrayLike,
         magnetic_weights: ArrayLike,
         /,
-    ):
+    ) -> None:
         electric = jnp.asarray(electric_weights, dtype=jnp.float64)
         magnetic = jnp.asarray(magnetic_weights, dtype=jnp.float64)
         if electric.ndim != 1 or magnetic.ndim != 1:
@@ -372,7 +372,7 @@ class PreparedSynchronizedEnergyObserver(AbstractPreparedMaxwellObserver):
     magnetic_weights: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: SynchronizedEnergyObserverPlan, /):
+    def __init__(self, plan: SynchronizedEnergyObserverPlan, /) -> None:
         self.electric_weights = plan.electric_weights
         self.magnetic_weights = plan.magnetic_weights
         self.prepared_id = canonical_fingerprint(
@@ -425,7 +425,7 @@ class ModeAmplitudeObserverPlan(AbstractMaxwellObserverPlan):
         /,
         *,
         direction: int = 1,
-    ):
+    ) -> None:
         electric = jnp.asarray(electric_modes)
         magnetic = jnp.asarray(magnetic_modes)
         frequencies = jnp.asarray(angular_frequencies, dtype=jnp.float64)
@@ -476,7 +476,7 @@ class PreparedModeAmplitudeObserver(AbstractPreparedMaxwellObserver):
     direction: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ModeAmplitudeObserverPlan, /):
+    def __init__(self, plan: ModeAmplitudeObserverPlan, /) -> None:
         self.electric_modes = plan.electric_modes
         self.magnetic_modes = plan.magnetic_modes
         self.angular_frequencies = plan.angular_frequencies

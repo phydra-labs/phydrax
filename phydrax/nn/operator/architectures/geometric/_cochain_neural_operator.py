@@ -98,7 +98,7 @@ class TopologicalRouteConfig(StrictModule):
         lower_laplacian: bool = True,
         upper_laplacian: bool = True,
         harmonic: bool = False,
-    ):
+    ) -> None:
         values = (
             bool(self_route),
             bool(exterior_derivative),
@@ -161,7 +161,7 @@ class TopologicalCochainBlock(StrictModule):
         norm_epsilon: float = 1e-6,
         residual_scale: float = 0.25,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         resolved_width = int(width)
         degrees = tuple(sorted({int(value) for value in active_degrees}))
         if resolved_width <= 0:
@@ -357,7 +357,7 @@ class CochainNeuralOperator(AbstractOperatorModel):
         default_target: str | None = None,
         norm_epsilon: float = 1e-6,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         specs = tuple(fields)
         if not specs or any(not isinstance(field, OperatorFieldSpec) for field in specs):
             raise TypeError("CochainNeuralOperator requires OperatorFieldSpec fields.")

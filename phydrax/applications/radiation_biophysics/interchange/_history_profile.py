@@ -72,7 +72,7 @@ class TimedRadiationHistoryProfile:
         dosimetry_reference: ReferenceArtifactManifest | None,
         transport_reference: ReferenceArtifactManifest | None,
         chemical_reference: ReferenceArtifactManifest | None,
-    ):
+    ) -> None:
         if not isinstance(source, RadiationSource):
             raise TypeError("source must be RadiationSource.")
         if (

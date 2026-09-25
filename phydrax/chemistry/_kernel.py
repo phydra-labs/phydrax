@@ -40,7 +40,7 @@ class ElectronicKernelEvaluation(StrictModule):
         point_charge_forces: ArrayLike | None = None,
         iterations: ArrayLike = 0,
         residual: ArrayLike = jnp.nan,
-    ):
+    ) -> None:
         energy_ = jnp.asarray(energy).reshape(())
         forces_ = jnp.asarray(forces, dtype=energy_.dtype)
         if forces_.ndim != 2 or forces_.shape[1] != 3:
@@ -89,7 +89,9 @@ class PotentialEnergyKernelEvaluation(StrictModule):
     forces: Array
     successful: Array
 
-    def __init__(self, energy: ArrayLike, forces: ArrayLike, successful: ArrayLike, /):
+    def __init__(
+        self, energy: ArrayLike, forces: ArrayLike, successful: ArrayLike, /
+    ) -> None:
         energy_ = jnp.asarray(energy).reshape(())
         forces_ = jnp.asarray(forces, dtype=energy_.dtype)
         if forces_.ndim != 2 or forces_.shape[1] != 3:

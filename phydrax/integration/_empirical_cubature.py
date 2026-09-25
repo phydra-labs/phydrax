@@ -27,7 +27,7 @@ class EmpiricalCubaturePlan(StrictModule):
 
     method: MomentRecombination
 
-    def __init__(self, method: MomentRecombination | None = None, /):
+    def __init__(self, method: MomentRecombination | None = None, /) -> None:
         resolved = MomentRecombination() if method is None else method
         if not isinstance(resolved, MomentRecombination):
             raise TypeError("method must be a MomentRecombination or None.")

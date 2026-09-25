@@ -106,7 +106,7 @@ class RecoveryTerms(StrictModule):
         timing: DefaultTimingConvention,
         settlement_lag: ArrayLike = 0.0,
         terms_id: str,
-    ):
+    ) -> None:
         rate_ = _scalar(rate, "recovery rate", nonnegative=True)
         if float(np.asarray(jax.device_get(rate_))) > 1.0:
             raise ValueError("recovery rate must not exceed one.")
@@ -151,7 +151,7 @@ class DefaultEventState(StrictModule):
         realization_id: str,
         coupling_id: str,
         recovery_terms_id: str,
-    ):
+    ) -> None:
         times = jnp.asarray(default_times, dtype=jnp.float64)
         event_mask = jnp.asarray(occurred)
         recovery = jnp.asarray(recoveries, dtype=jnp.float64)
@@ -217,7 +217,7 @@ class CreditPayoff(AbstractPayoff):
         reference_entity_id: str,
         kind: CreditPayoffKind,
         /,
-    ):
+    ) -> None:
         if kind not in ("defaultable_bond", "credit_default_swap"):
             raise ValueError("Unsupported credit payoff kind.")
         self.payoff_id = _identifier(payoff_id, "payoff_id")
@@ -252,7 +252,7 @@ class DefaultableBondContract(AbstractResolvedContract):
         *,
         contract_id: str,
         default_boundary_side: DefaultBoundarySide = "before_payment",
-    ):
+    ) -> None:
         if not isinstance(instrument, InstrumentReference):
             raise TypeError("instrument must be an InstrumentReference.")
         if not isinstance(face, CurrencyAmount):
@@ -360,7 +360,7 @@ class CreditDefaultSwapContract(AbstractResolvedContract):
         protection_side: ProtectionSide,
         accrued_on_default: bool = True,
         default_boundary_side: DefaultBoundarySide = "before_payment",
-    ):
+    ) -> None:
         if not isinstance(instrument, InstrumentReference):
             raise TypeError("instrument must be an InstrumentReference.")
         if not isinstance(notional, CurrencyAmount):

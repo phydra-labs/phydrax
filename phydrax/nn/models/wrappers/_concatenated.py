@@ -35,7 +35,7 @@ class ConcatenatedModel(_AbstractStructuredInputModel):
     in_size: int | tuple[int, ...] | Literal["scalar"]
     out_size: int | tuple[int, ...] | Literal["scalar"]
 
-    def __init__(self, models: Sequence[_AbstractBaseModel], *, axis: int = -1):
+    def __init__(self, models: Sequence[_AbstractBaseModel], *, axis: int = -1) -> None:
         if not models:
             raise ValueError("ConcatenatedModel requires at least one model.")
         first_in_size = models[0].in_size

@@ -40,7 +40,7 @@ class PanelInteractionReport2D(StrictModule):
         /,
         *,
         near_ratio: float = 4.0,
-    ):
+    ) -> None:
         if not isinstance(panelization, BoundaryPanelization2D):
             raise TypeError("panelization must be BoundaryPanelization2D.")
         ratio = float(near_ratio)

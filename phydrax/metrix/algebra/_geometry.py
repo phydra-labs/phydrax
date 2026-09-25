@@ -33,7 +33,9 @@ class _AbstractUnitCoordinateStateGeometry(AbstractStateGeometry):
     def _algebra_marker(self) -> str:
         raise NotImplementedError
 
-    def __init__(self, algebra: AbstractFiniteRealAlgebraSpec, tolerance: float, /):
+    def __init__(
+        self, algebra: AbstractFiniteRealAlgebraSpec, tolerance: float, /
+    ) -> None:
         tolerance_ = float(tolerance)
         if tolerance_ <= 0.0:
             raise ValueError("Unit algebra geometry tolerance must be positive.")
@@ -186,7 +188,7 @@ class _AbstractUnitCoordinateStateGeometry(AbstractStateGeometry):
 
 
 class UnitComplexStateGeometry(_AbstractUnitCoordinateStateGeometry):
-    def __init__(self, *, tolerance: float = 1e-9):
+    def __init__(self, *, tolerance: float = 1e-9) -> None:
         super().__init__(ComplexAlgebraSpec(), tolerance)
 
     def _algebra_marker(self) -> str:
@@ -194,7 +196,7 @@ class UnitComplexStateGeometry(_AbstractUnitCoordinateStateGeometry):
 
 
 class UnitQuaternionStateGeometry(_AbstractUnitCoordinateStateGeometry):
-    def __init__(self, *, tolerance: float = 1e-9):
+    def __init__(self, *, tolerance: float = 1e-9) -> None:
         super().__init__(QuaternionAlgebraSpec(), tolerance)
 
     def _algebra_marker(self) -> str:

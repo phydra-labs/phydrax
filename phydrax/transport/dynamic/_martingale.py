@@ -85,7 +85,7 @@ class MartingaleSchrodingerBridgeProblem(StrictModule):
         *,
         martingale_coordinates: ArrayLike | None = None,
         constraint_tolerance: float = 1e-7,
-    ):
+    ) -> None:
         if not isinstance(bridge, SchrodingerBridgeProblem):
             raise TypeError("bridge must be a SchrodingerBridgeProblem.")
         tolerance = float(constraint_tolerance)
@@ -196,7 +196,7 @@ class MartingaleSchrodingerBridgeSolver(StrictModule):
         moment_iterations: int = 64,
         tolerance: float = 1e-8,
         max_path_entries: int = 1_000_000,
-    ):
+    ) -> None:
         iterations = int(max_iterations)
         moments = int(moment_iterations)
         tolerance_ = float(tolerance)

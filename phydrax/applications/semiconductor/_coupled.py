@@ -43,7 +43,7 @@ class MaterialInterface(StrictModule):
         potential_jump=0.0,
         electron_law=None,
         hole_law=None,
-    ):
+    ) -> None:
         if not isinstance(edge, int) or edge < 0 or not 0 < fraction < 1:
             raise ValueError(
                 "An interface needs an edge and a strictly interior fraction."
@@ -79,7 +79,7 @@ class TrapBinding(StrictModule):
     location: int = eqx.field(static=True)
     initial_occupancy: jax.Array
 
-    def __init__(self, trap, location, *, initial_occupancy=0.5):
+    def __init__(self, trap, location, *, initial_occupancy=0.5) -> None:
         if (
             not isinstance(trap, DynamicTrap)
             or not isinstance(location, int)
@@ -101,7 +101,7 @@ class ThermalPort(StrictModule):
     node: int = eqx.field(static=True)
     exchange: ThermalBoundaryExchange
 
-    def __init__(self, name, node, exchange):
+    def __init__(self, name, node, exchange) -> None:
         if (
             not isinstance(name, str)
             or not name
@@ -122,7 +122,7 @@ class TunnelingChannel(StrictModule):
     energy: jax.Array
     attempt_rate: jax.Array
 
-    def __init__(self, path, energy, attempt_rate):
+    def __init__(self, path, energy, attempt_rate) -> None:
         energy_host, attempt_host = np.asarray(energy), np.asarray(attempt_rate)
         if (
             not isinstance(path, NonlocalTunnelingPath)

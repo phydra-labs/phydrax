@@ -51,7 +51,7 @@ class NeutralArrayPayload(StrictModule, NonTrainableState):
         array_names: Sequence[str],
         metadata: Mapping[str, object],
         /,
-    ):
+    ) -> None:
         names = tuple(str(value).strip() for value in array_names)
         values = tuple(np.asarray(value) for value in arrays)
         if (

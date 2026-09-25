@@ -39,7 +39,7 @@ class BEMFractureProblem3D(StrictModule, NonTrainableState):
         cohesive_strength: float = 0.0,
         relaxation: float = 0.1,
         maximum_iterations: int = 100,
-    ):
+    ) -> None:
         if not isinstance(traction_operator, AbstractLinearOperator):
             raise TypeError(
                 "traction_operator must be a prepared conforming BEM operator."

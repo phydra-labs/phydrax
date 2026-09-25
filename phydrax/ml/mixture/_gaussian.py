@@ -432,7 +432,7 @@ class MixtureDiagnostics(StrictModule):
         singular_components_seen: Array,
         converged: Array,
         method: str,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.negative_log_likelihood = jnp.asarray(negative_log_likelihood)
@@ -478,7 +478,7 @@ class GaussianMixtureModel(AbstractFittedModel):
         /,
         *,
         covariance_type: CovarianceType,
-    ):
+    ) -> None:
         self.mixing_weights = jnp.asarray(mixing_weights)
         self.means = jnp.asarray(means)
         self.covariance = jnp.asarray(covariance)
@@ -562,7 +562,7 @@ class BayesianGaussianMixtureModel(AbstractFittedModel):
         /,
         *,
         covariance_type: CovarianceType,
-    ):
+    ) -> None:
         self.mixing_weights = jnp.asarray(mixing_weights)
         self.means = jnp.asarray(means)
         self.covariance = jnp.asarray(covariance)
@@ -648,7 +648,7 @@ class GaussianMixture(AbstractRecipe):
         initialization: MixtureInitialization = "random",
         empty_policy: EmptyComponentPolicy = "reseed",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if component_count <= 0 or max_iterations <= 0:
             raise ValueError("component_count and max_iterations must be positive.")
         if (
@@ -776,7 +776,7 @@ class BayesianGaussianMixture(AbstractRecipe):
         initialization: MixtureInitialization = "random",
         empty_policy: EmptyComponentPolicy = "retain",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if component_count <= 0 or max_iterations <= 0:
             raise ValueError("component_count and max_iterations must be positive.")
         if (

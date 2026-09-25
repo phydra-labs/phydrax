@@ -27,7 +27,7 @@ class PICResourcePolicy(StrictModule, NonTrainableState):
         maximum_state_bytes: int = 1024**3,
         maximum_workspace_bytes: int = 2 * 1024**3,
         maximum_segments_per_particle: int = 4,
-    ):
+    ) -> None:
         state = int(maximum_state_bytes)
         workspace = int(maximum_workspace_bytes)
         segments = int(maximum_segments_per_particle)
@@ -59,7 +59,9 @@ class RelativisticBorisPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, speed_of_light: float = 1.0, /, *, tolerance: float = 1.0e-12):
+    def __init__(
+        self, speed_of_light: float = 1.0, /, *, tolerance: float = 1.0e-12
+    ) -> None:
         light = float(speed_of_light)
         tolerance_ = float(tolerance)
         if not np.isfinite(light) or light <= 0.0:

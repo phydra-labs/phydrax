@@ -44,7 +44,7 @@ class TensorCompletionPlan(StrictModule):
         relative_tolerance: float,
         regularization: float,
         max_local_unknowns: int,
-    ):
+    ) -> None:
         raw_modes = tuple(mode_sizes)
         integer_fields = raw_modes + (max_rank, sweeps, max_local_unknowns)
         if any(
@@ -110,7 +110,7 @@ class TensorCompletionEvidence(StrictModule):
         *,
         observed_count: int,
         holdout_count: int,
-    ):
+    ) -> None:
         training = jnp.asarray(training_errors)
         holdout = jnp.asarray(holdout_errors)
         if training.ndim != 1 or holdout.shape != training.shape:
@@ -142,7 +142,7 @@ class TensorCompletionResult(StrictModule):
         evidence: TensorCompletionEvidence,
         converged: Array,
         /,
-    ):
+    ) -> None:
         self.tensor = tensor
         self.evidence = evidence
         self.converged = jnp.asarray(converged, dtype=jnp.bool_)

@@ -33,7 +33,7 @@ class ReferenceRefinementTemplate(StrictModule, NonTrainableState):
         /,
         *,
         anisotropic_axes: Sequence[int] = (),
-    ):
+    ) -> None:
         parent = str(parent_cell_kind)
         children = tuple(str(value) for value in child_cell_kinds)
         matrices = np.asarray(affine_matrices, dtype=np.float64)
@@ -134,7 +134,7 @@ class GeneralHPForest(StrictModule, NonTrainableState):
         polynomial_orders: ArrayLike,
         template_ids: Sequence[str | None],
         /,
-    ):
+    ) -> None:
         kinds = tuple(str(value) for value in cell_kinds)
         parents = np.asarray(parent_slots, dtype=np.int32)
         children = np.asarray(child_slots, dtype=np.int32)
@@ -218,7 +218,7 @@ class NonconformingFacetOverlay(StrictModule, NonTrainableState):
         neighbor_levels: ArrayLike,
         mortar_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         owner = np.asarray(owner_cells, dtype=np.int32)
         neighbor = np.asarray(neighbor_cells, dtype=np.int32)
         owner_maps = np.asarray(owner_subface_maps, dtype=np.float64)

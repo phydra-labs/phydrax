@@ -33,7 +33,7 @@ class LinearElasticPhaseMaterial(StrictModule, NonTrainableState):
         /,
         *,
         material_id: str,
-    ):
+    ) -> None:
         tensor = np.asarray(stiffness)
         transformation = np.asarray(eigenstrain)
         identifier = str(material_id)
@@ -111,7 +111,7 @@ class PhaseMechanicalModel(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, materials: Sequence[LinearElasticPhaseMaterial], /):
+    def __init__(self, materials: Sequence[LinearElasticPhaseMaterial], /) -> None:
         values = tuple(materials)
         if (
             len(values) < 2
@@ -229,7 +229,7 @@ class PhaseHyperelasticModel(StrictModule, NonTrainableState):
         laws: Sequence[MixedHyperelasticLaw],
         law_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         values = tuple(laws)
         identifiers = tuple(str(value) for value in law_ids)
         if (

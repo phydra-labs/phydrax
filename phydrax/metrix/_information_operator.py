@@ -28,7 +28,7 @@ class _DampedInformationAction(StrictModule):
     action: Callable[[Array], Array]
     damping: Array
 
-    def __init__(self, action: Callable[[Array], Array], damping: ArrayLike, /):
+    def __init__(self, action: Callable[[Array], Array], damping: ArrayLike, /) -> None:
         self.action = action
         self.damping = jnp.asarray(damping)
 
@@ -55,7 +55,7 @@ class InformationMetricOperator(StrictModule):
         damping: ArrayLike = 0.0,
         metric_id: str,
         precision: GeometryPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(action):
             raise TypeError("action must be callable.")
         original = jnp.asarray(coordinates)

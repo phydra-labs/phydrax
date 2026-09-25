@@ -102,7 +102,7 @@ class _DistributedPeriodicFullFlowDrift(StrictModule):
         backend: PreparedDistributedPeriodicLES,
         constant_power_forcing: ConstantPowerFourierForcingPlan | None,
         /,
-    ):
+    ) -> None:
         if problem.spatial_dimension != 3:
             raise ValueError(
                 "Distributed periodic LES requires a three-dimensional problem."
@@ -254,7 +254,7 @@ class CompiledDistributedPeriodicLESDynamics(StrictModule, NonTrainableState):
         /,
         *,
         constant_power_forcing: ConstantPowerFourierForcingPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(problem, IncompressibleFlowProblem):
             raise TypeError("problem must be an IncompressibleFlowProblem.")
         if not isinstance(source_plan, DistributedPeriodicLESPlan):
@@ -370,7 +370,7 @@ class DistributedPeriodicLESMethodPlan(StrictModule, NonTrainableState):
         /,
         *,
         safety_factor: float = 0.8,
-    ):
+    ) -> None:
         if method not in ("etdrk2", "etdrk4", "ssprk33", "ssprk54"):
             raise ValueError("Distributed LES method is unsupported.")
         safety = float(safety_factor)
@@ -414,7 +414,7 @@ class PreparedDistributedPeriodicLESMethod(AbstractFixedStepMethod, NonTrainable
         dynamics: CompiledDistributedPeriodicLESDynamics,
         coordinates: HermitianSpectralCoordinates,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, DistributedPeriodicLESMethodPlan):
             raise TypeError("plan must be a DistributedPeriodicLESMethodPlan.")
         if not isinstance(dynamics, CompiledDistributedPeriodicLESDynamics):
@@ -681,7 +681,7 @@ class DistributedPeriodicLESStatisticsPlan(StrictModule, NonTrainableState):
         dynamics: CompiledDistributedPeriodicLESDynamics,
         coordinates: HermitianSpectralCoordinates,
         /,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledDistributedPeriodicLESDynamics):
             raise TypeError("dynamics has the wrong compiled type.")
         if not isinstance(coordinates, HermitianSpectralCoordinates):
@@ -830,7 +830,7 @@ class _DistributedPeriodicLESStatisticsEvaluator(StrictModule):
         method: PreparedDistributedPeriodicLESMethod,
         statistics: DistributedPeriodicLESStatisticsPlan,
         /,
-    ):
+    ) -> None:
         self.method = method
         self.statistics = statistics
         self.evaluator_id = canonical_fingerprint(
@@ -903,7 +903,7 @@ class DistributedPeriodicLESProductionCase(StrictModule, NonTrainableState):
         /,
         *,
         case_id: str,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledDistributedPeriodicLESDynamics):
             raise TypeError("dynamics has the wrong compiled distributed type.")
         label = str(case_id)
@@ -1036,7 +1036,7 @@ class DistributedPeriodicLESProductionPlan(StrictModule):
         statistics_window_end: float | None = None,
         statistics_batch_duration: float | None = None,
         maximum_statistics_batches: int = 0,
-    ):
+    ) -> None:
         if not isinstance(source_plan, DistributedPeriodicLESPlan):
             raise TypeError("source_plan must be a DistributedPeriodicLESPlan.")
         if source_plan.checkpoint_count < 1:
@@ -1214,7 +1214,7 @@ class PreparedDistributedPeriodicLESProduction(_PreparedProductionRoute):
         args: Any = None,
         args_id: str | None = None,
         publisher: ByteBoundedAsyncPublisher | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, DistributedPeriodicLESProductionPlan):
             raise TypeError("plan must be DistributedPeriodicLESProductionPlan.")
         self._bind_runtime(

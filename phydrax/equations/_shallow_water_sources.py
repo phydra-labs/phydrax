@@ -32,7 +32,7 @@ class ShallowWaterCoriolisSource(StrictModule, NonTrainableState):
         *,
         beta: float = 0.0,
         meridional_axis: int = 1,
-    ):
+    ) -> None:
         f0_ = float(f0)
         beta_ = float(beta)
         axis = int(meridional_axis)

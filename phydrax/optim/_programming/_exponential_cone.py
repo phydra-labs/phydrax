@@ -490,7 +490,7 @@ def _smoothness_margin(value: Array, /) -> Array:
 class ExponentialCone(AbstractConvexCone):
     """Three-dimensional exponential cone in canonical ``(x, y, z)`` order."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.dimension = 3
         self.cone_id = canonical_fingerprint({"kind": "exponential-cone"})
 

@@ -66,7 +66,9 @@ class UniformShootingSelector(AbstractShootingSelector, NonTrainableState):
     endpoint_margin: int = eqx.field(static=True)
     selector_id: str = eqx.field(static=True)
 
-    def __init__(self, endpoint_margin: int = 1, *, selector_id: str | None = None):
+    def __init__(
+        self, endpoint_margin: int = 1, *, selector_id: str | None = None
+    ) -> None:
         margin = int(endpoint_margin)
         if margin < 0:
             raise ValueError("endpoint_margin must be non-negative.")
@@ -109,7 +111,7 @@ class WeightedShootingSelector(AbstractShootingSelector, NonTrainableState):
         *,
         endpoint_margin: int = 1,
         selector_id: str,
-    ):
+    ) -> None:
         if not callable(log_weight):
             raise TypeError("log_weight must be callable.")
         margin = int(endpoint_margin)
@@ -194,7 +196,7 @@ class GaussianShootingModifier(AbstractShootingModifier, NonTrainableState):
     scale: float = eqx.field(static=True)
     modifier_id: str = eqx.field(static=True)
 
-    def __init__(self, scale: float, /, *, modifier_id: str | None = None):
+    def __init__(self, scale: float, /, *, modifier_id: str | None = None) -> None:
         scale_ = float(scale)
         if not isfinite(scale_) or scale_ <= 0.0:
             raise ValueError("scale must be finite and positive.")

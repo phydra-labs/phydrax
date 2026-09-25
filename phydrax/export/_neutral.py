@@ -64,7 +64,7 @@ class NeutralGeometrySchema(StrictModule, NonTrainableState):
         *,
         cells: ArrayLike | None = None,
         units: str = "dimensionless",
-    ):
+    ) -> None:
         coordinates_ = _array("coordinates", coordinates, rank=2)
         if jnp.iscomplexobj(coordinates_):
             raise TypeError("Geometry coordinates must be real-valued.")
@@ -111,7 +111,7 @@ class NeutralMaterialSchema(StrictModule, NonTrainableState):
         /,
         *,
         units: Mapping[str, str] | None = None,
-    ):
+    ) -> None:
         if not fields:
             raise ValueError("Neutral material schema requires fields.")
         arrays = tuple(
@@ -169,7 +169,7 @@ class NeutralFieldSchema(StrictModule, NonTrainableState):
         time: float | None = None,
         angular_frequency: float | None = None,
         units: str = "dimensionless",
-    ):
+    ) -> None:
         name_ = str(name)
         values_ = _array("field values", values)
         degree = None if cochain_degree is None else int(cochain_degree)
@@ -229,7 +229,7 @@ class NeutralPointCloudSchema(StrictModule, NonTrainableState):
         /,
         *,
         neighborhoods: ArrayLike | None = None,
-    ):
+    ) -> None:
         points_ = _array("point cloud", points, rank=2)
         if jnp.iscomplexobj(points_):
             raise TypeError("Point-cloud coordinates must be real-valued.")
@@ -294,7 +294,7 @@ class NeutralAdapterBoundary(StrictModule, NonTrainableState):
             "field",
             "point_cloud",
         ),
-    ):
+    ) -> None:
         if not allowed_kinds or any(
             value not in ("geometry", "material", "field", "point_cloud")
             for value in allowed_kinds

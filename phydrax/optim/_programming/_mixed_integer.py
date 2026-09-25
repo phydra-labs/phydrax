@@ -67,7 +67,7 @@ class MixedIntegerProgram(StrictModule):
         integer_indices: tuple[int, ...] = (),
         binary_indices: tuple[int, ...] = (),
         program_id: str = "bounded-mixed-integer-convex-program",
-    ):
+    ) -> None:
         if not isinstance(relaxation, (LinearProgram, QuadraticProgram, ConicProgram)):
             raise TypeError("relaxation must be a canonical convex program.")
         if relaxation.batch_shape:
@@ -133,7 +133,7 @@ class MixedIntegerCandidate(StrictModule, NonTrainableState):
         reported_objective: ArrayLike | None = None,
         source_kind: str = "caller",
         source_id: str = "caller-supplied",
-    ):
+    ) -> None:
         primal_ = jnp.asarray(primal)
         if primal_.ndim != 1:
             raise ValueError("MixedIntegerCandidate.primal must be one-dimensional.")

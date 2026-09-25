@@ -195,7 +195,7 @@ class EquivariantGraphConvolution(StrictModule):
         flow: GraphFlow = "source_to_target",
         normalize: bool = False,
         eps: float = 1e-30,
-    ):
+    ) -> None:
         if flow not in ("source_to_target", "target_to_source"):
             raise ValueError("flow must be 'source_to_target' or 'target_to_source'.")
         if scalar_output_key is None and vector_output_key is None:

@@ -30,7 +30,7 @@ class WellBalancedEquilibriumPlan(StrictModule, NonTrainableState):
         equilibrium_id: str,
         time_derivative_provider=None,
         entropy_supply_provider=None,
-    ):
+    ) -> None:
         identifier = str(equilibrium_id)
         if not callable(state_provider) or not identifier:
             raise ValueError("Equilibrium plans require state provider and ID.")

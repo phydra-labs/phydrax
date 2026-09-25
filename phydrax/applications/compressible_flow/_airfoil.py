@@ -65,7 +65,7 @@ class AirfoilSectionPlan(StrictModule, NonTrainableState):
         /,
         *,
         source_manifest: ReferenceArtifactManifest | None = None,
-    ):
+    ) -> None:
         points = np.asarray(coordinates, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 2 or points.shape[0] < 8:
             raise ValueError("Airfoil section requires at least eight planar points.")
@@ -159,7 +159,7 @@ class AirfoilOGridPlan(StrictModule, NonTrainableState):
         /,
         *,
         center: ArrayLike | None = None,
-    ):
+    ) -> None:
         circumferential = int(circumferential_cells)
         radial = int(radial_cells)
         radius = float(farfield_radius)
@@ -292,7 +292,7 @@ class RAE2822CasePlan(StrictModule, NonTrainableState):
         reynolds_number: float,
         target_lift_coefficient: float,
         reference_temperature: float,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -373,7 +373,7 @@ class TransonicFixedLiftPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-8,
         maximum_steps: int = 64,
-    ):
+    ) -> None:
         target = float(target_lift_coefficient)
         lower, upper = (float(value) for value in angle_bracket)
         tolerance_ = float(tolerance)

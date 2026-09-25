@@ -73,7 +73,7 @@ class PhaseMarginalizationPlan(StrictModule, NonTrainableState):
         low: float = 0.0,
         high: float = 2.0 * np.pi,
         reconstruction_nodes: int = 256,
-    ):
+    ) -> None:
         name = _identifier(parameter, "phase parameter")
         lower, upper = float(low), float(high)
         count = int(reconstruction_nodes)
@@ -117,7 +117,7 @@ class TimeMarginalizationPlan(StrictModule, NonTrainableState):
         *,
         num_nodes: int,
         parameter: str = "geocent_time",
-    ):
+    ) -> None:
         lower, upper = float(low), float(high)
         count = int(num_nodes)
         name = _identifier(parameter, "time parameter")
@@ -160,7 +160,7 @@ class DistanceMarginalizationPlan(StrictModule, NonTrainableState):
         *,
         order: int = 64,
         parameter: str = "luminosity_distance",
-    ):
+    ) -> None:
         lower, upper = float(low), float(high)
         count = int(order)
         name = _identifier(parameter, "distance parameter")
@@ -224,7 +224,7 @@ class CalibrationResponseEnsemble(StrictModule, NonTrainableState):
         convention: CalibrationCorrectionConvention,
         log_weights: ArrayLike | None = None,
         ensemble_id: str = "calibration-response-ensemble",
-    ):
+    ) -> None:
         frequencies = np.asarray(frequency, dtype=np.float64)
         curves = np.asarray(responses)
         identifiers = tuple(str(value).strip() for value in detector_ids)
@@ -307,7 +307,7 @@ class CalibrationMarginalizationPlan(StrictModule, NonTrainableState):
         /,
         *,
         parameter: str = "calibration_index",
-    ):
+    ) -> None:
         if not isinstance(ensemble, CalibrationResponseEnsemble):
             raise TypeError("ensemble must be CalibrationResponseEnsemble.")
         self.ensemble = ensemble
@@ -352,7 +352,7 @@ class GravitationalWaveMarginalizationPlan(StrictModule):
         calibration: CalibrationMarginalizationPlan | None = None,
         maximum_grid_points: int = 1_000_000,
         phase_separable_calibration: bool = False,
-    ):
+    ) -> None:
         if not isinstance(likelihood, GravitationalWaveLikelihoodPlan):
             raise TypeError("likelihood must be GravitationalWaveLikelihoodPlan.")
         values = (phase, time, distance, calibration)
@@ -550,7 +550,7 @@ class GravitationalWaveMarginalizedPosteriorTerm(AbstractPosteriorTerm):
         /,
         *,
         label: str = "gravitational_wave_marginalized_network",
-    ):
+    ) -> None:
         if not isinstance(marginalization, GravitationalWaveMarginalizationPlan):
             raise TypeError(
                 "marginalization must be GravitationalWaveMarginalizationPlan."

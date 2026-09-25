@@ -43,7 +43,7 @@ class FiniteElementPrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: Any | None = None,
         output_dtype: Any | None = None,
         compensated_accumulation: bool = True,
-    ):
+    ) -> None:
         geometry = real_precision_dtype_name(geometry_dtype)
         evaluation = real_precision_dtype_name(evaluation_dtype)
         accumulation = real_precision_dtype_name(

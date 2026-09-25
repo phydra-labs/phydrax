@@ -30,7 +30,7 @@ class CalibrationStandard(StrictModule):
     scattering: Array
     standard_id: str = eqx.field(static=True)
 
-    def __init__(self, scattering: ArrayLike, /, *, standard_id: str):
+    def __init__(self, scattering: ArrayLike, /, *, standard_id: str) -> None:
         value = jnp.asarray(scattering, dtype=jnp.complex128)
         if (
             value.ndim < 2
@@ -56,7 +56,7 @@ class VNAErrorModel(StrictModule):
         /,
         *,
         model_id: str | None = None,
-    ):
+    ) -> None:
         left = jnp.asarray(left_abcd, dtype=jnp.complex128)
         right = jnp.asarray(right_abcd, dtype=jnp.complex128)
         if (

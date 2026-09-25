@@ -28,7 +28,7 @@ class SeriesPairView(StrictModule):
         source_indices: ArrayLike,
         target_indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(series, SampledSeries):
             raise TypeError("series must be a SampledSeries.")
         if series.alignment != "node":

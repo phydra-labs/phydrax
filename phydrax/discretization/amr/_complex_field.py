@@ -53,7 +53,7 @@ class ComplexCompositeAMRCellLayout(StrictModule, NonTrainableState):
         *,
         component_shape: Sequence[int] = (),
         dtype: Any = np.complex128,
-    ):
+    ) -> None:
         dtype_ = np.dtype(jax.dtypes.canonicalize_dtype(np.dtype(dtype)))
         if not np.issubdtype(dtype_, np.complexfloating):
             raise TypeError("Complex AMR field storage requires a complex dtype.")

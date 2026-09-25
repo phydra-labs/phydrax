@@ -86,7 +86,7 @@ class DiscreteCoupledHJBProblem(StrictModule, NonTrainableState):
         args: Any = None,
         corner_tolerance: float = 0.0,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(spatial_grid, BoundedUniformGrid1D):
             raise TypeError("spatial_grid must be a BoundedUniformGrid1D.")
         if not isinstance(time_grid, TimeGrid):
@@ -176,7 +176,7 @@ class CoupledHJBPolicyIterationPlan(StrictModule, NonTrainableState):
         damping: float = 1.0,
         update: CoupledHJBUpdate = "jacobi",
         plan_id: str,
-    ):
+    ) -> None:
         if isinstance(maximum_iterations, (bool, np.bool_)):
             raise TypeError("maximum_iterations must be an integer.")
         capacity = operator.index(maximum_iterations)

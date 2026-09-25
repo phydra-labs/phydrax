@@ -35,7 +35,7 @@ class TokamakCoreState(StrictModule):
         ion_thermal_energy_j: ArrayLike,
         time_s: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         electron_density = jnp.asarray(electron_density_m3)
         electron_energy = jnp.asarray(
             electron_thermal_energy_j, dtype=electron_density.dtype
@@ -74,7 +74,7 @@ class TokamakTransportCoefficients(StrictModule):
         *,
         valid: ArrayLike = True,
         model_id: str = "prescribed-integrated-conductance",
-    ):
+    ) -> None:
         particle = jnp.asarray(particle_conductance_m3_s)
         electron = jnp.asarray(electron_energy_conductance_m3_s, dtype=particle.dtype)
         ion = jnp.asarray(ion_energy_conductance_m3_s, dtype=particle.dtype)
@@ -121,7 +121,7 @@ class TokamakTransportSources(StrictModule):
         /,
         *,
         exchange_to_electrons_w_m3: ArrayLike | None = None,
-    ):
+    ) -> None:
         particle = jnp.asarray(particle_source_m3_s)
         electron = jnp.asarray(electron_heating_w_m3, dtype=particle.dtype)
         ion = jnp.asarray(ion_heating_w_m3, dtype=particle.dtype)
@@ -161,7 +161,7 @@ class TokamakEdgeFlux(StrictModule):
         electron_power_w: ArrayLike = 0.0,
         ion_power_w: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (particle_rate_s, electron_power_w, ion_power_w)

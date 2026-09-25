@@ -67,7 +67,7 @@ class ExternalArtifactPolicy(StrictModule, NonTrainableState):
         allowed_license_ids: Sequence[str],
         allowed_suffixes: Sequence[str],
         maximum_depth: int = 32,
-    ):
+    ) -> None:
         root_path = Path(root)
         if root_path.is_symlink():
             raise ValueError("External artifact root cannot be a symbolic link.")
@@ -143,7 +143,7 @@ class AdmittedExternalArtifact(StrictModule, NonTrainableState):
         manifest_id: str,
         policy_id: str,
         /,
-    ):
+    ) -> None:
         relative = _identifier(relative_path, "relative artifact path")
         resolved = _identifier(resolved_path, "resolved artifact path")
         digest = _identifier(sha256, "artifact SHA-256")

@@ -31,7 +31,7 @@ class CurvedVirtualElementEdge(StrictModule, NonTrainableState):
         tangents: ArrayLike,
         reference_weights: ArrayLike,
         /,
-    ):
+    ) -> None:
         p = np.asarray(points, dtype=np.float64)
         t = np.asarray(tangents, dtype=np.float64)
         w = np.asarray(reference_weights, dtype=np.float64)
@@ -86,7 +86,7 @@ class VirtualElementProductPlan(StrictModule, NonTrainableState):
         inf_sup_margin: float,
         commuting_defect: float,
         maximum_commuting_defect: float = 1e-8,
-    ):
+    ) -> None:
         if (
             len(fields) < 2
             or len(fields) != len(field_sizes)
@@ -148,7 +148,7 @@ class VirtualElementAdaptivityPolicy(StrictModule, NonTrainableState):
         fraction: float = 0.5,
         maximum_degree: int = 8,
         maximum_cells: int = 1_000_000,
-    ):
+    ) -> None:
         if (
             not 0 < float(fraction) <= 1
             or int(maximum_degree) < 1
@@ -183,7 +183,7 @@ class VirtualElementEpoch(StrictModule, NonTrainableState):
         *,
         generation: int = 0,
         parent_epoch_id: str | None = None,
-    ):
+    ) -> None:
         ids = np.asarray(cell_global_ids, dtype=np.int64)
         degree = np.asarray(degrees, dtype=np.int32)
         if (

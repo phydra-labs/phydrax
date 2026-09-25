@@ -72,7 +72,7 @@ class Almonacid2024Geometry(StrictModule, NonTrainableState):
         muscle_width_m=0.055,
         pennation_angle_rad=15.3 * pi / 180,
         refinement=2,
-    ):
+    ) -> None:
         lengths = tuple(
             float(x)
             for x in (

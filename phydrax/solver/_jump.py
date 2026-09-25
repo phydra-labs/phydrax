@@ -472,7 +472,7 @@ class JumpSolution(StrictModule):
         state_shape: Sequence[int],
         algorithm: JumpAlgorithm,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(events, JumpEventBatch):
             raise TypeError("events must be a JumpEventBatch.")
         if not isinstance(realization, PoissonClockRealization):
@@ -857,7 +857,7 @@ class JumpDifferentialProblem(StrictModule):
         /,
         *,
         process_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(differential, DifferentialProblem):
             raise TypeError("differential must be a DifferentialProblem.")
         if not isinstance(jumps, AbstractJumpProcess):
@@ -902,7 +902,7 @@ class JumpDifferentialSolution(StrictModule):
         terminal: ArrayLike = False,
         numerical_successful: ArrayLike | None = None,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         arrays = validate_solution_arrays(
             times,
             states,
@@ -1085,7 +1085,7 @@ class _ClippedBrownianPath(dfx.AbstractBrownianPath):
         path: dfx.AbstractBrownianPath,
         support: tuple[float, float],
         /,
-    ):
+    ) -> None:
         self.path = path
         self._t0 = jnp.asarray(support[0])
         self._t1 = jnp.asarray(support[1])

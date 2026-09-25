@@ -45,7 +45,7 @@ class CategoricalNoisingKernel(AbstractDiscreteNoisingKernel):
     retention: float = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, retention: float, /):
+    def __init__(self, retention: float, /) -> None:
         value = float(retention)
         if not isfinite(value) or not 0.0 <= value <= 1.0:
             raise ValueError("retention must lie in [0, 1].")
@@ -71,7 +71,7 @@ class DiscreteForwardProcess(StrictModule):
     kernels: tuple[AbstractDiscreteNoisingKernel, ...]
     process_id: str = eqx.field(static=True)
 
-    def __init__(self, kernels: Sequence[AbstractDiscreteNoisingKernel], /):
+    def __init__(self, kernels: Sequence[AbstractDiscreteNoisingKernel], /) -> None:
         values = tuple(kernels)
         if not values or any(
             not isinstance(value, AbstractDiscreteNoisingKernel) for value in values
@@ -119,7 +119,7 @@ class FactorGraphReverseKernel(StrictModule):
         output_variables: ArrayLike,
         schedule: GibbsSchedule,
         /,
-    ):
+    ) -> None:
         if not isinstance(graph, DiscreteFactorGraph):
             raise TypeError("graph must be DiscreteFactorGraph.")
         if not isinstance(prepared, PreparedChromaticGibbs):
@@ -204,7 +204,7 @@ class DiscreteDenoisingProcess(StrictModule):
         forward: DiscreteForwardProcess,
         reverse: Sequence[FactorGraphReverseKernel],
         /,
-    ):
+    ) -> None:
         if not isinstance(forward, DiscreteForwardProcess):
             raise TypeError("forward must be DiscreteForwardProcess.")
         reverse_values = tuple(reverse)
@@ -286,7 +286,7 @@ class AdaptiveMixingPenalty(StrictModule):
         update_fraction: float = 0.2,
         minimum: float = 1e-4,
         maximum: float = 1.0,
-    ):
+    ) -> None:
         values = tuple(
             float(value) for value in (target, update_fraction, minimum, maximum)
         )
@@ -340,7 +340,7 @@ class HybridDiscreteEmbedding(StrictModule):
 
     def __init__(
         self, encoder: Callable, decoder: Callable, process: DiscreteDenoisingProcess, /
-    ):
+    ) -> None:
         if not isinstance(process, DiscreteDenoisingProcess):
             raise TypeError("process must be DiscreteDenoisingProcess.")
         if not callable(encoder) or not callable(decoder):

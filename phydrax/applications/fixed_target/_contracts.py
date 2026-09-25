@@ -40,7 +40,7 @@ class FixedTargetPlan(StrictModule, NonTrainableState):
         exposure: ExposureRecord,
         production_provider: HEPProviderBinding,
         transport_provider: HEPProviderBinding,
-    ):
+    ) -> None:
         energy = float(beam_energy)
         density = float(target_areal_density)
         labels = tuple(
@@ -116,7 +116,7 @@ class FixedTargetStageRecord(StrictModule, NonTrainableState):
         weighted_input_count: float,
         weighted_output_count: float,
         evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         labels = tuple(
             str(value).strip() for value in (stage, input_artifact_id, output_artifact_id)
         )
@@ -160,7 +160,7 @@ class FixedTargetChainRecord(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: FixedTargetPlan, stages: Sequence[FixedTargetStageRecord], /
-    ):
+    ) -> None:
         if not isinstance(plan, FixedTargetPlan):
             raise TypeError("plan must be FixedTargetPlan.")
         stages_ = tuple(stages)

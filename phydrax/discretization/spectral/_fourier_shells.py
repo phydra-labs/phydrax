@@ -35,7 +35,7 @@ class ModeTransferCorrection(StrictModule, NonTrainableState):
         /,
         *,
         minimum_transfer_magnitude: float,
-    ):
+    ) -> None:
         values = jax.lax.stop_gradient(jnp.asarray(multiplier))
         source = str(source_operator_id).strip()
         minimum = float(minimum_transfer_magnitude)
@@ -116,7 +116,7 @@ class _FourierShellBinGeometry(StrictModule, NonTrainableState):
         mode_weights: ArrayLike | None = None,
         final_edge_policy: FinalEdgePolicy = "include",
         source_id: str,
-    ):
+    ) -> None:
         magnitude = np.asarray(wavenumber_magnitude, dtype=np.float64)
         edges = np.asarray(bin_edges, dtype=np.float64).reshape((-1,))
         mask = (
@@ -254,7 +254,7 @@ class PeriodicFourierShellPlan(StrictModule, NonTrainableState):
         nyquist_policy: NyquistPolicy = "include",
         final_edge_policy: FinalEdgePolicy = "include",
         source_id: str = "periodic-cell-field",
-    ):
+    ) -> None:
         shape = tuple(source_shape)
         lengths = tuple(float(value) for value in box_lengths)
         edges = np.asarray(bin_edges, dtype=np.float64).reshape((-1,))

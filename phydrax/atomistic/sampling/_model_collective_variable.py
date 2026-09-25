@@ -36,7 +36,7 @@ class ModelCollectiveVariableProgram(AbstractCollectiveVariableProgram):
         model_id: str,
         names: tuple[str, ...],
         metrics: tuple[CollectiveVariableMetric, ...] | None = None,
-    ):
+    ) -> None:
         if not isinstance(source, AbstractCollectiveVariableProgram):
             raise TypeError("source must implement AbstractCollectiveVariableProgram.")
         if not isinstance(model, AbstractArrayModel):

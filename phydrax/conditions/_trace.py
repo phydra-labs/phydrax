@@ -46,7 +46,9 @@ class FieldJet(AbstractJetDeclaration):
     order: int = eqx.field(static=True)
     normal: bool = eqx.field(static=True)
 
-    def __init__(self, field: str, variable: str, order: int = 0, normal: bool = False):
+    def __init__(
+        self, field: str, variable: str, order: int = 0, normal: bool = False
+    ) -> None:
         field_ = str(field)
         variable_ = str(variable)
         order_ = int(order)
@@ -93,7 +95,7 @@ class PointJet(AbstractJetDeclaration):
         /,
         *,
         derivatives: Mapping[str, int] | Sequence[tuple[str, int]] = (),
-    ):
+    ) -> None:
         field_ = str(field)
         point_ = str(point_id)
         if not field_ or not point_:
@@ -127,7 +129,7 @@ class TraceJet(AbstractJetDeclaration):
         derivatives: Mapping[str, int] | Sequence[tuple[str, int]] = (),
         normal_order: int = 0,
         side: Literal["interior", "exterior", "average", "jump"] = "interior",
-    ):
+    ) -> None:
         field_ = str(field)
         trace_ = str(trace_id)
         normal_ = int(normal_order)
@@ -162,7 +164,7 @@ JetDeclaration: TypeAlias = FieldJet | PointJet | TraceJet
 class LinearTraceExpression(StrictModule):
     terms: tuple[tuple[Any, JetDeclaration], ...]
 
-    def __init__(self, terms: Sequence[tuple[Any, JetDeclaration]]):
+    def __init__(self, terms: Sequence[tuple[Any, JetDeclaration]]) -> None:
         values = tuple(terms)
         if not values or any(
             not isinstance(jet, AbstractJetDeclaration) for _, jet in values
@@ -204,7 +206,7 @@ class LinearTraceEquation(StrictModule):
     lhs: LinearTraceExpression
     rhs: Any
 
-    def __init__(self, lhs: JetDeclaration | LinearTraceExpression, rhs: Any):
+    def __init__(self, lhs: JetDeclaration | LinearTraceExpression, rhs: Any) -> None:
         expression = _trace_expression(lhs)
         identities = tuple(jet.identity for _, jet in expression.terms)
         if len(set(identities)) != len(identities):

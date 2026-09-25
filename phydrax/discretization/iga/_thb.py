@@ -32,7 +32,7 @@ class THBLevel(StrictModule, NonTrainableState):
         cell_active: ArrayLike,
         function_active: ArrayLike,
         /,
-    ):
+    ) -> None:
         level_ = int(level)
         basis = str(basis_id)
         cells = np.asarray(cell_active, dtype=np.bool_)
@@ -85,7 +85,7 @@ class THBBasisCertificate(StrictModule, NonTrainableState):
         prolongation_defect: float,
         tolerance: float,
         diagnostic_codes: Sequence[str] = (),
-    ):
+    ) -> None:
         hierarchy = str(hierarchy_id)
         partition = float(partition_defect)
         prolongation = float(prolongation_defect)
@@ -148,7 +148,7 @@ class THBHierarchy(StrictModule, NonTrainableState):
         levels: Sequence[THBLevel],
         prolongations: Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         levels_ = tuple(levels)
         matrices = tuple(np.asarray(value, dtype=np.float64) for value in prolongations)
         if not levels_ or tuple(level.level for level in levels_) != tuple(

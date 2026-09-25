@@ -43,7 +43,7 @@ class InteriorLaplaceDirichletResult(StrictModule):
         linear_result: LinearSolveResult,
         discretization: LayerDiscretizationReport,
         boundary_residual_norm: Array,
-    ):
+    ) -> None:
         if not isinstance(potential, LaplaceLayerPotential2D):
             raise TypeError("potential must be LaplaceLayerPotential2D.")
         if not isinstance(linear_result, LinearSolveResult):

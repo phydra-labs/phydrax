@@ -57,7 +57,7 @@ class Translation(GeometrySource):
         offset: Any,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(child, GeometrySource):
             raise TypeError("Translation.child must be a GeometrySource.")
         offset_ = np.asarray(offset, dtype=np.float64)
@@ -96,7 +96,7 @@ class _TranslationKernel(GeometryKernel):
         offset: ParameterBinding,
         *,
         source_id: str,
-    ):
+    ) -> None:
         self.child = child
         self.offset = offset
         self.source_id = source_id
@@ -254,7 +254,7 @@ class Union(GeometrySource):
         children: tuple[GeometrySource, ...],
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         children_ = tuple(children)
         if len(children_) < 2:
             raise ValueError("Union requires at least two child sources.")
@@ -283,7 +283,7 @@ class Union(GeometrySource):
 class _UnionKernel(GeometryKernel):
     children: tuple[GeometryKernel, ...]
 
-    def __init__(self, children: tuple[GeometryKernel, ...]):
+    def __init__(self, children: tuple[GeometryKernel, ...]) -> None:
         self.children = children
 
     @property

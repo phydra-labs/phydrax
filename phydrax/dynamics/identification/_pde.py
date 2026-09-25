@@ -67,7 +67,7 @@ class StructuredPDEData(StrictModule):
         sample_valid: ArrayLike | None = None,
         weights: ArrayLike | None = None,
         source_id: str,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         coordinate_values = tuple(jnp.asarray(item) for item in coordinates)
@@ -180,7 +180,7 @@ class PDEDerivative(StrictModule):
         /,
         *,
         name: str | None = None,
-    ):
+    ) -> None:
         if isinstance(component, bool) or not isinstance(component, (int, np.integer)):
             raise TypeError("component must be an integer.")
         resolved_orders = tuple(orders)
@@ -241,7 +241,7 @@ class FiniteDifferencePDEDerivative(AbstractPDEDerivative):
     method_id: str = eqx.field(static=True)
     max_total_order: int = eqx.field(static=True)
 
-    def __init__(self, *, max_total_order: int = 4):
+    def __init__(self, *, max_total_order: int = 4) -> None:
         maximum = int(max_total_order)
         if maximum < 1:
             raise ValueError("max_total_order must be positive.")
@@ -307,7 +307,7 @@ class PDELibraryTerm(StrictModule):
         *,
         derivative: PDEDerivative | None = None,
         name: str,
-    ):
+    ) -> None:
         powers = tuple(state_powers)
         if not powers:
             raise ValueError("state_powers must be a non-empty nonnegative tuple.")
@@ -352,7 +352,7 @@ class PDEFeatureLibrary(AbstractPDEFeatureLibrary):
         /,
         *,
         library_id: str | None = None,
-    ):
+    ) -> None:
         resolved = tuple(terms)
         if not resolved or any(not isinstance(term, PDELibraryTerm) for term in resolved):
             raise TypeError("terms must contain PDELibraryTerm instances.")
@@ -444,7 +444,7 @@ class PolynomialPDELibrary(AbstractPDEFeatureLibrary):
         include_mixed_derivatives: bool = False,
         include_interactions: bool = True,
         max_features: int = 4096,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         names = tuple(str(name) for name in coordinate_names)
@@ -542,7 +542,7 @@ class PDEIdentificationProblem(StrictModule):
         library: AbstractPDEFeatureLibrary,
         targets: Sequence[PDEDerivative] | None = None,
         derivative: AbstractPDEDerivative | None = None,
-    ):
+    ) -> None:
         if not isinstance(data, StructuredPDEData):
             raise TypeError("data must be StructuredPDEData.")
         if not isinstance(library, AbstractPDEFeatureLibrary):

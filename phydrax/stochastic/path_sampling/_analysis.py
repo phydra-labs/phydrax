@@ -133,7 +133,7 @@ class CommittorFitPlan(StrictModule, NonTrainableState):
         l2_regularization: float = 0.0,
         tolerance: float = 1.0e-7,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         features, iterations = int(feature_count), int(maximum_iterations)
         rate, regularization, tolerance_ = (
             float(learning_rate),

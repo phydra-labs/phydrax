@@ -86,7 +86,7 @@ class GuidedElasticModePlan(StrictModule, NonTrainableState):
         negative_eigenvalue_tolerance: float = 1e-10,
         orthogonality_tolerance: float = 1e-8,
         maximum_dofs: int = 4096,
-    ):
+    ) -> None:
         stiffness, mass = _guided_elastic_operators(stiffness_operator, mass_operator)
         if not isinstance(stiffness.source, ArraySpace):
             raise TypeError("Guided elastic mode coordinates must use an ArraySpace.")

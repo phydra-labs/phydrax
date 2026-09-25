@@ -53,7 +53,7 @@ class BeamletFrame(StrictModule, NonTrainableState):
     frame: RigidFrame
     frame_id: str = eqx.field(static=True)
 
-    def __init__(self, frame: RigidFrame, /):
+    def __init__(self, frame: RigidFrame, /) -> None:
         if not isinstance(frame, RigidFrame) or frame.dimension != 3:
             raise TypeError("frame must be a three-dimensional RigidFrame.")
         self.frame = frame
@@ -102,7 +102,7 @@ class GaussianBeamletState(StrictModule):
         topology_index: ArrayLike | None = None,
         valid: ArrayLike | None = None,
         status: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(chief_ray, OpticalRayState) or not isinstance(
             frame, BeamletFrame
         ):
@@ -273,7 +273,7 @@ class GaussianWaistSpecification(StrictModule):
     radii: Array
     rotation_angle: Array
 
-    def __init__(self, radii: ArrayLike, rotation_angle: ArrayLike = 0.0):
+    def __init__(self, radii: ArrayLike, rotation_angle: ArrayLike = 0.0) -> None:
         radii_ = jnp.asarray(radii)
         if not jnp.issubdtype(radii_.dtype, jnp.floating):
             radii_ = radii_.astype("float64")

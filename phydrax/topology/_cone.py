@@ -36,7 +36,7 @@ class MappingConeResult(StrictModule, NonTrainableState):
         dimensions: Sequence[int],
         evidence: TopologyReductionEvidence,
         /,
-    ):
+    ) -> None:
         values = tuple(dimensions)
         if len(values) != len(cone.counts) or any(value < 0 for value in values):
             raise ValueError("Mapping-cone dimensions do not match the chain complex.")

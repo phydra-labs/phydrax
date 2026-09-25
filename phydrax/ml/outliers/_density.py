@@ -130,7 +130,7 @@ class KernelDensityOutlierModel(AbstractFittedModel):
         *,
         bandwidth: float,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         train = jnp.asarray(training_features)
         self.training_features = train
         self.training_weights = jnp.asarray(training_weights)
@@ -179,7 +179,7 @@ class KernelDensityOutlierRecipe(AbstractRecipe):
     bandwidth: float = eqx.field(static=True)
     contamination: float = eqx.field(static=True)
 
-    def __init__(self, *, bandwidth: float = 1.0, contamination: float = 0.1):
+    def __init__(self, *, bandwidth: float = 1.0, contamination: float = 0.1) -> None:
         if float(bandwidth) <= 0.0:
             raise ValueError("bandwidth must be positive.")
         if not 0.0 < float(contamination) < 0.5:
@@ -339,7 +339,7 @@ class RobustNoveltyModel(AbstractFittedModel):
         *,
         tuning: float,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         location_ = jnp.asarray(location)
         self.location = location_
         self.scale = jnp.asarray(scale)
@@ -399,7 +399,7 @@ class RobustNoveltyRecipe(AbstractRecipe):
         tuning: float = 1.345,
         scale_floor: float = 1e-6,
         tolerance: float = 1e-5,
-    ):
+    ) -> None:
         if not 0.0 < float(contamination) < 0.5:
             raise ValueError("contamination must lie in (0, 0.5).")
         if int(iterations) <= 0 or float(tuning) <= 0.0:

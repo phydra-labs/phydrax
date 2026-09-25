@@ -59,7 +59,7 @@ class VortexPanelFlowPlan2D(StrictModule, NonTrainableState):
         trailing_edge_panels: tuple[int, int] | None = None,
         density: float = 1.0,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, FlowPanelGeometry2D):
             raise TypeError("geometry must be FlowPanelGeometry2D.")
         count = geometry.length.size

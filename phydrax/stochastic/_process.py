@@ -150,7 +150,7 @@ class GaussianProcessDistribution(AbstractProcessDistribution):
         /,
         *,
         event_shape: Sequence[int],
-    ):
+    ) -> None:
         events = _positive_shape(event_shape, name="event_shape")
         size = prod(events)
         mean_array = jnp.asarray(mean)
@@ -242,7 +242,7 @@ class DiagonalGaussianProcessDistribution(AbstractProcessDistribution):
         /,
         *,
         event_shape: Sequence[int],
-    ):
+    ) -> None:
         law = DiagonalNormalLaw(mean, scale, event_shape=event_shape)
         self.law = law
         self.event_shape = law.event_shape
@@ -345,7 +345,7 @@ class ProcessRealization(StrictModule):
         *,
         state_shape: Sequence[int],
         process_id: str,
-    ):
+    ) -> None:
         states = _positive_shape(state_shape, name="state_shape")
         initial = jnp.asarray(initial_state)
         if initial.shape != states:
@@ -438,7 +438,7 @@ class LatentGaussianCoefficientProcess(
         *,
         label: str | None = None,
         process_id: str | None = None,
-    ):
+    ) -> None:
         drift_array = jnp.asarray(drift)
         if drift_array.ndim < 1 or any(size <= 0 for size in drift_array.shape):
             raise ValueError(

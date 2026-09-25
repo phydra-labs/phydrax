@@ -52,7 +52,7 @@ class QuantumFieldSpecies(StrictModule, NonTrainableState):
         *,
         multiplicity: int = 1,
         rest_mass_frequency: float = 0.0,
-    ):
+    ) -> None:
         identifier = str(species_id).strip()
         spin_ = float(spin)
         twice_spin = round(2.0 * spin_)
@@ -123,7 +123,7 @@ class HawkingTailEvidence(StrictModule, NonTrainableState):
         qualified: ArrayLike,
         derivative_valid: ArrayLike,
         qualification_id: str,
-    ):
+    ) -> None:
         frequency = np.asarray(frequency_remainder_upper, dtype=np.float64)
         modes = np.asarray(mode_remainder_upper, dtype=np.float64)
         qualified_host = np.asarray(qualified, dtype=np.bool_)
@@ -193,7 +193,7 @@ class HawkingSpectrumPlan(StrictModule, NonTrainableState):
         relative_tail_tolerance: float = 1.0e-4,
         graybody_tolerance: float = 1.0e-10,
         corotation_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         if not scale.quantum_constants_explicit:
@@ -396,7 +396,7 @@ class HawkingScatteringData(StrictModule, NonTrainableState):
         tail_evidence: HawkingTailEvidence,
         source_ids: Sequence[Sequence[str]],
         qualification_id: str,
-    ):
+    ) -> None:
         if not isinstance(plan, HawkingSpectrumPlan):
             raise TypeError("plan must be a HawkingSpectrumPlan.")
         if not isinstance(tail_evidence, HawkingTailEvidence):
@@ -814,7 +814,7 @@ class KerrEvaporationState(StrictModule, NonTrainableState):
         elapsed_time: ArrayLike = 0.0,
         step_index: ArrayLike = 0,
         state_id: str,
-    ):
+    ) -> None:
         identifier = str(state_id).strip()
         if not identifier:
             raise ValueError("Kerr evaporation state_id must be non-empty.")
@@ -865,7 +865,7 @@ class KerrEvaporationPlan(StrictModule, NonTrainableState):
         maximum_mass_fraction_per_step: float = 1.0e-2,
         maximum_spin_change_per_step: float = 1.0e-2,
         extremality_margin: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         if not scale.quantum_constants_explicit:

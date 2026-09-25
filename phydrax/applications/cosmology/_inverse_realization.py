@@ -63,7 +63,7 @@ class ParticleFieldRealizationPlan(StrictModule, NonTrainableState):
         *,
         target_kind: ParticleTargetKind = "density",
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(transfer, PreparedParticleGridSplat):
             raise TypeError("transfer must be PreparedParticleGridSplat.")
         if not isinstance(observation, FieldObservationPlan):

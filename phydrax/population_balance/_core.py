@@ -30,7 +30,7 @@ class SectionalPopulationPlan(StrictModule, NonTrainableState):
     widths: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, edges: ArrayLike, /):
+    def __init__(self, edges: ArrayLike, /) -> None:
         values = np.asarray(edges, dtype=np.float64)
         if (
             values.ndim != 1

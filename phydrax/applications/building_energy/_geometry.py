@@ -53,7 +53,7 @@ class SurfaceRole(StrictModule):
         apertures: Sequence[tuple[MeshLabel, Aperture]] = (),
         boundary_id: str | None = None,
         adiabatic: bool = False,
-    ):
+    ) -> None:
         self.label, self.zone_id, self.construction = (
             label,
             _text(zone_id, "zone_id"),
@@ -234,7 +234,7 @@ class BuildingArchetype(StrictModule):
         source_url: str,
         license_id: str,
         assumptions: Sequence[str],
-    ):
+    ) -> None:
         if not constructions or not assumptions:
             raise ValueError("Archetype requires explicit constructions and assumptions.")
         self.archetype_id, self.source_url, self.license_id = (

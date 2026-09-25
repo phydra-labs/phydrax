@@ -37,7 +37,7 @@ class LinearRecurrentModel(StrictModule, ParameterOwner):
         *,
         execution: LinearRecurrenceExecution = "associative",
         return_mode: LinearRecurrentReturnMode = "sequence",
-    ):
+    ) -> None:
         if not isinstance(unit, LinearRecurrentUnit):
             raise TypeError("unit must be a LinearRecurrentUnit.")
         if execution not in ("serial", "associative"):

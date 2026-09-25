@@ -44,7 +44,7 @@ class CompressibleVelocityRule(StrictModule, NonTrainableState):
         name: str,
         frame_shift: tuple[int, ...] | None = None,
         exact_streaming: bool = True,
-    ):
+    ) -> None:
         velocity_host = np.asarray(velocities)
         base_host = np.asarray(base_probabilities)
         opposite_host = np.asarray(opposite, dtype=np.int32)

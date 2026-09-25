@@ -28,7 +28,7 @@ class TargetOperatorConsistencyLoss(AbstractOperatorLossTerm):
     name: str = "target_operator_consistency"
     weight: float = 1.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.field_name or not self.name or not jnp.isfinite(self.weight):
             raise ValueError("Target operator consistency configuration is invalid.")
 

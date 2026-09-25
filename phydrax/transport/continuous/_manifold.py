@@ -29,7 +29,7 @@ class ManifoldTransportGeometry(StrictModule):
         source_coordinate: ArrayLike = 0.0,
         target_coordinate: ArrayLike = 1.0,
         precision: GeometryPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(manifold, AbstractGeodesicManifold):
             raise TypeError("manifold must be an AbstractGeodesicManifold.")
         self.manifold = manifold

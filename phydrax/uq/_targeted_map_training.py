@@ -55,7 +55,7 @@ class TargetedMapTrainingPolicy(StrictModule, NonTrainableState):
         displacement_weight: float = 0.0,
         validation_interval: int = 10,
         patience: int | None = None,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         interval = int(validation_interval)
         rate = float(learning_rate)

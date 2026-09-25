@@ -48,7 +48,7 @@ class PatchCoordinateMapSet(StrictModule, NonTrainableState):
         /,
         *,
         patch_maps: Mapping[str, tuple[CoordinateMap, str]] | None = None,
-    ):
+    ) -> None:
         default_id = str(default_map_id)
         if not callable(default_map) or not default_id:
             raise ValueError(
@@ -120,7 +120,7 @@ class MappedMortarEvidence(StrictModule, NonTrainableState):
         minimum_measure: ArrayLike,
         tolerance: float,
         /,
-    ):
+    ) -> None:
         tolerance_ = float(tolerance)
         owner = jnp.asarray(maximum_owner_mismatch)
         neighbor = jnp.asarray(maximum_neighbor_mismatch)
@@ -191,7 +191,7 @@ class MappedMortarPlan(StrictModule, NonTrainableState):
         quadrature_order: int = 3,
         orientation: int = 1,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         owner = str(owner_patch_id)
         neighbor = str(neighbor_patch_id)
         bounds = tuple(tuple(float(value) for value in pair) for pair in parameter_bounds)
@@ -342,7 +342,7 @@ class CanonicalMappedGeometryEvidence(StrictModule, NonTrainableState):
         valid: ArrayLike,
         tolerance: float,
         /,
-    ):
+    ) -> None:
         jacobian = tuple(
             tuple(jnp.asarray(value) for value in level) for level in minimum_jacobian
         )
@@ -406,7 +406,7 @@ class CanonicalMappedGeometryPlan(StrictModule, NonTrainableState):
         *,
         quadrature_order: int = 3,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         hierarchy = canonicalize_patch_hierarchy(topology)
         order = int(quadrature_order)
         tolerance_ = float(tolerance)
@@ -753,7 +753,7 @@ class MappedMortarFluxPlan(StrictModule, NonTrainableState):
         neighbor_cell: int,
         cell_count: int,
         /,
-    ):
+    ) -> None:
         owner = int(owner_cell)
         neighbor = int(neighbor_cell)
         count = int(cell_count)

@@ -136,7 +136,7 @@ class SphereRouteWrapPlan(StrictModule, NonTrainableState):
         sense: WrapSense = "short",
         mandatory: bool = False,
         event_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         count = int(sample_count)
         if count < 2:
             raise ValueError("sample_count must be at least two.")
@@ -367,7 +367,7 @@ class PlanarCylinderRouteWrapPlan(StrictModule, NonTrainableState):
         sense: WrapSense = "short",
         mandatory: bool = False,
         event_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         sphere_policy = SphereRouteWrapPlan(
             sample_count,
             sense=sense,

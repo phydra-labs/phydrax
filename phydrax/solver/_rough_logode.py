@@ -256,7 +256,7 @@ class LogODE(AbstractRoughSolver):
         dt0: float | None = None,
         max_steps: int = 4096,
         explicit_fields: LiftedRoughVectorFields | None = None,
-    ):
+    ) -> None:
         if int(max_steps) <= 0:
             raise ValueError("max_steps must be positive.")
         if explicit_fields is not None and not callable(explicit_fields):
@@ -456,7 +456,7 @@ class LinearLogODE(AbstractRoughSolver):
         /,
         *,
         matrix_function_policy: MatrixFunctionPolicy | None = None,
-    ):
+    ) -> None:
         resolved = tuple(_operator(operator) for operator in operators)
         if not resolved:
             raise ValueError("operators must be non-empty.")

@@ -48,7 +48,7 @@ class HallCylinderPlan(StrictModule, NonTrainableState):
         maximum_orbital_separation: int | None = None,
         coefficient_tolerance: float = 1.0e-12,
         maximum_terms: int = 1_000_000,
-    ):
+    ) -> None:
         orbitals = int(orbital_count)
         particles = int(particle_count)
         circumference = float(circumference_in_magnetic_lengths)

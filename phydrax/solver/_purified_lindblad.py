@@ -23,7 +23,7 @@ class LocalKrausChannel(StrictModule):
     site: int = eqx.field(static=True)
     channel_id: str = eqx.field(static=True)
 
-    def __init__(self, site: int, kraus: ArrayLike, /, *, channel_id: str):
+    def __init__(self, site: int, kraus: ArrayLike, /, *, channel_id: str) -> None:
         values = jnp.asarray(kraus)
         if values.ndim != 3 or values.shape[-2] != values.shape[-1]:
             raise ValueError("Kraus operators require shape (count,d,d).")
@@ -69,7 +69,7 @@ class PurificationTruncationEvidence(StrictModule):
         truncation: TensorTruncationEvidence,
         channel_completeness_residual: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(truncation, TensorTruncationEvidence):
             raise TypeError("truncation must be TensorTruncationEvidence.")
         residual = jnp.asarray(channel_completeness_residual)
@@ -139,7 +139,7 @@ class PurifiedLindbladProblem(StrictModule):
         /,
         *,
         problem_id: str = "purified-lindblad",
-    ):
+    ) -> None:
         channels_ = tuple(channels)
         if not channels_:
             raise ValueError("At least one local Kraus channel is required.")
@@ -163,7 +163,7 @@ class PurifiedLindbladResult(StrictModule):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         self.final_state = final_state
         self.trace_history = jnp.asarray(trace_history)
         self.discarded_weight_history = jnp.asarray(discarded_weight_history)

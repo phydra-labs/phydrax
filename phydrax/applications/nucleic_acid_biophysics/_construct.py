@@ -13,7 +13,7 @@ class NucleotideKey:
     strand_id: str
     position: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.strand_id or self.strand_id != self.strand_id.strip():
             raise ValueError("strand_id must be a nonempty canonical identifier.")
         if (
@@ -38,7 +38,7 @@ class NucleicAcidConstruct:
     polymer_types: tuple[str, ...]
     circular: tuple[bool, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         fields = (self.strand_ids, self.sequences, self.polymer_types, self.circular)
         if any(not isinstance(value, tuple) for value in fields):
             raise TypeError("Construct fields must be immutable tuples.")

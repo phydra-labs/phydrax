@@ -51,7 +51,7 @@ class ShadowingSensitivityProblem(StrictModule):
         observable_state_gradient: Callable[[Array, Array, Any], Array] | None = None,
         neutral_direction: Callable[[Array, Array, Any], Array] | None = None,
         time_dilation: ShadowingTimeDilation = "none",
-    ):
+    ) -> None:
         if not isinstance(evolution, AbstractDifferentiableEvolution):
             raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         callbacks = (

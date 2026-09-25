@@ -57,7 +57,7 @@ class SuperconductingMaterialLawPlan(StrictModule, NonTrainableState):
         power_law_exponent: float = 20.0,
         commercial_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         temperature = np.asarray(temperature_axis, dtype=np.float64)
         field = np.asarray(magnetic_field_axis, dtype=np.float64)
         angle = np.asarray(angle_axis, dtype=np.float64)

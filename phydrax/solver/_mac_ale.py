@@ -406,7 +406,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
         tolerance=1e-9,
         maximum_iterations=500,
         geometry_epoch=0,
-    ):
+    ) -> None:
         if not isinstance(reference, FiniteVolumeDiscretization):
             raise TypeError("MAC ALE requires structured reference FV geometry.")
         if not callable(coordinate_map) or not callable(grid_velocity):
@@ -1051,7 +1051,7 @@ class MACRemeshEpochPlan(StrictModule, NonTrainableState):
         *,
         tolerance=1e-9,
         maximum_iterations=500,
-    ):
+    ) -> None:
         if not isinstance(source, PreparedMappedMACGeometry) or not isinstance(
             target, PreparedMappedMACGeometry
         ):

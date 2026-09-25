@@ -40,7 +40,7 @@ class HighEnthalpyAMRIndicatorPlan(StrictModule, NonTrainableState):
         refine_thresholds: ArrayLike,
         coarsen_thresholds: ArrayLike,
         /,
-    ):
+    ) -> None:
         names = tuple(str(value) for value in indicator_names)
         refine = np.asarray(refine_thresholds, dtype=np.float64)
         coarsen = np.asarray(coarsen_thresholds, dtype=np.float64)
@@ -107,7 +107,7 @@ class AerothermodynamicALEPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, vertex_to_cell_volume: ArrayLike, /, *, minimum_volume: float = 1.0e-14
-    ):
+    ) -> None:
         projection = np.asarray(vertex_to_cell_volume, dtype=np.float64)
         minimum = float(minimum_volume)
         if (
@@ -187,7 +187,7 @@ class AerothermodynamicTopologyTransaction(StrictModule, NonTrainableState):
         new_topology_id: str,
         remap: ConservativeRecessionRemapPlan,
         /,
-    ):
+    ) -> None:
         old = str(old_topology_id)
         new = str(new_topology_id)
         if (

@@ -65,7 +65,7 @@ class GRHDBoundaryCondition(StrictModule, NonTrainableState):
     kind: GRHDBoundaryKind = eqx.field(static=True)
     boundary_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: GRHDBoundaryKind = "outflow", /):
+    def __init__(self, kind: GRHDBoundaryKind = "outflow", /) -> None:
         if kind not in ("outflow", "reflective", "atmosphere"):
             raise ValueError("GRHD boundary kind is unsupported.")
         self.kind = kind
@@ -79,7 +79,9 @@ class GRHDBoundaryPair(StrictModule, NonTrainableState):
     upper: GRHDBoundaryCondition
     pair_id: str = eqx.field(static=True)
 
-    def __init__(self, lower: GRHDBoundaryCondition, upper: GRHDBoundaryCondition, /):
+    def __init__(
+        self, lower: GRHDBoundaryCondition, upper: GRHDBoundaryCondition, /
+    ) -> None:
         if not isinstance(lower, GRHDBoundaryCondition) or not isinstance(
             upper, GRHDBoundaryCondition
         ):
@@ -110,7 +112,7 @@ class GRHDFaceFluxPlan(StrictModule, NonTrainableState):
     kind: GRHDFaceFluxKind = eqx.field(static=True)
     flux_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: GRHDFaceFluxKind = "hlle", /):
+    def __init__(self, kind: GRHDFaceFluxKind = "hlle", /) -> None:
         if kind not in ("hlle", "rusanov"):
             raise ValueError("GRHD face flux must be 'hlle' or 'rusanov'.")
         self.kind = kind
@@ -463,7 +465,7 @@ class ValenciaFiniteVolumeStageGeometry(StrictModule, NonTrainableState):
         faces: Sequence[ADMGridGeometry],
         time: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, ValenciaGeometrySource):
             raise TypeError("source must be a ValenciaGeometrySource.")
         faces_ = tuple(faces)
@@ -752,7 +754,7 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
         conservation_tolerance: float = 1.0e-9,
         maximum_step_atmosphere_mass: float = 1.0e30,
         maximum_step_atmosphere_energy: float = 1.0e30,
-    ):
+    ) -> None:
         if not isinstance(system, ValenciaGRHDSystem):
             raise TypeError("system must be a ValenciaGRHDSystem.")
         if not isinstance(c2p, GRHDC2PPolicy) or c2p.system.system_id != system.system_id:

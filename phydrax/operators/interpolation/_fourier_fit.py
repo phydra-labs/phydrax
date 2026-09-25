@@ -138,7 +138,7 @@ class FourierScatteredFitPlan(StrictModule):
         regularization: float = 0.0,
         linear_policy: LinearSolvePolicy | None = None,
         query_chunk_size: int | None = None,
-    ):
+    ) -> None:
         shape = tuple(mode_shape)
         period_values = tuple(float(value) for value in periods)
         origin_values = (

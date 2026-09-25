@@ -38,7 +38,7 @@ class SlicingResourcePolicy(StrictModule):
         maximum_slices: int = 1_000_000,
         maximum_batch_elements: int = 100_000_000,
         maximum_checkpoint_bytes: int = 2**30,
-    ):
+    ) -> None:
         raw_values = (
             maximum_slices,
             maximum_batch_elements,
@@ -72,7 +72,7 @@ class SliceRange(StrictModule):
     total: int = eqx.field(static=True)
     range_id: str = eqx.field(static=True)
 
-    def __init__(self, start: int, stop: int, total: int, /):
+    def __init__(self, start: int, stop: int, total: int, /) -> None:
         if any(
             not isinstance(value, Integral) or isinstance(value, bool)
             for value in (start, stop, total)

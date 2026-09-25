@@ -104,7 +104,7 @@ class _NormalizedJumpProcess(AbstractJumpProcess):
         start: Array,
         duration: Array,
         /,
-    ):
+    ) -> None:
         self.process = process
         self.start = start
         self.duration = duration
@@ -270,7 +270,7 @@ class DifferentialTransitionKernel(AbstractTransitionKernel):
         atol: float = 1e-8,
         max_steps: int = 4096,
         approximation_id: str = "diffrax-transition",
-    ):
+    ) -> None:
         from ..solver import WienerTerm
 
         if not callable(drift):
@@ -410,7 +410,7 @@ class JumpTransitionKernel(AbstractTransitionKernel):
         algorithm: JumpTransitionAlgorithm = "next_reaction",
         max_events: int | None = None,
         approximation_id: str | None = None,
-    ):
+    ) -> None:
         from ._jump import AbstractJumpProcess
 
         if not isinstance(process, AbstractJumpProcess):
@@ -537,7 +537,7 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
         event_atol: float = 1e-9,
         max_steps: int = 4096,
         approximation_id: str = "jump-differential-transition",
-    ):
+    ) -> None:
         from ..solver import WienerTerm
         from ._jump import AbstractJumpProcess
 
@@ -717,7 +717,7 @@ class FiniteStateTransitionKernel(AbstractTransitionKernel):
         /,
         *,
         approximation_id: str = "exact-finite-state-transition",
-    ):
+    ) -> None:
         from ..solver import FiniteStateGenerator
 
         if not isinstance(generator, FiniteStateGenerator):
@@ -817,7 +817,7 @@ class PathwiseTransitionKernel(AbstractTransitionKernel):
         /,
         *,
         approximation_id: str = "sampled-pathwise-transition",
-    ):
+    ) -> None:
         if not isinstance(law, AbstractPathwiseTransition):
             raise TypeError("law must implement AbstractPathwiseTransition.")
         if not callable(driver_sampler):

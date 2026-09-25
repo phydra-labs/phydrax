@@ -92,7 +92,7 @@ class ParticleGridSplatState(StrictModule):
         invalid_geometry_count: ArrayLike,
         successful: ArrayLike,
         prepared_id: str,
-    ):
+    ) -> None:
         if not isinstance(stencil, GatherStencil):
             raise TypeError("stencil must be GatherStencil.")
         if not isinstance(assignment_state, SplatAssignmentState):
@@ -192,7 +192,7 @@ class ParticleGridSplatPlan(StrictModule, NonTrainableState):
         precision: ParticlePrecisionPolicy | None = None,
         budget: ParticleGridSplatBudget | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(target, (PreparedTensorGrid, PreparedTensorIndexSpace)):
             raise TypeError(
                 "target must be PreparedTensorGrid or PreparedTensorIndexSpace."
@@ -269,7 +269,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         plan: ParticleGridSplatPlan,
         particles: ParticleDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ParticleGridSplatPlan):
             raise TypeError("plan must be ParticleGridSplatPlan.")
         if not isinstance(particles, ParticleDiscretization):

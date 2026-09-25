@@ -25,7 +25,7 @@ class HybridizationMoments(StrictModule):
     zeroth: Array
     first: Array
 
-    def __init__(self, zeroth: ArrayLike, first: ArrayLike, /):
+    def __init__(self, zeroth: ArrayLike, first: ArrayLike, /) -> None:
         zeroth_ = jnp.asarray(zeroth)
         first_ = jnp.asarray(first)
         if zeroth_.shape != () or first_.shape != ():
@@ -76,7 +76,7 @@ class MatsubaraHybridization(StrictModule):
         moment_tolerance: float = 1e-8,
         frequency_unit: str = "native-energy",
         environment_id: str | None = None,
-    ):
+    ) -> None:
         beta_ = float(beta)
         if not isfinite(beta_) or beta_ <= 0.0:
             raise ValueError("beta must be finite and positive.")
@@ -194,7 +194,7 @@ class AndersonBath(StrictModule):
         *,
         frequency_unit: str = "native-energy",
         bath_id: str | None = None,
-    ):
+    ) -> None:
         energies = jnp.asarray(site_energies)
         couplings_ = jnp.asarray(couplings)
         if energies.ndim != 1 or couplings_.shape != energies.shape:
@@ -251,7 +251,7 @@ class ImpurityEnvironment(StrictModule):
         *,
         hybridization: MatsubaraHybridization | None = None,
         bath: AndersonBath | None = None,
-    ):
+    ) -> None:
         if (hybridization is None) == (bath is None):
             raise ValueError(
                 "ImpurityEnvironment requires exactly one of hybridization or bath."

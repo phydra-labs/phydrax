@@ -46,7 +46,7 @@ class ConditionRealizationStamp(StrictModule):
         *,
         quantifier: ConditionQuantifier,
         exact: bool,
-    ):
+    ) -> None:
         self.condition_id = _identifier(condition_id, "condition_id")
         self.source_id = _identifier(source_id, "source_id")
         self.realization_id = _identifier(realization_id, "realization_id")
@@ -71,7 +71,7 @@ class ConditionEvidence(StrictModule):
         /,
         *,
         evidence_id: str,
-    ):
+    ) -> None:
         if not isinstance(stamp, ConditionRealizationStamp):
             raise TypeError(
                 "ConditionEvidence.stamp must be a ConditionRealizationStamp."
@@ -116,7 +116,7 @@ class AffineProjectionCertificate(ConditionCertificate):
         certificate_id,
         rank,
         nullity,
-    ):
+    ) -> None:
         rank_ = int(rank)
         nullity_ = int(nullity)
         if rank_ < 0 or nullity_ < 0:
@@ -140,7 +140,7 @@ class NonlinearRetractionCertificate(ConditionCertificate):
 
     def __init__(
         self, stamp, residual_norm, tolerance, verified, /, *, certificate_id, iterations
-    ):
+    ) -> None:
         iterations_ = int(iterations)
         if iterations_ < 0:
             raise ValueError("Nonlinear retraction iterations must be nonnegative.")
@@ -170,7 +170,7 @@ class FeasibilityCertificate(ConditionCertificate):
         /,
         *,
         certificate_id,
-    ):
+    ) -> None:
         self.stamp = stamp
         self.certificate_id = _identifier(certificate_id, "certificate_id")
         self.residual_norm = _scalar(residual_norm, "residual_norm")
@@ -197,7 +197,7 @@ class ProbabilisticConditioningEvidence(StrictModule):
         /,
         *,
         evidence_id: str,
-    ):
+    ) -> None:
         if not isinstance(stamp, ConditionRealizationStamp):
             raise TypeError(
                 "Probabilistic evidence requires a ConditionRealizationStamp."

@@ -194,7 +194,7 @@ class DirichletFamily(AbstractExponentialFamily):
         atol: float = 1e-12,
         rtol: float = 1e-12,
         max_iterations: int = 100,
-    ):
+    ) -> None:
         categories = int(num_categories)
         absolute = float(atol)
         relative = float(rtol)

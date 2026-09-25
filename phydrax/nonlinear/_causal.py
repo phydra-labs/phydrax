@@ -69,7 +69,7 @@ class CausalRecurrenceProblem(StrictModule):
         *,
         parameters: Any = None,
         problem_id: str = "causal-recurrence",
-    ):
+    ) -> None:
         if not callable(transition):
             raise TypeError("transition must be callable.")
         identifier = str(problem_id)
@@ -174,7 +174,7 @@ class CausalLinearizationPolicy(StrictModule):
         probe_distribution: CausalProbeDistribution = "rademacher",
         block_builder: Callable[[Any, PyTree[Any], PyTree[Any]], Array] | None = None,
         linearization_id: str | None = None,
-    ):
+    ) -> None:
         if mode not in (
             "dense-exact",
             "diagonal-exact",
@@ -210,7 +210,7 @@ class CausalNewton(StrictModule):
 
     linearization: CausalLinearizationPolicy
 
-    def __init__(self, *, linearization: CausalLinearizationPolicy | None = None):
+    def __init__(self, *, linearization: CausalLinearizationPolicy | None = None) -> None:
         policy = CausalLinearizationPolicy() if linearization is None else linearization
         if not isinstance(policy, CausalLinearizationPolicy):
             raise TypeError("linearization must be CausalLinearizationPolicy or None.")
@@ -248,7 +248,7 @@ class CausalLevenbergMarquardt(StrictModule):
         decrease_ratio: float = 0.75,
         increase_ratio: float = 0.25,
         maximum_trials: int = 12,
-    ):
+    ) -> None:
         policy = CausalLinearizationPolicy() if linearization is None else linearization
         if not isinstance(policy, CausalLinearizationPolicy):
             raise TypeError("linearization must be CausalLinearizationPolicy or None.")

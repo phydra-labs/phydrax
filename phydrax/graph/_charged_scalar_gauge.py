@@ -46,7 +46,7 @@ class ChargedScalarGaugePlan(StrictModule, NonTrainableState):
         /,
         *,
         coupling: float,
-    ):
+    ) -> None:
         vertices_ = np.asarray(vertices, dtype=np.float64)
         faces_ = np.asarray(faces, dtype=np.int32)
         edges_ = np.asarray(edges, dtype=np.int32)

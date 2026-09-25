@@ -73,7 +73,7 @@ class SplitGroupTarget(StrictModule):
         local_coordinate_shape: tuple[int, ...],
         reference_measure: str,
         target_id: str,
-    ):
+    ) -> None:
         if not callable(log_target) or any(not callable(term) for term in force_terms):
             raise TypeError("log_target and every force term must be callable.")
         if not force_terms or len(force_terms) > 64:
@@ -134,7 +134,7 @@ class SplitGroupDynamicsPlan(StrictModule):
         integrator: IntegratorKind = "omelyan",
         dynamics: DynamicsKind = "ghmc",
         omelyan_lambda: float = 0.1931833275037836,
-    ):
+    ) -> None:
         size = float(step_size)
         steps = int(trajectory_steps)
         depth = int(maximum_tree_depth)
@@ -206,7 +206,7 @@ class SplitMetricAdaptationPlan(StrictModule):
         minimum_inverse_mass: float = 1e-3,
         maximum_inverse_mass: float = 1e3,
         regularization: float = 1e-3,
-    ):
+    ) -> None:
         steps = int(warmup_steps)
         lower = float(minimum_inverse_mass)
         upper = float(maximum_inverse_mass)

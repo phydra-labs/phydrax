@@ -104,7 +104,7 @@ class SLEPcSTOptions(StrictModule):
         pc_type: str,
         factor_solver_type: str | None = None,
         options_prefix: str | None = None,
-    ):
+    ) -> None:
         if st_type not in ("sinvert", "cayley"):
             raise ValueError("st_type must be 'sinvert' or 'cayley'.")
         ksp = str(ksp_type)
@@ -144,7 +144,7 @@ class SLEPcEigenPolicy(StrictModule):
         subspace_dimension: int | None = None,
         st_options: SLEPcSTOptions | None = None,
         failure_mode: SLEPcFailureMode = "status",
-    ):
+    ) -> None:
         selected = (
             GeneralEigenSelection("largest-magnitude", count=1)
             if selection is None
@@ -742,7 +742,7 @@ def _prepare_numeric(
 
 
 class _ShellMatrixContext:
-    def __init__(self, operator: AbstractLinearOperator):
+    def __init__(self, operator: AbstractLinearOperator) -> None:
         self.operator = operator
         self.action_count = 0
         self.host_to_device_bytes = 0

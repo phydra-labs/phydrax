@@ -89,7 +89,7 @@ class EvidenceAssessment:
         *,
         evidence_ids: Sequence[str] = (),
         reason: str = "not-assessed",
-    ):
+    ) -> None:
         dimension_ = EvidenceDimension(dimension)
         state_ = EvidenceState(state)
         evidence_ = _canonical_items(evidence_ids, "evidence ID")
@@ -160,7 +160,7 @@ class CapabilityDeclaration:
         examples: Sequence[str] = (),
         intended_uses: Sequence[str] = (),
         nonclaims: Sequence[str] = (),
-    ):
+    ) -> None:
         capability_ = _capability_name(capability, "capability")
         owner_ = _identifier(owner, "capability owner")
         disposition_ = CapabilityDisposition(disposition)
@@ -337,7 +337,7 @@ class CapabilityCatalog:
     declarations: tuple[CapabilityDeclaration, ...]
     catalog_id: str
 
-    def __init__(self, declarations: Sequence[CapabilityDeclaration], /):
+    def __init__(self, declarations: Sequence[CapabilityDeclaration], /) -> None:
         declarations_ = tuple(sorted(declarations, key=lambda item: item.capability))
         if not declarations_ or any(
             not isinstance(item, CapabilityDeclaration) for item in declarations_

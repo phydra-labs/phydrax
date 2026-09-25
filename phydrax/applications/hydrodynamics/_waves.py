@@ -77,7 +77,7 @@ class WaveForcingPlan(StrictModule, NonTrainableState):
         return_flow: bool = True,
         active_gain: float = 0.0,
         history_size: int = 128,
-    ):
+    ) -> None:
         if not isinstance(provider, IncidentWavePlan):
             raise TypeError("provider must be IncidentWavePlan.")
         generation = jnp.asarray(generation_weight)

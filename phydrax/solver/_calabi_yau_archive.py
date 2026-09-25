@@ -50,7 +50,7 @@ class CalabiYauMetricArtifact(StrictModule):
         precision_evidence: PrecisionEvidenceEnvelope,
         precision_policy_id: str,
         metric_evidence: CalabiYauMetricEvidence | None = None,
-    ):
+    ) -> None:
         self.potential_model = potential_model
         self.normalization = jnp.asarray(normalization)
         self.hypersurface_id = str(hypersurface_id)

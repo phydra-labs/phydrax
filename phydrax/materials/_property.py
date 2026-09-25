@@ -16,7 +16,7 @@ class TabulatedProperty(StrictModule, NonTrainableState):
     values: Array
     unit: str = eqx.field(static=True)
 
-    def __init__(self, argument: ArrayLike, values: ArrayLike, unit: str):
+    def __init__(self, argument: ArrayLike, values: ArrayLike, unit: str) -> None:
         x = np.asarray(argument, float)
         y = np.asarray(values)
         if (

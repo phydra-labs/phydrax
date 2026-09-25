@@ -70,7 +70,7 @@ class BlockAMRConservationPlan(StrictModule, NonTrainableState):
         /,
         *,
         precision: FiniteVolumePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(hierarchy, PreparedFDAMRHierarchy):
             raise TypeError("hierarchy must be PreparedFDAMRHierarchy.")
         if not isinstance(topology, BlockHierarchyTopology) or (

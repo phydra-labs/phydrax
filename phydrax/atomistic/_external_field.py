@@ -79,7 +79,7 @@ class GriddedExternalFieldPlan(StrictModule, NonTrainableState):
         coordinate_unit: str,
         value_unit: str,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         origin_ = np.asarray(origin)
         spacing_ = np.asarray(spacing)
         values_ = np.asarray(values)
@@ -155,7 +155,7 @@ class PreparedGriddedExternalField(StrictModule, NonTrainableState):
     grid_shape: tuple[int, int, int] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: GriddedExternalFieldPlan, /):
+    def __init__(self, plan: GriddedExternalFieldPlan, /) -> None:
         if not isinstance(plan, GriddedExternalFieldPlan):
             raise TypeError("plan must be a GriddedExternalFieldPlan.")
         self.plan = plan

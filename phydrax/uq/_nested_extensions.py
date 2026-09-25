@@ -38,7 +38,7 @@ class NestedSamplingCapacity(StrictModule):
         max_dynamic_batches: int,
         max_clusters: int,
         max_phantoms: int,
-    ):
+    ) -> None:
         values = tuple(
             (
                 max_live,
@@ -72,7 +72,7 @@ class PeriodicNestedCoordinate(StrictModule):
     origin: float = eqx.field(static=True)
     period: float = eqx.field(static=True)
 
-    def __init__(self, path: str, origin: float, period: float, /):
+    def __init__(self, path: str, origin: float, period: float, /) -> None:
         path_ = str(path)
         origin_ = float(origin)
         period_ = float(period)
@@ -113,7 +113,7 @@ class NestedPriorPlan(StrictModule):
         continuous_paths: Sequence[str],
         finite_supports: Mapping[str, tuple[ArrayLike, ArrayLike]] | None = None,
         periodic: Sequence[PeriodicNestedCoordinate] = (),
-    ):
+    ) -> None:
         continuous = tuple(str(path) for path in continuous_paths)
         if any(not path for path in continuous) or len(set(continuous)) != len(
             continuous
@@ -211,7 +211,7 @@ class NestedProposalPlan(StrictModule):
         slice_scale: float = 1.0,
         gradient_barrier_scale: float = 0.1,
         rejection_fallback: bool = False,
-    ):
+    ) -> None:
         if base not in ("hit-and-run", "slice-within-gibbs"):
             raise ValueError("Unknown nested base proposal.")
         enlargement = float(ellipsoid_enlargement)
@@ -259,7 +259,7 @@ class DynamicNestedPolicy(StrictModule):
         additional_live_per_batch: int,
         allocation_cadence: int,
         evidence_fraction: float = 0.5,
-    ):
+    ) -> None:
         pilot, additional, cadence = map(
             int, (pilot_dead_points, additional_live_per_batch, allocation_cadence)
         )
@@ -423,7 +423,7 @@ class NestedSamplingPlan(StrictModule):
         *,
         initial_live: int,
         dynamic: DynamicNestedPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(capacity, NestedSamplingCapacity):
             raise TypeError("capacity must be NestedSamplingCapacity.")
         if not isinstance(prior, NestedPriorPlan):

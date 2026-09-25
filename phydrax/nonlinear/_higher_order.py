@@ -75,7 +75,7 @@ class VectorHalley(AbstractNonlinearMethod):
         maximum_dimension: int = 128,
         maximum_search_steps: int = 16,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         linear_ = LinearSolvePolicy() if linear is None else linear
         if not isinstance(linear_, LinearSolvePolicy):
             raise TypeError("linear must be LinearSolvePolicy or None.")

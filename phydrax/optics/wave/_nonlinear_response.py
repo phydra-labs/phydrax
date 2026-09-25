@@ -272,7 +272,7 @@ class InstantaneousScalarSusceptibility(AbstractCarrierResolvedResponse):
         second_order: ArrayLike = 0.0,
         third_order: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         self.second_order = _real_finite_array("second_order", second_order, ())
         self.third_order = _real_finite_array("third_order", third_order, ())
 
@@ -335,7 +335,7 @@ class OrientedTensorSusceptibility(AbstractCarrierResolvedResponse):
         third_order: ArrayLike,
         crystal_frame: RigidFrame,
         /,
-    ):
+    ) -> None:
         if not isinstance(crystal_frame, RigidFrame) or crystal_frame.dimension != 3:
             raise ValueError("crystal_frame must be a three-dimensional RigidFrame.")
         self.second_order = _real_finite_array("second_order", second_order, (3, 3, 3))
@@ -437,7 +437,7 @@ class AnalyticPulseField(StrictModule):
         /,
         *,
         polarization: AnalyticPulsePolarization = "scalar",
-    ):
+    ) -> None:
         if not isinstance(space, PlaneFieldSpace):
             raise TypeError("space must be a PlaneFieldSpace.")
         if not isinstance(time_space, PulseTimeSpace):
@@ -667,7 +667,7 @@ class _PreparedInstantaneousResponse(PreparedCarrierResolvedResponse):
         /,
         *,
         temporal_axis: int,
-    ):
+    ) -> None:
         mask, shape, axis = _prepared_geometry(
             time_space, positive_frequency_mask, field_shape, temporal_axis
         )

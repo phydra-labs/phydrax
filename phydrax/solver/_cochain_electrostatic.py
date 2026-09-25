@@ -60,7 +60,7 @@ class CochainElectrostaticBoundaryPlan(StrictModule, NonTrainableState):
         dirichlet_mask: ArrayLike | None = None,
         dirichlet_values: ArrayLike = 0.0,
         neumann_source: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be StructuredCochainBridge.")
         if not isinstance(kind, ElectrostaticBoundaryKind):
@@ -227,7 +227,7 @@ class CochainElectrostaticPlan(StrictModule, NonTrainableState):
         compatibility_tolerance: float = 1.0e-10,
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be StructuredCochainBridge.")
         if not isinstance(boundary, CochainElectrostaticBoundaryPlan):

@@ -87,7 +87,7 @@ class Linear(_AbstractBaseModel):
         bias_init_lim: float = 1.0,
         weight_transform: AbstractParameterTransform | None = None,
         key: Key[Array, ""] = _key,
-    ):
+    ) -> None:
         # Initialize the weight matrix and (optionally) RWF scales and bias
         in_size_c = _canonical_size(in_size)
         out_size_c = _canonical_size(out_size)

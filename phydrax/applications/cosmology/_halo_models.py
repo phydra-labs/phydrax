@@ -50,7 +50,7 @@ class SmoothComponentSphericalCollapsePlan(StrictModule, NonTrainableState):
         steps: int = 1024,
         bisection_iterations: int = 64,
         collapse_radius: float = 1.0e-3,
-    ):
+    ) -> None:
         initial = float(initial_scale_factor)
         steps_ = int(steps)
         iterations = int(bisection_iterations)
@@ -202,7 +202,7 @@ class TinkerDuffy200mPlan(StrictModule, NonTrainableState):
         mass_domain: tuple[float, float],
         maximum_redshift: float = 2.0,
         pivot_mass: float = 2.0e12,
-    ):
+    ) -> None:
         if not isinstance(variance, LinearVariancePlan):
             raise TypeError("variance must be LinearVariancePlan.")
         minimum, maximum = (float(value) for value in mass_domain)
@@ -340,7 +340,7 @@ class MatterHaloModel200mPlan(StrictModule, NonTrainableState):
     profile: NFWProfile
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, triplet: TinkerDuffy200mPlan, profile: NFWProfile, /):
+    def __init__(self, triplet: TinkerDuffy200mPlan, profile: NFWProfile, /) -> None:
         if not isinstance(triplet, TinkerDuffy200mPlan) or not isinstance(
             profile, NFWProfile
         ):
@@ -460,7 +460,7 @@ class HaloCatalog(StrictModule):
         box_size: tuple[float, ...],
         artifact: ScientificArtifactEnvelope,
         /,
-    ):
+    ) -> None:
         ids = jax.lax.stop_gradient(jnp.asarray(halo_ids))
         position = jax.lax.stop_gradient(jnp.asarray(positions))
         velocity = jax.lax.stop_gradient(jnp.asarray(velocities, dtype=position.dtype))
@@ -570,7 +570,7 @@ class Zheng07OccupationExpectation200m(StrictModule):
         satellite_mass: ArrayLike,
         satellite_slope: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (

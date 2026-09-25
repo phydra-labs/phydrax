@@ -51,7 +51,7 @@ class MACDiagonalStageInverseMomentum(StrictModule, NonTrainableState):
         /,
         *,
         stage_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if isinstance(inverse_diagonal, (tuple, list)):
@@ -175,7 +175,7 @@ class MACHelmholtzStageInverseMomentum(StrictModule, NonTrainableState):
         diffusion_coefficient: ArrayLike | None = None,
         rhs_scale: ArrayLike = 1.0,
         stage_id: str,
-    ):
+    ) -> None:
         if not isinstance(plan, MACHelmholtzSolvePlan):
             raise TypeError("plan must be MACHelmholtzSolvePlan.")
         identifier = str(stage_id)

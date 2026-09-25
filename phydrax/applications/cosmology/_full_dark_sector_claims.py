@@ -85,7 +85,7 @@ class FullDarkSectorReferenceUse(StrictModule, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         values = (commercial_use, redistribution, training_use, export)
         if any(type(value) is not bool for value in values):
             raise TypeError("Full dark-sector requested-use values must be Boolean.")
@@ -1041,7 +1041,7 @@ class PromotedFullDarkSectorClaim(StrictModule, NonTrainableState):
         requested_use_id: str,
         admitted: bool,
         /,
-    ):
+    ) -> None:
         if not isinstance(claim, ScientificClaimProfile):
             raise TypeError("claim must be ScientificClaimProfile.")
         if not isinstance(promotion, PromotionState):

@@ -58,7 +58,7 @@ class ElementLocalSBPReport(StrictModule, NonTrainableState):
         *,
         tolerance: float,
         data_id: str,
-    ):
+    ) -> None:
         margin = jnp.asarray(positive_norm_margin)
         constant = jnp.asarray(constant_derivative_defect)
         identity = jnp.asarray(sbp_identity_defect)
@@ -102,7 +102,7 @@ class ElementLocalSBPData(StrictModule, NonTrainableState):
     report: ElementLocalSBPReport
     data_id: str = eqx.field(static=True)
 
-    def __init__(self, order: int, /, *, tolerance: float | None = None):
+    def __init__(self, order: int, /, *, tolerance: float | None = None) -> None:
         order_ = int(order)
         nodes, weights = _gll_rule(order_)
         runtime_dtype = np.asarray(jnp.asarray(nodes)).dtype
@@ -171,7 +171,7 @@ class TensorGLLSBPPlan(StrictModule, NonTrainableState):
     tolerance: float | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, order: int, /, *, tolerance: float | None = None):
+    def __init__(self, order: int, /, *, tolerance: float | None = None) -> None:
         order_ = int(order)
         if order_ < 1:
             raise ValueError("Tensor GLL polynomial order must be >= 1.")
@@ -214,7 +214,7 @@ class MetricFacePair(StrictModule, NonTrainableState):
         /,
         *,
         periodic_translation: bool = False,
-    ):
+    ) -> None:
         values = tuple(
             (
                 owner_cell,
@@ -265,7 +265,7 @@ class MappedTensorMetricReport(StrictModule, NonTrainableState):
         *,
         tolerance: float,
         metrics_id: str,
-    ):
+    ) -> None:
         determinant = jnp.asarray(determinant_margin)
         identity = jnp.asarray(metric_identity_defect)
         free_stream = jnp.asarray(free_stream_residual)
@@ -454,7 +454,7 @@ class MappedTensorMetricPlan(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(sbp, ElementLocalSBPData):
             raise TypeError("sbp must be ElementLocalSBPData.")
         dimension_ = int(dimension)

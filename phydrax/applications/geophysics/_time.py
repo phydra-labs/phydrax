@@ -145,7 +145,7 @@ class GeophysicalTimeSpec:
         calendar: str = "proleptic_gregorian",
         epoch: str = "2000-01-01T00:00:00",
         unit: str = "s",
-    ):
+    ) -> None:
         if calendar not in _CALENDARS:
             raise ValueError("Unsupported model calendar; conversion must be explicit.")
         if unit not in _UNITS:
@@ -240,7 +240,7 @@ class TemporalSupport:
 
     def __init__(
         self, kind: str = "instantaneous", bounds: Any = None, position: str = "point"
-    ):
+    ) -> None:
         if kind not in ("instantaneous", "mean", "accumulation", "minimum", "maximum"):
             raise ValueError("Unknown temporal support kind.")
         if position not in ("point", "start", "midpoint", "end"):

@@ -39,7 +39,7 @@ class MACCollectiveAdapter(StrictModule, NonTrainableState):
     topology_id: str = eqx.field(static=True)
     adapter_id: str = eqx.field(static=True)
 
-    def __init__(self, topology: PreparedMACDistributedTopology, /):
+    def __init__(self, topology: PreparedMACDistributedTopology, /) -> None:
         if not isinstance(topology, PreparedMACDistributedTopology):
             raise TypeError("topology must be PreparedMACDistributedTopology.")
         names = tuple(str(name) for name in topology.plan.mesh.axis_names)
@@ -149,7 +149,7 @@ class MACDistributedProjectionPlan(StrictModule, NonTrainableState):
         relative_tolerance: float = 1e-9,
         absolute_tolerance: float = 1e-9,
         maximum_iterations: int = 500,
-    ):
+    ) -> None:
         if not isinstance(topology, PreparedMACDistributedTopology):
             raise TypeError("topology must be PreparedMACDistributedTopology.")
         density_ = float(density)

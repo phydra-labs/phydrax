@@ -25,7 +25,7 @@ class PackmolRegionConstraint(StrictModule, NonTrainableState):
     parameters: tuple[float, ...] = eqx.field(static=True)
     constraint_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: str, parameters, /):
+    def __init__(self, kind: str, parameters, /) -> None:
         if kind not in (
             "inside-box",
             "inside-sphere",
@@ -66,7 +66,9 @@ class PackmolComponentPlan(StrictModule, NonTrainableState):
     constraints: tuple[PackmolRegionConstraint, ...]
     component_id: str = eqx.field(static=True)
 
-    def __init__(self, template: AtomisticFrame, count: int, /, *, constraints=()):
+    def __init__(
+        self, template: AtomisticFrame, count: int, /, *, constraints=()
+    ) -> None:
         if not isinstance(template, AtomisticFrame):
             raise TypeError("template must be AtomisticFrame.")
         count_ = int(count)
@@ -106,7 +108,7 @@ class PackmolAssemblyPlan(StrictModule, NonTrainableState):
         seed: int = 0,
         executable: str = "packmol",
         timeout: float = 300.0,
-    ):
+    ) -> None:
         values = tuple(components)
         if not values or any(
             not isinstance(value, PackmolComponentPlan) for value in values

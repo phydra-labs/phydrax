@@ -151,7 +151,7 @@ class ProcessTomographyExperiment(StrictModule):
         terminal_effect: ArrayLike | None = None,
         trials: ArrayLike | None = None,
         experiment_id: str,
-    ):
+    ) -> None:
         operations = tuple(instruments)
         selected = tuple(outcomes)
         if not operations or len(operations) != len(selected):
@@ -277,7 +277,7 @@ class CausalProcessTomographyProblem(StrictModule):
         /,
         *,
         problem_id: str = "causal-process-tomography",
-    ):
+    ) -> None:
         values = tuple(experiments)
         if not values:
             raise ValueError("At least one process experiment is required.")
@@ -357,7 +357,7 @@ class CausalProcessTomographyResult(StrictModule):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         self.process = process
         self.loss_history = jnp.asarray(loss_history)
         self.support_valid = jnp.all(jnp.isfinite(self.loss_history))

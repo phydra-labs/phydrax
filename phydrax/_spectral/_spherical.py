@@ -202,7 +202,7 @@ class _RecursiveSphericalExecution(StrictModule, NonTrainableState):
         spin: int,
         sampling: SphericalSampling,
         max_precompute_bytes: int,
-    ):
+    ) -> None:
         estimate = 256 * bandlimit**2
         limit = _validate_precompute_limit(
             max_precompute_bytes,
@@ -288,7 +288,7 @@ class _PrecomputedSphericalExecution(StrictModule, NonTrainableState):
         sampling: SphericalSampling,
         reality: bool,
         max_precompute_bytes: int,
-    ):
+    ) -> None:
         order_count = bandlimit if reality else 2 * bandlimit - 1
         forward_theta = (
             s2_samples.ntheta(2 * bandlimit, "mwss")
@@ -402,7 +402,7 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
         reality: bool = True,
         execution: SphericalExecution = "recursive",
         max_precompute_bytes: int = _DEFAULT_PRECOMPUTE_BYTES,
-    ):
+    ) -> None:
         selected_bandlimit = int(bandlimit)
         selected_sampling = str(sampling).lower()
         selected_spin = int(spin)

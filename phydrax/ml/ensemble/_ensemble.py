@@ -140,7 +140,7 @@ class EnsembleFitDiagnostics(StrictModule):
         *,
         method: str,
         auxiliary_status: Any = (),
-    ):
+    ) -> None:
         self.member_valid = jnp.asarray(member_valid, dtype=jnp.bool_)
         self.member_status = jnp.asarray(member_status, dtype=jnp.int32)
         self.auxiliary_status = jnp.asarray(auxiliary_status, dtype=jnp.int32)
@@ -162,7 +162,7 @@ class HomogeneousEnsembleModel(AbstractFittedModel):
         /,
         *,
         member_weights: Any = None,
-    ):
+    ) -> None:
         values = tuple(members)
         if not values:
             raise ValueError("members must be non-empty.")
@@ -204,7 +204,7 @@ class HeterogeneousEnsembleModel(AbstractFittedModel):
         /,
         *,
         member_weights: Any = None,
-    ):
+    ) -> None:
         values = tuple(members)
         if not values:
             raise ValueError("members must be non-empty.")
@@ -240,7 +240,7 @@ class SoftVotingModel(AbstractFittedModel):
 
     def __init__(
         self, members: Sequence[AbstractArrayModel], /, *, member_weights: Any = None
-    ):
+    ) -> None:
         values = tuple(members)
         if not values:
             raise ValueError("members must be non-empty.")
@@ -266,7 +266,7 @@ class HardVotingModel(AbstractFittedModel):
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     _input_binding = ModelBinding.pointwise()
 
-    def __init__(self, members: Sequence[AbstractArrayModel], /):
+    def __init__(self, members: Sequence[AbstractArrayModel], /) -> None:
         values = tuple(members)
         if not values:
             raise ValueError("members must be non-empty.")
@@ -316,7 +316,9 @@ class FeatureSubsetModel(AbstractFittedModel):
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     _input_binding = ModelBinding.pointwise()
 
-    def __init__(self, model: AbstractArrayModel, indices: Any, /, *, input_size: int):
+    def __init__(
+        self, model: AbstractArrayModel, indices: Any, /, *, input_size: int
+    ) -> None:
         selected = jnp.asarray(indices, dtype=jnp.int32)
         if selected.ndim != 1 or selected.shape[0] == 0:
             raise ValueError("indices must be a nonempty vector.")
@@ -344,7 +346,7 @@ class StackingModel(AbstractFittedModel):
 
     def __init__(
         self, bases: Sequence[AbstractArrayModel], meta_model: AbstractArrayModel, /
-    ):
+    ) -> None:
         values = tuple(bases)
         if not values:
             raise ValueError("bases must be non-empty.")
@@ -389,7 +391,7 @@ class MixtureOfExpertsModel(AbstractFittedModel):
         /,
         *,
         temperature: Any = 1.0,
-    ):
+    ) -> None:
         values = tuple(experts)
         if not values:
             raise ValueError("experts must be non-empty.")
@@ -499,7 +501,7 @@ class BaggingRecipe(AbstractRecipe):
         *,
         num_members: int = 16,
         sample_fraction: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(recipe, AbstractRecipe):
             raise TypeError("recipe must be an AbstractRecipe.")
         if int(num_members) <= 0 or not (0.0 < float(sample_fraction) <= 1.0):
@@ -542,7 +544,7 @@ class RandomSubspaceRecipe(AbstractRecipe):
 
     def __init__(
         self, recipe: AbstractRecipe, /, *, num_members: int = 16, feature_count: int
-    ):
+    ) -> None:
         if not isinstance(recipe, AbstractRecipe):
             raise TypeError("recipe must be an AbstractRecipe.")
         if int(num_members) <= 0 or int(feature_count) <= 0:
@@ -596,7 +598,7 @@ class SoftVotingRecipe(AbstractRecipe):
 
     def __init__(
         self, recipes: Sequence[AbstractRecipe], /, *, member_weights: Any = None
-    ):
+    ) -> None:
         values = tuple(recipes)
         if not values or any(not isinstance(value, AbstractRecipe) for value in values):
             raise TypeError(
@@ -622,7 +624,7 @@ class SoftVotingRecipe(AbstractRecipe):
 class HardVotingRecipe(AbstractRecipe):
     recipes: tuple[AbstractRecipe, ...]
 
-    def __init__(self, recipes: Sequence[AbstractRecipe], /):
+    def __init__(self, recipes: Sequence[AbstractRecipe], /) -> None:
         values = tuple(recipes)
         if not values or any(not isinstance(value, AbstractRecipe) for value in values):
             raise TypeError(
@@ -654,7 +656,7 @@ class StackingRecipe(AbstractRecipe):
         /,
         *,
         num_folds: int = 5,
-    ):
+    ) -> None:
         bases = tuple(base_recipes)
         if not bases or any(not isinstance(value, AbstractRecipe) for value in bases):
             raise TypeError("base_recipes must be a nonempty sequence of recipes.")
@@ -772,7 +774,7 @@ class MixtureOfExpertsRecipe(AbstractRecipe):
         /,
         *,
         temperature: float = 1.0,
-    ):
+    ) -> None:
         experts = tuple(expert_recipes)
         if not experts or any(not isinstance(value, AbstractRecipe) for value in experts):
             raise TypeError("expert_recipes must be a nonempty sequence of recipes.")

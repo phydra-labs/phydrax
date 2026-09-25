@@ -148,7 +148,7 @@ class FiniteHorizonLQOpenLoopGNEProblem(StrictModule):
         time_grid: TimeGrid | None = None,
         problem_id: str = "control:game:lq-open-loop-gne",
         dynamics_id: str = "control:game:dynamics:affine-discrete",
-    ):
+    ) -> None:
         if not isinstance(partition, PlayerControlPartition):
             raise TypeError("partition must be a PlayerControlPartition.")
         a = _real_array(dynamics_matrices, "dynamics_matrices")

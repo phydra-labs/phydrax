@@ -90,7 +90,7 @@ class CategoricalSchema(StrictModule):
         /,
         *,
         names: Sequence[str] | None = None,
-    ):
+    ) -> None:
         categories_ = tuple(tuple(values) for values in categories)
         if not categories_ or any(not values for values in categories_):
             raise ValueError("Every categorical feature requires a nonempty vocabulary.")
@@ -156,7 +156,7 @@ class CategoricalDiagnostics(StrictModule):
         method: str,
         input_shape: tuple[int, ...],
         output_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.category_weight = jnp.asarray(category_weight)
@@ -269,7 +269,7 @@ class FittedSimpleImputer(AbstractFittedModel):
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.fill_values = jnp.asarray(fill_values)
@@ -381,7 +381,7 @@ class SimpleImputer(AbstractRecipe):
         missing_values: Number | float = float("nan"),
         add_indicator: bool = False,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if strategy not in ("mean", "median", "most_frequent", "constant"):
             raise ValueError("Unsupported imputation strategy.")
         if weight_policy not in ("none", "statistical", "measure", "product"):
@@ -517,7 +517,7 @@ class FittedOrdinalEncoder(AbstractFittedModel, NonTrainableState):
         unknown_value: int,
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.categories = jnp.asarray(categories)
@@ -587,7 +587,7 @@ class OrdinalEncoder(AbstractRecipe):
         unknown_policy: UnknownPolicy = "fail",
         unknown_value: int = -1,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if unknown_policy not in ("fail", "indicator"):
             raise ValueError("unknown_policy must be 'fail' or 'indicator'.")
         if weight_policy not in ("none", "statistical", "measure", "product"):
@@ -657,7 +657,7 @@ class FittedOneHotEncoder(AbstractFittedModel, NonTrainableState):
         unknown_policy: UnknownPolicy,
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.categories = jnp.asarray(categories)
@@ -736,7 +736,7 @@ class OneHotEncoder(AbstractRecipe):
         *,
         unknown_policy: UnknownPolicy = "fail",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if unknown_policy not in ("fail", "indicator"):
             raise ValueError("unknown_policy must be 'fail' or 'indicator'.")
         if weight_policy not in ("none", "statistical", "measure", "product"):
@@ -811,7 +811,7 @@ class FittedTargetEncoder(AbstractFittedModel):
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.category_schema = category_schema
@@ -877,7 +877,7 @@ class TargetEncoder(AbstractRecipe):
         smoothing: ArrayLike = 1.0,
         unknown_policy: UnknownPolicy = "fail",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         smoothing_ = jnp.asarray(smoothing, dtype=jnp.float64)
         if smoothing_.ndim != 0:
             raise ValueError("smoothing must be scalar.")

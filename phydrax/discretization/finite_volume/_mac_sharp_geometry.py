@@ -128,7 +128,7 @@ class MACExactSDFMeasurePlan(StrictModule, NonTrainableState):
         wall_velocity: WallVelocityProvider | None = None,
         swept_cell_measure_rate: SweptMeasureRateProvider | None = None,
         gcl_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if not callable(signed_distance):

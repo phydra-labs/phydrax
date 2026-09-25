@@ -69,7 +69,7 @@ class OrthogonalDiffusiveWaveSurfacePlan(StrictModule):
         reference_temperature: float = 273.15,
         lateral: bool = True,
         orthogonality_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(trace, BoundarySurfaceTrace):
             raise TypeError("Surface runoff requires a BoundarySurfaceTrace.")
         if (

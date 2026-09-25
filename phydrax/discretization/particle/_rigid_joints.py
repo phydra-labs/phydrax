@@ -91,7 +91,7 @@ class BallJointSetPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers, left, right = _joint_vectors(
             "Ball", joint_ids, left_body_ids, right_body_ids
         )
@@ -138,7 +138,7 @@ class FixedJointSetPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers, left, right = _joint_vectors(
             "Fixed", joint_ids, left_body_ids, right_body_ids
         )
@@ -180,7 +180,7 @@ class HingeJointSetPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers, left, right = _joint_vectors(
             "Hinge", joint_ids, left_body_ids, right_body_ids
         )
@@ -242,7 +242,7 @@ class PrismaticJointSetPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers, left, right = _joint_vectors(
             "Prismatic", joint_ids, left_body_ids, right_body_ids
         )
@@ -304,7 +304,7 @@ class DistanceJointSetPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers, left, right = _joint_vectors(
             "Distance", joint_ids, left_body_ids, right_body_ids
         )
@@ -368,7 +368,7 @@ class RigidJointGraphPlan(StrictModule, NonTrainableState):
         prismatic: PrismaticJointSetPlan | None = None,
         distance: DistanceJointSetPlan | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         expected = (
             ("fixed", fixed, FixedJointSetPlan),
             ("ball", ball, BallJointSetPlan),
@@ -531,7 +531,7 @@ class PreparedRigidJointGraph(StrictModule, NonTrainableState):
         bodies: PreparedRigidBodySet,
         reference: RigidBodyKinematics,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, RigidJointGraphPlan):
             raise TypeError("plan must be a RigidJointGraphPlan.")
         if not isinstance(bodies, PreparedRigidBodySet):

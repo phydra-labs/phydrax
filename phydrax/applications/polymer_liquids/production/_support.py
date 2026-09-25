@@ -144,7 +144,7 @@ class PolymerProductionRegime(StrictModule, NonTrainableState):
         hydrodynamics: HydrodynamicRoute,
         driven_flow: DrivenFlowRoute,
         /,
-    ):
+    ) -> None:
         allowed = (
             (
                 model,

@@ -59,7 +59,7 @@ class SpatialBatteryCellPlan(StrictModule, NonTrainableState):
         /,
         *,
         current_weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(local_plan, IsothermalDFNPlan):
             raise TypeError("local_plan must be an IsothermalDFNPlan.")
         if not isinstance(parameters, DFNParameters):

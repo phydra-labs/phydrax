@@ -50,7 +50,7 @@ class Bounds(StrictModule):
         eqx.field(static=True, repr=False)
     )
 
-    def __init__(self, lower: Any = -jnp.inf, upper: Any = jnp.inf, /):
+    def __init__(self, lower: Any = -jnp.inf, upper: Any = jnp.inf, /) -> None:
         self.lower = lower
         self.upper = upper
         self._lower_metadata = _static_bound_metadata(lower)

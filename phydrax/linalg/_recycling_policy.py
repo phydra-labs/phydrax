@@ -28,7 +28,7 @@ class RecyclingPolicy(StrictModule):
         capacity: int = 20,
         extraction: RecyclingExtraction = "harmonic-ritz",
         refresh: RecyclingRefresh = "reuse-source",
-    ):
+    ) -> None:
         capacity_ = int(capacity)
         if capacity_ < 1:
             raise ValueError("Recycling capacity must be positive.")

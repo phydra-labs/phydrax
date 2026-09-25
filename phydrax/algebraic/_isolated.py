@@ -59,7 +59,7 @@ class IsolatedPolynomialRootProblem(StrictModule):
         system: SparsePolynomialSystem,
         scaling: PolynomialScaling | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(system, SparsePolynomialSystem):
             raise TypeError("system must be a SparsePolynomialSystem.")
         support = system.support

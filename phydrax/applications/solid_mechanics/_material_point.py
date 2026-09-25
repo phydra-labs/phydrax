@@ -37,7 +37,7 @@ class NeoHookeanMPMConstitutivePlan(
     capabilities: MPMConstitutiveCapabilities
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (1, 2, 3):
             raise ValueError("Neo-Hookean MPM supports dimensions one, two, and three.")

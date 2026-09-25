@@ -22,7 +22,7 @@ class _VectorFieldCallable(StrictModule):
     dimension: int
     role: str
 
-    def __init__(self, source: DomainFunction, dimension: int, role: str):
+    def __init__(self, source: DomainFunction, dimension: int, role: str) -> None:
         self.source = source
         self.dimension = int(dimension)
         self.role = role

@@ -39,7 +39,7 @@ class ConnectedConfigurations(StrictModule):
         /,
         *,
         configuration_shape: Sequence[int],
-    ):
+    ) -> None:
         shape = tuple(configuration_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("configuration_shape must contain positive dimensions.")
@@ -100,7 +100,7 @@ class CallableDiscreteQuantumOperator(AbstractDiscreteQuantumOperator):
         *,
         configuration_shape: Sequence[int],
         operator_id: str,
-    ):
+    ) -> None:
         if not callable(diagonal) or not callable(connections):
             raise TypeError("diagonal and connections must be callable.")
         shape = tuple(configuration_shape)

@@ -87,7 +87,7 @@ class PosteriorReweightingPolicy(StrictModule):
         self,
         minimum_effective_sample_size: float = 20.0,
         minimum_effective_sample_fraction: float = 0.01,
-    ):
+    ) -> None:
         count = float(minimum_effective_sample_size)
         fraction = float(minimum_effective_sample_fraction)
         if not np.isfinite(count) or count <= 0.0 or not 0.0 < fraction <= 1.0:
@@ -113,7 +113,7 @@ class PosteriorReweightingPlan(StrictModule):
         old_target_id: str,
         new_target_id: str,
         policy: PosteriorReweightingPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(old_log_density) or not callable(new_log_density):
             raise TypeError("Posterior target densities must be callable.")
         old_id, new_id = str(old_target_id).strip(), str(new_target_id).strip()

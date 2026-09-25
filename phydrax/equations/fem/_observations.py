@@ -38,7 +38,7 @@ class CoordinateObservation(StrictModule, NonTrainableState):
         *,
         weights: ArrayLike | None = None,
         observation_id: str = "coordinate-observation",
-    ):
+    ) -> None:
         if not isinstance(state_space, AbstractVectorSpace):
             raise TypeError("state_space must be AbstractVectorSpace.")
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
@@ -108,7 +108,7 @@ class FiniteElementLeastSquaresObjective(StrictModule, NonTrainableState):
         *,
         precision: ArrayLike = 1.0,
         objective_id: str = "finite-element-least-squares",
-    ):
+    ) -> None:
         if not isinstance(observation, CoordinateObservation):
             raise TypeError("observation must be CoordinateObservation.")
         target_ = jnp.asarray(target)

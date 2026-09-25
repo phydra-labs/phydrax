@@ -99,7 +99,7 @@ class FunctionalDecompositionEvidence(StrictModule):
         pair_losses: tuple[tuple[str, Array], ...],
         cover_verified: bool,
         certified: bool,
-    ):
+    ) -> None:
         self.training_loss = jnp.asarray(training_loss).reshape(())
         self.evaluation_loss = jnp.asarray(evaluation_loss).reshape(())
         self.maximum_pair_loss = jnp.asarray(maximum_pair_loss).reshape(())
@@ -172,7 +172,7 @@ class FunctionalDecompositionState(StrictModule):
         completed_sweeps: int = 0,
         trace_state: SchwarzTraceState | None = None,
         strategy: str,
-    ):
+    ) -> None:
         states, identities = _patch_kernel_states(kernel_states, kernel_checkpoint_ids)
         self.functions = frozendict(functions)
         self.kernel_states = states
@@ -200,7 +200,7 @@ class FunctionalDecompositionIterationMetrics(StrictModule):
         maximum_interface_defect,
         training_loss,
         /,
-    ):
+    ) -> None:
         self.completed_sweeps = jnp.asarray(completed_sweeps, dtype=jnp.int32)
         self.local_steps = jnp.asarray(local_steps, dtype=jnp.int32)
         self.maximum_interface_defect = jnp.asarray(maximum_interface_defect)
@@ -253,7 +253,7 @@ class FunctionalDecompositionResult(StrictModule):
         evidence: FunctionalDecompositionEvidence,
         status: str,
         iteration_session_state: IterationSessionState | None = None,
-    ):
+    ) -> None:
         self.solver = solver
         self.family = family
         self.global_field = global_field
@@ -552,7 +552,7 @@ class _LocalPatchLoss(StrictModule, NonTrainableState):
 
     solver: FunctionalSolver
 
-    def __init__(self, solver: FunctionalSolver, /):
+    def __init__(self, solver: FunctionalSolver, /) -> None:
         self.solver = eqx.tree_at(lambda value: value.functions, solver, frozendict())
 
     def __call__(
@@ -580,7 +580,7 @@ class _FiniteCandidateOptaxRule(AbstractKernelUpdateRule):
     optax_rule: OptaxUpdateRule
     rule_id: str = eqx.field(static=True)
 
-    def __init__(self, optimizer: Optimizer, /):
+    def __init__(self, optimizer: Optimizer, /) -> None:
         self.optax_rule = OptaxUpdateRule(optimizer, rule_id=_LOCAL_RULE_ID)
         self.rule_id = _LOCAL_RULE_ID
 

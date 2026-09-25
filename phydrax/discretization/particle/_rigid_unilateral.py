@@ -52,7 +52,7 @@ class FixedCapacityUnilateralPlan(StrictModule, NonTrainableState):
         termination: NonlinearTermination | None = None,
         complementarity_tolerance: float = 1.0e-8,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         keys = np.asarray(route_keys)
         if keys.ndim != 1 or keys.size == 0 or not np.issubdtype(keys.dtype, np.integer):
             raise TypeError("route_keys must be a nonempty rank-1 integer array.")
@@ -172,7 +172,7 @@ class PreparedUnilateralRows(StrictModule, NonTrainableState):
         /,
         *,
         prepared_scope_id: str,
-    ):
+    ) -> None:
         if not isinstance(plan, FixedCapacityUnilateralPlan):
             raise TypeError("plan must be a FixedCapacityUnilateralPlan.")
         scope = str(prepared_scope_id)
@@ -378,7 +378,7 @@ class JointLimitPlan(StrictModule, NonTrainableState):
         release_velocity: float = 1.0e-10,
         complementarity_tolerance: float = 1.0e-8,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers = np.asarray(hinge_ids)
         lower = np.asarray(lower_limits)
         upper = np.asarray(upper_limits)
@@ -537,7 +537,7 @@ class PreparedJointLimits(StrictModule, NonTrainableState):
     rows: PreparedUnilateralRows
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: JointLimitPlan, graph: PreparedRigidJointGraph, /):
+    def __init__(self, plan: JointLimitPlan, graph: PreparedRigidJointGraph, /) -> None:
         if not isinstance(plan, JointLimitPlan):
             raise TypeError("plan must be a JointLimitPlan.")
         if not isinstance(graph, PreparedRigidJointGraph):

@@ -209,7 +209,7 @@ class CellPolynomialBasis(StrictModule, NonTrainableState):
     feature_count: int = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, degree: int, /):
+    def __init__(self, dimension: int, degree: int, /) -> None:
         features = TotalDegreePolynomialFeatures(dimension, degree)
         if features.feature_count == 0:
             raise ValueError("Cell polynomial degree must be positive.")
@@ -257,7 +257,7 @@ class CellPolynomialReconstructionPlan(StrictModule, NonTrainableState):
         oversampling: int = 2,
         rcond: float = 1e-12,
         condition_limit: float = 1e8,
-    ):
+    ) -> None:
         degree_ = _positive_integer(degree, "degree")
         oversampling_ = int(oversampling)
         if oversampling_ < 0:
@@ -320,7 +320,7 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
         /,
         *,
         stencil_direction: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, CellPolynomialReconstructionPlan):
             raise TypeError("plan must be CellPolynomialReconstructionPlan.")
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):

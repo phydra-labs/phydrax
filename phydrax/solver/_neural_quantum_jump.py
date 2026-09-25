@@ -30,7 +30,7 @@ class NeuralJumpProjectionProblem(StrictModule):
         /,
         *,
         problem_id: str = "neural-jump-projection",
-    ):
+    ) -> None:
         if not callable(state_function):
             raise TypeError("state_function must be callable.")
         parameters_ = jnp.asarray(parameters)
@@ -61,7 +61,7 @@ class NeuralJumpProjectionResult(StrictModule):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         self.parameters = jnp.asarray(parameters)
         self.projected_state = jnp.asarray(projected_state)
         self.target_state = jnp.asarray(target_state)
@@ -135,7 +135,7 @@ class NeuralNoJumpTDVPProblem(StrictModule):
         /,
         *,
         problem_id: str = "neural-no-jump-tdvp",
-    ):
+    ) -> None:
         for value in (qgt_action, force, channel_rates, jump_projection):
             if not callable(value):
                 raise TypeError("Neural trajectory actions must be callable.")
@@ -174,7 +174,7 @@ class NeuralNoJumpTDVPResult(StrictModule):
         problem_id: str,
         saturated: bool = False,
         successful: bool = True,
-    ):
+    ) -> None:
         self.parameters = jnp.asarray(parameters)
         self.parameter_history = jnp.asarray(parameter_history)
         self.rate_history = jnp.asarray(rate_history)

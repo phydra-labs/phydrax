@@ -40,7 +40,7 @@ class ReactorKineticsState(StrictModule):
         precursor_populations: ArrayLike,
         time_s: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         population = jnp.asarray(neutron_population, dtype=jnp.float64)
         precursors = jnp.asarray(precursor_populations, dtype=population.dtype)
         time = jnp.asarray(time_s, dtype=population.dtype)

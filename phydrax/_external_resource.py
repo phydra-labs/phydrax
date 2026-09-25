@@ -26,7 +26,7 @@ class ResourceReadError(ValueError):
 
     reason: _ResourceFailure
 
-    def __init__(self, reason: _ResourceFailure, message: str, /):
+    def __init__(self, reason: _ResourceFailure, message: str, /) -> None:
         self.reason = reason
         super().__init__(str(message))
 

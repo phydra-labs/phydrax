@@ -48,7 +48,7 @@ class EigenCostEstimate(StrictModule):
         accepted: bool,
         reason: str,
         /,
-    ):
+    ) -> None:
         component_, reason_ = str(component), str(reason)
         if not component_ or not reason_:
             raise ValueError("Eigen cost component and reason must be non-empty.")
@@ -105,7 +105,7 @@ class EigenSolvePlan(StrictModule):
         candidates: tuple[EigenCostEstimate, ...],
         rejections: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, (Eigenproblem, GeneralizedEigenproblem)):
             raise TypeError("problem must be an Eigenproblem or GeneralizedEigenproblem.")
         if not isinstance(policy, EigenSolvePolicy):

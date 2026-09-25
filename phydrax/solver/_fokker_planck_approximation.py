@@ -31,7 +31,9 @@ class WeakObservable(StrictModule):
     generator: Any
     observable_id: str = eqx.field(static=True)
 
-    def __init__(self, function: Any, /, *, generator: Any = None, observable_id: str):
+    def __init__(
+        self, function: Any, /, *, generator: Any = None, observable_id: str
+    ) -> None:
         if not callable(function) or (generator is not None and not callable(generator)):
             raise TypeError("function and optional generator must be callable.")
         if not isinstance(observable_id, str) or not observable_id:
@@ -56,7 +58,7 @@ class ParticleFokkerPlanckPlan(StrictModule):
         confidence_level: float,
         validation_grid: Array,
         /,
-    ):
+    ) -> None:
         selected = tuple(observables)
         if not isinstance(ensemble_plan, StochasticPathEnsemblePlan):
             raise TypeError("ensemble_plan must be a StochasticPathEnsemblePlan.")
@@ -184,7 +186,7 @@ class SparseGridFokkerPlanckPlan(StrictModule):
         validation_operator: Any = None,
         reference: str = "coordinate",
         state_var: str = "x",
-    ):
+    ) -> None:
         if not isinstance(realization, IntegrationRealization) or not isinstance(
             validation_realization, IntegrationRealization
         ):

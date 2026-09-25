@@ -26,7 +26,7 @@ class MaterialRecord:
             tuple(sorted(str(v) for v in source_ids)),
         )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         component_ids = tuple(name for name, _ in self.composition)
         if (
             not self.material_id

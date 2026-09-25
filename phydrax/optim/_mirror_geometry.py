@@ -39,7 +39,7 @@ class ParameterMirrorGeometry(StrictModule):
         /,
         *,
         weights: Mapping[str, ArrayLike] | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometries, Mapping):
             raise TypeError("ParameterMirrorGeometry geometries must be a path mapping.")
         if not geometries:

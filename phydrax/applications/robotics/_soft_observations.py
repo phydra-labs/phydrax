@@ -152,7 +152,7 @@ class SoftObservationLayout(StrictModule, NonTrainableState):
         component_query_ids: tuple[str, ...],
         groups: tuple[tuple[str, int, int], ...],
         /,
-    ):
+    ) -> None:
         names = _string_tuple(component_names, "component_names")
         units = _string_tuple(component_units, "component_units")
         frames = _string_tuple(component_frames, "component_frames")
@@ -279,7 +279,7 @@ class SoftRobotObservation(StrictModule):
         sensor_plan_id: str,
         observation_plan_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(layout, SoftObservationLayout):
             raise TypeError("layout must be SoftObservationLayout.")
         arrays = tuple(
@@ -374,7 +374,7 @@ class SoftReducedStateQueryPlan(StrictModule, NonTrainableState):
         include_velocity: bool = True,
         coordinate_unit: str = "1",
         velocity_unit: str = "s^-1",
-    ):
+    ) -> None:
         if not isinstance(include_configuration, bool) or not isinstance(
             include_velocity, bool
         ):
@@ -421,7 +421,7 @@ class SoftFrameQueryPlan(StrictModule, NonTrainableState):
         position_unit: str = "m",
         linear_velocity_unit: str = "m/s",
         angular_velocity_unit: str = "rad/s",
-    ):
+    ) -> None:
         if not isinstance(reconstruction, RodReconstructionPlan):
             raise TypeError("reconstruction must be RodReconstructionPlan.")
         if not isinstance(include_pose, bool):
@@ -477,7 +477,7 @@ class SoftStrainQueryPlan(StrictModule, NonTrainableState):
         include_reduced: bool = False,
         stretch_shear_unit: str = "1",
         bend_twist_unit: str = "rad/m",
-    ):
+    ) -> None:
         if not isinstance(reconstruction, RodReconstructionPlan):
             raise TypeError("reconstruction must be RodReconstructionPlan.")
         if not isinstance(include_total, bool) or not isinstance(include_reduced, bool):
@@ -532,7 +532,7 @@ class SoftTendonQueryPlan(StrictModule, NonTrainableState):
         length_rate_unit: str = "m/s",
         tension_unit: str = "N",
         energy_unit: str = "J",
-    ):
+    ) -> None:
         if not isinstance(tendons, tuple) or not tendons:
             raise ValueError("tendons must be a nonempty tuple of prepared tendons.")
         if not all(
@@ -606,7 +606,7 @@ class SoftEnergyLoadQueryPlan(StrictModule, NonTrainableState):
         energy_unit: str = "J",
         power_unit: str = "W",
         reduced_effort_unit: str = "J",
-    ):
+    ) -> None:
         if not isinstance(include_mechanics, bool) or not isinstance(
             include_step_ledger, bool
         ):
@@ -650,7 +650,7 @@ class SoftSensorPlan(StrictModule, NonTrainableState):
         *,
         noise_standard_deviation: ArrayLike = 0.0,
         sample_period: float = 0.0,
-    ):
+    ) -> None:
         identifier = _identifier(sensor_id, "sensor_id")
         noise = np.asarray(noise_standard_deviation)
         if noise.ndim > 1 or not np.issubdtype(noise.dtype, np.floating):
@@ -696,7 +696,7 @@ class SoftTendonObservationState(StrictModule):
         execution_signature_id: str,
         tendon_query_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(actuator_states, tuple) or not all(
             isinstance(value, TendonActuatorState) for value in actuator_states
         ):
@@ -767,7 +767,7 @@ class SoftObservationPlan(StrictModule, NonTrainableState):
         tendon: SoftTendonQueryPlan | None = None,
         energy_load: SoftEnergyLoadQueryPlan | None = None,
         sensor: SoftSensorPlan | None = None,
-    ):
+    ) -> None:
         values = (
             (reduced_state, SoftReducedStateQueryPlan, "reduced_state"),
             (frame, SoftFrameQueryPlan, "frame"),
@@ -1496,7 +1496,9 @@ class PreparedSoftObservationPlan(StrictModule, NonTrainableState):
     query_plan_id: str = eqx.field(static=True)
     observation_plan_id: str = eqx.field(static=True)
 
-    def __init__(self, plant: PreparedReducedRodPlant, plan: SoftObservationPlan, /):
+    def __init__(
+        self, plant: PreparedReducedRodPlant, plan: SoftObservationPlan, /
+    ) -> None:
         if not isinstance(plant, PreparedReducedRodPlant):
             raise TypeError("plant must be PreparedReducedRodPlant.")
         if not isinstance(plan, SoftObservationPlan):

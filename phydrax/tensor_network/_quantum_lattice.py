@@ -31,7 +31,7 @@ class QuantumLatticeMPOPolicy(StrictModule):
         maximum_bond_dimension: int,
         maximum_tensor_elements: int,
         hermiticity_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         bond = int(maximum_bond_dimension)
         elements = int(maximum_tensor_elements)
         tolerance = float(hermiticity_tolerance)

@@ -237,7 +237,7 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
         fixed_mass_coefficient: float | None = None,
         fixed_diffusion_coefficient: float | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         if not isinstance(momentum, PreparedMACMomentumOperators):
             raise TypeError("momentum must be PreparedMACMomentumOperators.")
         if solve_method not in ("auto", "transform", "hybrid", "iterative"):
@@ -1074,7 +1074,7 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         prepared_les = _prepared_algebraic_les(dynamics)
@@ -1557,7 +1557,7 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         step = float(step_size)

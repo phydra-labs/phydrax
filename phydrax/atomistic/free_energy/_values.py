@@ -75,7 +75,7 @@ class FreeEnergyStatePlan(StrictModule, NonTrainableState):
         thermodynamic: PreparedThermodynamicStateTable,
         state_index: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(hamiltonian, PreparedControlledHamiltonian):
             raise TypeError("hamiltonian must be PreparedControlledHamiltonian.")
         if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
@@ -346,7 +346,7 @@ class FreeEnergyProtocolLegPlan(StrictModule, NonTrainableState):
         destination: FreeEnergyStatePlan,
         environment_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, FreeEnergyStatePlan) or not isinstance(
             destination, FreeEnergyStatePlan
         ):
@@ -542,7 +542,7 @@ class RestraintCorrectionPlan(FreeEnergyCorrectionPlan):
     convention: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, restraint_id: str, /, *, convention: str):
+    def __init__(self, restraint_id: str, /, *, convention: str) -> None:
         (
             self.correction_kind,
             self.correction_name,
@@ -564,7 +564,7 @@ class StandardStateCorrectionPlan(FreeEnergyCorrectionPlan):
     convention: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, standard_state_id: str, /, *, convention: str):
+    def __init__(self, standard_state_id: str, /, *, convention: str) -> None:
         (
             self.correction_kind,
             self.correction_name,
@@ -587,7 +587,7 @@ class SymmetryCorrectionPlan(FreeEnergyCorrectionPlan):
     plan_id: str = eqx.field(static=True)
     symmetry_number: int = eqx.field(static=True)
 
-    def __init__(self, symmetry_number: int, /, *, convention: str):
+    def __init__(self, symmetry_number: int, /, *, convention: str) -> None:
         number = int(symmetry_number)
         if number < 1:
             raise ValueError("symmetry_number must be positive.")

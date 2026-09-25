@@ -31,7 +31,7 @@ class MPMResourcePolicy(StrictModule, NonTrainableState):
         *,
         maximum_step_workspace_bytes: int = 2 * 1024**3,
         maximum_state_bytes: int = 1024**3,
-    ):
+    ) -> None:
         workspace = int(maximum_step_workspace_bytes)
         state = int(maximum_state_bytes)
         if workspace <= 0 or state <= 0:
@@ -76,7 +76,7 @@ class ExplicitMPMMethodPlan(StrictModule, NonTrainableState):
         advective_cfl: float = 0.4,
         force_cfl: float = 0.25,
         mass_tolerance_factor: float = 32.0,
-    ):
+    ) -> None:
         transfer_ = APICTransferPlan() if transfer is None else transfer
         if not isinstance(transfer_, AbstractMPMVelocityTransferPlan):
             raise TypeError("transfer must be AbstractMPMVelocityTransferPlan or None.")

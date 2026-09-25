@@ -59,7 +59,7 @@ class MutationProfileCase:
         protocol_id: str,
         source_manifest_ids: tuple[str, ...],
         parent_case_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         values = tuple(
             _identifier(value, name)
             for value, name in (
@@ -179,7 +179,7 @@ class MutationProfileBatch(StrictModule, NonTrainableState):
         mapping_category_ids: tuple[str, ...],
         cases: tuple[MutationProfileCase, ...],
         sources: tuple[ReferenceArtifactManifest, ...],
-    ):
+    ) -> None:
         if (
             not isinstance(cases, tuple)
             or not cases

@@ -59,7 +59,7 @@ class Wannier90MMNImport(StrictModule, NonTrainableState):
         connectivity: PreparedReciprocalConnectivity,
         raw_overlaps,
         /,
-    ):
+    ) -> None:
         if not isinstance(context, PeriodicSourceContext) or not isinstance(
             connectivity, PreparedReciprocalConnectivity
         ):

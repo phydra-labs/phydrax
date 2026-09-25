@@ -27,7 +27,7 @@ class GaussianDerivativeWaveform(StrictModule, NonTrainableState):
 
     def __init__(
         self, center_frequency_Hz: float, delay_s: float, amplitude: float = 1.0, /
-    ):
+    ) -> None:
         frequency, delay, amplitude_ = (
             float(center_frequency_Hz),
             float(delay_s),
@@ -76,7 +76,7 @@ class DispersiveFullWaveGPRPlan(StrictModule, NonTrainableState):
         step_size_s: ArrayLike,
         step_count: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(runtime, PreparedCompatibleMaxwell):
             raise TypeError("GPR requires a prepared compatible Maxwell runtime.")
         if not runtime.capabilities.dispersive or not runtime.capabilities.passive:

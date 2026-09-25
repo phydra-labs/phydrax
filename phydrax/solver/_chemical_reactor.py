@@ -109,7 +109,7 @@ class ChemicalReactorPlan(StrictModule, NonTrainableState):
         minimum_temperature: float | None = None,
         maximum_temperature: float | None = None,
         inversion_iterations: int = 48,
-    ):
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         if not isinstance(kind, ChemicalReactorKind):
@@ -460,7 +460,7 @@ class ChemicalReactorPlan(StrictModule, NonTrainableState):
 class _ChemicalReactorODEResidual(StrictModule):
     plan: ChemicalReactorPlan
 
-    def __init__(self, plan: ChemicalReactorPlan, /):
+    def __init__(self, plan: ChemicalReactorPlan, /) -> None:
         self.plan = plan
 
     def __call__(self, time, state, state_rate, args=None):
@@ -470,7 +470,7 @@ class _ChemicalReactorODEResidual(StrictModule):
 class PreparedChemicalReactorDynamics(StrictModule):
     plan: ChemicalReactorPlan
 
-    def __init__(self, plan: ChemicalReactorPlan, /):
+    def __init__(self, plan: ChemicalReactorPlan, /) -> None:
         if not isinstance(plan, ChemicalReactorPlan):
             raise TypeError("plan must be ChemicalReactorPlan.")
         self.plan = plan

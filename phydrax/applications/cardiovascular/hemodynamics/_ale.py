@@ -57,7 +57,7 @@ class ALEMinimumGapRoute(StrictModule, NonTrainableState):
         *,
         minimum_gap: float,
         route_id: str = "cardiovascular-ale-minimum-gap",
-    ):
+    ) -> None:
         if not callable(gap_provider) or not callable(swept_gap_provider):
             raise TypeError("gap_provider and swept_gap_provider must be callable.")
         gap = float(minimum_gap)
@@ -143,7 +143,7 @@ class CardiovascularALEPlan(StrictModule, NonTrainableState):
         minimum_face_measure: float = 1.0e-12,
         minimum_dual_measure: float = 1.0e-12,
         gcl_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(motion, MACALEGeometryPlan):
             raise TypeError("motion must be MACALEGeometryPlan.")
         if not isinstance(gap_route, ALEMinimumGapRoute):
@@ -189,7 +189,7 @@ class PreparedCardiovascularALE(StrictModule, NonTrainableState):
     plan: CardiovascularALEPlan
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: CardiovascularALEPlan, /):
+    def __init__(self, plan: CardiovascularALEPlan, /) -> None:
         if not isinstance(plan, CardiovascularALEPlan):
             raise TypeError("plan must be CardiovascularALEPlan.")
         self.plan = plan

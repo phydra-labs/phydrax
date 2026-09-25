@@ -42,7 +42,7 @@ class BoundedEvolutionObservationPlan(StrictModule, NonTrainableState):
         sample_stride: int = 1,
         include_initial: bool = True,
         observer_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(observable):
             raise TypeError("observable must be callable.")
         if any(isinstance(size, bool) for size in observable_shape):

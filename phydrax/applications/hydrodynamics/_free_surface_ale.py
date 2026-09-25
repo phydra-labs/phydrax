@@ -120,7 +120,7 @@ class GraphSurfaceALEPlan(StrictModule, NonTrainableState):
         maximum_slope: float = 1.0,
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 200,
-    ):
+    ) -> None:
         if not isinstance(reference, FiniteVolumeDiscretization):
             raise TypeError("reference must be FiniteVolumeDiscretization.")
         if len(reference.cell_shape) != 3:
@@ -177,7 +177,7 @@ class PreparedGraphSurfaceALE(StrictModule):
     bottom_vertices: Array
     surface_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: GraphSurfaceALEPlan, /):
+    def __init__(self, plan: GraphSurfaceALEPlan, /) -> None:
         reference = plan.reference
         x_axis, y_axis, z_axis = reference.grid.structured_axes
         periodic = (x_axis.periodic, y_axis.periodic)

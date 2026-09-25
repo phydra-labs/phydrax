@@ -78,7 +78,7 @@ class SpectralFieldReconstructionKernel(
         /,
         *,
         field_space_id: str,
-    ):
+    ) -> None:
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         precision = discretization.plan.precision

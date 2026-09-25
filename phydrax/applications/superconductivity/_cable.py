@@ -92,7 +92,7 @@ class SuperconductingCablePlan(StrictModule, NonTrainableState):
         dump_resistance: float,
         protection_trigger_temperature: float,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(material, SuperconductingMaterialLawPlan):
             raise TypeError("material must be SuperconductingMaterialLawPlan.")
         lengths = np.asarray(cell_lengths, dtype=np.float64)

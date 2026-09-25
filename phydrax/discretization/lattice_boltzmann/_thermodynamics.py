@@ -79,7 +79,7 @@ class PreparedBinaryKineticThermodynamics(StrictModule, NonTrainableState):
         velocity_set: LatticeBoltzmannVelocitySet,
         force_representation: ThermodynamicForceRepresentation,
         /,
-    ):
+    ) -> None:
         if not isinstance(closure, AbstractKineticThermodynamicClosure):
             raise TypeError("closure must implement AbstractKineticThermodynamicClosure.")
         if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):

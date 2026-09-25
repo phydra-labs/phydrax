@@ -64,7 +64,7 @@ class HierarchicalRadiusParticleNeighborhoodPlan(AbstractParticleNeighborhoodPla
         maximum_candidate_slots: int = 10_000_000,
         name: str = "hierarchical-radius-particle-neighborhood",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         radii = np.asarray(interaction_radii)
         edges = np.asarray(level_edges)
         cell_capacity = int(maximum_particles_per_cell)
@@ -164,7 +164,7 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
         plan: HierarchicalRadiusParticleNeighborhoodPlan,
         particles: ParticleDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, HierarchicalRadiusParticleNeighborhoodPlan):
             raise TypeError("plan must be a HierarchicalRadiusParticleNeighborhoodPlan.")
         if not isinstance(particles, ParticleDiscretization):

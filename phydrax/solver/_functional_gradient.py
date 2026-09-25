@@ -436,7 +436,7 @@ class _ConflictFreeOptaxRule(AbstractKernelUpdateRule):
         evaluation_parameters: EvaluationParametersFn | None,
         component_count: int,
         statistics_dtype: Any,
-    ):
+    ) -> None:
         if composition is None and alignment is None:
             raise ValueError("A conflict-free rule requires a composition or alignment.")
         self.optimizer = optimizer
@@ -1723,7 +1723,7 @@ def solve_gradient(
                 resumed_from_step=start_update_step,
             )
 
-        def publish_checkpoint(checkpoint_solver, checkpoint_state, *, final):
+        def publish_checkpoint(checkpoint_solver, checkpoint_state, *, final) -> None:
             if training is None or training.checkpoint is None:
                 return
             if sharding_policy is not None:

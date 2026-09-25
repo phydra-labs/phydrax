@@ -37,7 +37,7 @@ class TensorTruncationEvidence(StrictModule):
         /,
         precision_evidence: PrecisionEvidenceEnvelope,
         precision_policy_id: str,
-    ):
+    ) -> None:
         if (
             not isinstance(retained_rank, Integral)
             or isinstance(retained_rank, bool)

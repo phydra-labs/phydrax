@@ -49,7 +49,7 @@ class FlowVariationalFamily(AbstractVariationalFamily):
         flow: AbstractFlowDistribution,
         reference: PyTree[Any],
         /,
-    ):
+    ) -> None:
         if not isinstance(flow, AbstractFlowDistribution):
             raise TypeError("flow must be an AbstractFlowDistribution.")
         flat_reference, unravel = ravel_pytree(reference)
@@ -157,7 +157,7 @@ class FlowVariationalConfig(StrictModule):
         flow_layers: int = 6,
         nn_width: int = 64,
         nn_depth: int = 2,
-    ):
+    ) -> None:
         initialization_ = (
             VariationalConfig(num_steps=500) if initialization is None else initialization
         )

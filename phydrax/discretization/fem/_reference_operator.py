@@ -219,7 +219,7 @@ class FiniteElementFacetReference(StrictModule, NonTrainableState):
         basis_values: ArrayLike,
         basis_gradients: ArrayLike,
         /,
-    ):
+    ) -> None:
         index = int(facet_index)
         points_ = jnp.asarray(points)
         weights_ = jnp.asarray(weights)
@@ -297,7 +297,7 @@ class FiniteElementReferenceReport(StrictModule, NonTrainableState):
         point_count: int,
         facet_point_counts: tuple[int, ...],
         tensor_factorized: bool,
-    ):
+    ) -> None:
         content = {
             "kind": "finite-element-reference-report",
             "element_id": element_id,
@@ -351,7 +351,7 @@ class PreparedFiniteElementReference(StrictModule, NonTrainableState):
         /,
         *,
         tensor_family: ReferenceNodalFamily | None = None,
-    ):
+    ) -> None:
         from ...integration._rules import (
             interval_rule_data,
             reference_rule_data,

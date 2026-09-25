@@ -24,7 +24,7 @@ from ._selection import Interior
 class _VolumeDensityCallable(StrictModule):
     density: VolumeDensity
 
-    def __init__(self, density: VolumeDensity, /):
+    def __init__(self, density: VolumeDensity, /) -> None:
         self.density = density
 
     def __call__(self, coordinates: Any, /, *, key=None, **kwargs: Any):

@@ -33,7 +33,7 @@ class PeriodicEnergyDerivativeResult(StrictModule, NonTrainableState):
     provider_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, energy, forces, stress, successful, provider_id, /):
+    def __init__(self, energy, forces, stress, successful, provider_id, /) -> None:
         energy_ = jnp.asarray(energy).reshape(())
         force = jnp.asarray(forces, dtype=energy_.dtype)
         stress_ = jnp.asarray(stress, dtype=energy_.dtype)
@@ -81,7 +81,9 @@ class PeriodicEnergyDerivativePlan(StrictModule, NonTrainableState):
     provider_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, energy_function: PeriodicEnergyFunction, provider_id: str, /):
+    def __init__(
+        self, energy_function: PeriodicEnergyFunction, provider_id: str, /
+    ) -> None:
         if not callable(energy_function):
             raise TypeError("energy_function must be differentiable and callable.")
         provider = str(provider_id).strip()

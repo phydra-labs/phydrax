@@ -65,7 +65,7 @@ class MPMCheckpointPlan(StrictModule):
         compiled: CompiledMaterialPointProblem,
         template_state: MPMRuntimeState,
         /,
-    ):
+    ) -> None:
         if not isinstance(compiled, CompiledMaterialPointProblem):
             raise TypeError("compiled must be CompiledMaterialPointProblem.")
         if not isinstance(template_state, MPMRuntimeState):

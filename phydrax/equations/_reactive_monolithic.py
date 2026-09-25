@@ -37,7 +37,7 @@ class CellwiseReactiveFluidImplicitPlan(StrictModule, NonTrainableState):
         cell_heat_capacity: ArrayLike,
         species_storage: ArrayLike,
         /,
-    ):
+    ) -> None:
         mass = np.asarray(cell_mass, dtype=np.float64)
         heat = np.asarray(cell_heat_capacity, dtype=np.float64)
         species = np.asarray(species_storage, dtype=np.float64)
@@ -161,7 +161,7 @@ class ReactiveMonolithicCouplingPlan(StrictModule, NonTrainableState):
         continuum_exchange: ParticleContinuumExchangePlan,
         drag_coefficient: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(fluid, CellwiseReactiveFluidImplicitPlan):
             raise TypeError("fluid must be CellwiseReactiveFluidImplicitPlan.")
         if not isinstance(conversion, PreparedParticleConversionDynamics):

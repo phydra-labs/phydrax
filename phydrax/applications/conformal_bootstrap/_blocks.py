@@ -30,7 +30,7 @@ class ScalarBlockPlan(StrictModule):
         external_dimension: float,
         radial_order: int = 64,
         maximum_evaluations: int = 1_000_000,
-    ):
+    ) -> None:
         points = np.asarray(cross_ratios, dtype=np.float64)
         external = float(external_dimension)
         order = int(radial_order)

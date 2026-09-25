@@ -36,7 +36,7 @@ class HydroelasticMaterialPlan(StrictModule, NonTrainableState):
         dissipation: float = 0.0,
         friction: float = 0.0,
         velocity_regularization: float = 1.0e-6,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

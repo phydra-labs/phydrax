@@ -103,7 +103,7 @@ class ResolvedZeroCouponBond(AbstractResolvedContract):
         maturity_time: float,
         face_value: float,
         discount_curve_id: str,
-    ):
+    ) -> None:
         if not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency.")
         if not isinstance(valuation_date, FinanceDate) or not isinstance(
@@ -201,7 +201,7 @@ class ResolvedFixedRateBond(AbstractResolvedContract):
     contract_id: str = eqx.field(static=True)
     resolved_id: str = eqx.field(static=True)
 
-    def __init__(self, contract_id: str, coupon_leg: ResolvedFixedLeg, /):
+    def __init__(self, contract_id: str, coupon_leg: ResolvedFixedLeg, /) -> None:
         if not isinstance(coupon_leg, ResolvedFixedLeg):
             raise TypeError("coupon_leg must be a ResolvedFixedLeg.")
         if coupon_leg.pay_receive is not PayReceive.RECEIVE:
@@ -289,7 +289,7 @@ class ResolvedFloatingRateBond(AbstractResolvedContract):
     contract_id: str = eqx.field(static=True)
     resolved_id: str = eqx.field(static=True)
 
-    def __init__(self, contract_id: str, coupon_leg: ResolvedFloatingLeg, /):
+    def __init__(self, contract_id: str, coupon_leg: ResolvedFloatingLeg, /) -> None:
         if not isinstance(coupon_leg, ResolvedFloatingLeg):
             raise TypeError("coupon_leg must be a ResolvedFloatingLeg.")
         if coupon_leg.pay_receive is not PayReceive.RECEIVE:

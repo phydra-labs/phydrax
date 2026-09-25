@@ -89,7 +89,7 @@ class HolomorphicPolynomialFrame(StrictModule, NonTrainableState):
         /,
         *,
         normalization: ComplexAffineNormalization | None = None,
-    ):
+    ) -> None:
         if not isinstance(index_set, HolomorphicMultiIndexSet):
             raise TypeError("index_set must be HolomorphicMultiIndexSet.")
         output_size = int(complex_output_size)

@@ -54,7 +54,7 @@ class FullRangeQuasiEquilibriumPlan(StrictModule, NonTrainableState):
         /,
         *,
         prandtl_number: float,
-    ):
+    ) -> None:
         if not isinstance(model, PositiveCompressibleKineticPlan):
             raise TypeError("model must be a PositiveCompressibleKineticPlan.")
         prandtl = float(prandtl_number)

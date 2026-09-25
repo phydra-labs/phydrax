@@ -75,7 +75,7 @@ class PreparedAtmosphericBalance(StrictModule, NonTrainableState):
         boundaries,
         prescribed,
         order=2,
-    ):
+    ) -> None:
         if not isinstance(system, HomogeneousMixtureEulerSystem):
             raise TypeError("Atmospheric balance requires HomogeneousMixtureEulerSystem.")
         if not isinstance(discretization, FiniteVolumeDiscretization):

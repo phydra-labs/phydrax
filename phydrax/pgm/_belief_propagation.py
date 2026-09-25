@@ -69,7 +69,7 @@ class SumProductBeliefPropagation(StrictModule):
         relaxation: float = 1.0,
         absolute_tolerance: float = 1e-8,
         relative_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         steps, relaxed, absolute, relative = _method_parameters(
             maximum_steps,
             relaxation,
@@ -99,7 +99,7 @@ class MaxProductBeliefPropagation(StrictModule):
         relaxation: float = 1.0,
         absolute_tolerance: float = 1e-8,
         relative_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         steps, relaxed, absolute, relative = _method_parameters(
             maximum_steps,
             relaxation,
@@ -127,7 +127,7 @@ class BeliefPropagationSchedulePolicy(StrictModule):
     def __init__(
         self,
         kind: Literal["synchronous", "asynchronous", "forest"] = "synchronous",
-    ):
+    ) -> None:
         if kind not in ("synchronous", "asynchronous", "forest"):
             raise ValueError("Unknown belief-propagation schedule.")
         self.kind = kind
@@ -164,7 +164,7 @@ class BeliefPropagationState(StrictModule):
         /,
         *,
         step_index: int | Array = 0,
-    ):
+    ) -> None:
         if not isinstance(evidence, VariableStateValues):
             raise TypeError("evidence must be VariableStateValues.")
         values = jnp.asarray(messages)

@@ -53,7 +53,7 @@ class HyperRectangle(AbstractGeometry):
         upper: ArrayLike,
         *,
         label: str = "x",
-    ):
+    ) -> None:
         lower_arr = jnp.asarray(lower, dtype=jnp.float64)
         upper_arr = jnp.asarray(upper, dtype=jnp.float64)
         if lower_arr.ndim != 1 or upper_arr.ndim != 1:

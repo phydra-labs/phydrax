@@ -34,7 +34,7 @@ class DiscreteSupport(StrictModule, NonTrainableState):
         /,
         *,
         support_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             topology,
             (TensorTopology, CellComplexTopology, PointTopology, DyadicCellTopology),

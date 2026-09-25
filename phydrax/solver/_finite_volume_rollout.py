@@ -44,7 +44,7 @@ class FiniteVolumeReplayPolicy(StrictModule, NonTrainableState):
         /,
         *,
         block_size: int | None = None,
-    ):
+    ) -> None:
         if mode not in ("full", "step", "block"):
             raise ValueError("Unknown finite-volume replay mode.")
         size = None if block_size is None else int(block_size)
@@ -124,7 +124,7 @@ class AdaptiveFiniteVolumeRolloutPlan(StrictModule):
         retention: FiniteVolumeRetentionPolicy = "final",
         checkpoint_stride: int = 1,
         replay: FiniteVolumeReplayPolicy | None = None,
-    ):
+    ) -> None:
         attempts = int(attempt_count)
         stride = int(checkpoint_stride)
         if not isinstance(runtime, PreparedFiniteVolumeRuntime):
@@ -240,7 +240,7 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         retention: FiniteVolumeRetentionPolicy = "final",
         checkpoint_stride: int = 1,
         replay: FiniteVolumeReplayPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(runtime, PreparedFiniteVolumeRuntime):
             raise TypeError("runtime must be PreparedFiniteVolumeRuntime.")
         if not isinstance(temporal_mesh, TemporalMesh):

@@ -36,7 +36,7 @@ class EnergyTarget(StrictModule):
         temperature: float = 1.0,
         target_id: str | None = None,
         normalizer_status: str = "unknown",
-    ):
+    ) -> None:
         if not callable(energy):
             raise TypeError("energy must be callable.")
         shape = tuple(event_shape)
@@ -123,7 +123,7 @@ class PersistentContrastiveDivergence(StrictModule):
         step_size: float,
         num_steps: int,
         refresh_probability: float = 0.05,
-    ):
+    ) -> None:
         if not isinstance(target, EnergyTarget) or not callable(reference_sampler):
             raise TypeError("PCD requires an EnergyTarget and reference sampler.")
         step = float(step_size)

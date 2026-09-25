@@ -38,7 +38,7 @@ class ChemicalRateRuntime(StrictModule):
         self,
         photolysis_rates: ArrayLike | None = None,
         overpotential: ArrayLike = 0.0,
-    ):
+    ) -> None:
         rates = (
             jnp.zeros((0,)) if photolysis_rates is None else jnp.asarray(photolysis_rates)
         )
@@ -75,7 +75,7 @@ class ArrheniusRatePlan(AbstractChemicalRatePlan):
         temperature_exponent: ArrayLike = 0.0,
         activation_energy: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         pre = jnp.asarray(pre_exponential)
         exponent = jnp.asarray(temperature_exponent, dtype=pre.dtype)
         activation = jnp.asarray(activation_energy, dtype=pre.dtype)
@@ -111,7 +111,7 @@ class ThirdBodyRatePlan(AbstractChemicalRatePlan):
     base: ArrheniusRatePlan
     efficiencies: Array
 
-    def __init__(self, base: ArrheniusRatePlan, efficiencies: ArrayLike, /):
+    def __init__(self, base: ArrheniusRatePlan, efficiencies: ArrayLike, /) -> None:
         if not isinstance(base, ArrheniusRatePlan):
             raise TypeError("base must be ArrheniusRatePlan.")
         values = jnp.asarray(efficiencies)
@@ -137,7 +137,7 @@ class LindemannRatePlan(AbstractChemicalRatePlan):
     high_pressure: ArrheniusRatePlan
     efficiencies: Array
 
-    def __init__(self, low_pressure, high_pressure, efficiencies: ArrayLike, /):
+    def __init__(self, low_pressure, high_pressure, efficiencies: ArrayLike, /) -> None:
         if not isinstance(low_pressure, ArrheniusRatePlan) or not isinstance(
             high_pressure, ArrheniusRatePlan
         ):
@@ -183,7 +183,7 @@ class TroeRatePlan(AbstractChemicalRatePlan):
         temperature_2: ArrayLike,
         temperature_3: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(low_pressure, ArrheniusRatePlan) or not isinstance(
             high_pressure, ArrheniusRatePlan
         ):
@@ -232,7 +232,7 @@ class PLogRatePlan(AbstractChemicalRatePlan):
     pressures: Array
     rates: tuple[ArrheniusRatePlan, ...]
 
-    def __init__(self, pressures: ArrayLike, rates, /):
+    def __init__(self, pressures: ArrayLike, rates, /) -> None:
         pressure_values = np.asarray(pressures, dtype=np.float64)
         rate_values = tuple(rates)
         if (
@@ -292,7 +292,7 @@ class ChebyshevRatePlan(AbstractChemicalRatePlan):
         minimum_pressure: float,
         maximum_pressure: float,
         /,
-    ):
+    ) -> None:
         values = np.asarray(coefficients, dtype=np.float64)
         bounds = tuple(
             float(value)
@@ -360,7 +360,7 @@ class ChebyshevRatePlan(AbstractChemicalRatePlan):
 class PhotolysisRatePlan(AbstractChemicalRatePlan):
     channel: int = eqx.field(static=True)
 
-    def __init__(self, channel: int, /):
+    def __init__(self, channel: int, /) -> None:
         value = int(channel)
         if value < 0:
             raise ValueError("Photolysis channel must be nonnegative.")
@@ -390,7 +390,7 @@ class SurfaceCoverageRatePlan(AbstractChemicalRatePlan):
         exponential_coefficient: ArrayLike = 0.0,
         power_exponent: ArrayLike = 0.0,
         activation_energy_coefficient: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not isinstance(base, ArrheniusRatePlan):
             raise TypeError("base must be ArrheniusRatePlan.")
         index = int(species_index)
@@ -446,7 +446,7 @@ class StickingRatePlan(AbstractChemicalRatePlan):
         sticking_coefficient: ArrayLike,
         molar_mass: ArrayLike,
         /,
-    ):
+    ) -> None:
         coefficient = jnp.asarray(sticking_coefficient)
         mass = jnp.asarray(molar_mass, dtype=coefficient.dtype)
         if coefficient.shape != () or mass.shape != ():
@@ -486,7 +486,7 @@ class ButlerVolmerRatePlan(AbstractChemicalRatePlan):
         /,
         *,
         direction: int = 1,
-    ):
+    ) -> None:
         exchange = jnp.asarray(exchange_rate)
         coefficient = jnp.asarray(transfer_coefficient, dtype=exchange.dtype)
         electrons = int(electron_count)

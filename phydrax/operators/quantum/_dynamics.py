@@ -39,7 +39,7 @@ class _MatrixVectorActionCallable(StrictModule):
         state: DomainFunction,
         hamiltonian_positions: tuple[int, ...],
         state_positions: tuple[int, ...],
-    ):
+    ) -> None:
         self.hamiltonian = hamiltonian
         self.state = state
         self.hamiltonian_positions = hamiltonian_positions
@@ -77,7 +77,7 @@ class _SchrodingerResidualCallable(StrictModule):
         derivative_positions: tuple[int, ...],
         action_positions: tuple[int, ...],
         hbar: Array,
-    ):
+    ) -> None:
         self.state_derivative = state_derivative
         self.action = action
         self.derivative_positions = derivative_positions

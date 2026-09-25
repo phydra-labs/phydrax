@@ -88,7 +88,7 @@ class PreparedTriangleWLSQ(StrictModule, NonTrainableState):
         /,
         *,
         weight_power: float = 2.0,
-    ):
+    ) -> None:
         if not isinstance(discretization, TriangleFiniteVolumeDiscretization):
             raise TypeError("WLSQ requires triangular finite-volume geometry.")
         centers = np.asarray(discretization.cell_centers)
@@ -171,7 +171,7 @@ class TriangleMUSCLReconstructionPlan(StrictModule, NonTrainableState):
         *,
         limiter: TriangleLimiterKind = "venkatakrishnan",
         epsilon: float = 1e-12,
-    ):
+    ) -> None:
         if not isinstance(gradient, PreparedTriangleWLSQ):
             raise TypeError("gradient must be PreparedTriangleWLSQ.")
         if limiter not in ("unlimited", "barth_jespersen", "venkatakrishnan"):

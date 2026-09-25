@@ -46,7 +46,7 @@ class FermionicTwoParticleChannelConvention(StrictModule, NonTrainableState):
     operator_order: tuple[str, str, str, str] = eqx.field(static=True)
     convention_id: str = eqx.field(static=True)
 
-    def __init__(self, channel: FermionicTwoParticleChannel, /):
+    def __init__(self, channel: FermionicTwoParticleChannel, /) -> None:
         if channel not in _CHANNELS:
             raise ValueError("Unknown fermionic two-particle channel.")
         self.channel = channel
@@ -173,7 +173,7 @@ class MatsubaraTwoParticleGreenFunction(StrictModule):
         fermion_label_count: int | None = None,
         maximum_elements: int = 16_777_216,
         representation_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(convention, FermionicTwoParticleChannelConvention):
             raise TypeError("convention must be FermionicTwoParticleChannelConvention.")
         beta_ = float(beta)

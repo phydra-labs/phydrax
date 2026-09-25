@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, NoReturn
 
 import equinox as eqx
 import jax
@@ -49,7 +49,7 @@ class UnsupportedScalarScreenJunctionError(ValueError):
 
     evidence: ScalarScreenJunctionEvidence3D
 
-    def __init__(self, message: str, evidence: ScalarScreenJunctionEvidence3D, /):
+    def __init__(self, message: str, evidence: ScalarScreenJunctionEvidence3D, /) -> None:
         self.evidence = evidence
         super().__init__(message)
 
@@ -106,7 +106,7 @@ class ScalarCrackSideMetadata3D(StrictModule, NonTrainableState):
     evaluation_route: str = eqx.field(static=True)
     metadata_id: str = eqx.field(static=True)
 
-    def __init__(self, minus_name: str = "minus", plus_name: str = "plus", /):
+    def __init__(self, minus_name: str = "minus", plus_name: str = "plus", /) -> None:
         minus = str(minus_name)
         plus = str(plus_name)
         if not minus or not plus:
@@ -748,7 +748,7 @@ def prepare_scalar_screen_single_layer_dp0_3d(
 
 def prepare_scalar_screen_hypersingular_dp0_3d(
     support: ScalarScreenSupport3D, /, **kwargs
-):
+) -> NoReturn:
     """Reject W before any screen geometry or quadrature preparation."""
 
     del support, kwargs
@@ -757,7 +757,9 @@ def prepare_scalar_screen_hypersingular_dp0_3d(
     )
 
 
-def prepare_scalar_screen_calderon_dp0_3d(support: ScalarScreenSupport3D, /, **kwargs):
+def prepare_scalar_screen_calderon_dp0_3d(
+    support: ScalarScreenSupport3D, /, **kwargs
+) -> NoReturn:
     """Reject closed Calderón semantics on a two-sided open screen."""
 
     del support, kwargs
@@ -766,7 +768,9 @@ def prepare_scalar_screen_calderon_dp0_3d(support: ScalarScreenSupport3D, /, **k
     )
 
 
-def prepare_scalar_screen_junction_solve_3d(support: ScalarScreenSupport3D, /, **kwargs):
+def prepare_scalar_screen_junction_solve_3d(
+    support: ScalarScreenSupport3D, /, **kwargs
+) -> NoReturn:
     """Retain junction incidence and reject before operator preparation."""
 
     del kwargs

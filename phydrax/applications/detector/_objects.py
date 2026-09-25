@@ -41,7 +41,7 @@ class ReconstructedParticleBank(StrictModule, NonTrainableState):
         active: ArrayLike,
         provider_id: str,
         speed_of_light: float,
-    ):
+    ) -> None:
         event_ids_ = jnp.asarray(event_ids)
         pdg = jnp.asarray(pdg_hypotheses, dtype=jnp.int32)
         charges_ = jnp.asarray(charges)

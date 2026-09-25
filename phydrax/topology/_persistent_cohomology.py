@@ -30,7 +30,7 @@ class TerminalCocycleAnnotation(StrictModule, NonTrainableState):
         basis: FiniteFieldBasis,
         essential_pair_indices,
         /,
-    ):
+    ) -> None:
         indices = jnp.asarray(essential_pair_indices, dtype=jnp.int32)
         if indices.shape != (basis.generator_count,):
             raise ValueError(
@@ -56,7 +56,7 @@ class PersistentCohomologyResult(StrictModule, NonTrainableState):
         annotations: tuple[TerminalCocycleAnnotation, ...],
         field: PrimeField,
         /,
-    ):
+    ) -> None:
         self.persistence = persistence
         self.terminal_cocycles = terminal_cocycles
         self.annotations = annotations

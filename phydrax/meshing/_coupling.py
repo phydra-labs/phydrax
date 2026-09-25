@@ -141,7 +141,7 @@ class ConformalCoupling(_PointPairCoupling):
         *,
         source_ids: ArrayLike | None = None,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         tol = _tolerance(tolerance)
         rows, left, right = _point_pairs(
             source, target, source_scope, target_scope, source_ids
@@ -186,7 +186,7 @@ class PeriodicCoupling(_PointPairCoupling):
         *,
         source_ids: ArrayLike | None = None,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         tol = _tolerance(tolerance)
         rows, left, right = _point_pairs(
             source, target, source_scope, target_scope, source_ids
@@ -258,7 +258,7 @@ class ContactCoupling(_PointPairCoupling):
         source_ids: ArrayLike | None = None,
         clearance: float = 0.0,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         tol = _tolerance(tolerance)
         rows, left, right = _point_pairs(
             source, target, source_scope, target_scope, source_ids
@@ -342,7 +342,7 @@ class OversetCoupling(MeshCoupling):
         *,
         hole_scope: MeshingScope | None = None,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         _endpoints(source, target, source_scope, target_scope)
         tol = _tolerance(tolerance)
         if tol >= 1:

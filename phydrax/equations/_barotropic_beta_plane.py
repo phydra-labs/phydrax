@@ -122,7 +122,7 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
         dealiasing: PreparedDealiasingPlan | None = None,
         reality_tolerance: float = 1.0e-10,
         maximum_coordinate_size: int = 10_000_000,
-    ):
+    ) -> None:
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         beta_ = float(beta)

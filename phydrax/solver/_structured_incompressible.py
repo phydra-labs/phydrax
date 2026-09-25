@@ -79,7 +79,7 @@ class _WeightedMACPressureAction(StrictModule, NonTrainableState):
         boundaries: PreparedMACBoundaryPlan,
         face_inverse_momentum: FaceVelocity,
         /,
-    ):
+    ) -> None:
         self.operators = operators
         self.boundaries = boundaries
         self.face_inverse_momentum = operators.validate_velocity(face_inverse_momentum)
@@ -210,7 +210,7 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
         linear_policy: LinearSolvePolicy | None = None,
         hybrid_line_axis: int | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         boundaries_ = (

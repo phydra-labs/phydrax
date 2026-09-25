@@ -92,7 +92,7 @@ class _AbstractScalarExtensionState(StrictModule):
         linear_refresh_state: LinearRefreshState | None = None,
         direction_fallbacks: Any = 0,
         metrics: IterativeStepMetrics | None = None,
-    ):
+    ) -> None:
         self.iteration = jnp.asarray(iteration, dtype=jnp.int32)
         self.initial_optimality_norm = jnp.asarray(initial_optimality_norm)
         self.accepted_steps = jnp.asarray(accepted_steps, dtype=jnp.int32)
@@ -135,7 +135,7 @@ class NonlinearConjugateGradientState(_AbstractScalarExtensionState):
         gradient: PyTree[Any],
         direction: PyTree[Any],
         **kwargs: Any,
-    ):
+    ) -> None:
         super().__init__(**kwargs)
         self.value = jnp.asarray(value)
         self.gradient = gradient
@@ -159,7 +159,7 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
         restart_interval: int | None = None,
         orthogonality_restart: float = 0.1,
         descent_safeguard: float = 1e-3,
-    ):
+    ) -> None:
         beta = str(beta_method)
         supported = {
             "fletcher-reeves",
@@ -521,7 +521,7 @@ class DenseNewtonDoglegState(_AbstractScalarExtensionState):
 
     trust_radius: Array
 
-    def __init__(self, *, trust_radius: Any, **kwargs: Any):
+    def __init__(self, *, trust_radius: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.trust_radius = jnp.asarray(trust_radius)
 
@@ -553,7 +553,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
         expansion_factor: float = 2.0,
         minimum_curvature: float = 1e-10,
         max_dense_dimension: int = 512,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -932,7 +932,7 @@ class NewtonTrustRegionState(_AbstractScalarExtensionState):
 
     trust_radius: Array
 
-    def __init__(self, *, trust_radius: Any, **kwargs: Any):
+    def __init__(self, *, trust_radius: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.trust_radius = jnp.asarray(trust_radius)
 
@@ -962,7 +962,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
         expansion_ratio: float = 0.75,
         shrink_factor: float = 0.25,
         expansion_factor: float = 2.0,
-    ):
+    ) -> None:
         subproblem_ = SteihaugToint() if subproblem is None else subproblem
         if not isinstance(subproblem_, SteihaugToint):
             raise TypeError("subproblem must be SteihaugToint or None.")

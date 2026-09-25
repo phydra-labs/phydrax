@@ -60,7 +60,7 @@ class NumericalErrorRecord(StrictModule, NonTrainableState):
         method_id: str,
         realization_id: str,
         evidence_id: str,
-    ):
+    ) -> None:
         bound_host = np.asarray(absolute_error_bound)
         if np.iscomplexobj(bound_host):
             raise TypeError("Numerical error bounds must be real-valued.")
@@ -132,7 +132,7 @@ class ModelDiscrepancyRecord(StrictModule, NonTrainableState):
         calibration_evidence_id: str,
         validation_evidence_id: str,
         support_id: str,
-    ):
+    ) -> None:
         mean_host = np.asarray(mean)
         if np.iscomplexobj(mean_host):
             raise TypeError("Model discrepancy means must be real-valued.")
@@ -414,7 +414,7 @@ class RelativisticMultifidelityPlan(StrictModule, NonTrainableState):
         ] = (None, None, None, None),
         model_discrepancy: ModelDiscrepancyRecord | None = None,
         plan_id: str,
-    ):
+    ) -> None:
         components = (
             exact,
             perturbative_correction,
@@ -641,7 +641,7 @@ class LearnedClosureCandidate(StrictModule, NonTrainableState):
         training_realization_id: str,
         derivative_supported: bool = False,
         differentiation_evidence_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("Learned closure model must be callable.")
         derivative = bool(derivative_supported)
@@ -711,7 +711,7 @@ class LearnedClosureAdmissionEvidence(StrictModule, NonTrainableState):
         conservation_evidence_id: str,
         admissibility_evidence_id: str,
         rights_evidence_id: str,
-    ):
+    ) -> None:
         residual = jax.lax.stop_gradient(
             jnp.asarray(conservation_residual).reshape((-1,))
         )
@@ -811,7 +811,7 @@ class LearnedClosureAdmission(StrictModule, NonTrainableState):
         native_model_id: str,
         admitted: bool,
         refusal_reasons: tuple[str, ...],
-    ):
+    ) -> None:
         if not isinstance(evidence, LearnedClosureAdmissionEvidence):
             raise TypeError("evidence must be LearnedClosureAdmissionEvidence.")
         candidate = _identifier(candidate_id, "candidate_id")

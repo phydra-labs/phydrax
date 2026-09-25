@@ -104,7 +104,7 @@ class ARIMAModel(StrictModule):
         /,
         *,
         differencing: int,
-    ):
+    ) -> None:
         ar = jnp.asarray(autoregressive)
         ma = jnp.asarray(moving_average)
         if ar.ndim != 1 or ma.ndim != 1:
@@ -457,7 +457,7 @@ class VARModel(StrictModule):
         lag_matrices: ArrayLike,
         innovation_covariance: ArrayLike,
         /,
-    ):
+    ) -> None:
         intercept_ = jnp.asarray(intercept)
         matrices = jnp.asarray(lag_matrices)
         covariance = jnp.asarray(innovation_covariance)

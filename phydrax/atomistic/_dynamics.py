@@ -167,7 +167,7 @@ class VelocityVerletPlan(StrictModule, NonTrainableState):
     step_size: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, step_size: float, /):
+    def __init__(self, step_size: float, /) -> None:
         step = float(step_size)
         if not np.isfinite(step) or step <= 0.0:
             raise ValueError("step_size must be finite and positive.")
@@ -198,7 +198,7 @@ class AtomisticDynamicsPlan(StrictModule, NonTrainableState):
         /,
         *,
         constraints: PreparedDistanceConstraints | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, PreparedAtomisticSystem):
             raise TypeError("system must be a PreparedAtomisticSystem.")
         if not isinstance(potential, AbstractPreparedAtomisticHamiltonian):
@@ -279,7 +279,7 @@ class PreparedAtomisticDynamics(StrictModule):
     constraints: PreparedDistanceConstraints | None
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: AtomisticDynamicsPlan, /):
+    def __init__(self, plan: AtomisticDynamicsPlan, /) -> None:
         if not isinstance(plan, AtomisticDynamicsPlan):
             raise TypeError("plan must be an AtomisticDynamicsPlan.")
         self.plan = plan

@@ -54,7 +54,7 @@ class DifferentialControlFlow(StrictModule):
     step: DifferentialFlowStep
     flow_id: str = eqx.field(static=True)
 
-    def __init__(self, step: DifferentialFlowStep, /, *, flow_id: str):
+    def __init__(self, step: DifferentialFlowStep, /, *, flow_id: str) -> None:
         if not callable(step):
             raise TypeError("DifferentialControlFlow step must be callable.")
         self.step = step
@@ -100,7 +100,7 @@ class ILQRPolicy(AbstractControlParameterization, NonTrainableState):
         state_layout: StateLayout,
         control_shape: tuple[int, ...],
         policy_id: str,
-    ):
+    ) -> None:
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("ILQRPolicy time_grid must be a TimeGrid.")
         states = jnp.asarray(nominal_states)

@@ -30,7 +30,7 @@ class RiemannianHypersurface(StrictModule):
         metric: RiemannianMetric,
         conormal: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         if not isinstance(metric, RiemannianMetric):
             raise TypeError("RiemannianHypersurface requires a RiemannianMetric.")
         if not callable(conormal):

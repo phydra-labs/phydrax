@@ -29,7 +29,7 @@ class CFDEMCouplingSchedulePlan(StrictModule, NonTrainableState):
     dem_substeps: int = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, dem_substeps: int, /):
+    def __init__(self, dem_substeps: int, /) -> None:
         count = int(dem_substeps)
         if count <= 0:
             raise ValueError("dem_substeps must be positive.")

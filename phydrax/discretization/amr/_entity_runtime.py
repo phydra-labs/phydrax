@@ -38,7 +38,7 @@ class VariablePatchEntityFieldState(StrictModule):
         /,
         *,
         component_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         degree_ = int(degree)
         components = tuple(component_shape)
         if (
@@ -84,7 +84,7 @@ class VariablePatchEntityRoute(StrictModule, NonTrainableState):
         view: VariablePatchEntityBucketView,
         dtype,
         /,
-    ):
+    ) -> None:
         if not isinstance(complex, VariablePatchEntityComplex) or not isinstance(
             view, VariablePatchEntityBucketView
         ):
@@ -145,7 +145,7 @@ class VariablePatchEntityExecutionPlan(StrictModule, NonTrainableState):
         *,
         component_shape: Sequence[int] = (),
         dtype=jnp.float64,
-    ):
+    ) -> None:
         degree_ = int(degree)
         components = tuple(component_shape)
         dtype_ = jnp.dtype(dtype)

@@ -25,7 +25,7 @@ class GeometricContactCriteria:
     stacking_height: tuple[float, float]
     stacking_lateral_radius: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         numbers = (
             self.maximum_distance,
             self.minimum_abs_normal_cosine,

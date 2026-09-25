@@ -32,7 +32,7 @@ class PlayerControlPartition(StrictModule):
         player_ids: Sequence[str],
         control_sizes: Sequence[int],
         /,
-    ):
+    ) -> None:
         if isinstance(player_ids, str):
             raise TypeError("player_ids must be a sequence of player identifiers.")
         resolved_ids = tuple(player_ids)

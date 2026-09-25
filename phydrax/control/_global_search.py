@@ -57,7 +57,7 @@ class _ControlObjective(StrictModule):
         parameterization: AbstractControlParameterization,
         solver_options: dict[str, Any],
         /,
-    ):
+    ) -> None:
         self.problem = problem
         self.parameterization = parameterization
         self.solver_options = solver_options
@@ -139,7 +139,7 @@ class ControlSearchResult(StrictModule):
         objective_evaluations: int,
         invalid_candidates: int,
         design_signature: str,
-    ):
+    ) -> None:
         invalid = int(invalid_candidates)
         evaluations = int(objective_evaluations)
         self.problem = problem

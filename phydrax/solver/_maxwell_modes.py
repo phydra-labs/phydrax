@@ -182,7 +182,7 @@ class FixedFrequencyGuidedModePlan(StrictModule, NonTrainableState):
         isolation_absolute_tolerance: float = 1e-8,
         isolation_relative_tolerance: float = 1e-6,
         maximum_dofs: int = 4096,
-    ):
+    ) -> None:
         coefficient_values = tuple(
             np.asarray(value) for value in (coefficient_0, coefficient_1, coefficient_2)
         )
@@ -729,7 +729,7 @@ class MaxwellHuygensSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
         amplitude: ArrayLike = 1.0,
         control_key: str | None = None,
         magnetic_closedness_preserving: bool = False,
-    ):
+    ) -> None:
         if direction not in (-1, 1):
             raise ValueError("Huygens launch direction must be -1 or +1.")
         power = float(signed_power)
@@ -785,7 +785,7 @@ class MaxwellModePortPlan(StrictModule):
         source: MaxwellHuygensSourcePlan,
         observer: ModeAmplitudeObserverPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, MaxwellHuygensSourcePlan) or not isinstance(
             observer, ModeAmplitudeObserverPlan
         ):
@@ -830,7 +830,7 @@ class MaxwellModeDecomposition(StrictModule, NonTrainableState):
     mass: Array
     decomposition_id: str = eqx.field(static=True)
 
-    def __init__(self, modes: ArrayLike, mass: ArrayLike, /):
+    def __init__(self, modes: ArrayLike, mass: ArrayLike, /) -> None:
         modes_ = jnp.asarray(modes)
         mass_ = jnp.asarray(mass)
         if modes_.ndim != 2 or mass_.shape != (modes_.shape[0], modes_.shape[0]):
@@ -873,7 +873,7 @@ class MaxwellNearToFarPlan(StrictModule, NonTrainableState):
         directions: ArrayLike,
         wavenumbers: ArrayLike,
         /,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions, dtype=jnp.float64)
         normals_ = jnp.asarray(normals, dtype=jnp.float64)
         weights_ = jnp.asarray(weights, dtype=jnp.float64)

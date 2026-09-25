@@ -56,7 +56,7 @@ class MAPResult(StrictModule):
         initial_evaluation_seconds: float,
         step_compilation_seconds: float,
         optimization_seconds: float,
-    ):
+    ) -> None:
         self.problem = problem
         self.position = position
         self.parameters = problem.parameter_space.constrain(position)
@@ -98,7 +98,7 @@ class MAPConvergenceError(RuntimeError):
 
     result: MAPResult
 
-    def __init__(self, result: MAPResult):
+    def __init__(self, result: MAPResult) -> None:
         self.result = result
         super().__init__(
             "MAP optimization did not converge: "

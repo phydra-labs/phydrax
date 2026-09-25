@@ -66,7 +66,7 @@ class ForecastLaw(StrictModule):
         evidence: FinanceEvidenceBinding,
         scenario_returns: ArrayLike | None = None,
         scenario_probabilities: ArrayLike | None = None,
-    ):
+    ) -> None:
         assets = tuple(str(asset) for asset in asset_ids)
         if (
             not assets
@@ -166,7 +166,7 @@ class PortfolioScaling(StrictModule):
         *,
         objective_scale: float = 1.0,
         constraint_scale: float = 1.0,
-    ):
+    ) -> None:
         scale = _real_array(weight_scale, "weight_scale", ndim=1)
         if bool(np.any(np.asarray(scale) <= 0.0)):
             raise ValueError("weight_scale must be strictly positive.")
@@ -203,7 +203,7 @@ class PortfolioProblem(StrictModule):
         decision_time_ns: int,
         scaling: PortfolioScaling | None = None,
         current_weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(forecast, ForecastLaw):
             raise TypeError("forecast must be a ForecastLaw.")
         objective_types = (

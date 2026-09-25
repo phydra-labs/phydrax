@@ -59,7 +59,7 @@ class PreparedRigidHeatBath(StrictModule, NonTrainableState):
 
     def __init__(
         self, bodies, thermal_energy, translation_friction, rotation_friction, /
-    ):
+    ) -> None:
         values = np.asarray(
             [thermal_energy, translation_friction, rotation_friction], dtype=np.float64
         )

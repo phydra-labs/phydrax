@@ -69,7 +69,7 @@ class CompressibleKineticRuntimePlan(StrictModule, NonTrainableState):
         time_step: float = 1.0,
         quasi_equilibrium: FullRangeQuasiEquilibriumPlan | None = None,
         precision_policy_id: str = "homogeneous-float64",
-    ):
+    ) -> None:
         if not isinstance(model, PositiveCompressibleKineticPlan):
             raise TypeError("model must be a PositiveCompressibleKineticPlan.")
         if not isinstance(transport, IntegerLatticeTransportPlan):

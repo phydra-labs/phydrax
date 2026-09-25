@@ -100,7 +100,7 @@ class EngelhardtGasam2025Parameters(StrictModule):
         optimal_active_stretch: ArrayLike,
         peak_active_nominal_stress_pa: ArrayLike,
         /,
-    ):
+    ) -> None:
         alpha_ = _positive(alpha, "alpha")
         beta_ = _positive(beta, "beta")
         stiffness = _positive(stiffness_pa, "stiffness_pa")
@@ -284,7 +284,7 @@ class EngelhardtGasam2025Plan(StrictModule, NonTrainableState):
         /,
         *,
         minimum_jacobian: float = 1.0e-8,
-    ):
+    ) -> None:
         identifier = _identifier(material_id, "material_id")
         minimum = float(minimum_jacobian)
         if not isfinite(minimum) or minimum <= 0.0:

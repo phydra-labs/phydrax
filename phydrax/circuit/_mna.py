@@ -55,7 +55,7 @@ class NodalPort(StrictModule):
         negative: NodeId,
         reference: ElectricalWaveReference,
         /,
-    ):
+    ) -> None:
         values = tuple(str(value) for value in (port_id, positive, negative))
         if any(not value for value in values):
             raise ValueError("Nodal port and node IDs must be non-empty.")
@@ -75,7 +75,7 @@ class MNAStamp(StrictModule):
     c: Array
     d: Array
 
-    def __init__(self, y: ArrayLike, b: ArrayLike, c: ArrayLike, d: ArrayLike, /):
+    def __init__(self, y: ArrayLike, b: ArrayLike, c: ArrayLike, d: ArrayLike, /) -> None:
         y_, b_, c_, d_ = (jnp.asarray(value) for value in (y, b, c, d))
         if any(value.ndim < 2 for value in (y_, b_, c_, d_)):
             raise ValueError("MNA stamp blocks must have at least two axes.")
@@ -132,7 +132,7 @@ class CircuitInstance(StrictModule):
         component: AbstractMNAComponent,
         nodes: Sequence[NodeId],
         /,
-    ):
+    ) -> None:
         identifier = str(instance_id)
         node_tuple = tuple(str(node) for node in nodes)
         if not identifier or any(not node for node in node_tuple):
@@ -151,7 +151,7 @@ class VoltageProbe(StrictModule):
     positive: NodeId = eqx.field(static=True)
     negative: NodeId = eqx.field(static=True)
 
-    def __init__(self, probe_id: str, positive: NodeId, negative: NodeId, /):
+    def __init__(self, probe_id: str, positive: NodeId, negative: NodeId, /) -> None:
         values = tuple(str(value) for value in (probe_id, positive, negative))
         if any(not value for value in values) or values[1] == values[2]:
             raise ValueError("MNA probe IDs must be non-empty and nodes must differ.")
@@ -176,7 +176,7 @@ class NodalCircuit(StrictModule):
         nodes: Sequence[NodeId] | None = None,
         probes: Sequence[VoltageProbe] = (),
         circuit_id: str = "nodal-circuit",
-    ):
+    ) -> None:
         instance_tuple = tuple(instances)
         port_tuple = tuple(ports)
         probe_tuple = tuple(probes)
@@ -259,7 +259,7 @@ class MNASolvePolicy(StrictModule):
         maximum_matrix_bytes: int = 2**30,
         residual_tolerance: float = 1e-10,
         linear: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if assembly not in ("dense", "sparse"):
             raise ValueError("assembly must be 'dense' or 'sparse'.")
         if maximum_unknowns <= 0 or maximum_matrix_bytes <= 0 or residual_tolerance < 0.0:

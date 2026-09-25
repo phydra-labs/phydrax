@@ -120,7 +120,7 @@ class PreparedNucleotideModel(StrictModule):
     parameter_manifest_id: str = eqx.field(static=True)
     family: str = eqx.field(static=True)
 
-    def __init__(self, plan: NucleotideModelPlan, /):
+    def __init__(self, plan: NucleotideModelPlan, /) -> None:
         n = plan.construct.nucleotide_count
         ids, sites, geometry = (
             np.asarray(plan.body_ids),

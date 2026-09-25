@@ -245,7 +245,7 @@ class ExplicitFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         phases: ArrayLike | None = None,
         passthrough: Sequence[int] = (),
         include_constant: bool = False,
-    ):
+    ) -> None:
         r"""**Arguments:**
 
         - `in_size`: Input value size. The input is flattened to a vector.
@@ -325,7 +325,7 @@ class MultiscaleFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         phases: ArrayLike | None = None,
         passthrough: Sequence[int] = (),
         include_constant: bool = False,
-    ):
+    ) -> None:
         r"""**Arguments:**
 
         - `in_size`: Input value size. The input is flattened to a vector.
@@ -395,7 +395,7 @@ class HybridFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         passthrough: Sequence[int] = (),
         include_constant: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         r"""**Arguments:**
 
         - `in_size`: Input value size. The input is flattened to a vector.
@@ -469,7 +469,7 @@ class RandomFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         include_constant: bool = False,
         trainable: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         r"""**Arguments:**
 
         - `in_size`: Input value size. The input is flattened to a vector.
@@ -527,7 +527,7 @@ class TrainableFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         passthrough: Sequence[int] = (),
         include_constant: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         r"""**Arguments:**
 
         - `in_size`: Input value size. The input is flattened to a vector.

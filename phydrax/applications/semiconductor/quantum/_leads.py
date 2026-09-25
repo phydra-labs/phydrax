@@ -52,7 +52,7 @@ class SemiInfiniteLead(StrictModule):
         temperature,
         *,
         energy_reference,
-    ):
+    ) -> None:
         values = [
             _array(v, n)
             for v, n in zip(
@@ -128,7 +128,7 @@ class BoundStateOccupation(StrictModule):
     temperature: Array
     preparation: str = eqx.field(static=True)
 
-    def __init__(self, chemical_potential, temperature, *, preparation):
+    def __init__(self, chemical_potential, temperature, *, preparation) -> None:
         self.chemical_potential = _array(
             chemical_potential, "bound-state chemical potential"
         )

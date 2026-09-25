@@ -78,7 +78,7 @@ class LyapunovSpectrumCheckpoint(StrictModule):
         approximation_id: str,
         valid: ArrayLike = True,
         status: ArrayLike = LYAPUNOV_SUCCESS,
-    ):
+    ) -> None:
         state_array = jnp.asarray(state)
         shape = tuple(state_shape)
         dimension = state_array.size
@@ -187,7 +187,7 @@ class LyapunovSpectrumResult(StrictModule):
         valid: ArrayLike,
         status: ArrayLike,
         checkpoint: LyapunovSpectrumCheckpoint,
-    ):
+    ) -> None:
         if not isinstance(checkpoint, LyapunovSpectrumCheckpoint):
             raise TypeError("checkpoint must be a LyapunovSpectrumCheckpoint.")
         spectrum = jnp.asarray(exponents)

@@ -50,7 +50,7 @@ class SPDESolutionSpec(StrictModule):
         noise_regularization: SPDENoiseRegularization = "finite_rank",
         cutoff_id: str | None = None,
         renormalization: str | None = None,
-    ):
+    ) -> None:
         if concept not in (
             "strong",
             "mild",

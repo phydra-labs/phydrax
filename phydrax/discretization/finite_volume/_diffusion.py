@@ -51,7 +51,7 @@ class ConservativeBoundaryCondition(StrictModule, NonTrainableState):
         *,
         alpha: float | None = None,
         beta: float | None = None,
-    ):
+    ) -> None:
         if kind not in ("periodic", "dirichlet", "neumann", "robin"):
             raise ValueError("Unknown conservative boundary kind.")
         alpha_ = (
@@ -165,7 +165,7 @@ class FaceCoefficientPlan(StrictModule, NonTrainableState):
         kind: FaceInterpolationKind = "harmonic",
         function: Callable[[Array, Array, Array | None], Array] | None = None,
         function_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("Face coefficient plan requires PreparedTensorGrid.")
         if kind not in ("arithmetic", "harmonic", "upwind", "callable"):
@@ -314,7 +314,7 @@ class ConservativeDiffusionPlan(StrictModule, NonTrainableState):
         | None = None,
         interpolation: FaceInterpolationKind = "harmonic",
         precision: FiniteVolumePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = FiniteVolumePrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, FiniteVolumePrecisionPolicy):
             raise TypeError("precision must be a FiniteVolumePrecisionPolicy.")
@@ -361,7 +361,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
         plan: ConservativeDiffusionPlan,
         coefficient: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ConservativeDiffusionPlan):
             raise TypeError("plan must be ConservativeDiffusionPlan.")
         coefficient_ = plan.precision.flux(
@@ -864,7 +864,7 @@ class ConservativeAdvectionPlan(StrictModule, NonTrainableState):
         ]
         | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("Conservative advection requires PreparedTensorGrid.")
         if grid.primary_entity_layout.layout_id != grid.cells().layout_id:
@@ -913,7 +913,7 @@ class PreparedConservativeAdvection(StrictModule):
         plan: ConservativeAdvectionPlan,
         velocity: ArrayLike | Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ConservativeAdvectionPlan):
             raise TypeError("plan must be ConservativeAdvectionPlan.")
         faces = self._prepare_velocity(plan, velocity)

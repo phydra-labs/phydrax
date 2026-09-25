@@ -111,7 +111,7 @@ class MACVariationalViscosityPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         self.operators = operators

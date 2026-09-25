@@ -23,7 +23,7 @@ class KDKCoefficients(StrictModule):
         drift: ArrayLike,
         second_kick: ArrayLike,
         /,
-    ):
+    ) -> None:
         first = jnp.asarray(first_kick).reshape(())
         drift_ = jnp.asarray(drift, dtype=first.dtype).reshape(())
         second = jnp.asarray(second_kick, dtype=first.dtype).reshape(())
@@ -50,7 +50,7 @@ class KDKCompletion(StrictModule):
 class KDKTransactionPlan(StrictModule, NonTrainableState):
     periodic_box: tuple[float, ...] | None = eqx.field(static=True)
 
-    def __init__(self, periodic_box: tuple[float, ...] | None = None, /):
+    def __init__(self, periodic_box: tuple[float, ...] | None = None, /) -> None:
         self.periodic_box = (
             None
             if periodic_box is None

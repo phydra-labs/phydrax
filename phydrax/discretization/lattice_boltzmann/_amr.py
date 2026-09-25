@@ -45,7 +45,7 @@ class LatticeBoltzmannAMRTransferPlan(StrictModule, NonTrainableState):
         *,
         refinement_ratio: int = 2,
         nonequilibrium_scale: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):
             raise TypeError("velocity_set must be LatticeBoltzmannVelocitySet.")
         ratio = int(refinement_ratio)
@@ -166,7 +166,7 @@ class PreparedLatticeBoltzmannAMRTransfer(StrictModule, NonTrainableState):
         coarse_scaling: LatticeBoltzmannScaling,
         fine_scaling: LatticeBoltzmannScaling,
         /,
-    ):
+    ) -> None:
         if not isinstance(transfer, LatticeBoltzmannAMRTransferPlan):
             raise TypeError("transfer must be LatticeBoltzmannAMRTransferPlan.")
         if transfer.nonequilibrium_scale <= 0.0:
@@ -431,7 +431,7 @@ class LatticeBoltzmannAMRScalingPolicy(StrictModule, NonTrainableState):
         *,
         declared_substeps: Sequence[int] = (),
         viscosity_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if kind not in ("acoustic", "diffusive", "declared"):
             raise ValueError("Unknown LBM AMR scaling kind.")
         steps = tuple(declared_substeps)
@@ -479,7 +479,7 @@ class LatticeBoltzmannAMRTemporalTracePlan(StrictModule, NonTrainableState):
         /,
         *,
         exactness_degree: int = 1,
-    ):
+    ) -> None:
         nodes_ = np.asarray(nodes, dtype=np.float64)
         coefficients_ = np.asarray(coefficients, dtype=np.float64)
         degree = int(exactness_degree)
@@ -544,7 +544,7 @@ class LatticeBoltzmannAMRState(StrictModule):
         level_populations: Sequence[Array],
         active_masks: Sequence[Array],
         subcycle_phases: Array | None = None,
-    ):
+    ) -> None:
         populations = tuple(jnp.asarray(value) for value in level_populations)
         masks = tuple(jnp.asarray(value, dtype=jnp.bool_) for value in active_masks)
         if not populations or len(populations) != len(masks):
@@ -919,7 +919,7 @@ class LatticeBoltzmannAMRPlan(StrictModule, NonTrainableState):
         *,
         scaling: LatticeBoltzmannAMRScalingPolicy | None = None,
         temporal_trace: LatticeBoltzmannAMRTemporalTracePlan | None = None,
-    ):
+    ) -> None:
         transfer_tuple = (
             (transfers,)
             if isinstance(transfers, LatticeBoltzmannAMRTransferPlan)

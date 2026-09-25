@@ -81,7 +81,7 @@ class GluingContinuity(str, Enum):
 class PatchTopologyError(ValueError):
     """Malformed half-edge input rejected before any numerical preparation."""
 
-    def __init__(self, message: str, /):
+    def __init__(self, message: str, /) -> None:
         message_ = str(message)
         if not message_:
             raise ValueError("Patch topology errors require a message.")
@@ -97,7 +97,7 @@ class UnsupportedG1TopologyError(ValueError):
         status: G1PatchStatus,
         unsupported_vertex_labels: Sequence[str],
         /,
-    ):
+    ) -> None:
         if status is G1PatchStatus.SUPPORTED:
             raise ValueError("A supported topology cannot raise an unsupported error.")
         self.status = status
@@ -170,7 +170,7 @@ class PreparedHalfEdgePatchTopology(StrictModule, NonTrainableState):
         patch_labels: Sequence[str],
         patch_vertices: Sequence[Sequence[str]],
         /,
-    ):
+    ) -> None:
         labels = _nonempty_labels(patch_labels, "patch_labels")
         corners = tuple(
             tuple(str(vertex) for vertex in patch) for patch in patch_vertices
@@ -497,7 +497,7 @@ class BiquinticGluingConstraints(StrictModule, NonTrainableState):
         topology: PreparedHalfEdgePatchTopology,
         continuity: GluingContinuity = GluingContinuity.G1,
         /,
-    ):
+    ) -> None:
         if not isinstance(topology, PreparedHalfEdgePatchTopology):
             raise TypeError("topology must be a PreparedHalfEdgePatchTopology.")
         if not isinstance(continuity, GluingContinuity):
@@ -591,7 +591,7 @@ class BiquinticGluingBasis(StrictModule, NonTrainableState):
         /,
         *,
         relative_rank_tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         if not isinstance(constraints, BiquinticGluingConstraints):
             raise TypeError("constraints must be BiquinticGluingConstraints.")
         tolerance = float(relative_rank_tolerance)

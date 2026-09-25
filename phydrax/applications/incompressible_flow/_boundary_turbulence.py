@@ -129,7 +129,7 @@ class VectorEquilibriumWallStressPlan(StrictModule, NonTrainableState):
         tangency_tolerance: float = 1.0e-10,
         y_plus_envelope: tuple[float, float] = (0.0, 1.0e6),
         maximum_roughness_ratio: float = 0.2,
-    ):
+    ) -> None:
         kappa_ = float(kappa)
         iterations = int(root_iterations)
         bracket = int(bracket_iterations)
@@ -222,7 +222,9 @@ class PreparedVectorEquilibriumWallStress(StrictModule, NonTrainableState):
     roughness_support: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: VectorEquilibriumWallStressPlan, spatial_dimension: int, /):
+    def __init__(
+        self, plan: VectorEquilibriumWallStressPlan, spatial_dimension: int, /
+    ) -> None:
         if not isinstance(plan, VectorEquilibriumWallStressPlan):
             raise TypeError("plan must be a VectorEquilibriumWallStressPlan.")
         dimension = int(spatial_dimension)
@@ -569,7 +571,7 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
         covariance_tolerance: float = 1.0e-10,
         compatibility_tolerance: float = 1.0e-10,
         maximum_preparation_bytes: int = 256 * 1024 * 1024,
-    ):
+    ) -> None:
         if mode not in ("compact", "spectral"):
             raise ValueError("Inflow mode must be 'compact' or 'spectral'.")
         radius = float(compact_support_radius)
@@ -1219,7 +1221,7 @@ class PreparedVectorEquilibriumWallStressChannel(StrictModule, NonTrainableState
         sample_distance: ArrayLike,
         roughness_height: ArrayLike = 0.0,
         method: ChannelSBDF2Method | None = None,
-    ):
+    ) -> None:
         if not isinstance(wall_stress, PreparedVectorEquilibriumWallStress):
             raise TypeError("wall_stress must be a PreparedVectorEquilibriumWallStress.")
         if wall_stress.spatial_dimension != 3:
@@ -1556,7 +1558,7 @@ class PreparedStochasticTurbulentInflowMACBoundary(StrictModule, NonTrainableSta
         side: Literal["lower", "upper"],
         boundary_shape: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(inflow, PreparedStochasticTurbulentInflow):
             raise TypeError("inflow must be a PreparedStochasticTurbulentInflow.")
         axis_ = str(axis)

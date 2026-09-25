@@ -163,7 +163,7 @@ class CourtemancheAtrialParameters(StrictModule, NonTrainableState):
         sr_release_rate: float = 0.30,
         sr_volume_ratio: float = 13.0,
         cytosolic_buffer_factor: float = 0.10,
-    ):
+    ) -> None:
         values = {
             "rtf_mV": _positive(rtf_mV, "rtf_mV"),
             "faraday_C_per_mmol": _positive(faraday_C_per_mmol, "faraday_C_per_mmol"),
@@ -258,7 +258,7 @@ class AtrialStateLayout(StrictModule, NonTrainableState):
     state_size: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         names = (
             "voltage_mV",
             "m",
@@ -380,7 +380,7 @@ class CourtemancheAtrialModel(StrictModule, NonTrainableState):
     layout: AtrialStateLayout
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, parameters: CourtemancheAtrialParameters, /):
+    def __init__(self, parameters: CourtemancheAtrialParameters, /) -> None:
         if not isinstance(parameters, CourtemancheAtrialParameters):
             raise TypeError("parameters must be CourtemancheAtrialParameters.")
         layout = AtrialStateLayout()

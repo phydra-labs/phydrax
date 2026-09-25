@@ -41,7 +41,7 @@ class AtomisticReplayPolicy(StrictModule, NonTrainableState):
         /,
         *,
         block_size: int | None = None,
-    ):
+    ) -> None:
         if mode not in ("full", "step", "block"):
             raise ValueError("Unknown atomistic replay mode.")
         size = None if block_size is None else int(block_size)
@@ -73,7 +73,7 @@ class AtomisticTrajectoryPlan(StrictModule, NonTrainableState):
         sample_stride: int = 1,
         include_initial: bool = True,
         retention: AtomisticRetention = "trajectory",
-    ):
+    ) -> None:
         steps = int(step_count)
         stride = int(sample_stride)
         if steps <= 0 or stride <= 0:
@@ -159,7 +159,7 @@ class AtomisticRolloutPlan(StrictModule):
         observers: tuple[AbstractAtomisticObserverPlan, ...] = (),
         barostat: IsotropicMonteCarloBarostatPlan | None = None,
         barostat_interval: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedAtomisticDynamics):
             raise TypeError("dynamics must be PreparedAtomisticDynamics.")
         if not isinstance(trajectory, AtomisticTrajectoryPlan):

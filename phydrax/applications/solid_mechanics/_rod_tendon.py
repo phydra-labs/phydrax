@@ -92,7 +92,7 @@ class RodMaterialStation(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     station_id: str = eqx.field(static=True)
 
-    def __init__(self, segment_id: int, xi: float, offset: ArrayLike, /):
+    def __init__(self, segment_id: int, xi: float, offset: ArrayLike, /) -> None:
         if isinstance(segment_id, bool) or int(segment_id) != segment_id:
             raise TypeError("segment_id must be an integer.")
         segment = int(segment_id)
@@ -142,7 +142,7 @@ class TendonRoutePlan(StrictModule, NonTrainableState):
         *,
         minimum_span_length: float = 1.0e-9,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(stations, tuple) or len(stations) < 2:
             raise ValueError("stations must be a tuple containing at least two eyelets.")
         if not all(isinstance(station, RodMaterialStation) for station in stations):
@@ -188,7 +188,7 @@ class PreparedTendonRoute(StrictModule, NonTrainableState):
     workset_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: TendonRoutePlan, rod: RodPreparation, /):
+    def __init__(self, plan: TendonRoutePlan, rod: RodPreparation, /) -> None:
         if not isinstance(plan, TendonRoutePlan):
             raise TypeError("plan must be a TendonRoutePlan.")
         if isinstance(rod, PreparedReducedRod):
@@ -741,7 +741,7 @@ class FrictionlessElasticTendonPlan(StrictModule, NonTrainableState):
         maximum_tension: float,
         power_tolerance: float = 1.0e-8,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(route, TendonRoutePlan):
             raise TypeError("route must be a TendonRoutePlan.")
         stiffness_ = _positive_finite("stiffness", stiffness)
@@ -798,7 +798,7 @@ class TendonActuatorState(StrictModule):
 
     free_length: Array
 
-    def __init__(self, free_length: ArrayLike, /):
+    def __init__(self, free_length: ArrayLike, /) -> None:
         value = jnp.asarray(free_length)
         if value.shape != ():
             raise ValueError("free_length must be scalar.")
@@ -812,7 +812,7 @@ class TendonPayoutCommand(StrictModule):
 
     payout_rate: Array
 
-    def __init__(self, payout_rate: ArrayLike, /):
+    def __init__(self, payout_rate: ArrayLike, /) -> None:
         value = jnp.asarray(payout_rate)
         if value.shape != ():
             raise ValueError("payout_rate must be scalar.")
@@ -886,7 +886,7 @@ class PreparedFrictionlessElasticTendon(StrictModule, NonTrainableState):
         plan: FrictionlessElasticTendonPlan,
         route: PreparedTendonRoute,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, FrictionlessElasticTendonPlan):
             raise TypeError("plan must be a FrictionlessElasticTendonPlan.")
         if not isinstance(route, PreparedTendonRoute):

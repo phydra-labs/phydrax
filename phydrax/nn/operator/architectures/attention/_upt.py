@@ -164,7 +164,7 @@ class LatentTokenBlock(StrictModule):
         accumulation_dtype: str = "input",
         norm_eps: float = 1e-6,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.width = int(width)
         hidden = round(float(feed_forward_multiplier) * self.width)
         resolved_head_dim = (
@@ -291,7 +291,7 @@ class LatentTokenProcessor(StrictModule):
         accumulation_dtype: str = "input",
         norm_eps: float = 1e-6,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.width = int(width)
         self.depth = int(depth)
         if self.depth <= 0:
@@ -396,7 +396,7 @@ class UPT(AbstractEncodedOperatorModel):
         attention_block_size: int = 256,
         accumulation_dtype: str = "input",
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_channels = _get_size(in_channels)
         self.out_channels = _get_size(out_channels)
         self.coord_dim = int(coord_dim)
@@ -683,7 +683,7 @@ class ABUPT(AbstractEncodedOperatorModel):
         attention_block_size: int = 256,
         accumulation_dtype: str = "input",
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.graph = graph
         self.conditioning_names = graph.conditioning_names
         self.prediction_names = graph.prediction_names

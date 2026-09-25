@@ -143,7 +143,7 @@ class HypercubicGaugeObservablePlan(StrictModule, NonTrainableState):
         topology_id: str | None = None,
         field_space_id: str | None = None,
         maximum_sites: int = 1 << 22,
-    ):
+    ) -> None:
         shape = _positive_shape(lattice_shape, "lattice_shape")
         spacing = float(lattice_spacing)
         colors = int(color_components)
@@ -600,7 +600,7 @@ class WilsonFlowPlan(StrictModule, NonTrainableState):
         maximum_backtracks: int = 8,
         descent_tolerance: float = 1.0e-10,
         maximum_history_bytes: int = 256 * 1024 * 1024,
-    ):
+    ) -> None:
         if not isinstance(action, WilsonGaugeAction):
             raise TypeError("action must be WilsonGaugeAction.")
         if not isinstance(action.link_space.group, SpecialUnitaryGroup):
@@ -708,7 +708,7 @@ class StochasticSourcePlan(StrictModule, NonTrainableState):
         randomness_id: str,
         noise_kind: NoiseKind = "z4",
         maximum_source_values: int = 1 << 24,
-    ):
+    ) -> None:
         shape = _positive_shape(source_shape, "source_shape")
         count = int(source_count)
         maximum = int(maximum_source_values)
@@ -833,7 +833,7 @@ class PropagatorSolvePlan(StrictModule, NonTrainableState):
         maximum_steps: int = 4096,
         maximum_workspace_bytes: int = 256 * 1024 * 1024,
         maximum_source_bytes: int = 256 * 1024 * 1024,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLatticeDiracOperator):
             raise TypeError("operator must be AbstractLatticeDiracOperator.")
         if not isinstance(operator.target, ArraySpace):

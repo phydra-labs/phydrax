@@ -61,7 +61,7 @@ class CoordinateTransformPlan(StrictModule, NonTrainableState):
         expected_resource_sha256: Mapping[str, str],
         maximum_accuracy_m: float | None = None,
         maximum_resource_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         if not isinstance(source, GeospatialContract) or not isinstance(
             target, GeospatialContract
         ):
@@ -181,7 +181,7 @@ class CoordinateTransformResult(StrictModule, NonTrainableState):
         pyproj_version: str,
         proj_version: str,
         reported_accuracy_m: float | None,
-    ):
+    ) -> None:
         values = np.asarray(coordinates, dtype=np.float64)
         if (
             values.shape != source_shape

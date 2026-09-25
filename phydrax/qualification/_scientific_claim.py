@@ -194,7 +194,7 @@ class ScientificClaimProfile(StrictModule, NonTrainableState):
         /,
         *,
         frozen_criteria_ids: Sequence[str],
-    ):
+    ) -> None:
         capability = _identifier(capability_name, "capability_name")
         if not isinstance(support, SupportTuple):
             raise TypeError("support must be a SupportTuple.")

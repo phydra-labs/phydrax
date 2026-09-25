@@ -87,7 +87,7 @@ class LearnedChemicalFeatureSchema(StrictModule, NonTrainableState):
         lower: ArrayLike,
         upper: ArrayLike,
         /,
-    ):
+    ) -> None:
         names = tuple(str(value).strip() for value in feature_names)
         units = tuple(str(value).strip() for value in feature_units)
         lower_ = np.asarray(lower, dtype=np.float64)
@@ -406,7 +406,7 @@ class LearnedChemicalTransitionPlan(_AbstractLearnedChemicalTransition, Explicit
         invariant_tolerance: float = 1.0e-9,
         commercial_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         if not isinstance(feature_schema, LearnedChemicalFeatureSchema):
@@ -515,7 +515,7 @@ class TrainableLearnedChemicalTransitionPlan(_AbstractLearnedChemicalTransition)
     model: Callable = parameter_field()
     uncertainty_model: Callable = fixed_field()
 
-    def __init__(self, model: Callable, source: LearnedChemicalTransitionPlan, /):
+    def __init__(self, model: Callable, source: LearnedChemicalTransitionPlan, /) -> None:
         if not isinstance(source, LearnedChemicalTransitionPlan):
             raise TypeError("source must be a LearnedChemicalTransitionPlan.")
         self.model = trainable_provider(model)

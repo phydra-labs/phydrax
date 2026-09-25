@@ -61,7 +61,7 @@ class HomogeneousFlowProtocolPlan(StrictModule):
         flow_axis: int = 0,
         gradient_axis: int = 1,
         extension_axis: int = 0,
-    ):
+    ) -> None:
         if kind not in (
             "steady-shear",
             "oscillatory-shear",

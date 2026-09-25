@@ -30,7 +30,7 @@ class FunctionalDecompositionShardingPlan(StrictModule, NonTrainableState):
         *,
         devices: Sequence[jax.Device] | None = None,
         assignments: Mapping[str, int] | None = None,
-    ):
+    ) -> None:
         if not isinstance(cover, SubdomainCover):
             raise TypeError("cover must be a SubdomainCover.")
         devices_ = tuple(jax.devices() if devices is None else devices)
@@ -78,7 +78,7 @@ class DecompositionShardingEvidence(StrictModule, NonTrainableState):
         cross_device_pairings: int,
         communicated_bytes: int,
         verified: bool,
-    ):
+    ) -> None:
         self.patch_counts = tuple(patch_counts)
         self.cross_device_pairings = int(cross_device_pairings)
         self.communicated_bytes = int(communicated_bytes)
@@ -96,7 +96,7 @@ class ShardedLocalFieldFamily(StrictModule):
         plan: FunctionalDecompositionShardingPlan,
         evidence: DecompositionShardingEvidence,
         /,
-    ):
+    ) -> None:
         self.family = family
         self.plan = plan
         self.evidence = evidence
@@ -219,7 +219,7 @@ class DistributedCollectiveEvidence(StrictModule, NonTrainableState):
         device_count: int,
         communicated_bytes: int,
         verified: bool,
-    ):
+    ) -> None:
         self.mode = str(mode)
         self.device_count = int(device_count)
         self.communicated_bytes = int(communicated_bytes)
@@ -235,7 +235,7 @@ class DistributedCollectiveResult(StrictModule):
         value: jax.Array,
         evidence: DistributedCollectiveEvidence,
         /,
-    ):
+    ) -> None:
         self.value = value
         self.evidence = evidence
 

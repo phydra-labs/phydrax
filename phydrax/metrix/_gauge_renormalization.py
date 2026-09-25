@@ -33,7 +33,7 @@ class GaugeRenormalizationEvidence(StrictModule):
         finite: ArrayLike,
         valid: ArrayLike,
         gauge_kind: str,
-    ):
+    ) -> None:
         self.inverse_residual = jnp.asarray(inverse_residual)
         self.function_residual = jnp.asarray(function_residual)
         self.operator_residual = jnp.asarray(operator_residual)
@@ -71,7 +71,7 @@ class GaugeRenormalizationPlan(StrictModule):
         gauge_kind: str,
         tolerance: float = 1e-8,
         plan_id: str,
-    ):
+    ) -> None:
         supported = (
             "complex_scalar",
             "quaternion_unit",

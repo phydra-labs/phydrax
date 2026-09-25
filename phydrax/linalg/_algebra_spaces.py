@@ -22,7 +22,7 @@ from ._spaces import AbstractVectorSpace, ArraySpace
 class AlgebraCoefficientPairing(AbstractPairing):
     """Real Euclidean coefficient pairing for one algebra coordinate layout."""
 
-    def __init__(self, algebra_id: str, /):
+    def __init__(self, algebra_id: str, /) -> None:
         identifier = str(algebra_id)
         if not identifier:
             raise ValueError("algebra_id must be non-empty.")
@@ -69,7 +69,7 @@ class AlgebraArraySpace(AbstractVectorSpace):
         dtype: Any = np.float64,
         pairing: AbstractPairing | None = None,
         space_id: str | None = None,
-    ):
+    ) -> None:
         from ..metrix.algebra import AbstractFiniteRealAlgebraSpec
 
         if not isinstance(algebra, AbstractFiniteRealAlgebraSpec):

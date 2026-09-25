@@ -202,7 +202,7 @@ class ProjectedIterationAccelerationPlan(StrictModule, NonTrainableState):
         *,
         relaxation_minimum: float = 0.3,
         relaxation_maximum: float = 0.9,
-    ):
+    ) -> None:
         if kind not in ("reference", "chebyshev", "anderson"):
             raise ValueError("Unknown projection acceleration kind.")
         if not 0.0 < relaxation_minimum <= relaxation_maximum <= 1.0:
@@ -243,7 +243,7 @@ class ProductionProjectedSolvePlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 100,
         tolerance: float = 1e-8,
         acceleration: ProjectedIterationAccelerationPlan | None = None,
-    ):
+    ) -> None:
         if maximum_iterations <= 0 or tolerance <= 0.0:
             raise ValueError("Projected solve controls are invalid.")
         self.maximum_iterations = int(maximum_iterations)

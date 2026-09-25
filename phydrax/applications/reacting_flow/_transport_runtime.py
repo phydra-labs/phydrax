@@ -62,7 +62,7 @@ class TransportPropertyReusePlan(StrictModule, NonTrainableState):
         logarithmic_sensitivities: tuple[tuple[float, float], ...],
         maximum_relative_errors: tuple[float, float, float],
         maximum_reuse_count: int,
-    ):
+    ) -> None:
         if not isinstance(properties, AbstractGasTransportPropertyPlan):
             raise TypeError("properties must implement AbstractGasTransportPropertyPlan.")
         temperature = tuple(float(value) for value in temperature_bounds)

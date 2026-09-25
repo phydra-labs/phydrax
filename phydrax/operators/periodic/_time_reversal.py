@@ -53,7 +53,7 @@ class PeriodicTimeReversalPlan(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(pencil, PreparedPeriodicOrbitalPencil):
             raise TypeError("pencil must be PreparedPeriodicOrbitalPencil.")
         if not isinstance(mesh, ReciprocalMeshPlan):
@@ -186,7 +186,7 @@ class PeriodicZ2Plan(StrictModule, NonTrainableState):
         loop_axis: int = 0,
         transverse_axis: int = 1,
         endpoint_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         if not isinstance(bundle, PeriodicOverlapBundle):
             raise TypeError("bundle must be PeriodicOverlapBundle.")
         if not isinstance(time_reversal, PeriodicTimeReversalEvidence):

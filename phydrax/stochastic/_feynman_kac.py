@@ -110,7 +110,7 @@ class FeynmanKacSamplingPlan(StrictModule):
         time_weighting: FeynmanKacTimeWeighting = "uniform",
         refresh_mode: FeynmanKacRefreshMode = "resample",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         t0 = float(initial_time)
         t1 = float(terminal_time)
         if not jnp.isfinite(t0) or not jnp.isfinite(t1) or t1 <= t0:
@@ -204,7 +204,7 @@ class FeynmanKacPathBatch(StrictModule):
         query_weights: ArrayLike | None = None,
         dependence_ids: ArrayLike | None = None,
         antithetic: bool = False,
-    ):
+    ) -> None:
         state_event = _positive_shape(state_shape, owner="state_shape")
         noise_event = _positive_shape(noise_shape, owner="noise_shape")
         q_times = jnp.asarray(query_times, dtype=jnp.float64).reshape((-1,))
@@ -314,7 +314,7 @@ class FeynmanKacLabelBatch(StrictModule):
         cluster_ids: ArrayLike | None = None,
         source_path_count: int = 1,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         state_event = _positive_shape(state_shape, owner="state_shape")
         noise_event = _positive_shape(noise_shape, owner="noise_shape")
         output_event = _positive_shape(output_shape, owner="output_shape")

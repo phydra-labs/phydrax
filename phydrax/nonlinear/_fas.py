@@ -56,7 +56,7 @@ class FASLevel(StrictModule):
         restrict_residual: Callable[[PyTree[Any]], PyTree[Array]] | None = None,
         prolong_correction: Callable[[PyTree[Any]], PyTree[Array]] | None = None,
         level_id: str,
-    ):
+    ) -> None:
         values = (operator, smoother)
         spaces = (state_space, residual_space)
         transfers = (restrict_state, restrict_residual, prolong_correction)
@@ -123,7 +123,7 @@ class FASCyclePolicy(StrictModule):
         *,
         pre_smoothing_steps: int = 1,
         post_smoothing_steps: int = 1,
-    ):
+    ) -> None:
         if kind not in ("v", "w", "f"):
             raise ValueError(f"Unknown FAS cycle kind {kind!r}.")
         pre = int(pre_smoothing_steps)
@@ -153,7 +153,7 @@ class FASHierarchy(StrictModule):
         *,
         hierarchy_id: str = "nonlinear-fas",
         numeric_refreshes: int = 0,
-    ):
+    ) -> None:
         levels_ = tuple(levels)
         if len(levels_) < 2:
             raise ValueError("FAS requires at least one fine and one coarse level.")
@@ -432,7 +432,7 @@ class FASNonlinearPreconditioner(AbstractNonlinearUpdate):
         /,
         *,
         policy: FASCyclePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(hierarchy, FASHierarchy):
             raise TypeError("hierarchy must be a FASHierarchy.")
         policy_ = FASCyclePolicy() if policy is None else policy

@@ -26,7 +26,7 @@ class FiniteVolumeBoundaryPair(StrictModule, NonTrainableState):
         lower: AbstractConservationBoundary,
         upper: AbstractConservationBoundary,
         /,
-    ):
+    ) -> None:
         if not isinstance(lower, AbstractConservationBoundary) or not isinstance(
             upper, AbstractConservationBoundary
         ):
@@ -54,7 +54,7 @@ class FiniteVolumeBoundarySet(StrictModule, NonTrainableState):
         axis_names: Sequence[str],
         pairs: Sequence[FiniteVolumeBoundaryPair | None],
         /,
-    ):
+    ) -> None:
         names = tuple(str(name) for name in axis_names)
         pairs_ = tuple(pairs)
         if (

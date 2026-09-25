@@ -66,7 +66,7 @@ class NucleotideGDescriptor(StrictModule, NonTrainableState):
         cutoff=2.4,
         image_policy: str,
         smooth_width=0.0,
-    ):
+    ) -> None:
         """Fixed directed pair support; omission changes the descriptor identity.
 
         pairs contains NucleotideKey pairs, never atom IDs. None admits all
@@ -208,7 +208,7 @@ class ERMSDCollectiveVariableProgram(
     metrics: tuple[CollectiveVariableMetric, ...]
     program_id: str = eqx.field(static=True)
 
-    def __init__(self, descriptor, reference):
+    def __init__(self, descriptor, reference) -> None:
         evaluated = descriptor.evaluate(reference)
         if not bool(jnp.all(evaluated.pair_valid)):
             raise ValueError(

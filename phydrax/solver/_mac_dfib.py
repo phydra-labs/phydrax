@@ -75,7 +75,7 @@ class MACDivergenceFreeMarkerTransfer(StrictModule, NonTrainableState):
         *,
         require_periodic: bool = True,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if transfer.operators.prepared_id != projection.operators.prepared_id:
             raise ValueError("DFIB transfer and pressure projection operators differ.")
         periodic = all(
@@ -243,7 +243,7 @@ class MACDFIBProjectionPlan(StrictModule, NonTrainableState):
         *,
         linear_policy: LinearSolvePolicy | None = None,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(transfer, MACDivergenceFreeMarkerTransfer):
             raise TypeError("transfer must be MACDivergenceFreeMarkerTransfer.")
         tolerance_ = float(tolerance)

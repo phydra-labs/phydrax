@@ -32,7 +32,7 @@ class VirtualElementSpec(StrictModule, NonTrainableState):
         conformity: str = "H1",
         enhanced: bool = True,
         value_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         family_ = str(family)
         degree_ = int(degree)
         conformity_ = str(conformity)
@@ -152,7 +152,7 @@ class VirtualElementFieldSpec(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         name_ = str(name)
         shape = tuple(component_shape)
         if not name_:

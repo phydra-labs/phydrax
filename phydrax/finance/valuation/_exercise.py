@@ -36,7 +36,7 @@ class LSMPlan(StrictModule):
         polynomial_degree: int = 3,
         ridge: float = 1.0e-10,
         minimum_in_the_money_paths: int = 16,
-    ):
+    ) -> None:
         if (
             isinstance(polynomial_degree, bool)
             or not isinstance(polynomial_degree, int)
@@ -79,7 +79,7 @@ class LSMProblem(StrictModule):
         currency: Currency | None = None,
         evidence_binding: FinanceEvidenceBinding | None = None,
         pricing_law: PricingLaw | None = None,
-    ):
+    ) -> None:
         if not isinstance(paths, MonteCarloPathBatch) or paths.asset_count != 1:
             raise ValueError("LSM requires a one-asset MonteCarloPathBatch.")
         if not isinstance(payoff, BermudanPayoff):
@@ -229,7 +229,7 @@ class ReflectedBSDEPlan(StrictModule):
         ridge: float = 1.0e-8,
         minimum_paths: int = 32,
         residual_tolerance: float = 1.0e-4,
-    ):
+    ) -> None:
         ridge_, tolerance = float(ridge), float(residual_tolerance)
         if (
             not isfinite(ridge_)

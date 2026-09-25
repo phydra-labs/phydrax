@@ -57,7 +57,7 @@ class MultiblockSATCoupling(StrictModule, NonTrainableState):
         *,
         flux: MultiblockNumericalFlux = "central",
         interpolation_order: int = 4,
-    ):
+    ) -> None:
         if (
             not isinstance(multiblock, PreparedMultiblockGrid)
             or not isinstance(left, PreparedSBPOperator)

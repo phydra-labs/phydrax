@@ -156,7 +156,7 @@ class MACEnthalpyPorosityIMEXEulerMethod(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledMACEnthalpyPorosityDynamics):
             raise TypeError("dynamics must be CompiledMACEnthalpyPorosityDynamics.")
         fixed = None if fixed_step_size is None else float(fixed_step_size)
@@ -380,7 +380,7 @@ class MACEnthalpyPorositySBDF2Method(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         step = float(step_size)
         if not np.isfinite(step) or step <= 0.0:
             raise ValueError("SBDF2 step_size must be positive and finite.")

@@ -101,7 +101,7 @@ class HaldaneModelPlan(StrictModule, NonTrainableState):
         energy_unit: UnitDefinition,
         length_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -187,7 +187,7 @@ class KaneMeleModelPlan(StrictModule, NonTrainableState):
         energy_unit: UnitDefinition,
         length_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -297,7 +297,7 @@ class HofstadterModelPlan(StrictModule, NonTrainableState):
         energy_unit: UnitDefinition,
         length_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         numerator = int(flux_numerator)
         denominator = int(flux_denominator)
         hopping_ = float(hopping)

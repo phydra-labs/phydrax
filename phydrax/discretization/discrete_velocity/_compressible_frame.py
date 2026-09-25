@@ -32,7 +32,7 @@ class IntegerKineticFramePlan(StrictModule, NonTrainableState):
         rule: CompressibleVelocityRule,
         shift: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(rule, CompressibleVelocityRule):
             raise TypeError("rule must be a CompressibleVelocityRule.")
         frame = tuple(int(value) for value in shift)
@@ -177,7 +177,7 @@ class AdaptiveGaugePlan(StrictModule, NonTrainableState):
         reference_temperature: float = 1.0,
         minimum_scale: float = 0.25,
         maximum_scale: float = 4.0,
-    ):
+    ) -> None:
         reference = float(reference_temperature)
         lower = float(minimum_scale)
         upper = float(maximum_scale)

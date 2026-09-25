@@ -45,7 +45,7 @@ class FrozenTopologyTerm(AbstractEvaluatedScalarTerm):
         exponent: float = 1.0,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         name = str(field)
         if not name:
             raise ValueError("Frozen topology field name must be non-empty.")

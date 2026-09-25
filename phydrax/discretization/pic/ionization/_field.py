@@ -42,7 +42,7 @@ class FieldIonizationPlan(StrictModule, NonTrainableState):
         ionization_energy: float,
         maximum_probability: float = 0.25,
         maximum_events: int,
-    ):
+    ) -> None:
         rate = float(rate_coefficient)
         power = float(field_power)
         energy = float(ionization_energy)

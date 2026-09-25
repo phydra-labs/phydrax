@@ -37,7 +37,7 @@ class VineyardResult(StrictModule, NonTrainableState):
         times: Array,
         lineage: Sequence[Array],
         /,
-    ):
+    ) -> None:
         values = tuple(snapshots)
         lineages = tuple(jnp.asarray(value, dtype=jnp.int32) for value in lineage)
         times_ = jnp.asarray(times)
@@ -121,7 +121,7 @@ class ZigzagCellOperation(StrictModule, NonTrainableState):
         degree: int,
         ambient_cell: int,
         /,
-    ):
+    ) -> None:
         if action not in ("insert", "remove"):
             raise ValueError("Zigzag action must be insert or remove.")
         if int(degree) < 0 or int(ambient_cell) < 0:
@@ -147,7 +147,7 @@ class ZigzagTopologyResult(StrictModule, NonTrainableState):
     state_ids: tuple[str, ...] = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, operations, betti_history, state_ids, /):
+    def __init__(self, operations, betti_history, state_ids, /) -> None:
         self.operations = tuple(operations)
         self.betti_history = jnp.asarray(betti_history, dtype=jnp.int32)
         self.state_ids = tuple(state_ids)
@@ -172,7 +172,7 @@ class MonotoneZigzagIntervals(StrictModule, NonTrainableState):
         persistence: PersistenceResult,
         operations: Sequence[ZigzagCellOperation],
         /,
-    ):
+    ) -> None:
         values = tuple(operations)
         self.persistence = persistence
         self.operations = values

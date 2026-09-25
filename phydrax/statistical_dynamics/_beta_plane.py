@@ -42,7 +42,7 @@ class BetaPlaneStatisticalCoordinates(StrictModule, NonTrainableState):
         problem: BarotropicBetaPlane,
         partition: InteractionPartition,
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, BarotropicBetaPlane):
             raise TypeError("problem must be a BarotropicBetaPlane.")
         if not isinstance(partition, InteractionPartition):
@@ -160,7 +160,7 @@ class BetaPlaneCumulantSystem(StrictModule, NonTrainableState):
         *,
         maximum_tensor_bytes: int = 512 * 1024 * 1024,
         maximum_coordinate_dimension: int = 512,
-    ):
+    ) -> None:
         coordinates = BetaPlaneStatisticalCoordinates(problem, partition)
         maximum_bytes = int(maximum_tensor_bytes)
         maximum_dimension = int(maximum_coordinate_dimension)

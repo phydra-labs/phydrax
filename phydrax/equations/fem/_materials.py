@@ -62,7 +62,7 @@ class FiniteElementAuxiliaryEvaluation(StrictModule):
         retry_requested: ArrayLike = False,
         suggested_step: ArrayLike = 0.0,
         diagnostics: object = None,
-    ):
+    ) -> None:
         successful_ = jnp.asarray(successful, dtype=jnp.bool_)
         admissible_ = jnp.asarray(admissible, dtype=jnp.bool_)
         retry_ = jnp.asarray(retry_requested, dtype=jnp.bool_)
@@ -242,7 +242,7 @@ class LocalImplicitMaterial(AbstractLocalImplicitMaterial, NonTrainableState):
         max_steps: int = 25,
         tolerance: float = 1.0e-10,
         model_id: str,
-    ):
+    ) -> None:
         if not callable(residual) or not callable(response):
             raise TypeError("Local material residual and response must be callable.")
         shape, steps, tolerance_, identifier = _root_configuration(
@@ -330,7 +330,7 @@ class LearnedLocalImplicitMaterial(AbstractLocalImplicitMaterial):
         residual_scale: float | None = None,
         ports: ModelPorts | None = None,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         site = "LearnedLocalImplicitMaterial"
         if not callable(residual) or not callable(response):
             raise TypeError("Local material residual and response must be callable.")

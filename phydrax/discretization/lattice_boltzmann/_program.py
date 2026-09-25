@@ -62,7 +62,7 @@ class KineticFieldSpec(StrictModule, NonTrainableState):
         initialized: bool = False,
         checkpoint_required: bool = False,
         differentiable: bool = True,
-    ):
+    ) -> None:
         identifier = str(name)
         shape = tuple(component_shape)
         precision = str(precision_role)
@@ -147,7 +147,7 @@ class KineticStageSpec(StrictModule, NonTrainableState):
         reductions: Sequence[str] = (),
         conservation_channels: Sequence[str] = (),
         failure_scope: KineticFailureScope = KineticFailureScope.ATOMIC,
-    ):
+    ) -> None:
         identifier = str(name)
         order_ = int(order)
         read_names = tuple(str(value) for value in reads)
@@ -211,7 +211,7 @@ class KineticProgramManifest(StrictModule, NonTrainableState):
         /,
         *,
         dependency_manifest_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         kind = str(program_kind)
         lattice = str(lattice_id)
         precision = str(precision_policy_id)

@@ -32,7 +32,7 @@ class SubbandCoulombFormFactorPlan(StrictModule, NonTrainableState):
         /,
         *,
         normalization_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         positions = np.asarray(positions_meter, dtype=np.float64)
         density = np.asarray(probability_density_per_meter, dtype=np.float64)
         tolerance = float(normalization_tolerance)

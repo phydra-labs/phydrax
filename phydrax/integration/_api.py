@@ -116,7 +116,7 @@ class IntegrationRealization(StrictModule):
         /,
         *,
         precision: IntegrationPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         self.target = target
         self.plan = plan
         self.batch = batch

@@ -170,7 +170,7 @@ class CentralizedLQGProblem(StrictModule):
         covariance_tolerance: float = 1.0e-7,
         observation_control_matrices: ArrayLike | None = None,
         process_measurement_cross_covariances: ArrayLike | None = None,
-    ):
+    ) -> None:
         tolerance = _covariance_tolerance(covariance_tolerance)
         resolved_information_id = _identifier(information_id, "information_id")
         resolved_problem_id = _identifier(problem_id, "problem_id")
@@ -492,7 +492,7 @@ class BeliefFeedbackPolicy(StrictModule):
         information_id: str,
         belief_id: str,
         policy_id: str,
-    ):
+    ) -> None:
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("time_grid must be a TimeGrid.")
         if observation_timing != _PRE_ACTION_TIMING:

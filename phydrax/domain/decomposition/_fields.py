@@ -47,7 +47,7 @@ class LocalFieldRef(StrictModule):
     field_id: str = eqx.field(static=True)
     patch_id: str = eqx.field(static=True)
 
-    def __init__(self, field_id: str, patch_id: str, /):
+    def __init__(self, field_id: str, patch_id: str, /) -> None:
         self.field_id = _identifier(field_id, "field_id")
         self.patch_id = _identifier(patch_id, "patch_id")
 
@@ -69,7 +69,7 @@ class LocalFieldFamily(StrictModule):
         cover: SubdomainCover,
         fields: Mapping[str, DomainFunction],
         /,
-    ):
+    ) -> None:
         if not isinstance(cover, SubdomainCover):
             raise TypeError("cover must be a SubdomainCover.")
         values = dict(fields)
@@ -130,7 +130,7 @@ class _PartitionOfUnityEvaluator(StrictModule):
         self,
         family: LocalFieldFamily,
         deps: tuple[str, ...],
-    ):
+    ) -> None:
         lifted = family.lifted_fields()
         supports = tuple(patch.support for patch in family.cover.patches)
         windows = tuple(patch.window for patch in family.cover.patches)
@@ -273,7 +273,7 @@ class _BrokenFieldEvaluator(StrictModule):
     field_positions: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     support_positions: tuple[tuple[int, ...], ...] = eqx.field(static=True)
 
-    def __init__(self, family: LocalFieldFamily, deps: tuple[str, ...]):
+    def __init__(self, family: LocalFieldFamily, deps: tuple[str, ...]) -> None:
         lifted = family.lifted_fields()
         supports = tuple(patch.support for patch in family.cover.patches)
         self.fields = lifted
@@ -321,7 +321,7 @@ class BrokenField(StrictModule):
 
     family: LocalFieldFamily
 
-    def __init__(self, family: LocalFieldFamily, /):
+    def __init__(self, family: LocalFieldFamily, /) -> None:
         if not isinstance(family, LocalFieldFamily):
             raise TypeError("family must be a LocalFieldFamily.")
         self.family = family

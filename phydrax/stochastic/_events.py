@@ -111,7 +111,7 @@ class TerminalSetEvent(StrictModule):
         *,
         event_id: str,
         score: PathObservable | None = None,
-    ):
+    ) -> None:
         if not callable(predicate):
             raise TypeError("predicate must be callable.")
         if score is not None and not callable(score):
@@ -139,7 +139,7 @@ class ThresholdCrossingEvent(StrictModule):
         direction: CrossingDirection = "up",
         localization: EventLocalization = "linear",
         event_id: str,
-    ):
+    ) -> None:
         if not callable(observable):
             raise TypeError("observable must be callable.")
         value = float(threshold)
@@ -170,7 +170,7 @@ class AccumulatedPathEvent(StrictModule):
         direction: CrossingDirection = "up",
         localization: EventLocalization = "linear",
         event_id: str,
-    ):
+    ) -> None:
         if not callable(rate):
             raise TypeError("rate must be callable.")
         value = float(threshold)
@@ -200,7 +200,7 @@ class CompetingPathEvents(StrictModule):
         /,
         *,
         event_id: str = "competing-events",
-    ):
+    ) -> None:
         resolved = tuple(events)
         if not resolved or any(
             not isinstance(
@@ -246,7 +246,7 @@ class PathEventResult(StrictModule):
         *,
         event_ids: Sequence[str],
         trajectory_ids: Sequence[str],
-    ):
+    ) -> None:
         occurrence = jnp.asarray(occurred, dtype=jnp.bool_)
         shape = occurrence.shape
         censoring = jnp.asarray(censored, dtype=jnp.bool_)

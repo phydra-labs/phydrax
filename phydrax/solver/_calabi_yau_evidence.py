@@ -57,7 +57,7 @@ class CalabiYauMetricEvidencePlan(StrictModule):
         minimum_valid_fraction: float = 0.9,
         ricci_tolerance: float = 1e-3,
         require_ricci: bool = False,
-    ):
+    ) -> None:
         if not isinstance(training_samples, ProjectiveLineSamples) or not isinstance(
             heldout_samples, ProjectiveLineSamples
         ):

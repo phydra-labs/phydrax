@@ -34,7 +34,7 @@ class ClassicalSpinState(StrictModule):
         /,
         *,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         values = jnp.asarray(directions)
         active = jnp.asarray(active_mask, dtype=jnp.bool_)
         identifier = str(hamiltonian_id)
@@ -92,7 +92,7 @@ class ClassicalSpinHamiltonianPlan(StrictModule, NonTrainableState):
         field_unit: str,
         moment_unit: str,
         validation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(system, PreparedAtomisticSystem):
             raise TypeError("system must be PreparedAtomisticSystem.")
         if not isinstance(graph, AtomisticGraph):

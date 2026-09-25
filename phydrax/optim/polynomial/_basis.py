@@ -66,7 +66,7 @@ class DenseMonomialBasis(StrictModule):
     exponent_tuples: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
 
-    def __init__(self, variable_count: int, max_degree: int, /):
+    def __init__(self, variable_count: int, max_degree: int, /) -> None:
         size = dense_monomial_count(variable_count, max_degree)
         variables = index(variable_count)
         degree = index(max_degree)
@@ -125,7 +125,7 @@ class DenseMomentBasis(StrictModule):
     matrix_size: int = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
 
-    def __init__(self, variable_count: int, order: int, /):
+    def __init__(self, variable_count: int, order: int, /) -> None:
         if isinstance(order, bool):
             raise TypeError("order must be an integer.")
         relaxation_order = index(order)
@@ -188,7 +188,7 @@ class DenseLocalizingBasis(StrictModule):
         moments: DenseMomentBasis,
         polynomial_exponents: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(moments, DenseMomentBasis):
             raise TypeError("moments must be a DenseMomentBasis.")
         exponents = np.asarray(polynomial_exponents)

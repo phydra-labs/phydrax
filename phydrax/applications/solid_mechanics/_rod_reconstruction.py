@@ -154,7 +154,7 @@ class RodFrameQueryPlan(StrictModule, NonTrainableState):
     query_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, arc_lengths: ArrayLike, /):
+    def __init__(self, arc_lengths: ArrayLike, /) -> None:
         points = _real_vector("arc_lengths", arc_lengths)
         if points.size < 1:
             raise ValueError("arc_lengths must contain at least one physical query.")
@@ -187,7 +187,7 @@ class RodReconstructionPlan(StrictModule, NonTrainableState):
         refinement: int = 1,
         quadrature_tolerance: float = 1.0e-6,
         chart_margin: float = 1.0e-5,
-    ):
+    ) -> None:
         if not isinstance(queries, RodFrameQueryPlan):
             raise TypeError("queries must be a RodFrameQueryPlan.")
         method_ = _method(method)
@@ -377,7 +377,7 @@ class PreparedRodReconstruction(StrictModule, NonTrainableState):
         reduced: PreparedReducedRod,
         plan: RodReconstructionPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(reduced, PreparedReducedRod):
             raise TypeError("reduced must be a PreparedReducedRod.")
         if not isinstance(plan, RodReconstructionPlan):

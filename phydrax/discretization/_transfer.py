@@ -36,7 +36,7 @@ class TransferProperties(StrictModule, NonTrainableState):
         adjoint_paired: bool = False,
         differentiable_geometry: bool = False,
         exact_on: Sequence[str] = (),
-    ):
+    ) -> None:
         exact = tuple(str(value) for value in exact_on)
         if any(not value for value in exact) or len(set(exact)) != len(exact):
             raise ValueError("exact_on entries must be unique non-empty strings.")
@@ -73,7 +73,7 @@ class FieldTransfer(StrictModule, NonTrainableState):
         properties: TransferProperties | None = None,
         preparation: PreparationReport | None = None,
         transfer_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(source, DiscreteFieldSpace) or not isinstance(
             target, DiscreteFieldSpace
         ):

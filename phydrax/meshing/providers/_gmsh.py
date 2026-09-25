@@ -387,7 +387,7 @@ class GmshOptions(StrictModule, NonTrainableState):
         algorithm_3d: int = 1,
         terminal_output: bool = False,
         association_tolerance_factor: float = 4.0,
-    ):
+    ) -> None:
         factor = float(association_tolerance_factor)
         if not np.isfinite(factor) or factor <= 0.0:
             raise ValueError("association_tolerance_factor must be positive and finite.")
@@ -421,7 +421,7 @@ class GmshMeshingPlan(StrictModule, NonTrainableState):
         options: GmshOptions,
         support: ProviderSupportReport,
         /,
-    ):
+    ) -> None:
         model = _brep_model(source)
         if not isinstance(specification, (SurfaceMeshingSpec, VolumeMeshingSpec)):
             raise TypeError("specification must be surface or volume meshing.")
@@ -459,7 +459,7 @@ class GmshSession(AbstractMeshingSession):
         provider: GmshProvider,
         policy: MeshingExecutionPolicy,
         /,
-    ):
+    ) -> None:
         if policy.execution_mode is not MeshingExecutionMode.IN_PROCESS:
             raise MeshingFailure(
                 MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
@@ -1041,7 +1041,7 @@ def _audit_gmsh_mesh(
 
 
 class GmshProvider:
-    def __init__(self, options: GmshOptions | None = None, /):
+    def __init__(self, options: GmshOptions | None = None, /) -> None:
         self.options = GmshOptions() if options is None else options
         if not isinstance(self.options, GmshOptions):
             raise TypeError("options must be GmshOptions or None.")

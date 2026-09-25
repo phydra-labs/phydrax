@@ -59,7 +59,7 @@ class TrajectoryOptimizationContext(StrictModule):
     parameters: Any
     duration: Array | None
 
-    def __init__(self, args: Any, parameters: Any, duration: Array | None, /):
+    def __init__(self, args: Any, parameters: Any, duration: Array | None, /) -> None:
         self.args = args
         self.parameters = parameters
         self.duration = duration
@@ -89,7 +89,7 @@ class TrajectoryOptimizationView(StrictModule):
         control_shape: Sequence[int],
         state_geometry: AbstractStateGeometry | None = None,
         approximation_id: str = "control:direct-collocation:retracted-state-held-control",
-    ):
+    ) -> None:
         times_ = _inexact(times)
         cases = _case_shape(case_shape)
         state_event = tuple(state_shape)
@@ -214,7 +214,7 @@ class BoundedPathConstraint(StrictModule):
         upper: Any = jnp.inf,
         scale: ArrayLike = 1.0,
         constraint_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("BoundedPathConstraint function must be callable.")
         self.function = function
@@ -252,7 +252,7 @@ class BoundedTrajectoryConstraint(StrictModule):
         upper: Any = jnp.inf,
         scale: ArrayLike = 1.0,
         constraint_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("BoundedTrajectoryConstraint function must be callable.")
         self.function = function
@@ -299,7 +299,7 @@ class TrajectoryOptimizationProblem(StrictModule):
         parameter_space: AbstractVectorSpace | None = None,
         args: Any = None,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(dynamics, (ContinuousSystem, DifferentialAlgebraicSystem)):
             raise TypeError(
                 "TrajectoryOptimizationProblem dynamics must be ContinuousSystem or DifferentialAlgebraicSystem."

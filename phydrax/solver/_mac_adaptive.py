@@ -73,7 +73,7 @@ class MACNamedRateLimit(StrictModule, NonTrainableState):
         *,
         scale: float = 1.0,
         rate_id: str,
-    ):
+    ) -> None:
         name_ = str(name)
         identifier = str(rate_id)
         scale_ = float(scale)
@@ -124,7 +124,7 @@ class MACCompositeStepController(StrictModule, NonTrainableState):
         *,
         additional_limits: tuple[MACNamedRateLimit, ...] = (),
         safety_factor: float = 0.9,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         limits = tuple(additional_limits)
@@ -221,7 +221,7 @@ class MACAdaptivePolicy(StrictModule, NonTrainableState):
         growth_factor: float = 1.5,
         minimum_step_size: float = 1e-12,
         maximum_step_size: float = np.inf,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         retries = int(maximum_retries)
         reduction = float(reduction_factor)
@@ -352,7 +352,7 @@ class MACAdaptiveRolloutPlan(StrictModule):
         *,
         final_time: float,
         initial_step_size: float,
-    ):
+    ) -> None:
         from ._mac_viscous import MACSBDF2Method
 
         if isinstance(method, MACSBDF2Method):
@@ -866,7 +866,7 @@ class MACFrozenGridReplayPlan(StrictModule):
         *,
         checkpointing: CheckpointedScanMode = "block",
         block_size: int | None = 16,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         if not isinstance(method, AbstractFixedStepMethod):

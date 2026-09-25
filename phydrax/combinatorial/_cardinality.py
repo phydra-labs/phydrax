@@ -52,7 +52,7 @@ class CardinalitySpace(AbstractBoundableCombinatorialSpace):
     valid_count: int = eqx.field(static=True)
     _structure_id: str = eqx.field(static=True)
 
-    def __init__(self, size: int, count: int, /, *, valid: Any | None = None):
+    def __init__(self, size: int, count: int, /, *, valid: Any | None = None) -> None:
         if isinstance(size, bool) or not isinstance(size, Integral):
             raise TypeError("size must be a positive integer.")
         if isinstance(count, bool) or not isinstance(count, Integral):
@@ -157,7 +157,7 @@ class StableCardinalityOracle(AbstractBoundableLinearCombinatorialMethod):
 
     maximum_items: int = eqx.field(static=True)
 
-    def __init__(self, *, maximum_items: int = 10_000_000):
+    def __init__(self, *, maximum_items: int = 10_000_000) -> None:
         if isinstance(maximum_items, bool) or not isinstance(maximum_items, Integral):
             raise TypeError("maximum_items must be a positive integer.")
         if int(maximum_items) <= 0:

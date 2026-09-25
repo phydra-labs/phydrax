@@ -121,7 +121,7 @@ class UnidirectionalPropagationPlan(StrictModule, NonTrainableState):
         maximum_refinement_error: float = 1.0e-5,
         maximum_backward_wave_estimate: float = 1.0e-3,
         maximum_workspace_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         if not isinstance(space, PlaneFieldSpace):
             raise TypeError("space must be a PlaneFieldSpace.")
         if not isinstance(time_space, PulseTimeSpace):

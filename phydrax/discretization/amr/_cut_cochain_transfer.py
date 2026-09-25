@@ -51,7 +51,7 @@ class CutCellCochainTransferPlan(StrictModule, NonTrainableState):
         *,
         cell_transition: MultivaluedCutCellTransition | None = None,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(source_plan, CutCellCochainPlan) or not isinstance(
             target_plan, CutCellCochainPlan
         ):

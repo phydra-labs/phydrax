@@ -45,7 +45,7 @@ class FiniteElementPatchPlan(StrictModule, NonTrainableState):
         partition_weights: ArrayLike,
         global_size: int,
         /,
-    ):
+    ) -> None:
         routes = jnp.asarray(gathers, dtype=jnp.int32)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         weights = jnp.asarray(partition_weights)
@@ -166,7 +166,7 @@ class FiniteElementPatchPreconditioner(AbstractPreconditioner):
         /,
         *,
         builder_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, FiniteElementPatchPlan):
             raise TypeError("plan must be FiniteElementPatchPlan.")
         if not isinstance(space, AbstractVectorSpace):
@@ -353,7 +353,7 @@ class FiniteElementPatchPreconditionerBuilder(AbstractPreconditionerBuilder):
         *,
         local_solver: AbstractPreconditionerBuilder | None = None,
         properties: PreconditionerProperties | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, FiniteElementPatchPlan):
             raise TypeError("plan must be a FiniteElementPatchPlan.")
         solver = (

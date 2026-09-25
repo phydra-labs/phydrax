@@ -49,7 +49,7 @@ class ThermodynamicConvention:
     reference_temperature: float = 298.15
     standard_concentration: float = 1000.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.basis not in ("molar", "single-system"):
             raise ValueError("basis must be molar or single-system.")
         reference = JOULE_PER_MOLE if self.basis == "molar" else JOULE
@@ -287,7 +287,7 @@ class RepeatTransferUnfolding:
     prefix: str = "repeat"
     state_names = ("folded", "unfolded")
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             isinstance(self.repeat_count, bool)
             or not isinstance(self.repeat_count, int)

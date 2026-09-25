@@ -133,7 +133,7 @@ class MACMomentumPlan(StrictModule, NonTrainableState):
         *,
         boundaries: PreparedMACBoundaryPlan | MACBoundaryPlan | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         boundaries_ = (
@@ -182,7 +182,7 @@ class PreparedMACMomentumOperators(StrictModule, NonTrainableState):
     report: MACMomentumReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MACMomentumPlan, /):
+    def __init__(self, plan: MACMomentumPlan, /) -> None:
         if not isinstance(plan, MACMomentumPlan):
             raise TypeError("plan must be MACMomentumPlan.")
         grid = plan.operators.discretization.grid

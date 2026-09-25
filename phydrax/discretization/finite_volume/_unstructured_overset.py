@@ -824,7 +824,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         coverage_policy: str | None = None,
         bounded_interpolation: bool | None = None,
         bounded: bool | None = None,
-    ):
+    ) -> None:
         policy_data = _resolve_overset_policy(
             donor,
             receptor,
@@ -1255,7 +1255,7 @@ class PeriodicSlidingInterfacePlan(StrictModule, NonTrainableState):
         interface_id: str,
         shift_precision: int = 14,
         coverage_tolerance: float = 1e-12,
-    ):
+    ) -> None:
         period_ = float(period)
         left = np.asarray(left_breaks, dtype=np.float64)
         right = np.asarray(right_breaks, dtype=np.float64)

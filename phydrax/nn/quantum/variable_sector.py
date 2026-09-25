@@ -93,7 +93,7 @@ class BosonicJastrowAmplitude(StrictModule, ParameterOwner):
         pair_range: ArrayLike | float = 0.0,
         sector_log_weights: ArrayLike | None = None,
         amplitude_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(space, VariableSectorSpace):
             raise TypeError("space must be VariableSectorSpace.")
         center = (
@@ -244,7 +244,7 @@ class FermionicDeterminantJastrowAmplitude(StrictModule, ParameterOwner):
         pair_range: ArrayLike | float = 0.0,
         sector_log_weights: ArrayLike | None = None,
         amplitude_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(space, VariableSectorSpace):
             raise TypeError("space must be VariableSectorSpace.")
         bias = np.asarray(orbital_bias)

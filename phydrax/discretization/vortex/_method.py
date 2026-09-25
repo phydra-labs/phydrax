@@ -47,7 +47,7 @@ class InviscidVortexDiffusionPlan(AbstractVortexDiffusionPlan):
     plan_id: str = eqx.field(static=True)
     capabilities: VortexDiffusionCapabilities
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (2, 3):
             raise ValueError("Inviscid vortex diffusion requires dimension 2 or 3.")
@@ -77,7 +77,7 @@ class PreparedInviscidVortexDiffusion(AbstractPreparedVortexDiffusion):
     prepared_id: str = eqx.field(static=True)
     capabilities: VortexDiffusionCapabilities
 
-    def __init__(self, plan: InviscidVortexDiffusionPlan, capacity: int, /):
+    def __init__(self, plan: InviscidVortexDiffusionPlan, capacity: int, /) -> None:
         capacity_ = int(capacity)
         if capacity_ <= 0:
             raise ValueError("Vortex diffusion capacity must be positive.")
@@ -160,7 +160,7 @@ class VortexParticleMethodPlan(StrictModule, NonTrainableState):
         advective_cfl: float = 0.25,
         diffusive_cfl: float = 0.125,
         name: str = "vortex-particle-method",
-    ):
+    ) -> None:
         if not isinstance(velocity, AbstractVortexVelocityPlan):
             raise TypeError("velocity must be an AbstractVortexVelocityPlan.")
         diffusion_ = (
@@ -260,7 +260,7 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
         precision: ParticlePrecisionPolicy | None = None,
         background_velocity: BackgroundVortexVelocity | None = None,
         background_velocity_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
         if not isinstance(properties, VortexParticleProperties):

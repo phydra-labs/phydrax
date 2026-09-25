@@ -40,7 +40,7 @@ class UniformSquareTensor(StrictModule):
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
         numeric_version: ArrayLike = 0,
-    ):
+    ) -> None:
         array = jnp.asarray(value)
         if array.ndim != 4:
             raise ValueError(

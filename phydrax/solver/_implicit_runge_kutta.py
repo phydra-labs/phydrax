@@ -99,7 +99,7 @@ class GaussLegendreIRK(StrictModule, NonTrainableState):
     stages: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, stages: int = 2, /):
+    def __init__(self, stages: int = 2, /) -> None:
         count = int(stages)
         if count not in (1, 2, 3):
             raise ValueError("GaussLegendreIRK stages must be one, two, or three.")

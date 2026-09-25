@@ -59,7 +59,7 @@ class Wannier90HRImport(StrictModule, NonTrainableState):
         raw_hamiltonian_blocks,
         prepared_family: PreparedPeriodicTranslationFamily,
         /,
-    ):
+    ) -> None:
         if not isinstance(context, PeriodicSourceContext) or not isinstance(
             prepared_family, PreparedPeriodicTranslationFamily
         ):

@@ -81,7 +81,7 @@ class FrontierClosureObligation:
         /,
         *,
         nonclaims: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(support_tuple, SupportTuple):
             raise TypeError("support_tuple must be SupportTuple.")
         name_ = _identifier(name, "obligation name")
@@ -223,7 +223,7 @@ class DistributedResourceProfile:
         maximum_global_bytes: int,
         communication_route: str,
         /,
-    ):
+    ) -> None:
         backend_ = _identifier(backend, "backend")
         dtype_ = _identifier(dtype, "dtype")
         route = _identifier(communication_route, "communication route")
@@ -286,7 +286,7 @@ class ExternalQualificationBoundary:
         maximum_output_bytes: int,
         timeout_seconds: int,
         /,
-    ):
+    ) -> None:
         provider_ = _identifier(provider, "provider")
         release_ = _identifier(release, "release")
         digest = str(executable_sha256).lower()
@@ -350,7 +350,7 @@ class FrontierArtifactBinding:
         unit_ids: Sequence[str],
         evidence_ids: Sequence[str],
         parent_artifact_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         producer = _identifier(producer_id, "producer ID")
         support = _identifier(support_tuple_id, "support tuple ID")
         plan = _identifier(plan_id, "plan ID")

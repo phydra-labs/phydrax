@@ -190,7 +190,7 @@ class ResolvedEquityForward(AbstractResolvedContract):
         pay_receive: PayReceive | str,
         settlement_price: ArrayLike = 0.0,
         settlement_price_known: bool,
-    ):
+    ) -> None:
         if not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
@@ -325,7 +325,7 @@ class ResolvedFXForward(AbstractResolvedContract):
         quote_discount_curve_id: str,
         base_discount_curve_id: str,
         pay_receive: PayReceive | str,
-    ):
+    ) -> None:
         if not isinstance(fx_pair, FXPair):
             raise TypeError("fx_pair must be an FXPair.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
@@ -493,7 +493,7 @@ class ResolvedCommodityForward(AbstractResolvedContract):
         pay_receive: PayReceive | str,
         settlement_price: ArrayLike = 0.0,
         settlement_price_known: bool,
-    ):
+    ) -> None:
         if not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
@@ -630,7 +630,7 @@ class ResolvedCommodityFuture(AbstractResolvedContract):
         pay_receive: PayReceive | str,
         settlement_price: ArrayLike = 0.0,
         settlement_price_known: bool,
-    ):
+    ) -> None:
         if not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
@@ -733,7 +733,7 @@ class ResolvedEquityFuture(AbstractResolvedContract):
         pay_receive: PayReceive | str,
         settlement_price: ArrayLike = 0.0,
         settlement_price_known: bool,
-    ):
+    ) -> None:
         if not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
@@ -836,7 +836,7 @@ class ResolvedFXFuture(AbstractResolvedContract):
         pay_receive: PayReceive | str,
         settlement_rate: ArrayLike = 0.0,
         settlement_rate_known: bool,
-    ):
+    ) -> None:
         if not isinstance(fx_pair, FXPair):
             raise TypeError("fx_pair must be an FXPair.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)

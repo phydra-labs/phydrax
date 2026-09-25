@@ -30,7 +30,7 @@ class StatePartition(StrictModule, NonTrainableState):
         /,
         *,
         partition_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(masks, Mapping) or len(masks) < 2:
             raise TypeError("masks must map at least two names to masks.")
         names = tuple(str(name) for name in masks)

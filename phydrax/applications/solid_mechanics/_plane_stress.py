@@ -67,7 +67,7 @@ class PlaneStressKinematics(StrictModule):
         log_thickness_stretch: ArrayLike,
         reference_thickness: ArrayLike = 1.0,
         /,
-    ):
+    ) -> None:
         deformation = jnp.asarray(deformation_gradient)
         if deformation.shape[-2:] != (2, 2):
             raise ValueError("Plane-stress deformation gradients must end in 2x2.")
@@ -140,7 +140,7 @@ class BlockDiagonalPlaneStressReductionPlan(StrictModule, NonTrainableState):
         self,
         root_policy: NonlinearTermination | None = None,
         log_stretch_bounds: tuple[float, float] = _DEFAULT_LOG_STRETCH_BOUNDS,
-    ):
+    ) -> None:
         policy = (
             NonlinearTermination(
                 absolute_residual=1.0e-10,
@@ -428,7 +428,7 @@ class CoupledPlaneStressIncompressiblePlan(StrictModule, NonTrainableState):
         pressure_bounds: tuple[float, float] = _DEFAULT_PRESSURE_BOUNDS,
         volumetric_constraint: Callable[[Array], Array] | None = None,
         bulk_modulus: float | None = None,
-    ):
+    ) -> None:
         if volumetric_constraint is None or not callable(volumetric_constraint):
             raise TypeError("volumetric_constraint must be callable.")
         policy = (

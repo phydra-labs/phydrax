@@ -47,7 +47,7 @@ class LatticeBoltzmannPrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: Any | None = None,
         certification_dtype: Any | None = None,
         mixed_storage: bool = False,
-    ):
+    ) -> None:
         population = real_precision_dtype_name(population_dtype)
         compute = (
             population

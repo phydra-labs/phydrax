@@ -248,7 +248,7 @@ class RodPlan(StrictModule, NonTrainableState):
         orientation_norm_tolerance: float = 1.0e-4,
         inextensibility_tolerance: float = 1.0e-5,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         segments = np.asarray(segment_node_ids)
         if segments.ndim != 2 or segments.shape[1:] != (2,) or segments.shape[0] < 1:
             raise ValueError("segment_node_ids must have shape (segment_count, 2).")
@@ -419,7 +419,7 @@ class RodState(StrictModule):
         orientations: ArrayLike,
         angular_velocities: ArrayLike,
         /,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions)
         velocities_ = jnp.asarray(velocities)
         orientations_ = jnp.asarray(orientations)
@@ -485,7 +485,7 @@ class PreparedRod(StrictModule, NonTrainableState):
     material_workset_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: RodPlan, /):
+    def __init__(self, plan: RodPlan, /) -> None:
         if not isinstance(plan, RodPlan):
             raise TypeError("plan must be a RodPlan.")
         segment_vectors = (
@@ -1044,7 +1044,7 @@ class RodEndpointAttachment(StrictModule, NonTrainableState):
         /,
         *,
         attachment_id: str | None = None,
-    ):
+    ) -> None:
         if endpoint not in ("start", "end"):
             raise ValueError("endpoint must be 'start' or 'end'.")
         body_id = int(rigid_body_id)
@@ -1190,7 +1190,7 @@ class RodDynamicsPlan(StrictModule, NonTrainableState):
         maximum_angular_increment: float = np.pi,
         projection_iterations: int = 8,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if integrator != "symplectic":
             raise ValueError("The fixed-topology rod supports the symplectic integrator.")
         time_bound = float(maximum_time_step)
@@ -1335,7 +1335,7 @@ class PreparedRodDynamics(StrictModule, NonTrainableState):
     inertia_solve: SmallLinearSolvePlan | None
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, rod: PreparedRod, plan: RodDynamicsPlan, /):
+    def __init__(self, rod: PreparedRod, plan: RodDynamicsPlan, /) -> None:
         if not isinstance(rod, PreparedRod):
             raise TypeError("rod must be a PreparedRod.")
         if not isinstance(plan, RodDynamicsPlan):

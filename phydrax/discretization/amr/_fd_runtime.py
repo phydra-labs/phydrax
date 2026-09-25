@@ -66,7 +66,7 @@ class FDAMRHierarchyPlan(StrictModule, NonTrainableState):
         tag_buffer: int = 0,
         proper_nesting: int = 0,
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, FDExecutionPrecisionPolicy):
             raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
@@ -133,7 +133,7 @@ class PreparedFDAMRHierarchy(StrictModule, NonTrainableState):
     topology_compiler: BlockTopologyCompiler
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: FDAMRHierarchyPlan, /):
+    def __init__(self, plan: FDAMRHierarchyPlan, /) -> None:
         if not isinstance(plan, FDAMRHierarchyPlan):
             raise TypeError("plan must be FDAMRHierarchyPlan.")
         compiler = BlockTopologyCompiler(

@@ -163,7 +163,7 @@ class DirectCollocationScaling(StrictModule):
         dynamics: Any = None,
         objective: ArrayLike = 1.0,
         duration: ArrayLike | None = None,
-    ):
+    ) -> None:
         self.state = state
         self.control = control
         self.parameters = parameters
@@ -198,7 +198,7 @@ class DirectCollocationDerivativePolicy(StrictModule):
         chunk_size: int | None = None,
         verify: bool = True,
         num_verification_probes: int = 3,
-    ):
+    ) -> None:
         if compiler not in ("auto", "native"):
             raise ValueError("compiler must be 'auto' or 'native'.")
         if hessian not in ("limited-memory", "exact-sparse"):
@@ -231,7 +231,7 @@ class DirectCollocationAuditPolicy(StrictModule):
         constraint_tolerance: float = 1.0e-6,
         off_grid_points: int = 2,
         audit_id: str = "control:direct-collocation:audit",
-    ):
+    ) -> None:
         defect = float(defect_tolerance)
         constraint = float(constraint_tolerance)
         points = int(off_grid_points)
@@ -267,7 +267,7 @@ class DirectCollocationPlan(StrictModule):
         derivatives: DirectCollocationDerivativePolicy | None = None,
         audit: DirectCollocationAuditPolicy | None = None,
         plan_id: str = "control:direct-collocation",
-    ):
+    ) -> None:
         if not isinstance(mesh, TemporalMesh) or mesh.role != "collocation":
             raise TypeError(
                 "Direct collocation requires TemporalMesh(role='collocation')."
@@ -318,7 +318,7 @@ class DirectCollocationBounds(StrictModule):
         controls: Bounds | None = None,
         parameters: Bounds | None = None,
         duration: tuple[float, float] | None = None,
-    ):
+    ) -> None:
         for value, name in (
             (states, "states"),
             (controls, "controls"),
@@ -385,7 +385,7 @@ class DirectCollocationDecisionLayout(StrictModule):
         duration_scale: Array,
         variable_duration: bool,
         layout_id: str,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         geometry = state_layout.geometry

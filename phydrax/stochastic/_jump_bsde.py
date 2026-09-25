@@ -45,7 +45,7 @@ class JumpBSDEProblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(base, BSDEProblem):
             raise TypeError("base must be a BSDEProblem.")
         if not callable(compensator_rate):

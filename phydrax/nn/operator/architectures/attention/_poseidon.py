@@ -194,7 +194,7 @@ class _ConditionedLayerNorm(StrictModule):
         conditioned: bool,
         eps: float,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         self.conditioned = bool(conditioned)
         self.norm = eqx.nn.LayerNorm(
             int(width),
@@ -248,7 +248,7 @@ class _WindowAttention2D(StrictModule):
         window_size: int,
         shifted: bool,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         self.width = int(width)
         self.num_heads = int(num_heads)
         self.window_size = int(window_size)
@@ -447,7 +447,7 @@ class _PoseidonBlock(StrictModule):
         conditioned: bool,
         norm_eps: float,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         hidden = int(round(float(mlp_ratio) * int(width)))
         if hidden <= 0:
             raise ValueError("mlp_ratio must produce a positive hidden width.")
@@ -520,7 +520,7 @@ class _PoseidonStage(StrictModule):
         conditioned: bool,
         norm_eps: float,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         self.blocks = tuple(
             _PoseidonBlock(
                 width=width,
@@ -557,7 +557,7 @@ class _PatchMerge(StrictModule):
         conditioned: bool,
         norm_eps: float,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         reduction_key, norm_key = jr.split(key)
         self.in_width = int(in_width)
         self.reduction = Linear(
@@ -606,7 +606,7 @@ class _PatchUnmerge(StrictModule):
         conditioned: bool,
         norm_eps: float,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         expansion_key, mix_key, norm_key = jr.split(key, 3)
         self.in_width = int(in_width)
         out_width = self.in_width // 2
@@ -666,7 +666,7 @@ class _ConvNeXtSkipBlock(StrictModule):
         conditioned: bool,
         norm_eps: float,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         keys = jr.split(key, 4)
         self.width = int(width)
         self.depthwise_weight = jr.normal(keys[0], (7, 7, 1, self.width)) / 7.0
@@ -760,7 +760,7 @@ class Poseidon(AbstractOperatorModel):
         learn_residual: bool = False,
         norm_eps: float = 1e-5,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
         self.image_shape = _image_shape(image_shape)

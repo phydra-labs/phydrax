@@ -48,7 +48,7 @@ class VariablePatchHierarchyState(StrictModule):
         topology: VariablePatchHierarchyTopology,
         levels: Sequence[VariablePatchFieldState],
         /,
-    ):
+    ) -> None:
         values = tuple(levels)
         if (
             not isinstance(topology, VariablePatchHierarchyTopology)
@@ -133,7 +133,7 @@ class VariablePatchFillPatchPlan(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         if not isinstance(topology, VariablePatchHierarchyTopology):
             raise TypeError("Variable patch FillPatch requires realized topology.")
         level_ = int(level)

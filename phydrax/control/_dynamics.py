@@ -105,7 +105,7 @@ class DiscreteControlDynamics(StrictModule):
         /,
         *,
         method_id: str = "explicit-discrete-transition",
-    ):
+    ) -> None:
         if not isinstance(system, DiscreteSystem):
             raise TypeError("DiscreteControlDynamics system must be a DiscreteSystem.")
         if system.input_layout is None:
@@ -357,7 +357,7 @@ class DifferentialControlDynamics(StrictModule):
         /,
         *,
         method_id: str = "canonical-differential-problem",
-    ):
+    ) -> None:
         if not isinstance(system, ContinuousSystem):
             raise TypeError(
                 "DifferentialControlDynamics system must be a ContinuousSystem."

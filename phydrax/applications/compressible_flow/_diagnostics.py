@@ -81,7 +81,7 @@ class CompressibleBudgetPlan(StrictModule):
         /,
         *,
         accumulation: str = "deterministic",
-    ):
+    ) -> None:
         accumulation_ = str(accumulation)
         if not isinstance(
             system,
@@ -381,7 +381,7 @@ class CompressiblePlaneStatisticsPlan(StrictModule):
         plane_axes: Sequence[int] | None = None,
         periodic_lengths: Sequence[float] | None = None,
         characteristic_length: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(
             system,
             (

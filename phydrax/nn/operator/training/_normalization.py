@@ -52,7 +52,7 @@ class AffineNormalizer(NonTrainableState):
     channel_axis: int | None
     epsilon: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         mean = jnp.asarray(self.mean)
         scale = jnp.asarray(self.scale)
         if mean.shape != scale.shape:
@@ -236,7 +236,7 @@ class OperatorNormalizationPolicy(NonTrainableState):
     input_coordinates: Mapping[str, AffineNormalizer]
     query_coordinates: Mapping[str, AffineNormalizer]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         object.__setattr__(self, "input_values", dict(self.input_values))
         object.__setattr__(self, "targets", dict(self.targets))
         object.__setattr__(self, "input_coordinates", dict(self.input_coordinates))

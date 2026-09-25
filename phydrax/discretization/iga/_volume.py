@@ -70,7 +70,7 @@ class TensorNURBSVolume:
         *,
         patch_id: str | None = None,
         numeric_revision: str = "initial",
-    ):
+    ) -> None:
         identifier = str(block_id)
         revision = str(numeric_revision)
         if not identifier or not revision:
@@ -191,7 +191,7 @@ class FacetCorrespondence:
         right_axis_order: tuple[int, ...] | None = None,
         right_axis_reversed: tuple[bool, ...] | None = None,
         association_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(left, BoundaryFacetId) or not isinstance(
             right, BoundaryFacetId
         ):
@@ -262,7 +262,7 @@ class BlockComplex:
             tuple[BoundaryFacetId, BoundaryFacetId], ...
         ] = (),
         patch_atlas: PatchAtlas | None = None,
-    ):
+    ) -> None:
         values = tuple(volumes)
         if not values or not all(
             isinstance(value, TensorNURBSVolume) for value in values

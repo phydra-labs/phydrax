@@ -95,7 +95,7 @@ class HarmonicBondPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         *,
         name: str = "harmonic-bond",
         force_group: int = 0,
-    ):
+    ) -> None:
         k = _parameters("stiffness", stiffness, positive=True)
         distance = _parameters(
             "equilibrium_distance", equilibrium_distance, positive=True
@@ -140,7 +140,9 @@ class PreparedHarmonicBondPotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan: HarmonicBondPotential, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: HarmonicBondPotential, system: PreparedAtomisticSystem, /
+    ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name
@@ -202,7 +204,7 @@ class FiniteExtensibleNonlinearElasticBondPotential(
         *,
         name: str = "finite-extensible-nonlinear-elastic-bond",
         force_group: int = 0,
-    ):
+    ) -> None:
         k = _parameters("stiffness", stiffness, positive=True)
         extension = _parameters("maximum_extension", maximum_extension, positive=True)
         if k.shape != extension.shape:
@@ -255,7 +257,7 @@ class PreparedFiniteExtensibleNonlinearElasticBondPotential(
         plan: FiniteExtensibleNonlinearElasticBondPotential,
         system: PreparedAtomisticSystem,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name
@@ -329,7 +331,7 @@ class HarmonicAnglePotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         *,
         name: str = "harmonic-angle",
         force_group: int = 0,
-    ):
+    ) -> None:
         k = _parameters("stiffness", stiffness, positive=True)
         angle = _parameters("equilibrium_angle", equilibrium_angle)
         if k.shape != angle.shape or bool(jnp.any((angle <= 0.0) | (angle >= jnp.pi))):
@@ -374,7 +376,9 @@ class PreparedHarmonicAnglePotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan: HarmonicAnglePotential, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: HarmonicAnglePotential, system: PreparedAtomisticSystem, /
+    ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name
@@ -461,7 +465,7 @@ class PeriodicTorsionPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         improper: bool = False,
         name: str = "periodic-torsion",
         force_group: int = 0,
-    ):
+    ) -> None:
         amplitude_ = _parameters("amplitude", amplitude)
         periodicity_host = np.asarray(periodicity)
         phase_ = _parameters("phase", phase)
@@ -525,7 +529,7 @@ class PreparedPeriodicTorsionPotential(AbstractPreparedAtomisticEnergyTerm):
 
     def __init__(
         self, plan: PeriodicTorsionPotential, system: PreparedAtomisticSystem, /
-    ):
+    ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name
@@ -654,7 +658,7 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         explicit_sigma: ArrayLike | None = None,
         name: str = "lennard-jones",
         force_group: int = 0,
-    ):
+    ) -> None:
         epsilon_ = _parameters("epsilon", epsilon)
         sigma_ = _parameters("sigma", sigma, positive=True)
         if epsilon_.shape != sigma_.shape or bool(jnp.any(epsilon_ < 0.0)):
@@ -768,7 +772,9 @@ class PreparedLennardJonesPotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan: LennardJonesPotential, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: LennardJonesPotential, system: PreparedAtomisticSystem, /
+    ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name

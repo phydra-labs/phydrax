@@ -98,7 +98,7 @@ class SurfaceRobinSupport(StrictModule, NonTrainableState):
         support_kind: str,
         anchor_displacement: ArrayLike | None = None,
         support_id: str | None = None,
-    ):
+    ) -> None:
         normal = _unit_vector(direction, "direction")
         normal_value = _nonnegative_stiffness(normal_stiffness, "normal_stiffness")
         tangential_value = _nonnegative_stiffness(
@@ -193,7 +193,7 @@ class BasalSupport(StrictModule, NonTrainableState):
         *,
         anchor_displacement: ArrayLike | None = None,
         support_id: str | None = None,
-    ):
+    ) -> None:
         self.law = SurfaceRobinSupport(
             basal_axis,
             axial_stiffness,
@@ -224,7 +224,7 @@ class VascularSupport(StrictModule, NonTrainableState):
         *,
         anchor_displacement: ArrayLike | None = None,
         support_id: str | None = None,
-    ):
+    ) -> None:
         self.law = SurfaceRobinSupport(
             vessel_axis,
             axial_stiffness,
@@ -255,7 +255,7 @@ class EpicardialSupport(StrictModule, NonTrainableState):
         *,
         anchor_displacement: ArrayLike | None = None,
         support_id: str | None = None,
-    ):
+    ) -> None:
         self.law = SurfaceRobinSupport(
             epicardial_normal,
             normal_stiffness,
@@ -286,7 +286,7 @@ class PericardialSupport(StrictModule, NonTrainableState):
         *,
         anchor_displacement: ArrayLike | None = None,
         support_id: str | None = None,
-    ):
+    ) -> None:
         self.law = SurfaceRobinSupport(
             pericardial_normal,
             normal_stiffness,

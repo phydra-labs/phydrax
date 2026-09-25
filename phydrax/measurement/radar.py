@@ -207,7 +207,7 @@ class FMCWTransformPlan(StrictModule, NonTrainableState):
         *,
         propagation_speed: float,
         propagation_speed_unit: UnitDefinition,
-    ):
+    ) -> None:
         if not isinstance(acquisition, FMCWAcquisition):
             raise TypeError("acquisition must be FMCWAcquisition.")
         for name, value in (("fast_samples", fast_samples), ("chirps", chirps)):

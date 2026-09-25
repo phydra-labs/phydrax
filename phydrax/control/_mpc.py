@@ -70,7 +70,7 @@ class MPCWarmStartPolicy(StrictModule):
         *,
         terminal_control: Literal["hold", "zero"] = "hold",
         interior_margin: float = 1e-7,
-    ):
+    ) -> None:
         if terminal_control not in ("hold", "zero"):
             raise ValueError("terminal_control must be 'hold' or 'zero'.")
         margin = float(interior_margin)
@@ -141,7 +141,7 @@ class RecedingHorizonMPC(StrictModule):
         policy: ConvexSolvePolicy | None = None,
         warm_start_policy: MPCWarmStartPolicy | None = None,
         controller_id: str = "control:mpc:receding-horizon",
-    ):
+    ) -> None:
         if not isinstance(specification, LinearQuadraticControlProblem):
             raise TypeError("specification must be a LinearQuadraticControlProblem.")
         if (

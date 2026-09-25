@@ -33,7 +33,7 @@ class SpinorBasisConvention(StrictModule):
     spin_eigenvalues: tuple[int, ...] = eqx.field(static=True)
     convention_id: str = eqx.field(static=True)
 
-    def __init__(self, orbital_basis: PeriodicOrbitalBasisPlan, /):
+    def __init__(self, orbital_basis: PeriodicOrbitalBasisPlan, /) -> None:
         if not isinstance(orbital_basis, PeriodicOrbitalBasisPlan):
             raise TypeError("orbital_basis must be PeriodicOrbitalBasisPlan.")
         if orbital_basis.spin_order != "spinless":
@@ -89,7 +89,7 @@ class SpinOrbitCouplingPlan(StrictModule):
         require_angular_momentum_algebra: bool = True,
         hermiticity_tolerance: float = 1.0e-10,
         algebra_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(convention, SpinorBasisConvention):
             raise TypeError("convention must be SpinorBasisConvention.")
         angular = np.asarray(orbital_angular_momentum, dtype=np.complex128)
@@ -260,7 +260,7 @@ class SpinResolvedBandObservablePlan(StrictModule):
         /,
         *,
         degeneracy_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(convention, SpinorBasisConvention):
             raise TypeError("convention must be SpinorBasisConvention.")
         tolerance = float(degeneracy_tolerance)

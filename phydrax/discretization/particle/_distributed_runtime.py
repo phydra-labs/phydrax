@@ -91,7 +91,7 @@ class DistributedParticleRuntimePlan(StrictModule, NonTrainableState):
         receive_capacity: int | None = None,
         ghost_capacity: int | None = None,
         ghost_width: float = 0.0,
-    ):
+    ) -> None:
         # DistributedParticleLayout lives in the solver layer. Keep this
         # discretization owner structurally typed to avoid a solver import cycle.
         lengths = tuple(float(value) for value in box_size)
@@ -165,7 +165,7 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: DistributedParticleRuntimePlan, mesh: Mesh, axis_name: str, /
-    ):
+    ) -> None:
         if not isinstance(plan, DistributedParticleRuntimePlan):
             raise TypeError("plan must be DistributedParticleRuntimePlan.")
         if not isinstance(mesh, Mesh):

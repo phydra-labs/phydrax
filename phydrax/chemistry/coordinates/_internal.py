@@ -46,7 +46,7 @@ class InternalCoordinateState(StrictModule, NonTrainableState):
         successful,
         plan_id,
         /,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         jacobian_ = jnp.asarray(jacobian, dtype=values_.dtype)
         singular = jnp.asarray(singular_values, dtype=values_.dtype)
@@ -99,7 +99,7 @@ class InternalCoordinateRetractionResult(StrictModule, NonTrainableState):
         successful,
         plan_id,
         /,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions)
         achieved = jnp.asarray(achieved_values, dtype=positions_.dtype)
         target = jnp.asarray(target_values, dtype=positions_.dtype)
@@ -153,7 +153,7 @@ class MolecularCoordinateSystemPlan(StrictModule, NonTrainableState):
         dihedrals=(),
         regularization: float = 1.0e-12,
         rank_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         count = int(atom_count)
         bonds_ = tuple(tuple(item) for item in bonds)
         angles_ = tuple(tuple(item) for item in angles)

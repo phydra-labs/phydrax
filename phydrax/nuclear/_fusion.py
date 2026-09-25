@@ -43,7 +43,7 @@ class TabulatedMaxwellianReactivity(StrictModule, NonTrainableState):
         reactivity_m3_s: ArrayLike,
         channel: NuclearReactionChannel,
         /,
-    ):
+    ) -> None:
         if not isinstance(channel, NuclearReactionChannel):
             raise TypeError("channel must be NuclearReactionChannel.")
         energy_host = np.asarray(thermal_energy_j, dtype=np.float64)
@@ -137,7 +137,7 @@ class ThermalFusionReactionPlan(StrictModule, NonTrainableState):
         reactivity: TabulatedMaxwellianReactivity,
         species: NuclearSpeciesTable,
         /,
-    ):
+    ) -> None:
         if not isinstance(channel, NuclearReactionChannel):
             raise TypeError("channel must be NuclearReactionChannel.")
         if not isinstance(reactivity, TabulatedMaxwellianReactivity):

@@ -203,7 +203,7 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
         member_ids: Sequence[Any] | None = None,
         affine_prolongation: ArrayLike | None = None,
         affine_prescribed_map: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(graph, GraphIR):
             raise TypeError("graph must be a GraphIR.")
         graph.validate()

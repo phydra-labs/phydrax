@@ -38,7 +38,7 @@ class LieAlgebraCoordinateMetric(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     metric_id: str = eqx.field(static=True)
 
-    def __init__(self, group: AbstractLieGroup, /):
+    def __init__(self, group: AbstractLieGroup, /) -> None:
         if not isinstance(group, AbstractLieGroup):
             raise TypeError("group must implement AbstractLieGroup.")
         if len(group.algebra_shape) != 1:

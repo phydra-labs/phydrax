@@ -64,7 +64,7 @@ class PolynomialRecombination(StrictModule):
         maximum_feature_bytes: int = 64 * 1024**2,
         maximum_moment_error: float = 1e-9,
         differentiation: Literal["frozen-selection"] = "frozen-selection",
-    ):
+    ) -> None:
         degree_ = _nonnegative_integer(degree, "degree")
         features = _positive_integer(maximum_features, "maximum_features")
         feature_bytes = _positive_integer(maximum_feature_bytes, "maximum_feature_bytes")
@@ -132,7 +132,7 @@ class MarkovCubaturePlan(StrictModule):
         flow_substeps: int = 1,
         collect_history: bool = True,
         throw: bool = True,
-    ):
+    ) -> None:
         if not isinstance(temporal_mesh, TemporalMesh):
             raise TypeError("temporal_mesh must be a TemporalMesh.")
         if not isinstance(increment_rule, GaussianCubatureRule):

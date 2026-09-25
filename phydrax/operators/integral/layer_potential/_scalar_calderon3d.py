@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, NoReturn
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -78,7 +78,7 @@ class ScalarKernelFamily3D(StrictModule, NonTrainableState):
         /,
         *,
         parameter: float = 0.0,
-    ):
+    ) -> None:
         if family not in (
             "laplace",
             "modified-helmholtz",
@@ -198,7 +198,7 @@ class _BlockedScalarWeakOperator3D(_AbstractCostedLinearOperator):
         target_block_size: int,
         source_block_size: int,
         operator_id: str,
-    ):
+    ) -> None:
         values = jnp.asarray(exception_values)
         if values.shape != pair_data.values.shape:
             raise ValueError("Exception values must match classified surface pairs.")
@@ -372,7 +372,7 @@ class _WeakTransposeScalarOperator3D(_AbstractCostedLinearOperator):
         /,
         *,
         operator_id: str,
-    ):
+    ) -> None:
         self.operator = operator
         self.source = operator.source
         self.target = operator.target
@@ -420,7 +420,7 @@ class _StrongScalarOperator3D(_AbstractCostedLinearOperator):
         transposed_weak_action: bool,
         action_workspace_bytes: int,
         operator_id: str,
-    ):
+    ) -> None:
         self.weak = weak
         self.inverse_areas = jnp.reciprocal(jnp.asarray(areas))
         self.diagonal = jnp.asarray(diagonal)
@@ -1112,7 +1112,7 @@ def prepare_scalar_hypersingular_dp0_3d(
     /,
     *,
     numeric_version: str = "0",
-):
+) -> NoReturn:
     """Reject W before geometry/FEM preparation: DP0 is not H1/2 conforming."""
     del region, numeric_version
     raise UnsupportedScalarBoundarySpaceError(

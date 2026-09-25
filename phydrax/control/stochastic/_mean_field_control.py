@@ -121,7 +121,7 @@ class MeanFieldExternality(StrictModule):
         particle_count: int | None = None,
         discretization_id: str | None = None,
         bias_bound: ArrayLike | None = None,
-    ):
+    ) -> None:
         running_callback = _callback(running, "running")
         terminal_callback = _callback(terminal, "terminal")
         if mode not in ("analytic-lions", "finite-particle-adjoint"):
@@ -226,7 +226,7 @@ class MeanFieldControlProblem(StrictModule):
         minimum_effective_sample_size: float = (
             MINIMUM_MEAN_FIELD_CONTROL_EFFECTIVE_SAMPLE_SIZE
         ),
-    ):
+    ) -> None:
         if not isinstance(base_problem, MeanFieldBSDEProblem):
             raise TypeError("base_problem must be a MeanFieldBSDEProblem.")
         if base_problem.control_adapter is None:

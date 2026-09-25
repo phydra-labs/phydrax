@@ -48,7 +48,7 @@ class StateTrackingResult(StrictModule, NonTrainableState):
         previous_manifold_id,
         current_manifold_id,
         /,
-    ):
+    ) -> None:
         overlap = jnp.asarray(overlap_matrix)
         permutation_ = jnp.asarray(permutation, dtype=jnp.int32)
         alignment_ = jnp.asarray(alignment, dtype=overlap.dtype)

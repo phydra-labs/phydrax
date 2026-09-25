@@ -54,7 +54,7 @@ class ChebyshevEphemeris(StrictModule, NonTrainableState):
         catalog: CelestialBodyCatalog,
         provenance: AstrodynamicsDataProvenance,
         /,
-    ):
+    ) -> None:
         bounds = np.asarray(segment_bounds, dtype=np.float64)
         coefficients = np.asarray(position_coefficients, dtype=np.float64)
         if (

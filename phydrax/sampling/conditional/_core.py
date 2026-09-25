@@ -39,7 +39,7 @@ class ConditionalVariableGroup(StrictModule, NonTrainableState):
 
     def __init__(
         self, name: str, count: int, state_spec: PyTree[jax.ShapeDtypeStruct], /
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name:
             raise ValueError("Conditional variable-group name must be non-empty.")
         size = int(count)
@@ -89,7 +89,7 @@ class ConditionalInteractionGroup(StrictModule):
         /,
         *,
         interaction_id: str,
-    ):
+    ) -> None:
         heads = jnp.asarray(head_indices, dtype=jnp.int32).reshape((-1,))
         groups = tuple(str(value) for value in tail_groups)
         tails = tuple(jnp.asarray(value, dtype=jnp.int32) for value in tail_indices)
@@ -166,7 +166,7 @@ class CallableConditionalKernel(AbstractConditionalKernel):
         *,
         kernel_id: str,
         initialize: Callable | None = None,
-    ):
+    ) -> None:
         if not callable(sample):
             raise TypeError("sample must be callable.")
         if not isinstance(kernel_id, str) or not kernel_id:
@@ -192,7 +192,9 @@ class MetropolisWithinConditionalKernel(AbstractConditionalKernel):
     log_target: Callable = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, proposal, proposal_log_prob, log_target, /, *, kernel_id: str):
+    def __init__(
+        self, proposal, proposal_log_prob, log_target, /, *, kernel_id: str
+    ) -> None:
         if not all(
             callable(value) for value in (proposal, proposal_log_prob, log_target)
         ):
@@ -242,7 +244,7 @@ class ConditionalUpdateStage(StrictModule):
     update_indices: tuple[int, ...] = eqx.field(static=True)
     stage_id: str = eqx.field(static=True)
 
-    def __init__(self, update_indices: Sequence[int], /, *, stage_id: str):
+    def __init__(self, update_indices: Sequence[int], /, *, stage_id: str) -> None:
         indices = tuple(update_indices)
         if not indices or len(set(indices)) != len(indices) or min(indices) < 0:
             raise ValueError("Stage update indices must be unique and non-negative.")

@@ -321,7 +321,7 @@ class CochainHodgeSectorSpectra(StrictModule, NonTrainableState):
         degree: int,
         boundary_policy: CochainBoundaryKind,
         complex_fingerprint: str,
-    ):
+    ) -> None:
         for sector in (harmonic, exact, coexact):
             if sector is not None and not isinstance(sector, SpectralDecomposition):
                 raise TypeError("Hodge sectors must be Laplacian eigenbases or None.")

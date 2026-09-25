@@ -64,7 +64,7 @@ class ImplicitRootDerivativePolicy(StrictModule):
         *,
         tangent_linear_policy: LinearSolvePolicy | None = None,
         adjoint_linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if tangent_linear_policy is not None and not isinstance(
             tangent_linear_policy, LinearSolvePolicy
         ):

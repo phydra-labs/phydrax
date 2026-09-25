@@ -65,7 +65,7 @@ def _density_eigh(value: Any, /, *, role: str) -> tuple[Array, Array]:
 class _PurityCallable(StrictModule):
     density: DomainFunction
 
-    def __init__(self, density: DomainFunction):
+    def __init__(self, density: DomainFunction) -> None:
         self.density = density
 
     def __call__(self, *args, key=None, **kwargs):
@@ -80,7 +80,7 @@ class _EntropyCallable(StrictModule):
     density: DomainFunction
     base: Array
 
-    def __init__(self, density: DomainFunction, base: Array):
+    def __init__(self, density: DomainFunction, base: Array) -> None:
         self.density = density
         self.base = base
 
@@ -111,7 +111,7 @@ class _StateFidelityCallable(StrictModule):
         right: DomainFunction,
         left_positions: tuple[int, ...],
         right_positions: tuple[int, ...],
-    ):
+    ) -> None:
         self.left = left
         self.right = right
         self.left_positions = left_positions
@@ -147,7 +147,7 @@ class _DensityFidelityCallable(StrictModule):
         right: DomainFunction,
         left_positions: tuple[int, ...],
         right_positions: tuple[int, ...],
-    ):
+    ) -> None:
         self.left = left
         self.right = right
         self.left_positions = left_positions
@@ -194,7 +194,7 @@ class _TraceDistanceCallable(StrictModule):
         right: DomainFunction,
         left_positions: tuple[int, ...],
         right_positions: tuple[int, ...],
-    ):
+    ) -> None:
         self.left = left
         self.right = right
         self.left_positions = left_positions

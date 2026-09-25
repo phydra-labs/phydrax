@@ -189,7 +189,7 @@ class RigidDeformableAttachmentPlan(StrictModule, NonTrainableState):
         rank_tolerance: float = 1.0e-10,
         tolerance: float = 1.0e-9,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(interpolation, PreparedFiniteElementPointInterpolation):
             raise TypeError("interpolation must be prepared FE point interpolation.")
         from ..particle._rigid_body import PreparedRigidBodySet

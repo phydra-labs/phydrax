@@ -33,7 +33,7 @@ class SphericalOverdensityMassDefinition(StrictModule, NonTrainableState):
         overdensity: float,
         reference_density: Literal["mean_matter", "critical"],
         /,
-    ):
+    ) -> None:
         value = float(overdensity)
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError("Spherical overdensity must be finite and positive.")
@@ -117,7 +117,7 @@ class SphericalCollapseEdS(StrictModule, NonTrainableState):
     linear_threshold: float = eqx.field(static=True)
     virial_overdensity: float = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.linear_threshold = float((3.0 / 20.0) * (12.0 * np.pi) ** (2.0 / 3.0))
         self.virial_overdensity = float(18.0 * np.pi**2)
 
@@ -135,7 +135,7 @@ class LinearVariancePlan(StrictModule, NonTrainableState):
         /,
         *,
         required_field: MatterField = "total_matter",
-    ):
+    ) -> None:
         gravity = float(gravitational_constant)
         if not np.isfinite(gravity) or gravity <= 0.0:
             raise ValueError("gravitational_constant must be finite and positive.")
@@ -231,7 +231,7 @@ class NFWProfile(StrictModule, NonTrainableState):
         /,
         *,
         quadrature_order: int = 64,
-    ):
+    ) -> None:
         if not isinstance(mass_definition, SphericalOverdensityMassDefinition):
             raise TypeError("mass_definition must be SphericalOverdensityMassDefinition.")
         order = int(quadrature_order)

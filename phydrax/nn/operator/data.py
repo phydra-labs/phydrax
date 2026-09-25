@@ -37,7 +37,7 @@ class OperatorCaseProvenance:
     identities: Mapping[str, str] = dataclass_field(default_factory=dict)
     order: Mapping[str, float] = dataclass_field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         case_id = str(self.case_id)
         if not case_id:
             raise ValueError("Operator case IDs must be non-empty.")
@@ -86,7 +86,7 @@ class OperatorAxis(StrictModule, NonTrainableState):
         quadrature_weights: Array | None = None,
         basis: OperatorBasis = "uniform",
         periodic: bool = False,
-    ):
+    ) -> None:
         nodes_ = jnp.asarray(nodes, dtype=jnp.float64).reshape((-1,))
         if nodes_.size == 0:
             raise ValueError("OperatorAxis nodes must be non-empty.")
@@ -155,7 +155,7 @@ class FunctionSamples(StrictModule, NonTrainableState):
         topology: OperatorTopology | None = None,
         support_id: str | None = None,
         measure_id: str | None = None,
-    ):
+    ) -> None:
         axes_ = tuple(axes)
         if len({axis.name for axis in axes_}) != len(axes_):
             raise ValueError("FunctionSamples axis names must be unique.")
@@ -531,7 +531,7 @@ class OperatorBatch(StrictModule, NonTrainableState):
         queries: Mapping[str, FunctionSamples],
         case_axes: Sequence[str] = (),
         case_shape: Sequence[int] | None = None,
-    ):
+    ) -> None:
         if not inputs:
             raise ValueError("OperatorBatch requires at least one input function.")
         if not queries:
@@ -655,7 +655,7 @@ class OperatorClassificationSpec(StrictModule):
         target: OperatorClassificationTarget = "hard",
         thresholds: Sequence[float] = (),
         cutpoint_policy: OperatorOrdinalCutpointPolicy = "fixed",
-    ):
+    ) -> None:
         if kind not in ("binary", "multiclass", "multilabel", "ordinal"):
             raise ValueError(
                 "Operator classification kind must be 'binary', 'multiclass', 'multilabel', or 'ordinal'."
@@ -782,7 +782,7 @@ class OperatorOutputSpec(StrictModule):
         *,
         component_names: Sequence[str] = (),
         classification: OperatorClassificationSpec | None = None,
-    ):
+    ) -> None:
         if channels == "scalar":
             count = 1
         else:
@@ -1017,7 +1017,7 @@ class OperatorFieldBatch(StrictModule, NonTrainableState):
         *,
         query_name: str,
         spec: OperatorOutputSpec,
-    ):
+    ) -> None:
         resolved_query = str(query_name)
         if not resolved_query:
             raise ValueError("Operator output fields require a query name.")
@@ -1042,7 +1042,7 @@ class OperatorTargetBatch(StrictModule, NonTrainableState):
         *,
         case_axes: Sequence[str] = (),
         case_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         field_map = frozendict({str(name): field for name, field in fields.items()})
         for name, field in field_map.items():
             if not name:
@@ -1227,7 +1227,7 @@ class OperatorPrediction(StrictModule, NonTrainableState):
         *,
         case_axes: Sequence[str] = (),
         case_shape: Sequence[int] | None = None,
-    ):
+    ) -> None:
         if not fields:
             raise ValueError("OperatorPrediction requires at least one named field.")
         if not queries:

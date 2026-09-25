@@ -57,7 +57,7 @@ class MACDiffuseSDFGeometryPlan(StrictModule, NonTrainableState):
         field_id: str,
         interface_width: float,
         small_cell_fraction: float = 1.0e-2,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if not callable(signed_distance) or not callable(wall_velocity):

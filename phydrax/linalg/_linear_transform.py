@@ -56,7 +56,7 @@ class DenseLinearTransform(AbstractLinearTransform):
         /,
         *,
         transform_id: str | None = None,
-    ):
+    ) -> None:
         analysis_ = jnp.asarray(analysis)
         synthesis_ = jnp.asarray(synthesis)
         if analysis_.ndim != 2 or synthesis_.shape != (
@@ -96,7 +96,7 @@ class FFTLinearTransform(AbstractLinearTransform):
     modal_space: ArraySpace
     transform_id: str = eqx.field(static=True)
 
-    def __init__(self, count: int, /, *, dtype: Any = jnp.complex128):
+    def __init__(self, count: int, /, *, dtype: Any = jnp.complex128) -> None:
         size = int(count)
         dtype_ = np.dtype(jax.dtypes.canonicalize_dtype(np.dtype(dtype)))
         if size <= 0:
@@ -145,7 +145,7 @@ class RealTrigonometricTransform(AbstractLinearTransform):
         /,
         *,
         dtype: Any = jnp.float64,
-    ):
+    ) -> None:
         size = int(count)
         type_ = int(transform_type)
         dtype_ = np.dtype(jax.dtypes.canonicalize_dtype(np.dtype(dtype)))
@@ -280,7 +280,7 @@ class SimilarityScaledLinearTransform(AbstractLinearTransform):
         base: AbstractLinearTransform,
         scaling: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(base, AbstractLinearTransform):
             raise TypeError("base must be an AbstractLinearTransform.")
         if not isinstance(base.physical_space, ArraySpace):
@@ -324,7 +324,7 @@ class TensorLinearTransform(AbstractLinearTransform):
     modal_space: ArraySpace
     transform_id: str = eqx.field(static=True)
 
-    def __init__(self, transforms: Sequence[AbstractLinearTransform], /):
+    def __init__(self, transforms: Sequence[AbstractLinearTransform], /) -> None:
         values = tuple(transforms)
         if not values or not all(
             isinstance(value, AbstractLinearTransform) for value in values

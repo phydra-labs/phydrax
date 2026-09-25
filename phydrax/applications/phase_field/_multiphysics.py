@@ -133,7 +133,7 @@ class CoupledMultiphysicsPlan(StrictModule, NonTrainableState):
         exchange_tolerance: float = 1.0e-8,
         conservation_tolerance: float = 1.0e-8,
         entropy_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         required = (
             (graph, PhaseFieldCouplingGraph),
             (thermal, NonisothermalSolidificationPlan),

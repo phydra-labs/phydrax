@@ -46,7 +46,7 @@ class KineticCheckpointPlan(StrictModule, NonTrainableState):
         topology_id: str | None = None,
         execution_id: str | None = None,
         replay_policy_id: str | None = None,
-    ):
+    ) -> None:
         runtime = str(runtime_id)
         if not runtime:
             raise ValueError("runtime_id must be nonempty.")

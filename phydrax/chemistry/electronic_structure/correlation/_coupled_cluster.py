@@ -44,7 +44,7 @@ class CoupledClusterCheckpoint(StrictModule, NonTrainableState):
         *,
         lambda_singles=None,
         lambda_doubles=None,
-    ):
+    ) -> None:
         singles = jnp.asarray(singles_amplitudes)
         doubles = jnp.asarray(doubles_amplitudes, dtype=singles.dtype)
         lambda_s = (
@@ -142,7 +142,7 @@ class CoupledClusterResult(StrictModule, NonTrainableState):
         *,
         lambda_singles=None,
         lambda_doubles=None,
-    ):
+    ) -> None:
         singles = jnp.asarray(singles_amplitudes)
         doubles = jnp.asarray(doubles_amplitudes, dtype=singles.dtype)
         dtype = singles.real.dtype
@@ -240,7 +240,7 @@ class CoupledClusterPlan(StrictModule, NonTrainableState):
         convergence_tolerance: float = 1.0e-8,
         maximum_iterations: int = 100,
         solve_lambda: bool = True,
-    ):
+    ) -> None:
         level_ = str(level).strip().lower()
         tolerance = float(convergence_tolerance)
         iterations = int(maximum_iterations)
@@ -297,7 +297,7 @@ class CallableCoupledClusterProvider(AbstractCoupledClusterProvider):
     evaluator: CoupledClusterEvaluator = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluator: CoupledClusterEvaluator, provider_id: str, /):
+    def __init__(self, evaluator: CoupledClusterEvaluator, provider_id: str, /) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()
@@ -362,7 +362,7 @@ class MolecularCoupledClusterGradientResult(StrictModule, NonTrainableState):
         provider_id: str,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         gradient_ = jnp.asarray(gradient)
         dtype = gradient_.real.dtype
         reference_ = str(reference).strip().lower()

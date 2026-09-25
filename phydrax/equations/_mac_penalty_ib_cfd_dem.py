@@ -44,7 +44,7 @@ class IBPenaltyPlan(StrictModule, NonTrainableState):
         *,
         slip_tolerance: float = 1.0e-6,
         require_slip_for_acceptance: bool = True,
-    ):
+    ) -> None:
         penalty_ = float(penalty)
         tolerance = float(slip_tolerance)
         if (
@@ -95,7 +95,7 @@ class MACPenaltyIBCFDEMCouplingPlan(StrictModule, NonTrainableState):
         penalty: IBPenaltyPlan,
         transfer: PreparedMACMarkerTransfer,
         /,
-    ):
+    ) -> None:
         if not isinstance(fluid, CompiledMACIncompressibleDynamics):
             raise TypeError("fluid must be CompiledMACIncompressibleDynamics.")
         if fluid.algebraic_les is not None:

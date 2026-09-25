@@ -117,7 +117,7 @@ class DarkMatterInferenceEvaluation(StrictModule):
         derivative_valid: ArrayLike,
         product_id: str,
         realization_id: str,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values).reshape((-1,))
         if (
             values_.size == 0
@@ -211,7 +211,7 @@ class SmoothFixedGridDarkMatterInferencePlan(StrictModule, NonTrainableState):
         evaluator_id: str,
         realization_id: str,
         product_id: str,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         parameters = _positive_integer(parameter_count, "parameter_count")
@@ -377,7 +377,7 @@ class FixedTapeStochasticEvaluation(StrictModule):
         successful: ArrayLike,
         tape_id: str,
         product_id: str,
-    ):
+    ) -> None:
         value = jnp.asarray(values)
         scores = jnp.asarray(score, dtype=value.real.dtype)
         active_ = jnp.asarray(active, dtype=jnp.bool_).reshape((-1,))
@@ -493,7 +493,7 @@ class FixedTapeStochasticSensitivityPlan(StrictModule, NonTrainableState):
         evaluator_id: str,
         tape_id: str,
         product_id: str,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         parameters = _positive_integer(parameter_count, "parameter_count")
@@ -733,7 +733,7 @@ class DarkMatterCoordinateContract(StrictModule, NonTrainableState):
         layout: CoordinateLayout,
         unit_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         if not isinstance(layout, CoordinateLayout):
             raise TypeError("layout must be CoordinateLayout.")
         units = tuple(_identifier(value, "unit_id") for value in unit_ids)
@@ -783,7 +783,7 @@ class ConstantExternalDarkMatterProduct(StrictModule, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         if not callable(decoder):
             raise TypeError("decoder must be callable.")
         if not isinstance(manifest, ReferenceArtifactManifest):
@@ -915,7 +915,7 @@ class ExternalDarkMatterEmulatorProduct(StrictModule, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         location_ = jnp.asarray(location, dtype=jnp.float64).reshape((-1,))
         scale_ = jnp.asarray(scale, dtype=location_.dtype).reshape((-1,))
         if location_.shape != scale_.shape:
@@ -993,7 +993,7 @@ class DarkMatterErrorBudget(StrictModule, NonTrainableState):
         /,
         *,
         source_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(components, Mapping) or not components:
             raise TypeError("components must be a nonempty mapping of standard errors.")
         if not isinstance(coordinates, DarkMatterCoordinateContract):
@@ -1089,7 +1089,7 @@ class DarkMatterDiscrepancyPlan(StrictModule, NonTrainableState):
         degrees_of_freedom: int,
         observation: LinearObservationPlan | None = None,
         spectral: SpectralFieldDiscrepancyPlan | None = None,
-    ):
+    ) -> None:
         degrees = _positive_integer(degrees_of_freedom, "degrees_of_freedom")
         if observation is not None and not isinstance(observation, LinearObservationPlan):
             raise TypeError("observation must be LinearObservationPlan or None.")
@@ -1329,7 +1329,7 @@ class DarkMatterEmulatorCalibrationPlan(StrictModule, NonTrainableState):
         nominal_coverage: float = 0.9,
         maximum_coverage_gap: float = 0.1,
         minimum_calibration_count: int = 8,
-    ):
+    ) -> None:
         coverage = float(nominal_coverage)
         gap = float(maximum_coverage_gap)
         count = _positive_integer(minimum_calibration_count, "minimum_calibration_count")

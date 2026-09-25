@@ -54,7 +54,7 @@ class ParquetIterationPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
         damping: float = 0.75,
         maximum_vertex_elements: int = 1_000_000,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         tolerance_, damping_ = float(tolerance), float(damping)
         capacity = int(maximum_vertex_elements)
@@ -149,7 +149,7 @@ class PreparedParquetIteration(StrictModule, NonTrainableState):
         plan_id: str,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         self.fully_irreducible_vertex = fully_irreducible_vertex
         self.channel_bubbles = channel_bubbles
         self.channel_mixing = channel_mixing

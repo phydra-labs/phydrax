@@ -51,7 +51,7 @@ class CalorimeterGeometry(StrictModule, NonTrainableState):
         senders: ArrayLike,
         receivers: ArrayLike,
         conditions_id: str,
-    ):
+    ) -> None:
         cells = np.asarray(cell_ids)
         channels = np.asarray(channel_ids)
         layers = np.asarray(layer_ids)

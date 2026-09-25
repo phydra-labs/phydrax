@@ -63,7 +63,7 @@ class MMAPolicy(StrictModule):
         dual_bisections: int = 64,
         dual_bracket_steps: int = 48,
         feasibility_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -156,7 +156,7 @@ class MethodOfMovingAsymptotes(AbstractMinimizationMethod):
 
     policy: MMAPolicy
 
-    def __init__(self, policy: MMAPolicy | None = None, /):
+    def __init__(self, policy: MMAPolicy | None = None, /) -> None:
         policy_ = MMAPolicy() if policy is None else policy
         if not isinstance(policy_, MMAPolicy):
             raise TypeError("policy must be MMAPolicy or None.")

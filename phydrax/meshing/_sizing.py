@@ -49,7 +49,7 @@ class SizeCompliancePolicy(StrictModule, NonTrainableState):
         absolute_tolerance: float = 0.0,
         relative_tolerance: float = 0.0,
         target_statistics: tuple[str, ...] = ("p50", "p95"),
-    ):
+    ) -> None:
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
         statistics = tuple(str(value).strip() for value in target_statistics)
@@ -112,7 +112,7 @@ class UniformSizeControl(StrictModule, NonTrainableState):
         maximum_growth_rate: float | None = None,
         strength: SizeControlStrength = SizeControlStrength.HARD,
         priority: int = 0,
-    ):
+    ) -> None:
         if not isinstance(scope, MeshingScope):
             raise TypeError("scope must be MeshingScope.")
         target = _size(target_size, "target_size")
@@ -169,7 +169,7 @@ class CurvatureSizeControl(StrictModule, NonTrainableState):
         use_faceted_curvature: bool = False,
         strength: SizeControlStrength = SizeControlStrength.SOFT,
         priority: int = 0,
-    ):
+    ) -> None:
         if not isinstance(scope, MeshingScope):
             raise TypeError("scope must be MeshingScope.")
         angle = float(normal_angle)
@@ -225,7 +225,7 @@ class ProximitySizeControl(StrictModule, NonTrainableState):
         opposite_normals_only: bool = True,
         strength: SizeControlStrength = SizeControlStrength.HARD,
         priority: int = 0,
-    ):
+    ) -> None:
         if not isinstance(source_scope, MeshingScope) or not isinstance(
             target_scope, MeshingScope
         ):
@@ -296,7 +296,7 @@ class ResolvedSizeField(StrictModule, NonTrainableState):
         /,
         *,
         source_control_ids: tuple[str, ...],
-    ):
+    ) -> None:
         if not isinstance(domain, SizeFieldDomain):
             raise TypeError("domain must be SizeFieldDomain.")
         points = np.asarray(sample_points, dtype=np.float64)
@@ -346,7 +346,7 @@ class SizeResolutionReport(StrictModule, NonTrainableState):
         overlapping_scope_pairs: tuple[tuple[str, str], ...] = (),
         clamped: bool = False,
         provider_resolved: bool = False,
-    ):
+    ) -> None:
         if not controls or not all(
             isinstance(
                 control,
@@ -406,7 +406,7 @@ class MeshMetricField(StrictModule, NonTrainableState):
         maximum_size: float,
         maximum_anisotropy: float = 100.0,
         maximum_gradation: float = 1.3,
-    ):
+    ) -> None:
         if not isinstance(scope, MeshingScope):
             raise TypeError("scope must be MeshingScope.")
         metric = np.asarray(values, dtype=np.float64)

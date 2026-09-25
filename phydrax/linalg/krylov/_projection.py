@@ -37,7 +37,7 @@ class KrylovProjectionResourcePolicy(StrictModule):
         max_matvec_count: int | None = None,
         max_storage_bytes: int | None = None,
         max_workspace_bytes: int | None = None,
-    ):
+    ) -> None:
         self.max_matvec_count = _optional_nonnegative_int(
             max_matvec_count, "max_matvec_count"
         )
@@ -67,7 +67,7 @@ class KrylovProjectionPolicy(StrictModule):
         orthogonalization: Orthogonalization = "selective",
         breakdown_tolerance: float | None = None,
         resources: KrylovProjectionResourcePolicy | None = None,
-    ):
+    ) -> None:
         if method not in ("auto", "arnoldi", "lanczos"):
             raise ValueError("Unknown Krylov projection method.")
         dimension = int(max_dimension)

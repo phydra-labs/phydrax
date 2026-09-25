@@ -148,7 +148,7 @@ class Coregionalization(StrictModule):
         /,
         *,
         output_names: Sequence[str],
-    ):
+    ) -> None:
         names = _output_names(output_names)
         weights_ = jnp.asarray(weights)
         if not jnp.issubdtype(weights_.dtype, jnp.inexact):
@@ -210,7 +210,7 @@ class IntrinsicCoregionalizationKernel(AbstractOperatorValuedKernel):
         spatial_kernel: AbstractPositiveDefiniteKernel,
         coregionalization: Coregionalization,
         /,
-    ):
+    ) -> None:
         if not isinstance(spatial_kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("spatial_kernel must be a positive-definite kernel.")
         if not isinstance(coregionalization, Coregionalization):
@@ -262,7 +262,7 @@ class LinearModelCoregionalizationKernel(AbstractOperatorValuedKernel):
         self,
         components: Sequence[tuple[AbstractPositiveDefiniteKernel, Coregionalization]],
         /,
-    ):
+    ) -> None:
         components_ = tuple(components)
         if not components_:
             raise ValueError("LinearModelCoregionalizationKernel needs one component.")
@@ -471,7 +471,7 @@ class ProjectedTangentKernel(AbstractOperatorValuedKernel):
         *,
         projector_id: str,
         projector_derivative_order: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(scalar_kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("scalar_kernel must be positive definite.")
         if not callable(tangent_projector):
@@ -611,7 +611,7 @@ class ProjectedDifferentialFormKernel(AbstractOperatorValuedKernel):
         *,
         projector_id: str,
         projector_derivative_order: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(scalar_kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("scalar_kernel must be positive definite.")
         if not callable(tangent_projector):

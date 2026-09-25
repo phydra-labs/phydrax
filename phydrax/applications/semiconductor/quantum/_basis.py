@@ -61,7 +61,7 @@ class QuantumResources(StrictModule):
         max_intervals=512,
         max_eigen_steps=300,
         workspace_bytes=256 * 1024 * 1024,
-    ):
+    ) -> None:
         raw = (
             max_nodes,
             max_modes,
@@ -101,7 +101,7 @@ class TransverseModes(StrictModule):
     offsets: Array
     degeneracies: Array
 
-    def __init__(self, offsets=(0.0,), degeneracies=(2.0,)):
+    def __init__(self, offsets=(0.0,), degeneracies=(2.0,)) -> None:
         offsets_ = _array(offsets, "transverse energies")
         degeneracies_ = _array(degeneracies, "transverse degeneracies", positive=True)
         if (
@@ -149,7 +149,7 @@ class ChainHamiltonian(StrictModule):
 
     def __init__(
         self, diagonal, off_diagonal, cell_volumes, *, energy_reference, resources=None
-    ):
+    ) -> None:
         d = _array(diagonal, "Hamiltonian diagonal")
         o = _array(off_diagonal, "Hamiltonian hopping")
         v = _array(cell_volumes, "cell volumes", positive=True)
@@ -218,7 +218,9 @@ class EffectiveMass1D(StrictModule):
     area: Array
     base_hamiltonian: ChainHamiltonian
 
-    def __init__(self, x, band_edge, mass, *, area, energy_reference, resources=None):
+    def __init__(
+        self, x, band_edge, mass, *, area, energy_reference, resources=None
+    ) -> None:
         x_ = _array(x, "cell centers")
         if x_.ndim != 1 or x_.size < 2:
             raise ValueError(

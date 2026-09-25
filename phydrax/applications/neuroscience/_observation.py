@@ -44,7 +44,7 @@ class BOLDObservation(StrictModule, NonTrainableState):
         *,
         standard_deviation: ArrayLike = 1.0,
         mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         labels = tuple(region_ids)
         if (
             not labels

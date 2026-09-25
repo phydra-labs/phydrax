@@ -22,7 +22,7 @@ from ._validation import (
 class _StateNormCallable(StrictModule):
     state: DomainFunction
 
-    def __init__(self, state: DomainFunction):
+    def __init__(self, state: DomainFunction) -> None:
         self.state = state
 
     def __call__(self, *args, key=None, **kwargs):
@@ -47,7 +47,7 @@ class _StateObservableCallable(StrictModule):
         state_positions: tuple[int, ...],
         observable_positions: tuple[int, ...],
         operation: Literal["expectation", "variance"],
-    ):
+    ) -> None:
         self.state = state
         self.observable = observable
         self.state_positions = state_positions
@@ -91,7 +91,7 @@ class _DensityExpectationCallable(StrictModule):
         observable: DomainFunction,
         density_positions: tuple[int, ...],
         observable_positions: tuple[int, ...],
-    ):
+    ) -> None:
         self.density = density
         self.observable = observable
         self.density_positions = density_positions
@@ -118,7 +118,7 @@ class _DensityExpectationCallable(StrictModule):
 class _DensityFromFactorCallable(StrictModule):
     factor: DomainFunction
 
-    def __init__(self, factor: DomainFunction):
+    def __init__(self, factor: DomainFunction) -> None:
         self.factor = factor
 
     def __call__(self, *args, key=None, **kwargs):

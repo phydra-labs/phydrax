@@ -52,7 +52,7 @@ class InclusionCCDPlan(StrictModule, NonTrainableState):
         required_guarantee: ContactGuaranteeLevel = (
             ContactGuaranteeLevel.ENCLOSURE_CONSERVATIVE
         ),
-    ):
+    ) -> None:
         tolerance = float(time_tolerance)
         error = float(numerical_error)
         rescaling = float(conservative_rescaling)
@@ -113,7 +113,7 @@ class CertifiedAABBCCDPlan(StrictModule, NonTrainableState):
         required_guarantee: ContactGuaranteeLevel = (
             ContactGuaranteeLevel.ROUNDING_CERTIFIED
         ),
-    ):
+    ) -> None:
         tolerance = float(time_tolerance)
         rescaling = float(conservative_rescaling)
         iterations = int(maximum_iterations)

@@ -79,7 +79,7 @@ class PreparedFieldRouting(StrictModule, NonTrainableState):
         /,
         *,
         ownership: IntegrationOwnership | None = None,
-    ):
+    ) -> None:
         if not isinstance(cover, SubdomainCover):
             raise TypeError("cover must be a SubdomainCover.")
         maximum = cover.maximum_overlap

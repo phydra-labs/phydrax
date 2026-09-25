@@ -168,7 +168,7 @@ class CompartmentSpec(StrictModule, NonTrainableState):
     measure: Array
     unit: str = eqx.field(static=True)
 
-    def __init__(self, name: str, measure: ArrayLike, /, *, unit: str = "volume"):
+    def __init__(self, name: str, measure: ArrayLike, /, *, unit: str = "volume") -> None:
         self.name = _path_name(name, "Compartment name")
         self.measure = _scalar(measure, "Compartment measure", positive=True)
         self.unit = _name(unit, "Compartment measure unit")
@@ -194,7 +194,7 @@ class SpeciesSpec(StrictModule, NonTrainableState):
         quantity: str = "count",
         unit: str = "molecule",
         thermochemical_name: str | None = None,
-    ):
+    ) -> None:
         self.name = _path_name(name, "Species name")
         self.compartment = _name(compartment, "Species compartment")
         if not isinstance(reservoir, bool):
@@ -215,7 +215,7 @@ class MassActionPropensity(StrictModule):
     rate: Array
     orders: tuple[tuple[str, int], ...] = eqx.field(static=True)
 
-    def __init__(self, rate: ArrayLike, orders: Mapping[str, int], /):
+    def __init__(self, rate: ArrayLike, orders: Mapping[str, int], /) -> None:
         self.rate = _scalar(rate, "Mass-action rate")
         self.orders = _order_mapping(orders, "Mass-action orders")
 
@@ -240,7 +240,7 @@ class HillPropensity(StrictModule):
         *,
         basal_rate: ArrayLike = 0.0,
         repression: bool = False,
-    ):
+    ) -> None:
         self.maximum_rate = _scalar(maximum_rate, "Hill maximum rate")
         self.half_saturation = _scalar(
             half_saturation, "Hill half-saturation", positive=True
@@ -266,7 +266,7 @@ class MichaelisMentenPropensity(StrictModule):
         michaelis_constant: ArrayLike,
         substrate: str,
         /,
-    ):
+    ) -> None:
         self.maximum_rate = _scalar(maximum_rate, "Michaelis--Menten maximum rate")
         self.michaelis_constant = _scalar(
             michaelis_constant, "Michaelis constant", positive=True
@@ -280,7 +280,7 @@ class PromoterTransitionPropensity(StrictModule):
     rate: Array
     source: str = eqx.field(static=True)
 
-    def __init__(self, rate: ArrayLike, source: str, /):
+    def __init__(self, rate: ArrayLike, source: str, /) -> None:
         self.rate = _scalar(rate, "Promoter-transition rate")
         self.source = _name(source, "Promoter-transition source")
 
@@ -309,7 +309,7 @@ class StoichiometricProcessSpec(StrictModule):
         /,
         *,
         thermochemical_reaction: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             propensity,
             (
@@ -335,7 +335,7 @@ class StoichiometricRuntime(StrictModule):
 
     parameters: Array
 
-    def __init__(self, parameters: ArrayLike, /):
+    def __init__(self, parameters: ArrayLike, /) -> None:
         raw = jnp.asarray(parameters)
         if raw.dtype == jnp.bool_:
             raise TypeError("Runtime parameters must not be boolean.")
@@ -438,7 +438,7 @@ class StoichiometricNetworkPlan(StrictModule, NonTrainableState):
         *,
         stoichiometry_capacity: int | None = None,
         time_unit: str = "s",
-    ):
+    ) -> None:
         name_value = _name(name, "Network name")
         time_unit_value = _name(time_unit, "Network time unit")
         compartment_values = tuple(compartments)
@@ -569,7 +569,7 @@ class PreparedStoichiometricNetwork(StrictModule, NonTrainableState):
     maximum_order: int = eqx.field(static=True)
     network_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: StoichiometricNetworkPlan, /):
+    def __init__(self, plan: StoichiometricNetworkPlan, /) -> None:
         if not isinstance(plan, StoichiometricNetworkPlan):
             raise TypeError("plan must be StoichiometricNetworkPlan.")
         species_index = {item.name: index for index, item in enumerate(plan.species)}
@@ -1338,7 +1338,7 @@ class CompartmentalJumpProcess(AbstractJumpProcess):
     mark_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
-    def __init__(self, network: PreparedStoichiometricNetwork, /):
+    def __init__(self, network: PreparedStoichiometricNetwork, /) -> None:
         if not isinstance(network, PreparedStoichiometricNetwork):
             raise TypeError("network must be PreparedStoichiometricNetwork.")
         if any(item.quantity != "count" for item in network.plan.species):

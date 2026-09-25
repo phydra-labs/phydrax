@@ -40,7 +40,7 @@ class HarmonicClassFrame(StrictModule, NonTrainableState):
         *,
         degree: int,
         complex_fingerprint: str,
-    ):
+    ) -> None:
         self.exact_basis = exact_basis
         self.harmonic_subspace = harmonic_subspace
         self.harmonic_basis = jnp.asarray(harmonic_basis)
@@ -167,7 +167,7 @@ class CochainTransferCertificate(StrictModule, NonTrainableState):
         source_frame_id: str,
         target_frame_id: str,
         tolerance: float,
-    ):
+    ) -> None:
         commutator = jnp.asarray(commutator_residual)
         period = jnp.asarray(period_residual)
         self.commutator_residual = commutator

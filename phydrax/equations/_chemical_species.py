@@ -53,7 +53,7 @@ class ChemicalPhaseSpec(StrictModule, NonTrainableState):
         standard_pressure: float | None = None,
         site_density: float | None = None,
         phase_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Chemical phase name must be nonempty.")
@@ -145,7 +145,7 @@ class ChemicalSpeciesSchema(StrictModule, NonTrainableState):
         /,
         *,
         schema_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(catalog, ChemicalComponentCatalog):
             raise TypeError("catalog must be ChemicalComponentCatalog.")
         names = tuple(str(value) for value in species_names)

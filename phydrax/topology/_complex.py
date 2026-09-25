@@ -37,7 +37,7 @@ class CompactCellLayout(StrictModule, NonTrainableState):
         /,
         *,
         selection_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("Compact layouts require a CellComplexTopology.")
         selected = tuple(masks)
@@ -124,7 +124,7 @@ class CellSubcomplex(StrictModule, NonTrainableState):
         /,
         *,
         subcomplex_id: str | None = None,
-    ):
+    ) -> None:
         layout = CompactCellLayout(topology, masks)
         self._validate_closed(topology, layout)
         identifier = (
@@ -206,7 +206,7 @@ class CellComplexPair(StrictModule, NonTrainableState):
     quotient_layout: CompactCellLayout
     pair_id: str = eqx.field(static=True)
 
-    def __init__(self, ambient: CellSubcomplex, relative: CellSubcomplex, /):
+    def __init__(self, ambient: CellSubcomplex, relative: CellSubcomplex, /) -> None:
         if not isinstance(ambient, CellSubcomplex) or not isinstance(
             relative, CellSubcomplex
         ):
@@ -270,7 +270,7 @@ class CompactBoundary(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         degree_ = int(degree)
         rows = np.asarray(row_indices)
         columns = np.asarray(column_indices)
@@ -334,7 +334,7 @@ class CellVertexSupport(StrictModule, NonTrainableState):
         topology: CellComplexTopology,
         relations: Sequence[EdgeRelation],
         /,
-    ):
+    ) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("Cell vertex support requires a CellComplexTopology.")
         values = tuple(relations)

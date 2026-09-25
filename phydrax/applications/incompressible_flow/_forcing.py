@@ -141,7 +141,7 @@ class ConstantPowerFourierForcingPlan(StrictModule, NonTrainableState):
         reality_tolerance: float = 1.0e-10,
         power_tolerance: float = 1.0e-10,
         maximum_preparation_bytes: int = 256 * 1024 * 1024,
-    ):
+    ) -> None:
         if not isinstance(projector, PeriodicLerayProjector):
             raise TypeError("projector must be a PeriodicLerayProjector.")
         minimum_wave = float(minimum_wavenumber)
@@ -312,7 +312,7 @@ class SolenoidalHermitianFourierBasis(StrictModule, NonTrainableState):
         maximum_wavenumber: float,
         minimum_wavenumber: float = 0.0,
         maximum_preparation_bytes: int = 256 * 1024 * 1024,
-    ):
+    ) -> None:
         if not isinstance(projector, PeriodicLerayProjector):
             raise TypeError("projector must be a PeriodicLerayProjector.")
         minimum_wave = float(minimum_wavenumber)
@@ -505,7 +505,7 @@ class SolenoidalOUForcingPlan(StrictModule, NonTrainableState):
         *,
         correlation_time: float,
         rms_acceleration: float,
-    ):
+    ) -> None:
         if not isinstance(basis, SolenoidalHermitianFourierBasis):
             raise TypeError("basis must be a SolenoidalHermitianFourierBasis.")
         correlation = float(correlation_time)

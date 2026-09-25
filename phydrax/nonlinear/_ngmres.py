@@ -92,7 +92,7 @@ class NonlinearGMRES(AbstractNonlinearMethod):
         safeguard_factor: float = 1.0,
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(update, AbstractNonlinearUpdate):
             raise TypeError("update must be AbstractNonlinearUpdate.")
         history_ = int(history)

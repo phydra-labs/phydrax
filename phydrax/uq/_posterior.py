@@ -86,7 +86,7 @@ class SigmoidIntervalBijector(_AbstractShapePreservingBijector):
     lower: Array = fixed_field()
     upper: Array = fixed_field()
 
-    def __init__(self, lower: ArrayLike, upper: ArrayLike):
+    def __init__(self, lower: ArrayLike, upper: ArrayLike) -> None:
         lower_array = jnp.asarray(lower, dtype=jnp.float64)
         upper_array = jnp.asarray(upper, dtype=jnp.float64)
         if bool(jnp.any(~jnp.isfinite(lower_array))) or bool(
@@ -123,7 +123,7 @@ class SimplexBijector(AbstractBijector):
 
     num_categories: int = eqx.field(static=True)
 
-    def __init__(self, num_categories: int):
+    def __init__(self, num_categories: int) -> None:
         categories = int(num_categories)
         if categories < 2:
             raise ValueError("num_categories must be at least two.")
@@ -205,7 +205,7 @@ class ParameterSpace(StrictModule):
         priors: PyTree[AbstractProbabilityLaw] | None = None,
         bijectors: PyTree[AbstractBijector] | None = None,
         log_prior: Callable[[PyTree[Any]], ArrayLike] | None = None,
-    ):
+    ) -> None:
         leaves = jax.tree_util.tree_leaves(initial)
         if not leaves:
             raise ValueError("ParameterSpace initial position must contain array leaves.")
@@ -446,7 +446,7 @@ class PosteriorProblem(StrictModule):
         observation_variance: Callable[..., Any] | None = None,
         sample_observation: Callable[..., Any] | None = None,
         gauss_newton_residual: Callable[[PyTree[Any]], PyTree[Any]] | None = None,
-    ):
+    ) -> None:
         if not isinstance(parameter_space, ParameterSpace):
             raise TypeError("parameter_space must be a ParameterSpace.")
         if not callable(log_likelihood):

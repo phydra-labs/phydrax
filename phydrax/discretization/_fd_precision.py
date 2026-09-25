@@ -54,7 +54,7 @@ class FDExecutionPrecisionPolicy(StrictModule, NonTrainableState):
         field_dtype: Any = jnp.float64,
         accumulation_dtype: Any | None = None,
         certification_dtype: Any | None = None,
-    ):
+    ) -> None:
         coefficient = precision_dtype_name(coefficient_dtype)
         field = precision_dtype_name(field_dtype)
         accumulation = (

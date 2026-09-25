@@ -78,7 +78,7 @@ class SuperquadricDEMPlan(StrictModule, NonTrainableState):
         walls: Sequence[TriangleWallPlan] = (),
         wall_geometry: SuperquadricTriangleContactPlan | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(shapes, SuperquadricSetPlan):
             raise TypeError("shapes must be a SuperquadricSetPlan.")
         if not isinstance(geometry, SuperquadricContactPlan):
@@ -222,7 +222,7 @@ class PreparedSuperquadricDEMDynamics(StrictModule, NonTrainableState):
         precision,
         plan_id,
         /,
-    ):
+    ) -> None:
         if bodies.particles.prepared_id != shapes.particles.prepared_id:
             raise ValueError("Rigid body and superquadric populations do not match.")
         self.bodies = bodies

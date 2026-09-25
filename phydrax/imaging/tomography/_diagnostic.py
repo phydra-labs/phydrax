@@ -382,7 +382,7 @@ class MaterialBasisProjectionPlan(StrictModule):
         /,
         *,
         path_length_unit: UnitDefinition = METER,
-    ):
+    ) -> None:
         if not isinstance(transform, VoxelXRayTransformPlan):
             raise TypeError("transform must be VoxelXRayTransformPlan.")
         materials = tuple(
@@ -480,7 +480,7 @@ class PolychromaticDetectorPlan(StrictModule, NonTrainableState):
         protocol: CTAcquisitionProtocol,
         coefficients: DiagnosticPhotonCoefficientTable,
         /,
-    ):
+    ) -> None:
         if not isinstance(support, ProjectionSupport):
             raise TypeError("support must be ProjectionSupport.")
         if not isinstance(protocol, CTAcquisitionProtocol):

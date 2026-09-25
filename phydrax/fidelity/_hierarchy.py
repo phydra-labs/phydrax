@@ -55,7 +55,7 @@ class FidelityLevelSpec(StrictModule, NonTrainableState):
         observable_contract_id: str,
         discretization_bundle: DiscretizationBundle | None = None,
         metadata: Mapping[str, str] | None = None,
-    ):
+    ) -> None:
         if discretization_bundle is not None and not isinstance(
             discretization_bundle, DiscretizationBundle
         ):
@@ -120,7 +120,7 @@ class FidelityRelation(StrictModule, NonTrainableState):
         coupling_id: str | None = None,
         coupling: FidelityCoupling = "independent",
         metadata: Mapping[str, str] | None = None,
-    ):
+    ) -> None:
         source = nonempty_identifier("source_level_id", source_level_id)
         target = nonempty_identifier("target_level_id", target_level_id)
         if source == target:
@@ -174,7 +174,7 @@ class FidelityPath(StrictModule, NonTrainableState):
         *,
         hierarchy_id: str,
         hierarchy_fingerprint: str,
-    ):
+    ) -> None:
         levels_ = tuple(levels)
         relations_ = tuple(relations)
         if not levels_ or not all(
@@ -242,7 +242,7 @@ class FidelityHierarchy(StrictModule, NonTrainableState):
         *,
         target_level_id: str,
         hierarchy_id: str | None = None,
-    ):
+    ) -> None:
         levels_ = tuple(sorted(levels, key=lambda level: level.level_id))
         if not levels_ or not all(
             isinstance(level, FidelityLevelSpec) for level in levels_

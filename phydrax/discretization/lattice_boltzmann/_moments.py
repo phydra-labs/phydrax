@@ -142,7 +142,7 @@ class MomentBasisPlan(StrictModule, NonTrainableState):
         *,
         basis_name: str = "raw-monomial",
         maximum_condition_number: float = 1.0e12,
-    ):
+    ) -> None:
         name = str(basis_name)
         condition_limit = float(maximum_condition_number)
         if not name:
@@ -330,7 +330,7 @@ class RelaxationSpectrumPlan(StrictModule, NonTrainableState):
         *,
         default_rate: float = 1.0,
         shear_rate_indices: Sequence[int] | None = None,
-    ):
+    ) -> None:
         default = float(default_rate)
         if not np.isfinite(default) or default <= 0.0 or default >= 2.0:
             raise ValueError("default_rate must lie strictly between zero and two.")

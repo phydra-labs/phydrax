@@ -55,7 +55,7 @@ class PlanarXRayDetectorPlan(StrictModule, NonTrainableState):
         height: float,
         pixel_shape: tuple[int, int],
         detector_id: str,
-    ):
+    ) -> None:
         center_ = np.asarray(center, dtype=np.float64)
         normal_ = np.asarray(normal, dtype=np.float64)
         horizontal = np.asarray(horizontal_axis, dtype=np.float64)

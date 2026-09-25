@@ -104,7 +104,7 @@ class NonlinearUpdateCapabilities(StrictModule):
         differentiable_action: bool,
         exposes_linearization: bool = False,
         counts_complete: bool = True,
-    ):
+    ) -> None:
         self.jit = bool(jit)
         self.prepared_refresh = bool(prepared_refresh)
         self.differentiable_action = bool(differentiable_action)
@@ -132,7 +132,7 @@ class NonlinearUpdateControl(StrictModule):
         maximum_linear_iterations: Any = None,
         maximum_preconditioner_applications: Any = None,
         maximum_local_updates: Any = None,
-    ):
+    ) -> None:
         if budget is not None:
             if not isinstance(budget, NonlinearWorkBudget):
                 raise TypeError("budget must be NonlinearWorkBudget or None.")
@@ -248,7 +248,7 @@ class NonlinearUpdateDiagnostics(StrictModule):
         domain_failures: Any = 0,
         nonfinite_trials: Any = 0,
         counts_complete: bool = True,
-    ):
+    ) -> None:
         self.initial_residual_norm = jnp.asarray(initial_residual_norm)
         self.final_residual_norm = jnp.asarray(final_residual_norm)
         self.step_norm = jnp.asarray(step_norm)
@@ -342,7 +342,9 @@ class NonlinearUpdateProvenance(StrictModule):
     plan_id: str = eqx.field(static=True)
     notes: str = eqx.field(static=True)
 
-    def __init__(self, *, problem_id: str, update_id: str, plan_id: str, notes: str = ""):
+    def __init__(
+        self, *, problem_id: str, update_id: str, plan_id: str, notes: str = ""
+    ) -> None:
         identifiers = tuple(str(value) for value in (problem_id, update_id, plan_id))
         if any(not value for value in identifiers):
             raise ValueError("Nonlinear update provenance identifiers must be non-empty.")
@@ -375,7 +377,7 @@ class NonlinearUpdateResult(StrictModule):
         inner_status: Any = -1,
         components: tuple[NonlinearUpdateResult, ...] = (),
         evidence: NonlinearAttemptEvidence | None = None,
-    ):
+    ) -> None:
         if not isinstance(diagnostics, NonlinearUpdateDiagnostics):
             raise TypeError("diagnostics must be NonlinearUpdateDiagnostics.")
         if not isinstance(provenance, NonlinearUpdateProvenance):
@@ -431,7 +433,7 @@ class NonlinearUpdatePlan(StrictModule):
         *,
         problem_id: str,
         update_id: str,
-    ):
+    ) -> None:
         if not isinstance(state_space, AbstractVectorSpace) or not isinstance(
             residual_space, AbstractVectorSpace
         ):
@@ -480,7 +482,7 @@ class PreparedNonlinearUpdate(StrictModule):
         /,
         *,
         numeric_version: Any,
-    ):
+    ) -> None:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be NonlinearSystemProblem.")
         if not isinstance(update, AbstractNonlinearUpdate):
@@ -615,7 +617,7 @@ class FunctionNonlinearUpdate(AbstractNonlinearUpdate):
         /,
         *,
         update_id: str = "function-update",
-    ):
+    ) -> None:
         if _is_component(function):
             raise TypeError(
                 "function must map (state, args) to a proposed state; hold an array "
@@ -791,7 +793,7 @@ class NewtonStepUpdate(AbstractNonlinearUpdate):
         *,
         termination: NonlinearTermination | None = None,
         require_decrease: bool = True,
-    ):
+    ) -> None:
         method_ = NewtonKrylov() if method is None else method
         termination_ = NonlinearTermination() if termination is None else termination
         if not isinstance(method_, (NewtonKrylov, NewtonTrustRegion)):

@@ -90,7 +90,7 @@ class MerkleCavitationPlan(AbstractVOFMassTransferPlan):
         condensation_coefficient,
         latent_heat,
         /,
-    ):
+    ) -> None:
         p_sat, vaporization, condensation, latent = _positive_material_parameters(
             (
                 saturation_pressure,
@@ -148,7 +148,7 @@ class KunzCavitationPlan(AbstractVOFMassTransferPlan):
         reference_dynamic_pressure,
         latent_heat,
         /,
-    ):
+    ) -> None:
         p_sat, vaporization, condensation, dynamic, latent = (
             _positive_material_parameters(
                 (
@@ -226,7 +226,7 @@ class SchnerrSauerCavitationPlan(AbstractVOFMassTransferPlan):
         /,
         *,
         radius_floor=1.0e-12,
-    ):
+    ) -> None:
         values = _positive_material_parameters(
             (
                 saturation_pressure,
@@ -327,7 +327,7 @@ class InterfaceHeatResistancePhaseChangePlan(AbstractVOFMassTransferPlan):
         interface_heat_transfer_coefficient,
         latent_heat,
         /,
-    ):
+    ) -> None:
         saturation, coefficient, latent = _positive_material_parameters(
             (
                 saturation_temperature,
@@ -383,7 +383,7 @@ class TemperatureRelaxationPhaseChangePlan(AbstractVOFMassTransferPlan):
         condensation_time,
         latent_heat,
         /,
-    ):
+    ) -> None:
         saturation, vaporization, condensation, latent = _positive_material_parameters(
             (
                 saturation_temperature,
@@ -437,7 +437,7 @@ class TemperatureRelaxationPhaseChangePlan(AbstractVOFMassTransferPlan):
 
 
 class StefanHeatFluxPhaseChangePlan(AbstractVOFMassTransferPlan):
-    def __init__(self, latent_heat, /):
+    def __init__(self, latent_heat, /) -> None:
         (latent,) = _positive_material_parameters(
             (latent_heat,), "Stefan heat-flux phase change"
         )
@@ -483,7 +483,7 @@ class TwoMaterialVOFPhaseChangePlan(StrictModule, NonTrainableState):
         system: TwoMaterialVOFSystem,
         rate_law: AbstractVOFMassTransferPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(system, TwoMaterialVOFSystem):
             raise TypeError("system must be TwoMaterialVOFSystem.")
         if not isinstance(rate_law, AbstractVOFMassTransferPlan):

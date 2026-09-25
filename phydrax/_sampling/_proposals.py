@@ -128,7 +128,7 @@ class SingleCoordinateGaussianProposal(AbstractProposal):
     scale: float = eqx.field(static=True)
     proposal_id: str = eqx.field(static=True)
 
-    def __init__(self, scale: float, /, *, proposal_id: str | None = None):
+    def __init__(self, scale: float, /, *, proposal_id: str | None = None) -> None:
         value = float(scale)
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError("scale must be finite and positive.")
@@ -186,7 +186,7 @@ class SingleCoordinatePeriodicProposal(AbstractProposal):
         /,
         *,
         proposal_id: str | None = None,
-    ):
+    ) -> None:
         period_, half_width_ = float(period), float(half_width)
         if not np.isfinite(period_) or period_ <= 0.0:
             raise ValueError("period must be finite and positive.")
@@ -262,7 +262,9 @@ class GaussianRandomWalkProposal(AbstractProposal):
     scale: float = eqx.field(static=True)
     proposal_id: str = eqx.field(static=True)
 
-    def __init__(self, scale: float, /, *, proposal_id: str = "gaussian-random-walk"):
+    def __init__(
+        self, scale: float, /, *, proposal_id: str = "gaussian-random-walk"
+    ) -> None:
         value = float(scale)
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError("scale must be finite and positive.")
@@ -331,7 +333,7 @@ class SingleElectronSphereProposal(AbstractProposal):
         /,
         *,
         proposal_id: str | None = None,
-    ):
+    ) -> None:
         count = int(electron_count)
         angle = float(maximum_angle)
         if count < 1 or not np.isfinite(angle) or angle <= 0.0 or angle > np.pi:
@@ -460,7 +462,7 @@ class CallableProposal(AbstractProposal):
         /,
         *,
         proposal_id: str,
-    ):
+    ) -> None:
         if not callable(sample) or not callable(log_prob):
             raise TypeError("sample and log_prob must be callable.")
         if not isinstance(proposal_id, str) or not proposal_id:

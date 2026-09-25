@@ -90,7 +90,7 @@ class RaoBlackwellizedStateSpaceModel(StrictModule):
         observation_shape: Sequence[int],
         model_id: str,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(nonlinear_prior, AbstractStatePrior):
             raise TypeError("nonlinear_prior must implement AbstractStatePrior.")
         if not isinstance(nonlinear_transition, AbstractTransitionKernel):
@@ -223,7 +223,7 @@ class RaoBlackwellizedStateSpaceProblem(StrictModule):
         problem_id: str,
         args: Any = None,
         input_signal: AbstractStateSpaceInput | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, RaoBlackwellizedStateSpaceModel):
             raise TypeError("model must be a RaoBlackwellizedStateSpaceModel.")
         if not isinstance(observations, ObservationSequence):
@@ -869,7 +869,7 @@ class RaoBlackwellizedFilterLikelihood(StrictModule):
         resampling_policy: ResamplingPolicy = "ess",
         resampling_threshold: float = 0.5,
         raise_on_failure: bool = False,
-    ):
+    ) -> None:
         count, method, policy, threshold = _configuration(
             num_particles,
             resampling_method,

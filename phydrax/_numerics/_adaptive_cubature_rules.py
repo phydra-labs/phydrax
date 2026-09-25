@@ -73,7 +73,7 @@ class AdaptiveCubatureRuleData(StrictModule, NonTrainableState):
         family: AdaptiveCubatureFamily,
         source_id: str,
         maximum_rule_bytes: int = _DEFAULT_MAXIMUM_BYTES,
-    ):
+    ) -> None:
         points_host = np.asarray(points, dtype=np.float64)
         weights_host = np.asarray(weights, dtype=np.float64).reshape((-1,))
         embedded_host = np.asarray(embedded_weights, dtype=np.float64).reshape((-1,))

@@ -99,7 +99,7 @@ class FractureMatrixExchange(StrictModule):
         origin: ArrayLike,
         tangent_axes: ArrayLike,
         fracture_id: str,
-    ):
+    ) -> None:
         if (
             not isinstance(matrix_discretization, UnstructuredFiniteVolumeDiscretization)
             or matrix_discretization.cell_dimension != 3

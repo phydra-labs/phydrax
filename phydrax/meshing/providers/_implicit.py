@@ -410,7 +410,7 @@ class ImplicitMeshingPlan(StrictModule, NonTrainableState):
         source_id: str,
         source_revision: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(geometry, CompiledGeometry):
             raise TypeError("geometry must be CompiledGeometry.")
         if not isinstance(grid, PreparedTensorGrid):

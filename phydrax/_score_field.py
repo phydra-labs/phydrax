@@ -30,7 +30,7 @@ class StateTimeScoreField(StrictModule):
         state_label: str,
         time_label: str,
         context_labels=(),
-    ):
+    ) -> None:
         if not isinstance(function, DomainFunction):
             raise TypeError("score field must be a DomainFunction.")
         if not state_label or not time_label or state_label == time_label:

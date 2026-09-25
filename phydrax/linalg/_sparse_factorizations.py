@@ -62,7 +62,7 @@ class SparseFactorizationPolicy(StrictModule):
         diagonal_shift: float = 0.0,
         allow_pivot_replacement: bool = False,
         replacement_value: float = 1e-12,
-    ):
+    ) -> None:
         if kind not in ("auto", "lu", "cholesky"):
             raise ValueError(f"Unknown sparse factorization kind {kind!r}.")
         if ordering not in ("natural", "reverse-cuthill-mckee"):

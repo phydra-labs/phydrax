@@ -60,7 +60,7 @@ class SparseLinearMap(AbstractSparseLinearOperator):
         *,
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(relation, (EdgeRelation, RowRelation)):
             raise TypeError("relation must be an EdgeRelation or RowRelation.")
         values = jnp.asarray(coefficients)
@@ -220,7 +220,7 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
         accumulation_dtype: Any | None = None,
-    ):
+    ) -> None:
         if not isinstance(relation, (EdgeRelation, RowRelation)):
             raise TypeError("relation must be an EdgeRelation or RowRelation.")
         if not isinstance(source, AbstractVectorSpace) or not isinstance(
@@ -393,7 +393,7 @@ class _SparseStoragePlan(StrictModule):
     route_shape: tuple[int, ...] = eqx.field(static=True)
     nnz: int = eqx.field(static=True)
 
-    def __init__(self, relation: SparseRelation, /):
+    def __init__(self, relation: SparseRelation, /) -> None:
         edge = (
             relation
             if isinstance(relation, EdgeRelation)

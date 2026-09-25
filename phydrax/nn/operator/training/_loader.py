@@ -114,7 +114,7 @@ class OperatorBatchEpoch(Iterator[OperatorTrainingBatch]):
         /,
         *,
         start_batch: int,
-    ):
+    ) -> None:
         self._loader = loader
         self._plan = plan
         self._next_batch_index = int(start_batch)
@@ -197,7 +197,7 @@ class OperatorBatchLoader:
         sharding_policy: OperatorShardingPolicy | None = None,
         sampling: AnchorQuerySamplingPolicy | None = None,
         split: str = "train",
-    ):
+    ) -> None:
         if int(batch_size) <= 0:
             raise ValueError("batch_size must be positive.")
         if int(seed) < 0:

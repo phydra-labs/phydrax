@@ -268,7 +268,7 @@ class _RequestRecorderRule(DerivativeRule):
         prefix_backends: tuple[DerivativeBackend, ...] = (),
         prefix_laplacian_variables: tuple[str, ...] = (),
         prefix_laplacian_backends: tuple[DerivativeBackend, ...] = (),
-    ):
+    ) -> None:
         self.recorded = recorded
         self.prefix = prefix
         self.prefix_variables = prefix_variables
@@ -440,7 +440,7 @@ class DerivativeExecutionPlan(StrictModule):
         /,
         *,
         directional: bool = False,
-    ):
+    ) -> None:
         if not requests:
             raise ValueError("DerivativeExecutionPlan requires derivative requests.")
         if strategy not in ("reverse", "forward", "jvp", "jet"):

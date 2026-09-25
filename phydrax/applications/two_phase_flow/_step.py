@@ -78,7 +78,7 @@ class TwoPhaseMovingBodyPlan(StrictModule, NonTrainableState):
         *,
         velocity: ArrayLike = (0.0, 0.0, 0.0),
         penalty: float = 1.0,
-    ):
+    ) -> None:
         center_ = jnp.asarray(center)
         velocity_ = jnp.asarray(velocity, dtype=center_.dtype)
         radius_ = float(radius)
@@ -163,7 +163,7 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod, NonTrainableState
         /,
         *,
         body: TwoPhaseMovingBodyPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(two_phase, PreparedIncompressibleTwoPhaseVOF):
             raise TypeError("two_phase must be PreparedIncompressibleTwoPhaseVOF.")
         if body is not None and not isinstance(body, TwoPhaseMovingBodyPlan):

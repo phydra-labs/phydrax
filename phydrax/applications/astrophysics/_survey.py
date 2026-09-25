@@ -32,7 +32,7 @@ class SurveyVisitPlan(StrictModule, NonTrainableState):
         /,
         *,
         survey_id="survey-visits",
-    ):
+    ) -> None:
         self.times = jnp.asarray(times)
         self.exposure = jnp.asarray(exposure)
         self.dither = jnp.asarray(dither)
@@ -74,7 +74,7 @@ class SurveyCatalogPlan(StrictModule, NonTrainableState):
     capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, capacity: int, /, *, catalog_id="survey-catalog"):
+    def __init__(self, capacity: int, /, *, catalog_id="survey-catalog") -> None:
         if int(capacity) <= 0:
             raise ValueError("Survey catalog capacity must be positive.")
         self.capacity = int(capacity)

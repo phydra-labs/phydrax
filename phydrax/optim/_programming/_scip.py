@@ -32,7 +32,7 @@ class SCIPMixedInteger(AbstractMixedIntegerMethod):
 
     plan: SCIPPlan
 
-    def __init__(self, plan: SCIPPlan | None = None, /):
+    def __init__(self, plan: SCIPPlan | None = None, /) -> None:
         selected = SCIPPlan() if plan is None else plan
         if not isinstance(selected, SCIPPlan):
             raise TypeError("plan must be a SCIPPlan or None.")

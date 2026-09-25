@@ -41,7 +41,7 @@ class DiffusionBridgeControlDataset(StrictModule):
         /,
         *,
         bridge_id: str,
-    ):
+    ) -> None:
         times_ = jnp.asarray(times)
         states_ = jnp.asarray(states)
         reference = jnp.asarray(reference_drift)
@@ -83,7 +83,7 @@ class DiffusionBridgeDriftTerm(AbstractScalarTerm):
         *,
         metric: Any = None,
         label: str | None = None,
-    ):
+    ) -> None:
         if not field:
             raise ValueError("field must be non-empty.")
         if not isinstance(dataset, DiffusionBridgeControlDataset):

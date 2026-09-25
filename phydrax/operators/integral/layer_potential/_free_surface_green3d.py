@@ -63,7 +63,7 @@ class FreeSurfaceGreenPolicy3D(StrictModule, NonTrainableState):
         root_tolerance: float = 1.0e-13,
         max_root_iterations: int = 128,
         max_resident_bytes: int = 32 * 1024 * 1024,
-    ):
+    ) -> None:
         radial = int(radial_order_per_interval)
         angular = int(angular_order)
         cutoff_factor = float(cutoff_clearance_factor)

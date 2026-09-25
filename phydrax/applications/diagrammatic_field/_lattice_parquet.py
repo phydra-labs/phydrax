@@ -71,7 +71,7 @@ class LatticeParquetPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
         damping: float = 0.7,
         maximum_elements: int = 4_000_000,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         tolerance_ = float(tolerance)
         damping_ = float(damping)
@@ -185,7 +185,7 @@ class PreparedLatticeParquet(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan, vertex, bubbles, gathers, inverses, routing_residual, prepared_id, /
-    ):
+    ) -> None:
         self.plan = plan
         self.fully_irreducible_vertex = vertex
         self.channel_bubbles = bubbles

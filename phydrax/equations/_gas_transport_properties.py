@@ -137,7 +137,7 @@ class ReferencePowerLawGasTransportPlan(AbstractGasTransportPropertyPlan):
         diffusion_temperature_exponent: float = 1.75,
         viscosity_temperature_exponent: float = 0.7,
         conductivity_temperature_exponent: float = 0.7,
-    ):
+    ) -> None:
         viscosity = np.asarray(species_viscosities, dtype=np.float64)
         count = viscosity.size if viscosity.ndim == 1 else 0
         if count < 2:
@@ -253,7 +253,7 @@ class LogPolynomialGasTransportPlan(AbstractGasTransportPropertyPlan):
         reference_pressure: float,
         relative_error_bounds: tuple[float, float, float],
         reference_id: str,
-    ):
+    ) -> None:
         viscosity = np.asarray(viscosity_coefficients, dtype=np.float64)
         conductivity = np.asarray(conductivity_coefficients, dtype=np.float64)
         diffusion = np.asarray(diffusion_coefficients, dtype=np.float64)
@@ -372,7 +372,7 @@ class KineticTheoryGasTransportPlan(AbstractGasTransportPropertyPlan):
         eucken_factors: ArrayLike,
         temperature_bounds: tuple[float, float],
         /,
-    ):
+    ) -> None:
         masses = np.asarray(molar_masses_g_mol, dtype=np.float64)
         count = masses.size if masses.ndim == 1 else 0
         if count < 2:

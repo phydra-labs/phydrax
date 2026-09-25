@@ -358,7 +358,7 @@ class GraphModel(StrictModule, BatchEvaluator):
         edge_input_key: str | None = None,
         global_input_key: str | None = None,
         output_key: str | None = None,
-    ):
+    ) -> None:
         if output not in ("nodes", "edges", "globals"):
             raise ValueError("GraphModel output must be 'nodes', 'edges', or 'globals'.")
         self.module = module
@@ -498,7 +498,7 @@ class GraphRolloutModel(StrictModule, BatchEvaluator):
         edge_input_key: str | None = None,
         global_input_key: str | None = None,
         output_key: str | None = None,
-    ):
+    ) -> None:
         if int(steps) < 0:
             raise ValueError("GraphRolloutModel steps must be non-negative.")
         if feature not in ("nodes", "edges", "globals"):

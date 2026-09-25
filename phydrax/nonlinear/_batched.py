@@ -121,7 +121,7 @@ class SmallRootKernel(StrictModule):
         relative_tolerance: float = 1e-8,
         minimum_damping: float = 1e-4,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         dimension = int(maximum_dimension)

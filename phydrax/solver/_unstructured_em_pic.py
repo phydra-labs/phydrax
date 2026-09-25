@@ -72,7 +72,7 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
         *,
         pusher: RelativisticBorisPlan | None = None,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(maxwell, PreparedUnstructuredMaxwell):
             raise TypeError("maxwell must be PreparedUnstructuredMaxwell.")
         if not isinstance(current, UnstructuredWhitneyCurrentPlan):

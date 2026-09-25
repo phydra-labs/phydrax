@@ -22,7 +22,7 @@ from ._validation import MetricValidationReport, validate_metric
 class _HessianMetricMap(StrictModule):
     geometry: HessianGeometry
 
-    def __init__(self, geometry: HessianGeometry, /):
+    def __init__(self, geometry: HessianGeometry, /) -> None:
         self.geometry = geometry
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -41,7 +41,7 @@ class HessianGeometry(StrictModule):
         /,
         *,
         chart: CoordinateChart,
-    ):
+    ) -> None:
         if not callable(potential):
             raise TypeError("Hessian potential must be callable.")
         if not isinstance(chart, CoordinateChart):

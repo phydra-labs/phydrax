@@ -90,7 +90,7 @@ class MessagePassing(StrictModule):
             [jnp.ndarray, jnp.ndarray | None],
             jnp.ndarray,
         ] = _aggregated_update,
-    ):
+    ) -> None:
         _route_reduction(aggr)
         if flow not in ("source_to_target", "target_to_source"):
             raise ValueError(f"Unsupported flow mode: {flow!r}.")

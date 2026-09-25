@@ -73,7 +73,7 @@ class IonizedMixtureThermodynamicsPlan(StrictModule, NonTrainableState):
         /,
         *,
         neutrality_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         species_index = int(electron_species_index)
         mode_index = int(electron_mode_index)
         tolerance = float(neutrality_tolerance)
@@ -237,7 +237,7 @@ class IonizedMultitemperatureEulerSystem(
         *,
         density_floor: float = 1.0e-12,
         pressure_floor: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(thermodynamics, IonizedMixtureThermodynamicsPlan):
             raise TypeError("thermodynamics must be IonizedMixtureThermodynamicsPlan.")
         base = TwoTemperatureMixtureEulerSystem(
@@ -450,7 +450,7 @@ class IonizedMultitemperatureNavierStokesSystem(
         /,
         *,
         mode_diffusivities: ArrayLike | None = None,
-    ):
+    ) -> None:
         inviscid = IonizedMultitemperatureEulerSystem(thermodynamics, dimension)
         base = TwoTemperatureMixtureNavierStokesSystem(
             thermodynamics.base,

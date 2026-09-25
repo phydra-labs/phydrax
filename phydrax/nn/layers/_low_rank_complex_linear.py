@@ -47,7 +47,7 @@ class LowRankComplexLinearInitializationReport(StrictModule, NonTrainableState):
         realized_rank: int,
         retained_energy: float,
         relative_truncation_residual: float,
-    ):
+    ) -> None:
         counts = (
             int(input_count),
             int(output_count),
@@ -106,7 +106,7 @@ class LowRankComplexLinear(_AbstractBaseModel):
         rank: int,
         use_bias: bool = True,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         in_size_ = _canonical_size(in_size)
         out_size_ = _canonical_size(out_size)
         in_shape = _get_value_shape(in_size_)

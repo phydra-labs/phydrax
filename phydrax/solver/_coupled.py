@@ -91,7 +91,7 @@ class CoupledLevelResult(StrictModule):
         realization_id: str | None,
         coupling_id: str | None,
         state_transfer_id: str | None,
-    ):
+    ) -> None:
         samples = tuple(sample_shape)
         values = jnp.asarray(observable)
         if values.shape[: len(samples)] != samples:
@@ -134,7 +134,7 @@ class CoupledHierarchyResult(StrictModule):
         realization_id: str | None,
         coupling_id: str | None,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         records = tuple(levels)
         values = tuple(jnp.asarray(correction) for correction in corrections)
         valid = tuple(jnp.asarray(mask, dtype=jnp.bool_) for mask in correction_valid)

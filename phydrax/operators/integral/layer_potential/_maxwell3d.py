@@ -56,7 +56,7 @@ class MaxwellEFIEPolicy3D(StrictModule, NonTrainableState):
         max_edges: int = 1024,
         max_dense_bytes: int = 256 * 1024 * 1024,
         max_condition_number: float = 1.0e10,
-    ):
+    ) -> None:
         orders = (int(regular_order), int(singular_order), int(near_order))
         values = (
             float(near_ratio),

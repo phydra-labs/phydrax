@@ -98,7 +98,7 @@ class PETScKSPPolicy(StrictModule):
         reuse_preconditioner: bool = False,
         options: Mapping[str, PETScOptionValue]
         | Sequence[tuple[str, PETScOptionValue]] = (),
-    ):
+    ) -> None:
         ksp, pc = str(ksp_type), str(pc_type)
         relative, absolute, divergence = (
             float(relative_tolerance),
@@ -151,7 +151,7 @@ class PETScSNESPolicy(StrictModule):
         ksp: PETScKSPPolicy | None = None,
         options: Mapping[str, PETScOptionValue]
         | Sequence[tuple[str, PETScOptionValue]] = (),
-    ):
+    ) -> None:
         if jacobian_mode not in ("matrix-free", "dense-autodiff"):
             raise ValueError("jacobian_mode must be 'matrix-free' or 'dense-autodiff'.")
         snes = str(snes_type)
@@ -203,7 +203,7 @@ class PETScLinearPlan(StrictModule):
         preconditioner_operator: AbstractSparseLinearOperator,
         policy: PETScKSPPolicy,
         /,
-    ):
+    ) -> None:
         operator_storage = _canonical_storage(problem.operator, role="system operator")
         preconditioner_storage = _canonical_storage(
             preconditioner_operator, role="preconditioner operator"
@@ -246,7 +246,7 @@ class PETScNonlinearPlan(StrictModule):
         /,
         *,
         args: Any = None,
-    ):
+    ) -> None:
         if not isinstance(problem, NonlinearSystemProblem) or not isinstance(
             policy, PETScSNESPolicy
         ):
@@ -307,7 +307,7 @@ class PreparedPETScLinearSolve(StrictModule):
         solver,
         prepared_id,
         numeric_version=0,
-    ):
+    ) -> None:
         self.plan, self.setup_transfer, self.petsc = plan, setup_transfer, petsc
         self.operator_matrix, self.preconditioner_matrix, self.solver = (
             operator_matrix,
@@ -343,7 +343,7 @@ class PreparedPETScNonlinearSolve(StrictModule):
         callbacks,
         prepared_id,
         numeric_version=0,
-    ):
+    ) -> None:
         self.plan, self.setup_transfer, self.petsc, self.solver = (
             plan,
             setup_transfer,
@@ -375,7 +375,7 @@ class PETScLinearDiagnostics(StrictModule):
         iterations,
         convergence_reason,
         converged,
-    ):
+    ) -> None:
         self.residual_norm, self.relative_residual = (
             jnp.asarray(residual_norm),
             jnp.asarray(relative_residual),
@@ -406,7 +406,7 @@ class PETScNonlinearDiagnostics(StrictModule):
         linear_iterations,
         convergence_reason,
         converged,
-    ):
+    ) -> None:
         self.initial_residual_norm, self.final_residual_norm = (
             jnp.asarray(initial_residual_norm),
             jnp.asarray(final_residual_norm),
@@ -452,7 +452,7 @@ class PETScProvenance(StrictModule):
         reused_preconditioner,
         setup_transfer,
         solve_transfer,
-    ):
+    ) -> None:
         values = tuple(
             str(value)
             for value in (
@@ -491,7 +491,7 @@ class PETScLinearResult(StrictModule):
     diagnostics: PETScLinearDiagnostics
     provenance: PETScProvenance
 
-    def __init__(self, value, status, diagnostics, provenance, /):
+    def __init__(self, value, status, diagnostics, provenance, /) -> None:
         self.value, self.status, self.diagnostics, self.provenance = (
             value,
             jnp.asarray(status, dtype=jnp.int32),
@@ -512,7 +512,9 @@ class PETScNonlinearResult(StrictModule):
     diagnostics: PETScNonlinearDiagnostics
     provenance: PETScProvenance
 
-    def __init__(self, *, state, residual, auxiliary, status, diagnostics, provenance):
+    def __init__(
+        self, *, state, residual, auxiliary, status, diagnostics, provenance
+    ) -> None:
         self.state, self.residual, self.auxiliary = state, residual, auxiliary
         self.status, self.diagnostics, self.provenance = (
             jnp.asarray(status, dtype=jnp.int32),
@@ -528,7 +530,7 @@ class PETScNonlinearResult(StrictModule):
 class PETScBackend(AbstractExternalBackend):
     """Lazy host-only petsc4py KSP/SNES provider; it never materializes implicitly."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -1026,7 +1028,7 @@ def _configure_snes(
 ) -> tuple[Any, tuple[Any, ...]]:
     dtype = jax.tree.leaves(plan.space.structure())[0].dtype
 
-    def residual_callback(snes, value, residual):
+    def residual_callback(snes, value, residual) -> None:
         del snes
         state = plan.space.unflatten(
             jnp.asarray(value.getArray(readonly=True), dtype=dtype)
@@ -1057,7 +1059,7 @@ def _configure_snes(
 
         dense_jacobian = jax.jacfwd(coordinate_residual)
 
-        def jacobian_callback(snes, value, operator, preconditioner):
+        def jacobian_callback(snes, value, operator, preconditioner) -> None:
             del snes
             dense = np.asarray(
                 jax.device_get(

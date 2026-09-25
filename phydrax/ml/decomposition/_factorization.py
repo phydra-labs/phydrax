@@ -166,7 +166,7 @@ class SparseCodingModel(AbstractFittedModel):
         *,
         regularization: float,
         transform_iterations: int,
-    ):
+    ) -> None:
         dictionary_ = jnp.asarray(dictionary)
         if not jnp.issubdtype(dictionary_.dtype, jnp.inexact):
             dictionary_ = dictionary_.astype(jnp.float32)
@@ -254,7 +254,7 @@ class NMFModel(AbstractFittedModel):
 
     _input_binding = ModelBinding.blockwise("flat", pass_key=False)
 
-    def __init__(self, components, *, transform_iterations: int, epsilon: float):
+    def __init__(self, components, *, transform_iterations: int, epsilon: float) -> None:
         components_ = jnp.asarray(components)
         if not jnp.issubdtype(components_.dtype, jnp.floating):
             raise TypeError("NMF components must use a real floating dtype.")
@@ -321,7 +321,7 @@ class NMF(AbstractRecipe):
         tolerance: float = 1e-6,
         epsilon: float = 1e-8,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.n_components = int(n_components)
         self.max_iterations = int(max_iterations)
         self.transform_iterations = int(transform_iterations)
@@ -497,7 +497,7 @@ class SparseCoding(AbstractRecipe):
         regularization: float = 1e-2,
         transform_iterations: int = 64,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         dictionary_ = jnp.asarray(dictionary)
         if not jnp.issubdtype(dictionary_.dtype, jnp.inexact):
             dictionary_ = dictionary_.astype(jnp.float32)
@@ -638,7 +638,7 @@ class DictionaryLearning(AbstractRecipe):
         transform_iterations: int = 64,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.n_components = int(n_components)
         self.regularization = float(regularization)
         self.max_iterations = int(max_iterations)

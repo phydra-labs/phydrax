@@ -44,7 +44,7 @@ class UnsteadyVortexLatticePlan(StrictModule, NonTrainableState):
     wake: VortexWakePlan
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, bound: SteadyVortexLatticePlan, wake: VortexWakePlan, /):
+    def __init__(self, bound: SteadyVortexLatticePlan, wake: VortexWakePlan, /) -> None:
         if not isinstance(bound, SteadyVortexLatticePlan):
             raise TypeError("bound must be SteadyVortexLatticePlan.")
         if not isinstance(wake, VortexWakePlan):

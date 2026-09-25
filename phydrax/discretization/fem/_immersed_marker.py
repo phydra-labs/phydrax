@@ -33,7 +33,7 @@ class FiniteElementImmersedMarkerMapPlan(StrictModule, NonTrainableState):
         configuration_space: AbstractVectorSpace,
         interpolation_matrix: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(markers, LagrangianMarkerDiscretization):
             raise TypeError("markers must be LagrangianMarkerDiscretization.")
         if not isinstance(configuration_space, AbstractVectorSpace):
@@ -73,7 +73,7 @@ class PreparedFiniteElementImmersedMarkerMap(StrictModule, NonTrainableState):
     interpolation: DenseLinearOperator
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: FiniteElementImmersedMarkerMapPlan, /):
+    def __init__(self, plan: FiniteElementImmersedMarkerMapPlan, /) -> None:
         if not isinstance(plan, FiniteElementImmersedMarkerMapPlan):
             raise TypeError("plan must be FiniteElementImmersedMarkerMapPlan.")
         interpolation = DenseLinearOperator(

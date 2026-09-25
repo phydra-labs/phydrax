@@ -385,7 +385,7 @@ class MechanicsPotentialGuidance(AbstractScoreGuidance):
         args=None,
         linear_policy=None,
         guidance_id: str = "mechanics-potential",
-    ):
+    ) -> None:
         if not isinstance(parameterization, StateDesignParameterization):
             raise TypeError("parameterization must be StateDesignParameterization.")
         if not isfinite(float(scale)) or float(scale) < 0.0:

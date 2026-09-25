@@ -95,7 +95,7 @@ class SpectralNeuronInspection(StrictModule):
         convex: bool,
         concave: bool,
         monotonicity: tuple[str, ...],
-    ):
+    ) -> None:
         self.matrix = jnp.asarray(matrix)
         self.eigenvalues = jnp.asarray(eigenvalues)
         self.selected_eigenvalue = jnp.asarray(selected_eigenvalue)

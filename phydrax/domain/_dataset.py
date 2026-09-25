@@ -55,7 +55,7 @@ class DatasetDomain(JointFactor):
         *,
         label: str = "data",
         measure: Literal["probability", "count"] = "probability",
-    ):
+    ) -> None:
         leaves = jax.tree_util.tree_leaves(data)
         if not leaves:
             raise ValueError("DatasetDomain requires at least one array leaf.")

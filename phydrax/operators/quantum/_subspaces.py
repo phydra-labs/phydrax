@@ -45,7 +45,7 @@ class BasisStateSubspace(StrictModule):
         /,
         *,
         subspace_id: str | None = None,
-    ):
+    ) -> None:
         if isinstance(physical_dimension, bool) or not isinstance(
             physical_dimension, Integral
         ):
@@ -126,7 +126,7 @@ class DenseQuantumSubspace(StrictModule):
         tolerance: float = 1e-10,
         maximum_entries: int = 1 << 26,
         subspace_id: str | None = None,
-    ):
+    ) -> None:
         value = jnp.asarray(isometry)
         if value.ndim != 2 or value.shape[0] == 0 or value.shape[1] == 0:
             raise ValueError("isometry must be one nonempty matrix.")

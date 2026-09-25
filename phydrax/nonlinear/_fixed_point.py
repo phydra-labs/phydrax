@@ -102,7 +102,7 @@ class AndersonAcceleration(StrictModule):
         safeguard_factor: float = 2.0,
         restart_condition: float = 1e12,
         linear: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         history_ = int(history)
         regularization_ = float(regularization)
         safeguard_ = float(safeguard_factor)
@@ -274,7 +274,7 @@ class FixedPointIteration(StrictModule):
         damping: float = 1.0,
         acceleration: AndersonAcceleration | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         damping_ = float(damping)
         if not isfinite(damping_) or not 0.0 < damping_ <= 1.0:
             raise ValueError("Fixed-point damping must lie in (0, 1].")
@@ -743,7 +743,7 @@ class SteffensenIteration(StrictModule):
         denominator_tolerance: float = 1e-12,
         safeguard_factor: float = 1.0,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         tolerance = float(denominator_tolerance)
         safeguard = float(safeguard_factor)
         if not isfinite(tolerance) or tolerance <= 0.0:
@@ -1013,7 +1013,7 @@ class PicardUpdate(AbstractNonlinearUpdate):
         *,
         damping: float = 1.0,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(inverse_action) and not isinstance(
             inverse_action, AbstractPreconditioner
         ):
@@ -1193,7 +1193,7 @@ class PicardIteration(StrictModule):
         damping: float = 1.0,
         acceleration: AndersonAcceleration | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(inverse_action) and not isinstance(
             inverse_action, AbstractPreconditioner
         ):

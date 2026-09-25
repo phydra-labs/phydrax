@@ -107,7 +107,7 @@ class MOTSSolvePlan(StrictModule, NonTrainableState):
         maximum_steps: int = 40,
         minimum_radius: float = 1.0e-10,
         stability_tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         if not isinstance(surface_plan, SphericalSurfacePlan):
             raise TypeError("surface_plan must be a SphericalSurfacePlan.")
         residual_tolerance_ = float(residual_tolerance)

@@ -39,7 +39,7 @@ class MeshQueryResult(StrictModule):
         distance: Array,
         face_index: Array,
         normal: Array,
-    ):
+    ) -> None:
         self.closest_point = jnp.asarray(closest_point, dtype=jnp.float64)
         self.distance = jnp.asarray(distance, dtype=jnp.float64)
         self.face_index = jnp.asarray(face_index, dtype=jnp.int32)
@@ -54,7 +54,9 @@ class TriangleMesh(StrictModule):
     topology: TriangleTopology
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, vertices: Array, faces: Array, *, source_id: str | None = None):
+    def __init__(
+        self, vertices: Array, faces: Array, *, source_id: str | None = None
+    ) -> None:
         vertices_host = np.asarray(vertices, dtype=np.float64)
         faces_host = np.asarray(faces, dtype=np.int32)
         if vertices_host.ndim != 2 or vertices_host.shape[1] != 3:
@@ -177,7 +179,7 @@ class _TriangleSurfaceMap(BoundaryMap):
     vertices: Array
     faces: Array
 
-    def __init__(self, vertices: Array, faces: Array):
+    def __init__(self, vertices: Array, faces: Array) -> None:
         self.vertices = vertices
         self.faces = faces
 
@@ -219,7 +221,7 @@ class _TriangleCubatureMap(AbstractCubatureMap):
     vertices: Array
     faces: Array
 
-    def __init__(self, vertices: Array, faces: Array):
+    def __init__(self, vertices: Array, faces: Array) -> None:
         self.vertices = jnp.asarray(vertices, dtype=jnp.float64)
         self.faces = jnp.asarray(faces, dtype=jnp.int32)
 
@@ -320,7 +322,7 @@ class TriangleMeshQueryIndex(StrictModule):
     mesh: TriangleMesh
     bvh: TriangleBVH
 
-    def __init__(self, mesh: TriangleMesh):
+    def __init__(self, mesh: TriangleMesh) -> None:
         from ._bvh import TriangleBVH
 
         if not isinstance(mesh, TriangleMesh):

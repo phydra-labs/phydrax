@@ -39,7 +39,7 @@ class TransportProvenance(StrictModule):
         /,
         *,
         approximation: str = "exact",
-    ):
+    ) -> None:
         self.method = str(method)
         self.cost = str(cost)
         self.execution = str(execution)

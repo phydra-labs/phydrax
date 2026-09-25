@@ -35,7 +35,7 @@ class StoutSmearingResourcePolicy(StrictModule):
         maximum_matrix_dimension: int = 64,
         maximum_iterations: int = 64,
         maximum_workspace_bytes: int = 2_147_483_648,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_links,
@@ -88,7 +88,7 @@ class StoutSmearingPlan(StrictModule):
         iterations: int = 1,
         resources: StoutSmearingResourcePolicy | None = None,
         dtype: Any = jnp.complex64,
-    ):
+    ) -> None:
         if not isinstance(staples, GaugeStaplePlan):
             raise TypeError("staples must be GaugeStaplePlan.")
         rho_ = float(rho)

@@ -60,7 +60,7 @@ class VOFPhaseChangePlan(StrictModule, NonTrainableState):
         /,
         *,
         thermal_diffusion: UnstructuredTwoMaterialThermalDiffusionPlan | None = None,
-    ):
+    ) -> None:
         from ...equations._vof_phase_change import (
             StefanHeatFluxPhaseChangePlan,
             TwoMaterialVOFPhaseChangePlan,

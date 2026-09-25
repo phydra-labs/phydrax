@@ -22,7 +22,9 @@ class MPMMaterialBankEntry(StrictModule, NonTrainableState):
     particle_indices: Array
     entry_id: str = eqx.field(static=True)
 
-    def __init__(self, material: Any, particle_indices: ArrayLike, /, *, entry_id: str):
+    def __init__(
+        self, material: Any, particle_indices: ArrayLike, /, *, entry_id: str
+    ) -> None:
         indices = np.asarray(particle_indices, dtype=np.int32)
         identifier = str(entry_id)
         if indices.ndim != 1 or np.any(indices < 0) or not identifier:
@@ -43,7 +45,7 @@ class MPMMaterialBank(StrictModule, NonTrainableState):
     entries: tuple[MPMMaterialBankEntry, ...]
     bank_id: str = eqx.field(static=True)
 
-    def __init__(self, entries: Sequence[MPMMaterialBankEntry], /):
+    def __init__(self, entries: Sequence[MPMMaterialBankEntry], /) -> None:
         entries_ = tuple(entries)
         if not entries_ or any(
             not isinstance(entry, MPMMaterialBankEntry) for entry in entries_
@@ -77,7 +79,7 @@ class MPMNodalFieldPlan(StrictModule, NonTrainableState):
         /,
         *,
         contact_plan: object = None,
-    ):
+    ) -> None:
         from ._contact_kway import KWayMPMContactPlan
 
         ids = tuple(str(value) for value in field_ids)

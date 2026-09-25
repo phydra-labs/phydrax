@@ -245,7 +245,7 @@ class PrimalDualInteriorPoint(AbstractStructuredNonlinearMethod):
         maximum_restoration_steps: int = 20,
         max_dense_dimension: int = 512,
         require_feasible_start: bool = True,
-    ):
+    ) -> None:
         if mode == "dense-filter":
             implementation: AbstractMinimizationMethod = _DenseFilterInteriorPoint(
                 fraction_to_boundary=fraction_to_boundary,

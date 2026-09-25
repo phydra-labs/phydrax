@@ -43,7 +43,7 @@ class SLLODIntegratorPlan(StrictModule, NonTrainableState):
         thermostat: SLLODThermostatKind = "gaussian-isokinetic",
         kinetic_relative_tolerance: float = 1.0e-6,
         maximum_displacement: float | None = None,
-    ):
+    ) -> None:
         step = float(time_step)
         maximum = None if maximum_displacement is None else float(maximum_displacement)
         kinetic_tolerance = float(kinetic_relative_tolerance)
@@ -119,7 +119,7 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
         dynamics: PreparedAtomisticDynamics,
         cell: EvolvingFlowCellPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, SLLODIntegratorPlan):
             raise TypeError("plan must be SLLODIntegratorPlan.")
         if not isinstance(dynamics, PreparedAtomisticDynamics):

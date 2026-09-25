@@ -58,7 +58,7 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
         maximum_steps: int = 30,
         tolerance: float = 1.0e-10,
         plan_id: str,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         steps = int(maximum_steps)
         tolerance_ = float(tolerance)
@@ -181,7 +181,7 @@ class LocalRootPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
         minimum_derivative: float = 1.0e-12,
         plan_id: str,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         tolerance_ = float(tolerance)
         derivative = float(minimum_derivative)

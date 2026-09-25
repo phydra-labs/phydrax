@@ -41,7 +41,7 @@ class LinearRefreshState(StrictModule):
         *,
         template: LinearSolveTemplate | None = None,
         preconditioner_refresh_kind: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedLinearSolve):
             raise TypeError("prepared must be a PreparedLinearSolve.")
         template_ = prepared.template if template is None else template

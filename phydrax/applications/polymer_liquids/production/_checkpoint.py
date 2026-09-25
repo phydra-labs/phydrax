@@ -40,7 +40,7 @@ class CompositePolymerCheckpointPlan(StrictModule, NonTrainableState):
         /,
         *,
         scope_id: str | None = None,
-    ):
+    ) -> None:
         normalized = tuple(
             sorted(
                 (str(name), str(identifier)) for name, identifier in components.items()

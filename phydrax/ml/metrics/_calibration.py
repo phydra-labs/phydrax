@@ -52,7 +52,7 @@ class CalibrationResult(StrictModule):
         status: ArrayLike,
         effective_weight: ArrayLike,
         hard_binning: bool,
-    ):
+    ) -> None:
         self.value = jnp.asarray(value)
         self.bin_weight = jnp.asarray(bin_weight)
         self.mean_probability = jnp.asarray(mean_probability)

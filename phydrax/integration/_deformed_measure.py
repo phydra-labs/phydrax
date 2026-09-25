@@ -88,7 +88,7 @@ class DeformedMeasurePlan(StrictModule, NonTrainableState):
         reference_normal: ArrayLike | None = None,
         minimum_jacobian: float = 0.0,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if kind not in ("volume", "surface"):
             raise ValueError("Deformed measure kind must be 'volume' or 'surface'.")
         measure = _real_inexact_array("reference_measure", reference_measure)

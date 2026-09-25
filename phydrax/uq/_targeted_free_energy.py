@@ -44,7 +44,7 @@ class CallableReducedPotential(AbstractReducedPotential):
         event_shape: tuple[int, ...],
         potential_id: str,
         /,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         shape = tuple(event_shape)
@@ -80,7 +80,7 @@ class TargetedMapPlan(StrictModule):
         /,
         *,
         architecture_id: str,
-    ):
+    ) -> None:
         if not isinstance(bijector, AbstractBijector):
             raise TypeError("bijector must implement AbstractBijector.")
         shape = tuple(event_shape)
@@ -148,7 +148,7 @@ class TargetedFreeEnergyProblem(StrictModule, NonTrainableState):
         target: AbstractReducedPotential,
         mapping: TargetedMapPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, AbstractReducedPotential) or not isinstance(
             target, AbstractReducedPotential
         ):

@@ -65,7 +65,7 @@ class ChebyshevCollocation(StrictModule, NonTrainableState):
         lower: float = -1.0,
         upper: float = 1.0,
         maximum_dimension: int = 256,
-    ):
+    ) -> None:
         maximum = int(maximum_dimension)
         if int(count) > maximum or maximum < 3:
             raise ValueError("Chebyshev collocation exceeds maximum_dimension budget.")

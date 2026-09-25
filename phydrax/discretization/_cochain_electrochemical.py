@@ -90,7 +90,7 @@ class PreparedCochainElectrochemicalFlux(StrictModule, NonTrainableState):
         bridge: StructuredCochainBridge,
         diffusivities: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be StructuredCochainBridge.")
         values = np.asarray(diffusivities, dtype=np.float64)

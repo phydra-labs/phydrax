@@ -30,7 +30,7 @@ class DecayVolumePlan(StrictModule, NonTrainableState):
         /,
         *,
         length_unit_id: str,
-    ):
+    ) -> None:
         start = float(longitudinal_start)
         end = float(longitudinal_end)
         radius = float(maximum_radius)

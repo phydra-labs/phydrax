@@ -173,7 +173,7 @@ class FramePositionTask(StrictModule, NonTrainableState):
         bounds: Bounds | None = None,
         tolerance: float = 1.0e-6,
         task_id: str,
-    ):
+    ) -> None:
         target = _floating_vector(target_position, 3, "target_position")
         transform = jnp.eye(4, dtype=target.dtype).at[:3, 3].set(target)
         self.body_id = _body_identifier(body_id)
@@ -210,7 +210,7 @@ class FrameOrientationTask(StrictModule, NonTrainableState):
         bounds: Bounds | None = None,
         tolerance: float = 1.0e-6,
         task_id: str,
-    ):
+    ) -> None:
         orientation = _floating_vector(target_orientation, 4, "target_orientation")
         position = jnp.zeros((3,), dtype=orientation.dtype)
         self.body_id = _body_identifier(body_id)
@@ -249,7 +249,7 @@ class FramePoseTask(StrictModule, NonTrainableState):
         bounds: Bounds | None = None,
         tolerance: float = 1.0e-6,
         task_id: str,
-    ):
+    ) -> None:
         position = _floating_vector(target_position, 3, "target_position")
         orientation = _floating_vector(target_orientation, 4, "target_orientation")
         self.body_id = _body_identifier(body_id)
@@ -416,7 +416,7 @@ class FrameInverseKinematicsPlan(StrictModule, NonTrainableState):
         rotation_chart_tolerance: float = 1.0e-6,
         configuration_chart_tolerance: float = 1.0e-6,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(articulation, PreparedReducedArticulation):
             raise TypeError("articulation must be PreparedReducedArticulation.")
         tasks_ = tuple(tasks)

@@ -50,7 +50,7 @@ class PoolExecutionSignature(StrictModule):
         execution_group: ExecutionGroupSpec | None = None,
         static_callables: Mapping[str, Callable[..., Any]]
         | Sequence[tuple[str, Callable[..., Any]]] = (),
-    ):
+    ) -> None:
         values = tuple(
             str(value) for value in (topology_id, method_id, precision_id, backend_id)
         )

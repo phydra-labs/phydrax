@@ -27,7 +27,7 @@ class OperatorLossScaleState(StrictModule):
         scale: Any,
         consecutive_finite_updates: Any = 0,
         nonfinite_microsteps: Any = 0,
-    ):
+    ) -> None:
         scale_array = jnp.asarray(scale)
         finite_updates = jnp.asarray(consecutive_finite_updates, dtype=jnp.int32)
         nonfinite = jnp.asarray(nonfinite_microsteps, dtype=jnp.int32)
@@ -52,7 +52,7 @@ class OperatorLossScalePolicy:
     minimum_scale: float = 1.0
     maximum_scale: float = 16777216.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         values = (
             self.initial_scale,
             self.growth_factor,

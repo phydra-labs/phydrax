@@ -96,7 +96,7 @@ class ImaginaryTimeGreenFunction(StrictModule):
         moments: GreenFunctionMoments | None = None,
         evidence: GreenRepresentationEvidence | None = None,
         representation_id: str | None = None,
-    ):
+    ) -> None:
         beta_ = _positive(beta, "beta")
         statistics_ = _statistics(statistics)
         tau_ = jnp.asarray(tau)
@@ -168,7 +168,7 @@ class MatsubaraGreenFunction(StrictModule):
         moments: GreenFunctionMoments | None = None,
         evidence: GreenRepresentationEvidence | None = None,
         representation_id: str | None = None,
-    ):
+    ) -> None:
         beta_ = _positive(beta, "beta")
         statistics_ = _statistics(statistics)
         indices_ = jnp.asarray(indices)
@@ -240,7 +240,7 @@ class SelfEnergyMoments(StrictModule):
         /,
         *,
         active: ArrayLike | None = None,
-    ):
+    ) -> None:
         static = jnp.asarray(static_limit)
         tail = jnp.asarray(tail_values)
         if tail.ndim < 1:
@@ -300,7 +300,7 @@ class MatsubaraSelfEnergy(StrictModule):
         frequency_unit: str = "native-energy",
         mode_axis: tuple[str, ...] = ("local-orbital",),
         representation_id: str | None = None,
-    ):
+    ) -> None:
         beta_ = _positive(beta, "beta")
         indices_ = jnp.asarray(indices)
         values_ = jnp.asarray(values)
@@ -446,7 +446,7 @@ class RetardedGreenFunction(StrictModule):
         frequency_unit: str = "native-energy",
         mode_axis: tuple[str, ...] = ("local-orbital",),
         representation_id: str | None = None,
-    ):
+    ) -> None:
         frequency = jnp.asarray(frequencies)
         values_ = jnp.asarray(values)
         broadening_ = jnp.asarray(broadening)
@@ -626,7 +626,7 @@ class DLRGreenFunction(StrictModule):
         moment_count: int = 4,
         evidence: GreenRepresentationEvidence | DLRTransformEvidence | None = None,
         representation_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(basis, PreparedDLRBasis):
             raise TypeError("basis must be a PreparedDLRBasis.")
         values = jnp.asarray(coefficients)
@@ -708,7 +708,7 @@ class ThermalLehmannPolicy(StrictModule):
         maximum_bytes: int = 512 * 1024**2,
         weight_tolerance: float = 0.0,
         hamiltonian_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         for name, value in (
             ("maximum_states", maximum_states),
             ("maximum_channels", maximum_channels),
@@ -823,7 +823,7 @@ class DysonPolicy(StrictModule):
         maximum_bytes: int = 512 * 1024**2,
         rank_tolerance: float = 1e-12,
         residual_tolerance: float = 1e-9,
-    ):
+    ) -> None:
         for name, value in (
             ("maximum_samples", maximum_samples),
             ("maximum_matrix_dimension", maximum_matrix_dimension),

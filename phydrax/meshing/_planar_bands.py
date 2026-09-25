@@ -65,7 +65,7 @@ class PlanarBandControl:
         side_schedules: Mapping[str, LayerSchedule] | Sequence[tuple[str, LayerSchedule]],
         tangential_target: float,
         /,
-    ):
+    ) -> None:
         patch = _text(patch_name, "patch_name")
         if isinstance(side_schedules, Mapping):
             entries = tuple(side_schedules.items())

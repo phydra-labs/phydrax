@@ -69,7 +69,7 @@ class CochainFieldSpec(StrictModule, NonTrainableState):
         complex_side: CochainSide = "primal",
         cell_orientation: CochainCellOrientation,
         sampling: CochainSampling,
-    ):
+    ) -> None:
         resolved_degree = int(degree)
         if resolved_degree < 0:
             raise ValueError("Cochain degree must be non-negative.")
@@ -109,7 +109,7 @@ class CochainBoundaryPolicy(StrictModule, NonTrainableState):
 
     kind: CochainBoundaryKind = eqx.field(static=True)
 
-    def __init__(self, kind: CochainBoundaryKind = "absolute"):
+    def __init__(self, kind: CochainBoundaryKind = "absolute") -> None:
         if kind not in ("absolute", "relative"):
             raise ValueError("Cochain boundary policy must be 'absolute' or 'relative'.")
         self.kind = kind
@@ -153,7 +153,7 @@ class CochainDiscretization(AbstractPreparedDiscretization):
         key: DiscretizationKey | None = None,
         plan_id: str | None = None,
         numeric_version: str = "0",
-    ):
+    ) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("topology must be a CellComplexTopology.")
         counts = tuple(entity_set.count for entity_set in topology.entity_sets)

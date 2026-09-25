@@ -54,7 +54,7 @@ class CorrelatedObservablePolicy(StrictModule):
         *,
         max_lag: int | None = None,
         minimum_draws: int = 8,
-    ):
+    ) -> None:
         if max_lag is not None and int(max_lag) < 1:
             raise ValueError("max_lag must be positive when provided.")
         minimum = int(minimum_draws)

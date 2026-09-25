@@ -62,7 +62,7 @@ class PreparedFunctionalNTK(StrictModule):
         view: FunctionalNTKView,
         discretization_bundle_id: str,
         parameter_paths: tuple[str, ...],
-    ):
+    ) -> None:
         if not isinstance(ntk, PreparedEmpiricalNTK):
             raise TypeError("ntk must be a PreparedEmpiricalNTK.")
         if not isinstance(residual, PreparedFunctionalResidual):

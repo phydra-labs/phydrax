@@ -74,7 +74,7 @@ class WeightedSIDMPacketState(StrictModule):
         lineage_depth: ArrayLike,
         scale_factor: ArrayLike,
         /,
-    ):
+    ) -> None:
         position = jnp.asarray(positions)
         self.positions = position
         self.microscopic_masses = jnp.asarray(microscopic_masses, dtype=position.dtype)
@@ -349,7 +349,7 @@ class WeightedSIDMPlan(StrictModule):
         smoothing_length_comoving: float,
         angular_split: SmallAngleSplitPlan | None = None,
         time: FLRWDistancePlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(particle_mesh, CosmologicalParticleMeshPlan):
             raise TypeError("particle_mesh must be CosmologicalParticleMeshPlan.")
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
@@ -1211,7 +1211,7 @@ class WeightedPacketResamplingPlan(StrictModule, NonTrainableState):
         velocity_moment: Literal["kinetic_energy", "covariance"] = "kinetic_energy",
         maximum_packet_weight: float = np.finfo(np.float64).max,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         count = int(target_active_count)
         maximum = float(maximum_packet_weight)
         tolerance_ = float(tolerance)

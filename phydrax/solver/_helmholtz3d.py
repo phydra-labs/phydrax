@@ -50,7 +50,7 @@ class ExteriorHelmholtzDirichletResult3D(StrictModule):
         linear_result: LinearSolveResult,
         assembly_report: BoundaryOperatorAssemblyReport,
         boundary_residual_norm: Array,
-    ):
+    ) -> None:
         if not isinstance(potential, HelmholtzCombinedField3D):
             raise TypeError("potential must be HelmholtzCombinedField3D.")
         if not isinstance(linear_result, LinearSolveResult):

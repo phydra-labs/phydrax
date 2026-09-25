@@ -61,7 +61,7 @@ class RaggedTimeSeriesObservationAction(AbstractConditionOperator):
         /,
         *,
         components: Sequence[int] | None = None,
-    ):
+    ) -> None:
         field_ = str(field)
         if not field_:
             raise ValueError("Trajectory observation field name must be non-empty.")
@@ -214,7 +214,7 @@ class RaggedTimeSeriesCorrectionEvidence(StrictModule):
         observation_count: int,
         interpolation: RaggedTimeSeriesHardInterpolation,
         gate: RaggedTimeSeriesHardGate,
-    ):
+    ) -> None:
         self.provider_id = str(provider_id)
         self.action_id = str(action_id)
         self.observation_count = int(observation_count)
@@ -375,7 +375,7 @@ class RaggedTimeSeriesCorrectionAction(StrictModule):
         field_names: tuple[str, ...],
         evidence: RaggedTimeSeriesCorrectionEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(observation, RaggedTimeSeriesObservationAction):
             raise TypeError(
                 "RaggedTimeSeriesCorrectionAction requires a trajectory observation."
@@ -476,7 +476,7 @@ class RaggedTimeSeriesCorrectionProvider(StrictModule):
         gate: RaggedTimeSeriesHardGate = "sin2",
         components_output_width: int | None = None,
         snap_tol: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(observation, RaggedTimeSeriesObservationAction):
             raise TypeError(
                 "RaggedTimeSeriesCorrectionProvider requires a trajectory observation."
@@ -642,7 +642,7 @@ class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchEvaluator, DerivativeRulePr
         u_free: DomainFunction,
         table: _RaggedTimeSeriesTable,
         components: tuple[int, ...] | None,
-    ):
+    ) -> None:
         self.u_free = u_free
         self.table = table
         self.components = components
@@ -697,7 +697,7 @@ class _RaggedTimeSeriesHardAnsatzDerivative(
         u_free_derivatives: tuple[DomainFunction, ...],
         table: _RaggedTimeSeriesTable,
         components: tuple[int, ...] | None,
-    ):
+    ) -> None:
         self.order = int(order)
         self.u_free_derivatives = tuple(u_free_derivatives)
         self.table = table

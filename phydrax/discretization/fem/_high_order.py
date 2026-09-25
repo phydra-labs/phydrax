@@ -241,7 +241,7 @@ class ReferenceNodalFamily(StrictModule, NonTrainableState):
         /,
         *,
         node_set: NodeSet = "gauss-lobatto",
-    ):
+    ) -> None:
         cell, orders = _normalize_orders(cell_kind, order)
         axis_data = tuple(_axis_data(value, node_set) for value in orders)
         nodes = tuple(jnp.asarray(data[0]) for data in axis_data)
@@ -345,7 +345,7 @@ class TensorProductTabulation(StrictModule, NonTrainableState):
         family: ReferenceNodalFamily,
         points_by_axis: tuple[ArrayLike, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(family, ReferenceNodalFamily):
             raise TypeError("family must be ReferenceNodalFamily.")
         if (
@@ -431,7 +431,7 @@ class SumFactorizationPlan(StrictModule, NonTrainableState):
     tabulation: TensorProductTabulation
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, tabulation: TensorProductTabulation, /):
+    def __init__(self, tabulation: TensorProductTabulation, /) -> None:
         if not isinstance(tabulation, TensorProductTabulation):
             raise TypeError("tabulation must be TensorProductTabulation.")
         self.tabulation = tabulation
@@ -482,7 +482,7 @@ class QuadratureChunkPolicy(StrictModule, NonTrainableState):
     chunk_size: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, chunk_size: int, /):
+    def __init__(self, chunk_size: int, /) -> None:
         size = int(chunk_size)
         if size <= 0:
             raise ValueError("Quadrature chunk size must be positive.")
@@ -718,7 +718,7 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
     condition_number: float = eqx.field(static=True)
     family_id: str = eqx.field(static=True)
 
-    def __init__(self, cell_kind: str, order: int, /):
+    def __init__(self, cell_kind: str, order: int, /) -> None:
         cell = str(cell_kind)
         p = int(order)
         dimension = {"triangle": 2, "tetrahedron": 3}.get(cell)

@@ -212,7 +212,7 @@ class OperatorDriverBinding(StrictModule):
         *,
         kind: OperatorDriverKind,
         quantity: OperatorDriverQuantity,
-    ):
+    ) -> None:
         resolved_input = _name(input_name, owner="input_name")
         resolved_component = _name(component, owner="component")
         if kind not in ("wiener", "jump"):
@@ -266,7 +266,7 @@ class OperatorTransitionSpec(StrictModule):
         driver_bindings: Sequence[OperatorDriverBinding] = (),
         query_name: str = "query",
         output_field: str = "output",
-    ):
+    ) -> None:
         if not isinstance(output_spec, OperatorOutputSpec):
             raise TypeError("output_spec must be an OperatorOutputSpec.")
         state = _name(state_input, owner="state_input")
@@ -733,7 +733,7 @@ class OperatorProcessDistribution(AbstractProcessDistribution):
     batch_shape: tuple[int, ...] = eqx.field(static=True)
     uncertainty_source: Literal["process"] = eqx.field(static=True)
 
-    def __init__(self, distribution: AbstractOperatorDistribution, /):
+    def __init__(self, distribution: AbstractOperatorDistribution, /) -> None:
         if not isinstance(distribution, AbstractOperatorDistribution):
             raise TypeError("distribution must implement AbstractOperatorDistribution.")
         if distribution.uncertainty_source != "process":
@@ -777,7 +777,7 @@ class OperatorMarginalTransition(AbstractMarginalTransitionLaw):
         /,
         *,
         process_id: str,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractProbabilisticOperatorModel):
             raise TypeError(
                 "OperatorMarginalTransition requires an AbstractProbabilisticOperatorModel."
@@ -825,7 +825,7 @@ class OperatorPathwiseTransition(AbstractPathwiseTransition):
         /,
         *,
         process_id: str,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("OperatorPathwiseTransition model must be callable.")
         if not isinstance(spec, OperatorTransitionSpec):
@@ -903,7 +903,7 @@ class OperatorProcessTransition(StrictModule):
         /,
         *,
         process_id: str,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("OperatorProcessTransition model must be callable.")
         if not isinstance(spec, OperatorTransitionSpec):
@@ -953,7 +953,7 @@ class OperatorJumpTransition(StrictModule):
         /,
         *,
         process_id: str,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("OperatorJumpTransition model must be callable.")
         if not isinstance(spec, OperatorTransitionSpec):
@@ -1011,7 +1011,7 @@ class StochasticOperatorRollout(StrictModule):
         process_id: str,
         kind: OperatorTransitionKind,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(trajectory, StochasticTrajectory):
             raise TypeError("trajectory must be a StochasticTrajectory.")
         if kind not in ("marginal", "pathwise", "process"):

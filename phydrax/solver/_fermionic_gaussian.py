@@ -27,7 +27,7 @@ class FermionicGaussianProblem(StrictModule):
         /,
         *,
         problem_id: str = "fermionic-gaussian",
-    ):
+    ) -> None:
         if not isinstance(initial_state, FermionicGaussianState):
             raise TypeError("initial_state must be FermionicGaussianState.")
         drift_ = jnp.asarray(drift, dtype=jnp.float64)
@@ -85,7 +85,7 @@ class FermionicGaussianSolution(StrictModule):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         values = jnp.asarray(covariances)
         times_ = jnp.asarray(times)
         if (

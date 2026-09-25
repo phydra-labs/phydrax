@@ -29,7 +29,7 @@ class CalabiYauCampaign(StrictModule):
         hypersurface: ProjectiveHypersurface,
         problem: CalabiYauMetricProblem,
         /,
-    ):
+    ) -> None:
         self.name = str(name)
         self.hypersurface = hypersurface
         self.problem = problem

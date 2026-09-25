@@ -146,7 +146,7 @@ class OpenSimCylinderRouteWrapPlan(StrictModule, NonTrainableState):
         side: CylinderWrapSide = "shortest",
         event_tolerance_m: float = 1.0e-8,
         residual_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         if isinstance(sample_count, bool) or int(sample_count) != sample_count:
             raise ValueError("sample_count must be an integer.")
         if sample_count < 2:

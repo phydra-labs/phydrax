@@ -94,7 +94,7 @@ class ConservativeMultiblockInterfacePlan(StrictModule):
         *,
         left_side: InterfaceSide = "upper",
         right_side: InterfaceSide = "lower",
-    ):
+    ) -> None:
         if not isinstance(left, FiniteVolumeDiscretization) or not isinstance(
             right, FiniteVolumeDiscretization
         ):
@@ -234,7 +234,7 @@ class FiniteVolumeMultiblockRuntimePlan(StrictModule):
         interfaces: tuple[ConservativeMultiblockInterfacePlan, ...],
         positivity: FluxPositivityPlan,
         /,
-    ):
+    ) -> None:
         blocks = tuple(block_dynamics)
         interfaces_ = tuple(interfaces)
         if not blocks:

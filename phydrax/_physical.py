@@ -49,7 +49,7 @@ class SpatialCoordinateContract(StrictModule, NonTrainableState):
         length_coordinate_kind: LengthCoordinateKind = "physical",
         coordinate_system: str = "cartesian",
         reference_frame: str = "world",
-    ):
+    ) -> None:
         if not isinstance(length_unit, UnitDefinition):
             raise TypeError("length_unit must be a UnitDefinition.")
         if length_unit.dimension != LENGTH:
@@ -154,7 +154,7 @@ class DimensionalScaleContract(StrictModule, NonTrainableState):
         /,
         *,
         length_coordinate_kind: LengthCoordinateKind = "physical",
-    ):
+    ) -> None:
         if not all(
             isinstance(unit, UnitDefinition)
             for unit in (length_unit, mass_unit, time_unit)
@@ -372,7 +372,7 @@ class RelativityScaleContract(StrictModule, NonTrainableState):
         reduced_planck_constant: PhysicalConstant,
         boltzmann_constant: PhysicalConstant,
         quantum_constants_explicit: bool = True,
-    ):
+    ) -> None:
         if not isinstance(dimensional_scale, DimensionalScaleContract):
             raise TypeError("dimensional_scale must be a DimensionalScaleContract.")
         if not isinstance(quantum_constants_explicit, bool):

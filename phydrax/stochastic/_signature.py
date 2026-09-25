@@ -251,7 +251,7 @@ class PrimitiveBasis(StrictModule):
     )
     expansion_matrices: tuple[tuple[tuple[float, ...], ...], ...] = eqx.field(static=True)
 
-    def __init__(self, dimension: int, depth: int, /):
+    def __init__(self, dimension: int, depth: int, /) -> None:
         resolved_dimension = int(dimension)
         resolved_depth = _validate_depth(depth)
         if resolved_dimension <= 0:
@@ -433,7 +433,7 @@ class LogSignatureControl(AbstractRoughControl):
         joint_time: bool,
         source_id: str | None,
         realization: FractionalGaussianRealization | None,
-    ):
+    ) -> None:
         self.times = times
         self.fine_times = fine_times
         self.signature_levels = signature_levels

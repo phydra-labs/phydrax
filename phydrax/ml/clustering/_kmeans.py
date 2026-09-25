@@ -264,7 +264,7 @@ class KMeans(AbstractRecipe):
         initialization: ClusterInitialization = "k-means++",
         empty_policy: EmptyClusterPolicy = "reseed",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if cluster_count <= 0 or max_iterations <= 0 or tolerance < 0.0:
             raise ValueError("invalid k-means configuration.")
         _validate_cluster_policies(initialization, empty_policy)
@@ -316,7 +316,7 @@ class SoftKMeans(AbstractRecipe):
         initialization: ClusterInitialization = "k-means++",
         empty_policy: EmptyClusterPolicy = "reseed",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if cluster_count <= 0 or max_iterations <= 0:
             raise ValueError("cluster_count and max_iterations must be positive.")
         _validate_cluster_policies(initialization, empty_policy)
@@ -367,7 +367,7 @@ class KMedoids(AbstractRecipe):
         initialization: ClusterInitialization = "k-means++",
         empty_policy: EmptyClusterPolicy = "reseed",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if cluster_count <= 0 or max_iterations <= 0:
             raise ValueError("invalid k-medoids configuration.")
         _validate_cluster_policies(initialization, empty_policy)
@@ -481,7 +481,7 @@ class StreamingKMeans(StrictModule):
         centers: ArrayLike,
         cluster_mass: ArrayLike | None = None,
         updates: ArrayLike = 0,
-    ):
+    ) -> None:
         centers_ = jnp.asarray(centers)
         if centers_.ndim < 2:
             raise ValueError("centers must have shape case + (cluster, feature).")
@@ -566,7 +566,7 @@ class MiniBatchKMeans(AbstractRecipe):
         initialization: ClusterInitialization = "k-means++",
         empty_policy: EmptyClusterPolicy = "retain",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if cluster_count <= 0 or batch_size <= 0 or max_iterations <= 0:
             raise ValueError("invalid mini-batch k-means configuration.")
         _validate_cluster_policies(initialization, empty_policy)

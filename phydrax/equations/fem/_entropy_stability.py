@@ -37,7 +37,7 @@ class PhysicalBoundaryEntropyContract(StrictModule, NonTrainableState):
     supply: Any = eqx.field(static=True)
     contract_id: str = eqx.field(static=True)
 
-    def __init__(self, boundary_id: str, supply: Any, /):
+    def __init__(self, boundary_id: str, supply: Any, /) -> None:
         identifier = str(boundary_id)
         if not identifier or not callable(supply):
             raise ValueError("Boundary entropy contracts require ID and supply callable.")
@@ -112,7 +112,7 @@ class EntropyStableDGPlan(StrictModule, NonTrainableState):
         formulation: EntropyDGFormulation = "generalized_sbp",
         tolerance: float = 1.0e-10,
         boundary_contracts: Sequence[PhysicalBoundaryEntropyContract] = (),
-    ):
+    ) -> None:
         formulation_ = str(formulation)
         tolerance_ = float(tolerance)
         if (

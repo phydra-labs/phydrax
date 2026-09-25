@@ -45,7 +45,7 @@ class RaggedSeriesBatchInput(StrictModule):
         length: Array,
         sample_index: Array | None = None,
         sample_scale: Array | None = None,
-    ):
+    ) -> None:
         self.static = static
         self.series = series
         self.time = jnp.asarray(time, dtype=jnp.float64)
@@ -157,7 +157,7 @@ class RaggedSeriesModel(StrictModule, BatchEvaluator, ParameterOwner):
     model: Callable
     label: str
 
-    def __init__(self, model: Callable, /, *, label: str = "data"):
+    def __init__(self, model: Callable, /, *, label: str = "data") -> None:
         self.model = _ensure_special_kwonly_args(model)
         self.label = str(label)
 
@@ -215,7 +215,7 @@ class MaskedSeriesPoolingModel(StrictModule, ParameterOwner):
         include_static_in_steps: bool = False,
         include_static_in_readout: bool = True,
         scale_sampled_sum: bool = False,
-    ):
+    ) -> None:
         if reduction not in ("mean", "sum"):
             raise ValueError("reduction must be either 'mean' or 'sum'.")
         self.step_model = _ensure_special_kwonly_args(step_model)

@@ -29,7 +29,7 @@ class ComplexCoordinateConvention(StrictModule):
         chart: CoordinateChart,
         pairs: Sequence[tuple[int, int]] | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(chart, CoordinateChart):
             raise TypeError("Complex coordinates require a CoordinateChart.")
         if chart.dimension % 2:
@@ -88,7 +88,7 @@ class ComplexCoordinateConvention(StrictModule):
 class _ConstantComplexStructure(StrictModule):
     matrix: Array
 
-    def __init__(self, matrix: ArrayLike, /):
+    def __init__(self, matrix: ArrayLike, /) -> None:
         self.matrix = jnp.asarray(matrix)
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -107,7 +107,7 @@ class AlmostComplexStructure(StrictModule):
         /,
         *,
         chart: CoordinateChart,
-    ):
+    ) -> None:
         if not callable(matrix):
             raise TypeError("Almost-complex matrix must be callable.")
         if not isinstance(chart, CoordinateChart):
@@ -161,7 +161,7 @@ class AlmostComplexValidationReport(StrictModule):
         algebra_residual: ArrayLike,
         nijenhuis_residual: ArrayLike,
         integrable: ArrayLike,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.algebra_residual = jnp.asarray(algebra_residual)

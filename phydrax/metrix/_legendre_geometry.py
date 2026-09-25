@@ -78,7 +78,7 @@ class LegendreGeometry(StrictModule):
         primal_support: ChartSupport,
         dual_support: ChartSupport,
         geometry_id: str,
-    ):
+    ) -> None:
         if not isinstance(hessian_geometry, HessianGeometry):
             raise TypeError("hessian_geometry must be a HessianGeometry.")
         if not callable(inverse_dual_coordinates):
@@ -292,7 +292,7 @@ class LegendreValidationReport(StrictModule):
         maximum_fenchel_young_diagonal_gap: ArrayLike,
         maximum_bregman_diagonal_error: ArrayLike,
         precision_evidence: PrecisionEvidenceEnvelope,
-    ):
+    ) -> None:
         if not isinstance(metric_validation, MetricValidationReport):
             raise TypeError("metric_validation must be a MetricValidationReport.")
         if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):

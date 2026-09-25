@@ -54,7 +54,7 @@ class CR3BPSystem(StrictModule, NonTrainableState):
         /,
         *,
         collision_radius: ArrayLike = 0.0,
-    ):
+    ) -> None:
         ratio_host = float(np.asarray(mass_ratio))
         collision_host = float(np.asarray(collision_radius))
         if not np.isfinite(ratio_host) or not 0.0 < ratio_host <= 0.5:

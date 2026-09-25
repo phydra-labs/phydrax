@@ -32,7 +32,7 @@ class PoleSet(StrictModule, NonTrainableState):
     orders: tuple[int, ...] = eqx.field(static=True)
     pole_set_id: str = eqx.field(static=True)
 
-    def __init__(self, locations: ArrayLike, orders: Sequence[int], /):
+    def __init__(self, locations: ArrayLike, orders: Sequence[int], /) -> None:
         locations_raw = np.asarray(locations, dtype=np.complex128)
         orders_ = tuple(orders)
         if locations_raw.ndim != 1 or locations_raw.size == 0:
@@ -66,7 +66,7 @@ class TrainablePoleSet(StrictModule, ParameterOwner):
     location_imag: Array
     orders: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, locations: ArrayLike, orders: Sequence[int], /):
+    def __init__(self, locations: ArrayLike, orders: Sequence[int], /) -> None:
         fixed = PoleSet(locations, orders)
         self.location_real = jnp.real(fixed.locations)
         self.location_imag = jnp.imag(fixed.locations)
@@ -105,7 +105,7 @@ class MeromorphicLinearFrameCertificate(AbstractConstructionCertificate):
         maximum_derivative_order: int,
         normalization_id: str,
         pole_set_id: str,
-    ):
+    ) -> None:
         output = int(complex_output_size)
         coefficient_count = int(real_coefficient_count)
         derivative = int(maximum_derivative_order)
@@ -149,7 +149,7 @@ class MeromorphicMapCertificate(AbstractConstructionCertificate):
         *,
         parameter_mode: str,
         construction_dependency: str,
-    ):
+    ) -> None:
         mode = str(parameter_mode)
         dependency = str(construction_dependency)
         if not mode or not dependency:
@@ -190,7 +190,7 @@ class PoleClearanceReport(StrictModule, NonTrainableState):
         center: complex,
         radius: float,
         required_clearance: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(poles, PoleSet):
             raise TypeError("poles must be PoleSet.")
         center_ = complex(center)
@@ -257,7 +257,7 @@ class DomainHolomorphicCertificate(StrictModule, NonTrainableState):
         meromorphic: MeromorphicMapCertificate,
         clearance: PoleClearanceReport,
         /,
-    ):
+    ) -> None:
         if not isinstance(meromorphic, MeromorphicMapCertificate):
             raise TypeError("meromorphic must be MeromorphicMapCertificate.")
         if not isinstance(clearance, PoleClearanceReport):
@@ -302,7 +302,7 @@ class MeromorphicLinearFrame(StrictModule, NonTrainableState):
         *,
         normalization: ComplexAffineNormalization | None = None,
         maximum_derivative_order: int = 4,
-    ):
+    ) -> None:
         degree = int(regular_degree)
         output = int(complex_output_size)
         derivative = int(maximum_derivative_order)
@@ -398,7 +398,7 @@ class ConstrainedMeromorphicPotential(StrictModule, ParameterOwner):
         /,
         *,
         initial_free_coordinates: ArrayLike | None = None,
-    ):
+    ) -> None:
         frame = coefficient_map.operator.plan.frame
         certificate = frame.linear_frame_certificate()
         if not isinstance(certificate, MeromorphicLinearFrameCertificate):
@@ -479,7 +479,7 @@ class MeromorphicVariableProjectionPlan(StrictModule, NonTrainableState):
         regular_degree: int,
         pole_orders: Sequence[int],
         /,
-    ):
+    ) -> None:
         coordinates_ = jnp.asarray(coordinates)
         observations_ = jnp.asarray(observations)
         degree = int(regular_degree)

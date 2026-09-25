@@ -60,7 +60,7 @@ class LPDOQuantumProgramPolicy(StrictModule):
         trace_preservation_tolerance: float = 1e-6,
         trace_tolerance: float = 1e-6,
         maximum_discarded_weight: float = 1e-6,
-    ):
+    ) -> None:
         integers = (
             int(maximum_bond_dimension),
             int(maximum_purification_dimension),
@@ -288,7 +288,7 @@ def plan_lpdo_quantum_program(
     )
 
 
-def _validate_schema(program, plan):
+def _validate_schema(program, plan) -> None:
     if program.program_id != plan.program_id:
         raise ValueError("Quantum-program structure changed; replan is required.")
     routes = tuple(

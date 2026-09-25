@@ -175,7 +175,7 @@ class MigrationEdge(StrictModule, NonTrainableState):
         *,
         migration_id: str,
         lossy: bool = False,
-    ):
+    ) -> None:
         source = _identifier(source_format_id, "source-format ID")
         target = _identifier(target_format_id, "target-format ID")
         if source == target:
@@ -245,7 +245,7 @@ class MigrationReport(StrictModule, NonTrainableState):
         migration_ids: Sequence[str],
         lineage: Sequence[str],
         lossy: bool,
-    ):
+    ) -> None:
         input_format = _identifier(input_format_id, "input-format ID")
         output_format = _identifier(output_format_id, "output-format ID")
         input_value = _object(input_record, "Migration input record")
@@ -397,7 +397,7 @@ class CompatibilityRegistry(StrictModule, NonTrainableState):
         current_writer_id: str,
         edges: Sequence[MigrationEdge],
         /,
-    ):
+    ) -> None:
         current = _identifier(current_writer_id, "current-writer ID")
         if not isinstance(edges, Sequence) or isinstance(edges, (str, bytes)):
             raise TypeError("edges must be a sequence of MigrationEdge values.")

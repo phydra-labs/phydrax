@@ -36,7 +36,9 @@ class FunctionalPrecisionPolicy(StrictModule, NonTrainableState):
     matmul_precision: FunctionalMatmulPrecision = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, matmul_precision: FunctionalMatmulPrecision = "default", /):
+    def __init__(
+        self, matmul_precision: FunctionalMatmulPrecision = "default", /
+    ) -> None:
         if matmul_precision not in (
             "default",
             "high",

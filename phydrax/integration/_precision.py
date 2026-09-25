@@ -38,7 +38,7 @@ class IntegrationPrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: Any | None = None,
         decision_dtype: Any | None = None,
         output_dtype: Any | None = None,
-    ):
+    ) -> None:
         evaluation = (
             None
             if evaluation_dtype is None

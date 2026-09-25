@@ -47,7 +47,7 @@ class ActivationObservationPlan(StrictModule, NonTrainableState):
         /,
         *,
         threshold: float,
-    ):
+    ) -> None:
         if isinstance(node_count, bool) or not isinstance(node_count, int):
             raise TypeError("node_count must be an integer.")
         if node_count <= 0:
@@ -342,7 +342,7 @@ class ChordConductionVelocityPlan(StrictModule, NonTrainableState):
         target_node_id: int,
         distance_mm: float,
         /,
-    ):
+    ) -> None:
         if not isinstance(activation_plan, ActivationObservationPlan):
             raise TypeError("activation_plan must be an ActivationObservationPlan.")
         source = int(source_node_id)

@@ -74,7 +74,7 @@ class KSGSCoefficients(StrictModule, NonTrainableState):
         buoyancy: float,
         production_limit: float,
         /,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -113,7 +113,7 @@ class LowReKSGSCoefficients(StrictModule, NonTrainableState):
     viscous_dissipation: float = eqx.field(static=True)
     coefficient_id: str = eqx.field(static=True)
 
-    def __init__(self, damping: float, viscous_dissipation: float, /):
+    def __init__(self, damping: float, viscous_dissipation: float, /) -> None:
         damping_ = float(damping)
         dissipation_ = float(viscous_dissipation)
         if any(
@@ -167,7 +167,7 @@ class KSGSInputs(StrictModule):
         molecular_kinematic_viscosity: ArrayLike,
         diffusion_rate: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(filter_scale, LESFilterScale):
             raise TypeError("filter_scale must be LESFilterScale.")
         gradient = _inexact(velocity_gradient)
@@ -185,7 +185,9 @@ class BuoyancyKSGSInputs(StrictModule):
     base: KSGSInputs
     buoyancy_frequency_squared: Array
 
-    def __init__(self, base: KSGSInputs, buoyancy_frequency_squared: ArrayLike, /):
+    def __init__(
+        self, base: KSGSInputs, buoyancy_frequency_squared: ArrayLike, /
+    ) -> None:
         if not isinstance(base, KSGSInputs):
             raise TypeError("base must be KSGSInputs.")
         self.base = base
@@ -217,7 +219,7 @@ class DynamicKSGSInputs(StrictModule):
         averaging_weight: ArrayLike,
         accept_update: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(base, KSGSInputs):
             raise TypeError("base must be KSGSInputs.")
         leonard = _inexact(leonard_stress)
@@ -246,7 +248,7 @@ class LowReKSGSInputs(StrictModule):
         wall_distance: ArrayLike,
         sqrt_kinetic_energy_gradient: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(base, KSGSInputs):
             raise TypeError("base must be KSGSInputs.")
         distance = _inexact(wall_distance)
@@ -363,7 +365,7 @@ class StaticKSGSPlan(AbstractKSGSPlan):
 
     def __init__(
         self, coefficients: KSGSCoefficients, provenance: LESParameterProvenance, /
-    ):
+    ) -> None:
         _assign_plan(self, coefficients, provenance, "static-ksgs")
 
     def evaluate(self, state: KSGSState, inputs: object, /) -> KSGSResult:
@@ -379,7 +381,7 @@ class BuoyancyKSGSPlan(AbstractKSGSPlan):
 
     def __init__(
         self, coefficients: KSGSCoefficients, provenance: LESParameterProvenance, /
-    ):
+    ) -> None:
         _assign_plan(self, coefficients, provenance, "buoyancy-ksgs")
 
     def evaluate(self, state: KSGSState, inputs: object, /) -> KSGSResult:
@@ -414,7 +416,7 @@ class DynamicKSGSPlan(AbstractKSGSPlan):
         test_filter: ResolvedLESFilter,
         test_filter_scale_ratio: float,
         /,
-    ):
+    ) -> None:
         if not isinstance(test_filter, ResolvedLESFilter):
             raise TypeError("test_filter must be ResolvedLESFilter.")
         ratio = float(test_filter_scale_ratio)
@@ -493,7 +495,7 @@ class LowReKSGSPlan(AbstractKSGSPlan):
         low_re_coefficients: LowReKSGSCoefficients,
         provenance: LESParameterProvenance,
         /,
-    ):
+    ) -> None:
         if not isinstance(low_re_coefficients, LowReKSGSCoefficients):
             raise TypeError("low_re_coefficients must be LowReKSGSCoefficients.")
         _assign_plan(self, coefficients, provenance, "low-re-ksgs", low_re_coefficients)

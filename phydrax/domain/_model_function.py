@@ -40,7 +40,7 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
         domain_labels: tuple[str, ...],
         deps: tuple[str, ...],
         binding: ModelBinding,
-    ):
+    ) -> None:
 
         if not callable(model):
             raise TypeError("Domain models must be callable.")

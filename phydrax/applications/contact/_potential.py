@@ -39,7 +39,7 @@ class ConvergentContactPotentialPlan(StrictModule, NonTrainableState):
         *,
         geometry_tolerance: float = 1.0e-12,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         activation = float(activation_distance)
         tolerance = float(geometry_tolerance)
         stiffness_ = jnp.asarray(stiffness)
@@ -106,7 +106,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: ConvergentContactPotentialPlan, scene: PreparedCollisionScene, /
-    ):
+    ) -> None:
         if not isinstance(plan, ConvergentContactPotentialPlan):
             raise TypeError("plan must be ConvergentContactPotentialPlan.")
         if not isinstance(scene, PreparedCollisionScene):

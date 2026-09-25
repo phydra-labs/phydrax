@@ -40,7 +40,7 @@ class LatticeBoltzmannWallLedger(StrictModule):
         work: Array,
         fluid_work: Array,
         /,
-    ):
+    ) -> None:
         self.fluid_impulse = fluid_impulse
         self.body_impulse = body_impulse
         self.force = force

@@ -55,7 +55,7 @@ class PreparedRigidJointCoordinates(StrictModule, NonTrainableState):
     graph: PreparedRigidJointGraph
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, graph: PreparedRigidJointGraph, /):
+    def __init__(self, graph: PreparedRigidJointGraph, /) -> None:
         if not isinstance(graph, PreparedRigidJointGraph):
             raise TypeError("graph must be a PreparedRigidJointGraph.")
         self.graph = graph

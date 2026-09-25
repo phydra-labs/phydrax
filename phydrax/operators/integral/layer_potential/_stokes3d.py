@@ -69,7 +69,7 @@ class StokesLayerKernel3D(StrictModule):
     contract: StokesBoundaryContract3D = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, viscosity: ArrayLike, /):
+    def __init__(self, viscosity: ArrayLike, /) -> None:
         mu = jnp.asarray(viscosity, dtype=jnp.float64)
         if mu.shape != () or not bool(jnp.isfinite(mu) & (mu > 0.0)):
             raise ValueError("viscosity must be one finite positive scalar.")
@@ -202,7 +202,7 @@ class StokesLayerPotential3D(_AbstractTrialSpaceField):
         viscosity: ArrayLike,
         kind: Literal["single", "double"] = "single",
         density: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(panelization, SurfacePanelization3D):
             raise TypeError("panelization must be SurfacePanelization3D.")
         if kind not in ("single", "double"):
@@ -426,7 +426,7 @@ class StokesSingleLayerDP0Policy3D(StrictModule, NonTrainableState):
         max_matrix_bytes: int = 64 * 1024 * 1024,
         max_preparation_workspace_bytes: int = 64 * 1024 * 1024,
         precision: IntegrationPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         regular, singular = int(regular_order), int(singular_order)
         if regular < 2 or singular < 2:
             raise ValueError("Stokes Galerkin quadrature orders must be at least two.")

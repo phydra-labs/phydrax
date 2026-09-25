@@ -61,7 +61,7 @@ class ElectronicManifoldResult(StrictModule, NonTrainableState):
         symmetry_sector: str | None = None,
         magnetic_transition_dipoles: ArrayLike | None = None,
         rotatory_strengths: ArrayLike | None = None,
-    ):
+    ) -> None:
         excitation = jnp.asarray(excitation_energies)
         absolute = jnp.asarray(absolute_energies, dtype=excitation.dtype)
         electric_input = jnp.asarray(electric_transition_dipoles)

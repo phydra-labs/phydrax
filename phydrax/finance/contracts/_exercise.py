@@ -54,7 +54,7 @@ class ExerciseSchedule(StrictModule, NonTrainableState):
         style: ExerciseStyle,
         notice_days: int = 0,
         capacity: int | None = None,
-    ):
+    ) -> None:
         values = tuple(dates)
         if not values or not all(isinstance(value, FinanceDate) for value in values):
             raise TypeError("dates must contain at least one FinanceDate.")
@@ -155,7 +155,7 @@ class SettlementTerms(StrictModule, NonTrainableState):
         calendar_id: str,
         business_day_rule: BusinessDayRule,
         settlement_type: SettlementType = SettlementType.CASH,
-    ):
+    ) -> None:
         if not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency.")
         if (

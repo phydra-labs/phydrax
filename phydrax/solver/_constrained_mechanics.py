@@ -23,7 +23,7 @@ class ConstrainedMechanicalState(StrictModule):
     configuration: Array
     momentum: Array
 
-    def __init__(self, configuration: ArrayLike, momentum: ArrayLike, /):
+    def __init__(self, configuration: ArrayLike, momentum: ArrayLike, /) -> None:
         configuration_ = jnp.asarray(configuration)
         momentum_ = jnp.asarray(momentum)
         if configuration_.ndim != 1 or momentum_.shape != configuration_.shape:
@@ -62,7 +62,7 @@ class SHAKERATTLEPlan:
         maximum_projection_steps: int = 8,
         constraint_tolerance: float = 1.0e-10,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         inverse_mass_ = jnp.asarray(inverse_mass)
         if inverse_mass_.ndim != 1 or inverse_mass_.size == 0:
             raise ValueError("inverse_mass must be a non-empty vector.")

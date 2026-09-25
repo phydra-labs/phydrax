@@ -49,7 +49,7 @@ class DarkSectorSpeciesPlan(StrictModule, NonTrainableState):
         charges: ArrayLike = (),
         mass_unit: str = "physical-mass",
         energy_unit: str = "physical-energy",
-    ):
+    ) -> None:
         identifier = str(species_id).strip()
         mass_ = float(mass)
         energy = float(internal_energy)

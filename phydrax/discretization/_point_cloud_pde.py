@@ -43,7 +43,7 @@ class PointBoundaryPlan(StrictModule):
         /,
         *,
         robin_coefficient: ArrayLike | None = None,
-    ):
+    ) -> None:
         if kind not in ("dirichlet", "neumann", "robin"):
             raise ValueError("Unknown point-cloud boundary kind.")
         values_ = jnp.asarray(values)
@@ -150,7 +150,7 @@ class DissipativePointDiffusion(StrictModule, NonTrainableState):
         discretization: PreparedPointCloudDiscretization,
         diffusivity: ArrayLike = 1.0,
         /,
-    ):
+    ) -> None:
         count = discretization.state_shape[0]
         coefficient = jnp.broadcast_to(
             jnp.asarray(diffusivity, dtype=jnp.float64), (count,)
@@ -315,7 +315,7 @@ class PointConormalInterface(StrictModule):
         /,
         *,
         jump: ArrayLike = 0.0,
-    ):
+    ) -> None:
         left_host = np.asarray(left_indices)
         right_host = np.asarray(right_indices)
         if (
@@ -369,7 +369,7 @@ class DistributedPointPartition(StrictModule, NonTrainableState):
     partition_count: int = eqx.field(static=True)
     partition_id: str = eqx.field(static=True)
 
-    def __init__(self, owners: ArrayLike, partition_count: int, /):
+    def __init__(self, owners: ArrayLike, partition_count: int, /) -> None:
         owners_host = np.asarray(owners)
         count = int(partition_count)
         if (

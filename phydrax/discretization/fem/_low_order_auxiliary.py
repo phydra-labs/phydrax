@@ -35,7 +35,7 @@ class LowOrderAuxiliaryOperatorPlan(StrictModule, NonTrainableState):
         anterpolation: AbstractLinearOperator,
         multiplicity_weight: object,
         /,
-    ):
+    ) -> None:
         if not isinstance(interpolation, AbstractLinearOperator) or not isinstance(
             anterpolation, AbstractLinearOperator
         ):
@@ -76,7 +76,7 @@ class LowOrderAuxiliaryPreconditioner(AbstractPreconditioner):
         plan: LowOrderAuxiliaryOperatorPlan,
         low_order_preconditioner: AbstractPreconditioner,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, LowOrderAuxiliaryOperatorPlan) or not isinstance(
             low_order_preconditioner, AbstractPreconditioner
         ):

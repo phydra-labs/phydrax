@@ -36,7 +36,7 @@ class DynamicalMapSeriesPhysicality(StrictModule):
         intermediate_condition_numbers: ArrayLike,
         intermediate_solve_residuals: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.cp_margins = jnp.asarray(cp_margins)
         self.trace_preservation_residuals = jnp.asarray(trace_preservation_residuals)
         self.intermediate_cp_margins = jnp.asarray(intermediate_cp_margins)

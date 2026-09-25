@@ -27,7 +27,7 @@ class PDEConditionedInput(StrictModule):
     batch: OperatorBatch
     tokens: PDETokenBatch
 
-    def __init__(self, batch: OperatorBatch, tokens: PDETokenBatch, /):
+    def __init__(self, batch: OperatorBatch, tokens: PDETokenBatch, /) -> None:
         if not isinstance(batch, OperatorBatch):
             raise TypeError("PDEConditionedInput batch must be an OperatorBatch.")
         if not isinstance(tokens, PDETokenBatch):
@@ -83,7 +83,7 @@ class PDEConditionedOperator(AbstractOperatorModel):
         /,
         *,
         input_name: str = "equation",
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractOperatorModel):
             raise TypeError("PDEConditionedOperator requires an operator model.")
         if not isinstance(encoder, PDEConditionEncoder):

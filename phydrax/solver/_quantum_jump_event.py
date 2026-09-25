@@ -42,7 +42,7 @@ class QuantumJumpEventTable(StrictModule):
         thresholds: ArrayLike,
         active: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.times = jnp.asarray(times)
         self.channels = jnp.asarray(channels, dtype=jnp.int32)
         self.root_residuals = jnp.asarray(root_residuals)
@@ -74,7 +74,7 @@ class EventDrivenQuantumJumpResult(StrictModule):
         status: int | Array = int(QuantumTrajectoryStatus.SUCCESS),
         saturated: bool = False,
         successful: bool = True,
-    ):
+    ) -> None:
         self.states = jnp.asarray(states)
         self.times = jnp.asarray(times)
         self.events = events

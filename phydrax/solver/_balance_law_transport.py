@@ -55,7 +55,7 @@ class BalanceLawSourceView(StrictModule):
         *,
         component_names: tuple[str, ...],
         transport_id: str,
-    ):
+    ) -> None:
         average = jnp.asarray(cell_average)
         volumes = jnp.asarray(cell_volumes)
         active = jnp.asarray(active_cell_mask, dtype=jnp.bool_)
@@ -211,7 +211,7 @@ class AbstractPreparedBalanceLawTransport(StrictModule):
 class PreparedFiniteVolumeBalanceLawTransport(AbstractPreparedBalanceLawTransport):
     runtime: PreparedFiniteVolumeRuntime
 
-    def __init__(self, runtime: PreparedFiniteVolumeRuntime, /):
+    def __init__(self, runtime: PreparedFiniteVolumeRuntime, /) -> None:
         if not isinstance(runtime, PreparedFiniteVolumeRuntime):
             raise TypeError("runtime must be PreparedFiniteVolumeRuntime.")
         names = tuple(runtime.dynamics.system.component_names)
@@ -368,7 +368,7 @@ class PreparedFiniteVolumeBalanceLawTransport(AbstractPreparedBalanceLawTranspor
 class PreparedConstrainedMHDBalanceLawTransport(AbstractPreparedBalanceLawTransport):
     integrator: ConstrainedMHDSSPRK3Plan
 
-    def __init__(self, integrator: ConstrainedMHDSSPRK3Plan, /):
+    def __init__(self, integrator: ConstrainedMHDSSPRK3Plan, /) -> None:
         if not isinstance(integrator, ConstrainedMHDSSPRK3Plan):
             raise TypeError("integrator must be ConstrainedMHDSSPRK3Plan.")
         dynamics = integrator.spatial.dynamics

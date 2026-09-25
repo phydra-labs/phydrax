@@ -78,7 +78,7 @@ class CouplingProblem(StrictModule, NonTrainableState):
         args: Any = None,
         resources: CouplingResourcePolicy | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(graph, CouplingGraph):
             raise TypeError("graph must be CouplingGraph.")
         if not isinstance(policy, AbstractCouplingPolicy):
@@ -183,7 +183,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
         retention: CouplingRetentionPolicy = "final",
         checkpoint_stride: int = 1,
         replay: FixedStepReplayPolicy | None = None,
-    ):
+    ) -> None:
         if retention not in ("final", "checkpoints", "trajectory"):
             raise ValueError("Unknown coupling retention policy.")
         stride = int(checkpoint_stride)

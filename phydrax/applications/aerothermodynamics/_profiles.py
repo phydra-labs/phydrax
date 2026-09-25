@@ -39,7 +39,7 @@ class IonizedContinuumProfile(StrictModule):
 
     def __init__(
         self, system, thermochemical_source, plasma_transport, /, *, electrostatic=None
-    ):
+    ) -> None:
         if (
             not isinstance(
                 system,
@@ -85,7 +85,7 @@ class RadiatingContinuumProfile(StrictModule):
         continuum: IonizedContinuumProfile,
         radiation: MultigroupRadiationMatterProcessPlan,
         /,
-    ):
+    ) -> None:
         if (
             not isinstance(continuum, IonizedContinuumProfile)
             or not isinstance(radiation, MultigroupRadiationMatterProcessPlan)
@@ -112,7 +112,7 @@ class AblatingEntryProfile(StrictModule):
     recession: FixedConnectivityRecessionPlan
     profile_id: str = eqx.field(static=True)
 
-    def __init__(self, radiating, wall, material, interface, recession, /):
+    def __init__(self, radiating, wall, material, interface, recession, /) -> None:
         if (
             not isinstance(radiating, RadiatingContinuumProfile)
             or not isinstance(wall, ReactingPlasmaWallPlan)
@@ -144,7 +144,7 @@ class RarefiedDSMCProfile(StrictModule, NonTrainableState):
     dsmc: DSMCProductionPlan
     profile_id: str = eqx.field(static=True)
 
-    def __init__(self, dsmc: DSMCProductionPlan, /):
+    def __init__(self, dsmc: DSMCProductionPlan, /) -> None:
         if not isinstance(dsmc, DSMCProductionPlan):
             raise TypeError("Rarefied profile requires DSMCProductionPlan.")
         self.dsmc = dsmc
@@ -159,7 +159,7 @@ class FixedContinuumDSMCProfile(StrictModule):
     interface: ContinuumDSMCInterfacePlan
     profile_id: str = eqx.field(static=True)
 
-    def __init__(self, continuum, rarefied, interface, /):
+    def __init__(self, continuum, rarefied, interface, /) -> None:
         if (
             not isinstance(continuum, IonizedContinuumProfile)
             or not isinstance(rarefied, RarefiedDSMCProfile)
@@ -190,7 +190,7 @@ class DynamicContinuumDSMCProfile(StrictModule):
         fixed: FixedContinuumDSMCProfile,
         ownership: HybridOwnershipEpochPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(fixed, FixedContinuumDSMCProfile) or not isinstance(
             ownership, HybridOwnershipEpochPlan
         ):

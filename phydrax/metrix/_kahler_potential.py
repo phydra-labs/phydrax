@@ -24,7 +24,7 @@ def _realify_hermitian(matrix: Array, /) -> Array:
 class _KahlerPotentialMetricMap(StrictModule):
     geometry: KahlerPotentialGeometry
 
-    def __init__(self, geometry: KahlerPotentialGeometry, /):
+    def __init__(self, geometry: KahlerPotentialGeometry, /) -> None:
         self.geometry = geometry
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -46,7 +46,7 @@ class KahlerPotentialGeometry(StrictModule):
         convention: ComplexCoordinateConvention,
         potential: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         if not isinstance(reference_metric, RiemannianMetric):
             raise TypeError("reference_metric must be a RiemannianMetric.")
         if not isinstance(convention, ComplexCoordinateConvention):

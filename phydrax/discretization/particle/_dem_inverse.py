@@ -39,7 +39,7 @@ class DEMInverseProblem(StrictModule, NonTrainableState):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         if not callable(forward_case):
             raise TypeError("forward_case must be callable.")
         observation = jnp.asarray(observations)

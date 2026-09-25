@@ -117,7 +117,7 @@ class ReducedSemiImplicitVelocityEulerStepPolicy(StrictModule):
         absolute_energy_tolerance: float = 1.0e-6,
         relative_energy_tolerance: float = 1.0e-4,
         inverse_forward_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         maximum = float(maximum_step_size)
         absolute = float(absolute_energy_tolerance)
         relative = float(relative_energy_tolerance)

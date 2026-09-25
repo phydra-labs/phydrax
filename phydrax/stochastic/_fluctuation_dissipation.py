@@ -53,7 +53,7 @@ class IsothermalPortHamiltonianDynamics(StrictModule):
         *,
         temperature: float,
         process_id: str,
-    ):
+    ) -> None:
         from ..nn.models import PortHamiltonianVectorField
 
         if not isinstance(field, PortHamiltonianVectorField):
@@ -268,7 +268,7 @@ class IsothermalPortHamiltonianTransitionKernel(AbstractTransitionKernel):
         /,
         *,
         approximation_id: str = "euler-maruyama",
-    ):
+    ) -> None:
         if not isinstance(dynamics, IsothermalPortHamiltonianDynamics):
             raise TypeError("dynamics must be IsothermalPortHamiltonianDynamics.")
         self.dynamics = dynamics

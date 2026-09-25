@@ -45,7 +45,7 @@ class BoundaryStageContext(StrictModule):
         /,
         *,
         stage_id: str,
-    ):
+    ) -> None:
         names = tuple(str(value) for value in axis_names)
         coordinate_values = tuple(jnp.asarray(value) for value in coordinates)
         identifier = str(stage_id)
@@ -119,7 +119,7 @@ class CellGhostBoundary(StrictModule, NonTrainableState):
         lower_beta: float = 1.0,
         upper_alpha: float = 1.0,
         upper_beta: float = 1.0,
-    ):
+    ) -> None:
         axis_ = int(axis)
         allowed = ("periodic", "dirichlet", "neumann", "robin")
         if axis_ < 0 or lower_kind not in allowed or upper_kind not in allowed:
@@ -291,7 +291,7 @@ class NodalBoundaryRuntime(StrictModule, NonTrainableState):
         lower_beta: float = 1.0,
         upper_alpha: float = 1.0,
         upper_beta: float = 1.0,
-    ):
+    ) -> None:
         axis_ = int(axis)
         kinds = (lower_kind, upper_kind)
         coefficients = tuple(
@@ -455,7 +455,7 @@ class BoundaryWorkspace(StrictModule):
         runtime_ids: tuple[str, ...],
         stage_id: str,
         /,
-    ):
+    ) -> None:
         original = jnp.asarray(original_values)
         names = tuple(str(value) for value in axis_names)
         values = tuple(jnp.asarray(value) for value in axis_values)
@@ -515,7 +515,7 @@ class ConformingInterfaceRuntime(StrictModule, NonTrainableState):
     axis: str = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
 
-    def __init__(self, field_name: str, axis: str, /):
+    def __init__(self, field_name: str, axis: str, /) -> None:
         field = str(field_name)
         axis_ = str(axis)
         if not field or not axis_:

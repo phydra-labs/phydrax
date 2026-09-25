@@ -59,7 +59,7 @@ class BloodOxygenModel(StrictModule, NonTrainableState):
         maximum_partial_pressure_kPa: float = 80.0,
         inversion_steps: int = 64,
         inversion_tolerance_mL_per_dL: float = 1.0e-8,
-    ):
+    ) -> None:
         hemoglobin = float(hemoglobin_g_per_dL)
         capacity = float(binding_capacity_mL_per_g)
         solubility = float(solubility_mL_per_dL_kPa)
@@ -385,7 +385,7 @@ class OxygenTransportPlan(StrictModule, NonTrainableState):
         *,
         inflow_cell_index: ArrayLike = (),
         outflow_cell_index: ArrayLike = (),
-    ):
+    ) -> None:
         volumes_host = np.asarray(cell_volume_mm3, dtype=np.float64)
         source_host = np.asarray(source_index, dtype=np.int32)
         destination_host = np.asarray(destination_index, dtype=np.int32)
@@ -616,7 +616,7 @@ class MembraneOxygenatorModel(StrictModule, NonTrainableState):
         *,
         minimum_flow_mm3_per_ms: float,
         maximum_flow_mm3_per_ms: float,
-    ):
+    ) -> None:
         if not isinstance(blood_model, BloodOxygenModel):
             raise TypeError("blood_model must be a BloodOxygenModel.")
         pressure = float(gas_partial_pressure_kPa)

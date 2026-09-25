@@ -48,7 +48,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
         value_shape: tuple[int, ...] = (),
         tabulator: Callable | None = None,
         tabulator_id: str | None = None,
-    ):
+    ) -> None:
         family_ = str(family)
         cell = str(cell_kind)
         order = int(degree)

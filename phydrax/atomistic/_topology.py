@@ -98,7 +98,7 @@ class MolecularTopologyPlan(StrictModule, NonTrainableState):
         torsion_type_ids: ArrayLike | None = None,
         improper_type_ids: ArrayLike | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         bonds_ = _canonical_pairs("bonds", _interaction_table("bonds", bonds, 2))
         angles_ = _interaction_table("angles", angles, 3)
         torsions_ = _interaction_table("torsions", torsions, 4)
@@ -207,7 +207,9 @@ class PreparedMolecularTopology(StrictModule, NonTrainableState):
     particle_discretization_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MolecularTopologyPlan, particles: ParticleDiscretization, /):
+    def __init__(
+        self, plan: MolecularTopologyPlan, particles: ParticleDiscretization, /
+    ) -> None:
         if not isinstance(plan, MolecularTopologyPlan):
             raise TypeError("plan must be a MolecularTopologyPlan.")
         if not isinstance(particles, ParticleDiscretization):

@@ -62,7 +62,7 @@ class TetrahedralNedelecSpace(StrictModule, NonTrainableState):
     cell_space: ArraySpace
     space_id: str = eqx.field(static=True)
 
-    def __init__(self, mesh: CellMesh, /, *, geometry_tolerance: float = 1e-12):
+    def __init__(self, mesh: CellMesh, /, *, geometry_tolerance: float = 1e-12) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("Tetrahedral H(curl) space requires CellMesh.")
         if mesh.topological_dimension != 3 or mesh.ambient_dimension != 3:

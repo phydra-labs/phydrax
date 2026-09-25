@@ -80,7 +80,7 @@ class ArrayAffineStabilityBound(AbstractStabilityBoundEvaluator):
         error_space_id: str,
         support_id: str,
         evidence_id: str,
-    ):
+    ) -> None:
         weights_ = jnp.asarray(weights)
         offset_ = jnp.asarray(offset, dtype=weights_.dtype)
         lower_ = jnp.asarray(lower, dtype=weights_.dtype)
@@ -211,7 +211,7 @@ class AffineROMCertification(StrictModule, NonTrainableState):
         residual_norm: ResidualDualNormArtifact,
         stability: AbstractStabilityBoundEvaluator,
         /,
-    ):
+    ) -> None:
         if not isinstance(residual_norm, ResidualDualNormArtifact):
             raise TypeError("residual_norm must be a ResidualDualNormArtifact.")
         if not isinstance(stability, AbstractStabilityBoundEvaluator):

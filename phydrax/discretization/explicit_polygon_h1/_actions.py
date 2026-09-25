@@ -53,7 +53,7 @@ class ExplicitPolygonH1ReferenceActions(LocalReferenceActions):
         maximum_derivative_order: int,
         structural_id: str,
         is_trace: bool,
-    ):
+    ) -> None:
         rows = jnp.asarray(cell_rows, dtype=jnp.int32)
         traces = jnp.asarray(trace_values)
         width = int(local_width)
@@ -197,7 +197,7 @@ class ExplicitPolygonH1GeometryActions(LocalGeometryActions):
         runtime_layout_id: str,
         domain_kind: str,
         structural_id: str,
-    ):
+    ) -> None:
         rows = jnp.asarray(cell_rows, dtype=jnp.int32)
         edges = jnp.asarray(local_edges, dtype=jnp.int32)
         points = jnp.asarray(reference_points)
@@ -291,7 +291,7 @@ class ExplicitPolygonH1GeometryActions(LocalGeometryActions):
 class ExplicitPolygonH1LocalProvider(StrictModule):
     discretization: object
 
-    def __init__(self, discretization, /):
+    def __init__(self, discretization, /) -> None:
         from ._space import ExplicitPolygonH1Discretization
 
         if not isinstance(discretization, ExplicitPolygonH1Discretization):

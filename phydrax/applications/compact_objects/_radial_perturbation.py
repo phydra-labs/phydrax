@@ -128,7 +128,7 @@ class SchwarzschildRadialPlan(StrictModule, NonTrainableState):
         maximum_dimension: int = 512,
         integration_substeps: int = 32,
         infinity_asymptotic_order: int = 12,
-    ):
+    ) -> None:
         if not isinstance(mode, SeparatedMode):
             raise TypeError("mode must be a SeparatedMode.")
         _validate_schwarzschild_sector(mode)
@@ -344,7 +344,7 @@ class KerrTeukolskyRadialPlan(StrictModule, NonTrainableState):
         asymptotic_tolerance: float = 5.0e-2,
         wave_number_tolerance: float = 1.0e-10,
         maximum_dimension: int = 512,
-    ):
+    ) -> None:
         if not isinstance(mode, SeparatedMode):
             raise TypeError("mode must be a SeparatedMode.")
         if mode.sector not in ("teukolsky", "scalar"):

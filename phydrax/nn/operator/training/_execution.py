@@ -457,7 +457,7 @@ class PreparedOperatorInput(StrictModule, NonTrainableState):
         /,
         *,
         plan_fingerprint: str,
-    ):
+    ) -> None:
         self.physical_batch = physical_batch
         self.execution_batch = execution_batch
         self.plan_fingerprint = str(plan_fingerprint)
@@ -519,7 +519,7 @@ class OperatorExecutionPlan(StrictModule):
         sharding_policy: OperatorShardingPolicy | None = None,
         compilation_strategy: OperatorCompilationStrategy = "eager",
         padding_policy: OperatorPaddingPolicy = "explicit_mask",
-    ):
+    ) -> None:
         if not isinstance(execution_model, AbstractOperatorModel):
             raise TypeError("OperatorExecutionPlan requires a PhydraX execution model.")
         if not isinstance(task, OperatorTask):

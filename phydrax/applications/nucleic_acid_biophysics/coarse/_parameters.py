@@ -37,7 +37,7 @@ def _vector(value, size, name):
     return array
 
 
-def _angle(value):
+def _angle(value) -> None:
     a, theta0, join = _vector(value, 3, "angular window")
     if a <= 0 or join <= 0 or not 0 <= theta0 <= 2 * math.pi or a * join * join >= 1:
         raise ValueError(
@@ -45,7 +45,7 @@ def _angle(value):
         )
 
 
-def _helicity(value):
+def _helicity(value) -> None:
     a, join = _vector(value, 2, "helicity window")
     if a <= 0 or not -1 < join < 0 or a * join * join >= 1:
         raise ValueError(
@@ -53,14 +53,14 @@ def _helicity(value):
         )
 
 
-def _radial(value, kind):
+def _radial(value, kind) -> None:
     array = _vector(value, 6, "radial well")
     if array[0] < 0 or array[5] <= 0:
         raise ValueError("Radial amplitude must be nonnegative and width positive.")
     radial_support(array, kind)
 
 
-def _validate_profile(profile, model, *, screening_required, hybrid):
+def _validate_profile(profile, model, *, screening_required, hybrid) -> None:
     required = {
         "backbone",
         "excluded",
@@ -199,7 +199,7 @@ class NucleotideParameterArtifact:
         redistribution=False,
         training_use=False,
         export=False,
-    ):
+    ) -> None:
         if not isinstance(manifest, ReferenceArtifactManifest) or not isinstance(
             units, AtomisticUnitSystem
         ):

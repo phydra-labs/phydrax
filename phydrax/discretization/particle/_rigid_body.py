@@ -44,7 +44,7 @@ class RigidBodySetPlan(StrictModule, NonTrainableState):
         fixed_mask: ArrayLike | None = None,
         name: str = "rigid-bodies",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         material = np.asarray(material_ids)
         inertia = np.asarray(inertia_com)
         if (
@@ -133,7 +133,7 @@ class RigidBodyMassProperties(StrictModule, NonTrainableState):
         plan: RigidBodySetPlan,
         particles: ParticleDiscretization,
         /,
-    ):
+    ) -> None:
         dimension = particles.ambient_dimension
         expected = (particles.capacity,) if dimension == 2 else (particles.capacity, 3, 3)
         if dimension not in (2, 3) or plan.inertia_com.shape != expected:
@@ -186,7 +186,9 @@ class PreparedRigidBodySet(StrictModule, NonTrainableState):
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: RigidBodySetPlan, particles: ParticleDiscretization, /):
+    def __init__(
+        self, plan: RigidBodySetPlan, particles: ParticleDiscretization, /
+    ) -> None:
         if not isinstance(plan, RigidBodySetPlan):
             raise TypeError("plan must be a RigidBodySetPlan.")
         if not isinstance(particles, ParticleDiscretization):
@@ -321,7 +323,7 @@ class RigidBodyReferenceFrameRebase(StrictModule, NonTrainableState):
         target_bodies: RigidBodySetPlan,
         center_of_mass_offsets: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, PreparedRigidBodySet):
             raise TypeError("source must be a PreparedRigidBodySet.")
         if not isinstance(target_particles, ParticleSetPlan):
@@ -765,7 +767,7 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
-    def __init__(self, bodies: PreparedRigidBodySet, /):
+    def __init__(self, bodies: PreparedRigidBodySet, /) -> None:
         if not isinstance(bodies, PreparedRigidBodySet):
             raise TypeError("bodies must be a PreparedRigidBodySet.")
         identifier = f"state-geometry:rigid-body:{bodies.prepared_id}"

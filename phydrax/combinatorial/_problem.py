@@ -135,7 +135,7 @@ class LinearCombinatorialProblem(StrictModule):
         /,
         *,
         problem_id: str = "linear-combinatorial-problem",
-    ):
+    ) -> None:
         if not isinstance(space, AbstractCombinatorialSpace):
             raise TypeError("space must be an AbstractCombinatorialSpace.")
         identifier = str(problem_id)

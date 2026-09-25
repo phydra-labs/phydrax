@@ -56,7 +56,7 @@ class CachedContactSearchPlan(StrictModule, NonTrainableState):
         *,
         skin: float,
         rebuild_fraction: float = 0.5,
-    ):
+    ) -> None:
         if not isinstance(
             search, (DenseContactSearchPlan, SweepAndPruneContactSearchPlan)
         ):

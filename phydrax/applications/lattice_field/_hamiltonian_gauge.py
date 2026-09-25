@@ -73,7 +73,7 @@ class PeriodicSchwingerModel(StrictModule):
         theta_angle: float = 0.0,
         global_flux_sector: int = 0,
         maximum_link_dimension: int = 4096,
-    ):
+    ) -> None:
         sites = int(site_count)
         spacing = float(lattice_spacing)
         mass_ = float(mass)
@@ -181,7 +181,7 @@ class CompactU1GaugeModel(StrictModule):
         electric_coupling: float,
         magnetic_coupling: float,
         electric_flux_offset: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("topology must be a CellComplexTopology.")
         if topology.dimension < 2:
@@ -282,7 +282,7 @@ class GaugeSimulationResourcePolicy(StrictModule):
         maximum_local_exponential_elements: int = 1 << 24,
         gauge_tolerance: float = 1e-9,
         unitarity_tolerance: float = 1e-9,
-    ):
+    ) -> None:
         dense = int(maximum_dense_elements)
         operations = int(maximum_program_operations)
         local = int(maximum_local_exponential_elements)

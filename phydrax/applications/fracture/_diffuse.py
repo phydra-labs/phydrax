@@ -37,7 +37,7 @@ class PhaseFieldFractureParameters(StrictModule, NonTrainableState):
         /,
         *,
         residual_stiffness: ArrayLike = 1.0e-8,
-    ):
+    ) -> None:
         values = tuple(
             np.asarray(value)
             for value in (
@@ -98,7 +98,7 @@ class PhaseFieldHistoryState(StrictModule, NonTrainableState):
         /,
         *,
         state_version: int = 0,
-    ):
+    ) -> None:
         history_ = np.asarray(history)
         damage = np.asarray(accepted_damage)
         version = int(state_version)
@@ -163,7 +163,7 @@ class PhaseFieldHistoryTransaction(StrictModule, NonTrainableState):
         *,
         base_state_version: int,
         accepted: bool,
-    ):
+    ) -> None:
         history = np.asarray(trial_history)
         damage = np.asarray(trial_damage)
         version = int(base_state_version)
@@ -225,7 +225,7 @@ class FixedHistoryNeuralBlock(StrictModule, NonTrainableState):
         /,
         *,
         base_state_version: int,
-    ):
+    ) -> None:
         history = jnp.asarray(fixed_history)
         damage_ = jnp.asarray(damage)
         logits_ = jnp.asarray(logits)
@@ -278,7 +278,7 @@ class BoundedNeuralFixedHistoryController(StrictModule):
     network: object
     controller_id: str = eqx.field(static=True)
 
-    def __init__(self, network: object, /, *, controller_id: str):
+    def __init__(self, network: object, /, *, controller_id: str) -> None:
         if not callable(network):
             raise TypeError("network must be callable.")
         identifier = str(controller_id)
@@ -342,7 +342,7 @@ class PhaseFieldFractureModel(StrictModule, NonTrainableState):
         displacement_field: str = "displacement",
         damage_field: str = "damage",
         model_id: str = "phase-field-fracture",
-    ):
+    ) -> None:
         if not isinstance(parameters, PhaseFieldFractureParameters):
             raise TypeError("parameters must be PhaseFieldFractureParameters.")
         displacement = str(displacement_field)

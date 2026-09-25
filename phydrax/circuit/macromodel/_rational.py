@@ -41,7 +41,7 @@ class RationalFitPolicy(StrictModule):
         maximum_decay: float = 1e3,
         include_proportional: bool = False,
         residual_tolerance: float = 1e-4,
-    ):
+    ) -> None:
         count = int(pole_count)
         minimum, maximum = float(minimum_decay), float(maximum_decay)
         tolerance = float(residual_tolerance)
@@ -70,7 +70,7 @@ class RationalMatrixModel(StrictModule):
         /,
         *,
         model_id: str | None = None,
-    ):
+    ) -> None:
         poles_ = jnp.asarray(poles, dtype=jnp.complex128)
         residues_ = jnp.asarray(residues, dtype=jnp.complex128)
         direct_ = jnp.asarray(direct, dtype=jnp.complex128)
@@ -165,7 +165,7 @@ class RationalScatteringComponent(AbstractScatteringComponent):
         *,
         numeric_version: ArrayLike = 0,
         component_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, RationalMatrixModel):
             raise TypeError("model must be RationalMatrixModel.")
         port_tuple = tuple(ports)

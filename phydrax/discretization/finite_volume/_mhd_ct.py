@@ -32,7 +32,7 @@ class ConstrainedMagneticStateLayout(StrictModule, NonTrainableState):
     electromotive_degree: int | None = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (1, 2, 3):
             raise ValueError(
@@ -120,7 +120,7 @@ class UpwindConstrainedTransportPlan(StrictModule):
         reconstruction: MHDPrimitiveReconstructionPlan | None = None,
         electromotive_plan: AbstractUCTElectromotivePlan | None = None,
         boundary_set: ConstrainedMHDBoundarySet | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedFiniteVolumeDynamics):
             raise TypeError("dynamics must be PreparedFiniteVolumeDynamics.")
         if not isinstance(bridge, StructuredCochainBridge):

@@ -44,7 +44,7 @@ class _WeightedLaplacianCallable(StrictModule):
         differential_positions: tuple[int, ...],
         coordinate_position: int,
         /,
-    ):
+    ) -> None:
         self.base = base
         self.differential = differential
         self.measure = measure
@@ -91,7 +91,7 @@ class _WeightedDivergenceCallable(StrictModule):
         field_positions: tuple[int, ...],
         coordinate_position: int,
         /,
-    ):
+    ) -> None:
         self.base = base
         self.field = field
         self.measure = measure

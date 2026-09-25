@@ -45,7 +45,7 @@ class VibrationalConfigurationResult(StrictModule, NonTrainableState):
         successful,
         plan_id,
         /,
-    ):
+    ) -> None:
         energy = jnp.asarray(vci_energies)
         coefficients = jnp.asarray(vci_coefficients, dtype=energy.dtype)
         residuals = jnp.asarray(vci_residuals, dtype=energy.dtype)
@@ -119,7 +119,7 @@ class VibrationalConfigurationPlan(StrictModule, NonTrainableState):
         vscf_tolerance: float = 1.0e-10,
         vscf_maximum_sweeps: int = 100,
         residual_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(force_field, AnharmonicForceFieldResult):
             raise TypeError("force_field must be AnharmonicForceFieldResult.")
         frequency = jnp.asarray(frequencies)
@@ -260,7 +260,7 @@ class HinderedRotorResult(StrictModule, NonTrainableState):
         successful,
         plan_id,
         /,
-    ):
+    ) -> None:
         energies_ = jnp.asarray(energies)
         vectors_input = jnp.asarray(wavefunctions)
         vectors = vectors_input.astype(
@@ -316,7 +316,7 @@ class HinderedRotorPlan(StrictModule, NonTrainableState):
         temperature: float = 298.15,
         boltzmann_constant: float,
         root_count: int = 16,
-    ):
+    ) -> None:
         potential_ = jnp.asarray(potential)
         rotational = float(rotational_constant)
         temperature_ = float(temperature)
@@ -421,7 +421,7 @@ class ConformationalEnsemblePlan(StrictModule, NonTrainableState):
         degeneracies: ArrayLike | None = None,
         temperature: float = 298.15,
         boltzmann_constant: float,
-    ):
+    ) -> None:
         energy = jnp.asarray(energies)
         degeneracy = (
             jnp.ones(energy.shape, dtype=energy.dtype)

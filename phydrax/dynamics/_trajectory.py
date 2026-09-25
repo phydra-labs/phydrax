@@ -124,7 +124,7 @@ class TrajectoryData(StrictModule):
         coordinate_kind: CoordinateKind = "continuous",
         source_id: str,
         dataset_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):

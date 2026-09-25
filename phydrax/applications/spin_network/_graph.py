@@ -31,7 +31,7 @@ class SpinNetworkEdge(StrictModule):
     twice_spin: int = eqx.field(static=True)
     edge_id: str = eqx.field(static=True)
 
-    def __init__(self, label: str, source: str, target: str, twice_spin: int, /):
+    def __init__(self, label: str, source: str, target: str, twice_spin: int, /) -> None:
         values = tuple(str(value) for value in (label, source, target))
         spin = int(twice_spin)
         if any(not value for value in values) or values[1] == values[2] or spin < 0:
@@ -63,7 +63,7 @@ class SpinNetworkGraphPlan(StrictModule):
         vertex_edge_order: Mapping[str, Sequence[str]],
         resources: SU2SectorResourcePolicy,
         /,
-    ):
+    ) -> None:
         vertex_values = tuple(str(value) for value in vertices)
         edge_values = tuple(edges)
         if (

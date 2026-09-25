@@ -98,7 +98,7 @@ class MultivaluedCutCellTransition(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
         require_complete: bool = True,
-    ):
+    ) -> None:
         if not isinstance(source, MultivaluedCutCellComplex) or not isinstance(
             target, MultivaluedCutCellComplex
         ):

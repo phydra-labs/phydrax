@@ -29,7 +29,7 @@ def _cone_dimension(value: int, name: str, minimum: int, /) -> int:
 class ZeroCone(AbstractConvexCone):
     """The singleton cone containing only the origin."""
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         size = _cone_dimension(dimension, "ZeroCone", 0)
         self.dimension = size
         self.cone_id = canonical_fingerprint({"kind": "zero-cone", "dimension": size})
@@ -52,7 +52,7 @@ class ZeroCone(AbstractConvexCone):
 class NonnegativeCone(AbstractConvexCone):
     """Elementwise nonnegative orthant."""
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         size = _cone_dimension(dimension, "NonnegativeCone", 0)
         self.dimension = size
         self.cone_id = canonical_fingerprint(
@@ -81,7 +81,7 @@ class NonnegativeCone(AbstractConvexCone):
 class SecondOrderCone(AbstractConvexCone):
     """Lorentz cone ``(t, x)`` satisfying ``||x||₂ <= t``."""
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         size = _cone_dimension(dimension, "SecondOrderCone", 2)
         self.dimension = size
         self.cone_id = canonical_fingerprint(
@@ -120,7 +120,7 @@ class RotatedSecondOrderCone(AbstractConvexCone):
 
     _soc: SecondOrderCone
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         size = _cone_dimension(dimension, "RotatedSecondOrderCone", 3)
         self.dimension = size
         self._soc = SecondOrderCone(size)
@@ -174,7 +174,7 @@ class ProductCone(AbstractConvexCone):
     cones: tuple[AbstractConvexCone, ...]
     slices: tuple[slice, ...] = eqx.field(static=True)
 
-    def __init__(self, cones: Sequence[AbstractConvexCone] = (), /):
+    def __init__(self, cones: Sequence[AbstractConvexCone] = (), /) -> None:
         requested = tuple(cones)
         if any(not isinstance(cone, AbstractConvexCone) for cone in requested):
             raise TypeError("ProductCone blocks must be AbstractConvexCone values.")

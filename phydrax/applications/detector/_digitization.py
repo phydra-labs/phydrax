@@ -35,7 +35,7 @@ class SensitiveHitPlan(StrictModule, NonTrainableState):
         *,
         channel_count: int,
         conditions_id: str,
-    ):
+    ) -> None:
         mapping = np.asarray(element_to_channel)
         channels = int(channel_count)
         conditions = str(conditions_id).strip()
@@ -117,7 +117,7 @@ class DigitizationPlan(StrictModule, NonTrainableState):
         threshold: float,
         maximum_adc: int,
         conditions_id: str,
-    ):
+    ) -> None:
         calibration_ = np.asarray(calibration, dtype=np.float64)
         noise = np.asarray(noise_standard_deviation, dtype=np.float64)
         crosstalk_ = np.asarray(crosstalk, dtype=np.float64)

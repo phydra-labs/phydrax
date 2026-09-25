@@ -146,7 +146,7 @@ class _SeriesTrajectorySignal(
         domain: TrajectoryDatasetDomain | IrregularTrajectoryDatasetDomain,
         reconstruction: SampledSeriesReconstruction,
         derivative_order: int = 0,
-    ):
+    ) -> None:
         self.domain = domain
         self.reconstruction = reconstruction
         self.derivative_order = int(derivative_order)

@@ -37,7 +37,7 @@ class CommoditySeasonality(StrictModule):
 
     def __init__(
         self, phases: ArrayLike, factors: ArrayLike, /, *, period: ArrayLike = 1.0
-    ):
+    ) -> None:
         phases_ = jnp.asarray(phases, dtype=jnp.float64)
         factors_ = jnp.asarray(factors, dtype=jnp.float64)
         if phases_.ndim != 1 or phases_.size < 2 or factors_.shape != phases_.shape:
@@ -83,7 +83,7 @@ class SchwartzOneFactorModel(StrictModule):
         volatility: ArrayLike,
         initial_factor: ArrayLike,
         /,
-    ):
+    ) -> None:
         initial = jnp.asarray(initial_factor, dtype=jnp.float64)
         if initial.shape != ():
             raise ValueError("initial_factor must be scalar.")
@@ -124,7 +124,7 @@ class SchwartzTwoFactorModel(StrictModule):
         correlation: ArrayLike,
         initial_factors: ArrayLike,
         /,
-    ):
+    ) -> None:
         correlation_ = jnp.asarray(correlation, dtype=jnp.float64)
         factors = jnp.asarray(initial_factors, dtype=jnp.float64)
         if correlation_.shape != () or factors.shape != (2,):
@@ -186,7 +186,7 @@ class CommodityFactorModel(StrictModule):
         spot_loadings: ArrayLike,
         dependence: CorrelationMatrix,
         /,
-    ):
+    ) -> None:
         if not isinstance(dependence, CorrelationMatrix):
             raise TypeError("dependence must be a CorrelationMatrix.")
         count = dependence.dimension

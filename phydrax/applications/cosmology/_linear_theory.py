@@ -54,7 +54,7 @@ class MassiveNeutrinoSpecies(StrictModule, NonTrainableState):
         temperature_ratio: float = 0.71611,
         degeneracy: float = 1.0,
         distribution_id: str = "fermi-dirac-zero-chemical-potential",
-    ):
+    ) -> None:
         mass = float(mass_ev)
         temperature = float(temperature_ratio)
         weight = float(degeneracy)
@@ -139,7 +139,7 @@ class CosmologyModelRequest(StrictModule, NonTrainableState):
         ),
         gauge: str = "synchronous",
         power_field: str = "cold_baryon",
-    ):
+    ) -> None:
         if not isinstance(scale, CosmologyScaleContract):
             raise TypeError("scale must be CosmologyScaleContract.")
         scalar_values = tuple(
@@ -340,7 +340,7 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
         backend_name: str = "linear-theory-subprocess",
         backend_version: str = "user-provided",
         numerical_policy_id: str = "user-provided",
-    ):
+    ) -> None:
         executable = str(application).strip()
         arguments_ = tuple(str(argument) for argument in arguments)
         timeout = float(timeout_seconds)

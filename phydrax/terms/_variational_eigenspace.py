@@ -375,7 +375,7 @@ class VariationalEigenspace(AbstractSamplingTerm):
         weight: ArrayLike = 1.0,
         tolerance: float = 1e-10,
         label: str | None = None,
-    ):
+    ) -> None:
         if not callable(stiffness_form):
             raise TypeError("stiffness_form must be callable.")
         if mass_form is not None and not callable(mass_form):
@@ -530,7 +530,7 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
         weight: ArrayLike = 1.0,
         tolerance: float = 1e-10,
         label: str | None = None,
-    ):
+    ) -> None:
         if not callable(operator_action):
             raise TypeError("operator_action must be callable.")
         if metric_action is not None and not callable(metric_action):

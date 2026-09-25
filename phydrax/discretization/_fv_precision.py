@@ -55,7 +55,7 @@ class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
         output_dtype: PrecisionDType | None = None,
         checkpoint_dtype: PrecisionDType | None = None,
         resolution: PrecisionResolution | None = None,
-    ):
+    ) -> None:
         storage = _finite_precision_dtype(storage_dtype)
         reconstruction = _finite_precision_dtype(
             storage if reconstruction_dtype is None else reconstruction_dtype

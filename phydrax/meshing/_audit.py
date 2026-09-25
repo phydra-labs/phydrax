@@ -62,7 +62,7 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
         minimum_mean_ratio: float = 0.0,
         maximum_aspect_ratio: float = 1.0e300,
         maximum_connectivity_entries: int = 500_000_000,
-    ):
+    ) -> None:
         measure = float(minimum_measure)
         ratio = float(minimum_mean_ratio)
         aspect = float(maximum_aspect_ratio)

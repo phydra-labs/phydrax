@@ -27,7 +27,7 @@ class RadialGrid(StrictModule, NonTrainableState):
     weights: Array
     grid_id: str = eqx.field(static=True)
 
-    def __init__(self, redshifts: ArrayLike, /):
+    def __init__(self, redshifts: ArrayLike, /) -> None:
         nodes = np.asarray(redshifts, dtype=np.float64).reshape((-1,))
         if (
             nodes.size < 3
@@ -60,7 +60,7 @@ class RedshiftDistribution(StrictModule):
     values: Array
     bin_id: str = eqx.field(static=True)
 
-    def __init__(self, grid: RadialGrid, values: ArrayLike, bin_id: str, /):
+    def __init__(self, grid: RadialGrid, values: ArrayLike, bin_id: str, /) -> None:
         if not isinstance(grid, RadialGrid):
             raise TypeError("grid must be RadialGrid.")
         identifier = str(bin_id).strip()
@@ -96,7 +96,7 @@ class LinearDensityTracer(StrictModule):
         /,
         *,
         power_field: MatterField = "total_matter",
-    ):
+    ) -> None:
         if not isinstance(distribution, RedshiftDistribution):
             raise TypeError("distribution must be RedshiftDistribution.")
         bias_ = jnp.asarray(bias, dtype=distribution.values.dtype)
@@ -139,7 +139,7 @@ class LensingConvergenceTracer(StrictModule):
         /,
         *,
         multiplicative_calibration: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not isinstance(distribution, RedshiftDistribution):
             raise TypeError("distribution must be RedshiftDistribution.")
         calibration = jnp.asarray(
@@ -183,7 +183,7 @@ class LimberAngularPowerPlan(StrictModule, NonTrainableState):
         multipoles: ArrayLike,
         tracer_count: int,
         /,
-    ):
+    ) -> None:
         ell = np.asarray(multipoles, dtype=np.int64).reshape((-1,))
         count = int(tracer_count)
         if ell.size < 1 or np.any(ell < 2) or np.any(np.diff(ell) <= 0) or count < 1:
@@ -317,7 +317,7 @@ class LinearRSDMultipolePlan(StrictModule, NonTrainableState):
         /,
         *,
         mu_order: int = 32,
-    ):
+    ) -> None:
         k = np.asarray(wavenumbers, dtype=np.float64).reshape((-1,))
         order = int(mu_order)
         if (

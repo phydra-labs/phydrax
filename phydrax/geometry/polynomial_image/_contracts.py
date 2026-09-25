@@ -70,7 +70,7 @@ class PolynomialImageClaimEvidence(StrictModule, NonTrainableState):
         ideal_equality: EvidenceDisposition = EvidenceDisposition.NOT_ASSESSED,
         real_geometry: EvidenceDisposition = EvidenceDisposition.NOT_ASSESSED,
         topology: EvidenceDisposition = EvidenceDisposition.NOT_ASSESSED,
-    ):
+    ) -> None:
         values = (
             numerical_discovery,
             exact_containment,
@@ -115,7 +115,7 @@ class TargetMonomialSupport(StrictModule, NonTrainableState):
         variable_labels: Sequence[str],
         exponents: ArrayLike,
         /,
-    ):
+    ) -> None:
         labels = tuple(str(label) for label in variable_labels)
         powers = np.asarray(exponents)
         if not labels or any(not label for label in labels):
@@ -190,7 +190,7 @@ class PolynomialImageResourceEvidence(StrictModule, NonTrainableState):
         estimated_svd_bytes: int,
         within_budget: bool,
         limiting_resource: str | None,
-    ):
+    ) -> None:
         counts = tuple(
             (
                 sample_count,
@@ -259,7 +259,7 @@ class JacobianRankEvidence(StrictModule, NonTrainableState):
         *,
         provider: str,
         svd_plan_ids: Sequence[str],
-    ):
+    ) -> None:
         singular = jnp.asarray(singular_values)
         lower = jnp.asarray(lower_ranks, dtype=jnp.int32)
         upper = jnp.asarray(upper_ranks, dtype=jnp.int32)
@@ -381,7 +381,7 @@ class TargetRelationEvidence(StrictModule, NonTrainableState):
         heldout_accepted: ArrayLike,
         provider: str,
         svd_plan_id: str | None,
-    ):
+    ) -> None:
         singular = jnp.asarray(singular_values)
         coefficients = jnp.asarray(candidate_coefficients)
         active = jnp.asarray(candidate_active, dtype=jnp.bool_)
@@ -495,7 +495,7 @@ class PolynomialImageAnalysisResult(StrictModule, NonTrainableState):
         *,
         map_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(status, PolynomialImageAnalysisStatus):
             raise TypeError("status must be PolynomialImageAnalysisStatus.")
         if not isinstance(source_kind, SourceSampleKind):
@@ -571,7 +571,7 @@ class ExactCompositionRemainder(StrictModule, NonTrainableState):
         equation_label: str,
         terms: Sequence[tuple[Sequence[int], str]],
         /,
-    ):
+    ) -> None:
         label = str(equation_label)
         canonical_terms = tuple(
             (tuple(exponent), str(coefficient)) for exponent, coefficient in terms
@@ -618,7 +618,7 @@ class ExactPolynomialContainmentResult(StrictModule, NonTrainableState):
         *,
         map_id: str,
         relation_system_id: str,
-    ):
+    ) -> None:
         values = tuple(remainders)
         if not values or any(
             not isinstance(value, ExactCompositionRemainder) for value in values

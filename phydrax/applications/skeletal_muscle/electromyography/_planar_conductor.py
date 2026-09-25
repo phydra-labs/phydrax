@@ -39,7 +39,7 @@ class PlanarConductorParameters(StrictModule):
         skin_thickness_m: ArrayLike,
         source_depth_m: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -114,7 +114,7 @@ class PetersenRostalski2019PlanarConductorPlan(StrictModule):
         /,
         *,
         zero_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         fx = jnp.asarray(frequency_x_rad_per_m)
         fz = jnp.asarray(frequency_z_rad_per_m)
         transfer = jnp.asarray(electrode_transfer)

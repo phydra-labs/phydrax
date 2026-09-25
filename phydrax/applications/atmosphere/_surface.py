@@ -55,7 +55,7 @@ class WetSlabPlan(StrictModule):
         dry_heat_capacity: ArrayLike = 2.0e6,
         minimum_temperature: float | None = None,
         maximum_temperature: float | None = None,
-    ):
+    ) -> None:
         if thermodynamics is not None and not isinstance(
             thermodynamics, MoistThermodynamicPlan
         ):
@@ -216,7 +216,7 @@ class BulkSurfaceExchangePlan(StrictModule):
         moisture_transfer_coefficient: ArrayLike = 1.2e-3,
         stability: str = "bulk-richardson",
         gravity: float = 9.80665,
-    ):
+    ) -> None:
         heat = jnp.asarray(
             heat_transfer_coefficient,
             dtype=jnp.result_type(heat_transfer_coefficient, 0.0),

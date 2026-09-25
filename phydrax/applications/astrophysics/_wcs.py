@@ -55,7 +55,7 @@ class TangentSipWcsPlan(StrictModule, NonTrainableState):
         inverse_iterations=12,
         tolerance=1.0e-11,
         wcs_id="tan-sip",
-    ):
+    ) -> None:
         sky = np.asarray(reference_sky, dtype=np.float64)
         pixel = np.asarray(reference_pixel, dtype=np.float64)
         cd = np.asarray(cd_matrix, dtype=np.float64)

@@ -57,7 +57,7 @@ class ImplicitNewmarkMethod(StrictModule, NonTrainableState):
         /,
         *,
         method_id: str | None = None,
-    ):
+    ) -> None:
         beta_ = float(beta)
         gamma_ = float(gamma)
         if not isfinite(beta_) or not isfinite(gamma_) or beta_ <= 0.0 or gamma_ <= 0.0:
@@ -151,7 +151,7 @@ class FiniteElementDynamicsState(StrictModule, NonTrainableState):
         step: ArrayLike = 0,
         state_version: ArrayLike = 0,
         materials: MaterialTransaction | None = None,
-    ):
+    ) -> None:
         displacement_ = jnp.asarray(displacement)
         velocity_ = jnp.asarray(velocity)
         acceleration_ = jnp.asarray(acceleration)

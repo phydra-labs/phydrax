@@ -110,7 +110,7 @@ class BPZVirasoroBlockPlan(StrictModule):
         pole_tolerance: float = 1e-12,
         branch_id: str,
         derivation_source_id: str,
-    ):
+    ) -> None:
         points = np.asarray(cross_ratios, dtype=np.float64)
         charge = float(central_charge)
         weights = tuple(float(value) for value in external_weights)
@@ -244,7 +244,7 @@ class IsingSigmaVirasoroPlan(StrictModule):
     channel: IsingSigmaChannel = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, cross_ratios: ArrayLike, channel: IsingSigmaChannel, /):
+    def __init__(self, cross_ratios: ArrayLike, channel: IsingSigmaChannel, /) -> None:
         points = np.asarray(cross_ratios, dtype=np.float64)
         channel_value = str(channel)
         if points.ndim != 1 or points.size == 0 or not np.all(np.isfinite(points)):

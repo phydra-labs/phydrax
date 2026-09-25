@@ -127,7 +127,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         *,
         precision: FiniteVolumePrecisionPolicy | None = None,
         partition: PreparedDistributedBlockAMRHierarchy | None = None,
-    ):
+    ) -> None:
         if isinstance(discretization, PreparedBlockAMRRuntime):
             block_runtime = discretization
             topology = block_runtime.dynamics.topology

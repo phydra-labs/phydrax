@@ -196,7 +196,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
         dt: ArrayLike = 1.0,
         label: str = "data",
         measure: RaggedSeriesMeasureMode = "probability",
-    ):
+    ) -> None:
         """Create a finite dataset of variable-length input series.
 
         Parameters:

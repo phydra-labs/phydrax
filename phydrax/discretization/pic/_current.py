@@ -49,7 +49,7 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         *,
         maximum_segments_per_particle: int = 4,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(transfer, PreparedPICParticleCochainTransfer):
             raise TypeError("transfer must be PreparedPICParticleCochainTransfer.")
         if transfer.bridge.dimension != 3:

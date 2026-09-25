@@ -31,7 +31,7 @@ class ChemicalReaction:
     parent_event_keys: tuple[RadiationEventKey, ...] = ()
     material: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.key.stage != "chemical":
             raise ValueError("Chemical reactions require chemical event keys.")
         _point(self.position)
@@ -59,7 +59,7 @@ class ReactionLedger:
     source: RadiationSource
     records: tuple[ChemicalReaction, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not all(isinstance(item, ChemicalReaction) for item in self.records):
             raise TypeError("Reaction ledger requires chemical reactions.")
         object.__setattr__(self, "records", _canonical_events(self.records, self.source))

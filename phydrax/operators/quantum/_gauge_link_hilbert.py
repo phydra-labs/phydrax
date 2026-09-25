@@ -62,7 +62,7 @@ class FiniteGroupLinkHilbertSpace(StrictModule):
         *,
         labels: Sequence[str] | None = None,
         maximum_operator_elements: int = 1 << 26,
-    ):
+    ) -> None:
         table = np.asarray(multiplication_table)
         if (
             table.ndim != 2
@@ -271,7 +271,7 @@ class TruncatedU1LinkHilbertSpace(StrictModule):
         *,
         center_flux: int = 0,
         maximum_operator_elements: int = 1 << 26,
-    ):
+    ) -> None:
         cutoff = int(maximum_flux)
         center = int(center_flux)
         if cutoff < 1:
@@ -437,7 +437,7 @@ class SU2IrrepTruncatedLinkHilbertSpace(StrictModule):
         *,
         maximum_dimension: int = 4096,
         maximum_operator_elements: int = 1 << 27,
-    ):
+    ) -> None:
         maximum_spin = int(maximum_twice_spin)
         if maximum_spin < 0:
             raise ValueError("maximum_twice_spin must be non-negative.")

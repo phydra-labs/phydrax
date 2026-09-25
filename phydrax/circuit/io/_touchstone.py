@@ -36,7 +36,7 @@ class TouchstonePolicy(StrictModule):
         allow_version_2: bool = True,
         require_monotone_frequency: bool = True,
         maximum_file_bytes: int = 64 * 1024 * 1024,
-    ):
+    ) -> None:
         self.allow_version_1 = bool(allow_version_1)
         self.allow_version_2 = bool(allow_version_2)
         self.require_monotone_frequency = bool(require_monotone_frequency)
@@ -72,7 +72,7 @@ class TouchstoneData(StrictModule):
         version: str = "1.0",
         source_hash: str = "",
         file_convention: str = "touchstone-column-major",
-    ):
+    ) -> None:
         frequencies = jnp.asarray(frequencies_hz, dtype=jnp.float64)
         matrix = jnp.asarray(scattering, dtype=jnp.complex128)
         if (

@@ -118,7 +118,7 @@ class FiniteElementPMultigridPolicy(StrictModule, NonTrainableState):
         pre_smoothing: int = 1,
         post_smoothing: int = 1,
         cycle: str = "v",
-    ):
+    ) -> None:
         coarsening = str(degree_coarsening)
         orders = tuple(
             tuple(value) if isinstance(value, tuple) else int(value)
@@ -255,7 +255,7 @@ class FiniteElementPMultigridPlan(StrictModule, NonTrainableState):
         policy: FiniteElementPMultigridPolicy,
         coarse_operator_source: PCoarseOperatorSource,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             hierarchy_builder, AbstractPreconditionerBuilder
         ) or not isinstance(policy, FiniteElementPMultigridPolicy):

@@ -61,7 +61,7 @@ class DeepSplittingSolution(StrictModule):
         /,
         *,
         interpolation: DeepSplittingInterpolation = "linear",
-    ):
+    ) -> None:
         if not isinstance(problem, BSDEProblem):
             raise TypeError("problem must be a BSDEProblem.")
         time_values = jnp.asarray(times, dtype=jnp.float64)

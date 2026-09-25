@@ -34,7 +34,7 @@ class ConvexShapePlan(StrictModule, NonTrainableState):
         *,
         volume_tolerance: float = 1.0e-14,
         shape_id: str | None = None,
-    ):
+    ) -> None:
         vertices_ = np.asarray(vertices)
         triangles_ = np.asarray(triangles)
         material = int(material_id)
@@ -104,7 +104,7 @@ class PreparedConvexShape(StrictModule, NonTrainableState):
     bounding_radius: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ConvexShapePlan, /):
+    def __init__(self, plan: ConvexShapePlan, /) -> None:
         faces = plan.vertices[plan.triangles]
         cross = jnp.cross(faces[:, 1] - faces[:, 0], faces[:, 2] - faces[:, 0])
         normals = cross / jnp.linalg.norm(cross, axis=-1, keepdims=True)

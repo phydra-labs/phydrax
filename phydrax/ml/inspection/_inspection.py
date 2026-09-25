@@ -45,7 +45,7 @@ class PartialDependenceResult(StrictModule):
         average: Any,
         sample_weight: Any,
         /,
-    ):
+    ) -> None:
         self.grid = jnp.asarray(grid)
         self.feature_indices = jnp.asarray(feature_indices, dtype=jnp.int32)
         self.ice = jnp.asarray(ice)
@@ -66,7 +66,7 @@ class PermutationImportanceResult(StrictModule):
         permuted_scores: Any,
         importances: Any,
         /,
-    ):
+    ) -> None:
         permuted = jnp.asarray(permuted_scores)
         importance = jnp.asarray(importances)
         if permuted.shape != importance.shape or permuted.ndim < 2:
@@ -88,7 +88,9 @@ class SensitivityResult(StrictModule):
     order: int = eqx.field(static=True)
     holomorphic: bool = eqx.field(static=True)
 
-    def __init__(self, values: Any, derivative: Any, /, *, order: int, holomorphic: bool):
+    def __init__(
+        self, values: Any, derivative: Any, /, *, order: int, holomorphic: bool
+    ) -> None:
         self.values = jnp.asarray(values)
         self.derivative = jnp.asarray(derivative)
         self.order = int(order)
@@ -114,7 +116,7 @@ class RegressionInfluenceDiagnostics(StrictModule):
         effective_parameters: Any,
         valid: Any,
         /,
-    ):
+    ) -> None:
         self.prediction = jnp.asarray(prediction)
         self.residual = jnp.asarray(residual)
         self.leverage = jnp.asarray(leverage)
@@ -161,7 +163,7 @@ class InfluenceFunctionResult(StrictModule):
         condition_estimate: Any,
         valid: Any,
         parameter_paths: tuple[str, ...],
-    ):
+    ) -> None:
         self.parameter_influence = jnp.asarray(parameter_influence)
         self.loss_influence = jnp.asarray(loss_influence)
         self.hessian = jnp.asarray(hessian)

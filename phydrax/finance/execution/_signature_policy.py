@@ -60,7 +60,7 @@ class CausalSignaturePolicySpec(StrictModule):
         feature_kind: SignatureFeatureKind = "signature",
         include_scalar: bool = True,
         spec_id: str,
-    ):
+    ) -> None:
         if history_dimension <= 0 or action_size <= 0 or depth <= 0:
             raise ValueError(
                 "history_dimension, action_size, and depth must be positive."
@@ -146,7 +146,7 @@ class SignaturePolicySampleSet(StrictModule):
         independence_labels: ArrayLike,
         sample_role: PolicySampleRole,
         dataset_id: str,
-    ):
+    ) -> None:
         history = jnp.asarray(histories)
         if history.ndim != 3 or 0 in history.shape:
             raise ValueError(
@@ -228,7 +228,7 @@ class CausalSignaturePolicy(StrictModule):
         *,
         training_sample: SignaturePolicySampleSet,
         policy_id: str,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedCausalSignaturePolicy):
             raise TypeError("prepared must be a PreparedCausalSignaturePolicy.")
         if not isinstance(training_sample, SignaturePolicySampleSet):

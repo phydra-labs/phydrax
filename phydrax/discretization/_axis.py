@@ -69,7 +69,7 @@ class AxisDiscretization(StrictModule):
         active: ArrayLike | None = None,
         level: ArrayLike | None = None,
         parent_interval: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(domain, AxisDomain):
             raise TypeError("domain must be an AxisDomain.")
         if basis not in (
@@ -216,7 +216,7 @@ class TensorGridPlan(AbstractDiscretizationPlan):
         cut_cell_order: int = 0,
         key: DiscretizationKey | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         axes_ = tuple(axes)
         if not axes_ or not all(isinstance(axis, AbstractAxisSpec) for axis in axes_):
             raise TypeError(
@@ -300,7 +300,7 @@ class UniformAxisSpec(AbstractAxisSpec):
     endpoint: bool
     periodic: bool
 
-    def __init__(self, n: int, *, endpoint: bool = True, periodic: bool = False):
+    def __init__(self, n: int, *, endpoint: bool = True, periodic: bool = False) -> None:
         self.n = _axis_count(n)
         self.endpoint = bool(endpoint)
         self.periodic = bool(periodic)
@@ -344,7 +344,7 @@ class UniformCellAxisSpec(AbstractAxisSpec):
     n: int
     periodic: bool
 
-    def __init__(self, n: int, *, periodic: bool = False):
+    def __init__(self, n: int, *, periodic: bool = False) -> None:
         self.n = _axis_count(n)
         self.periodic = bool(periodic)
 
@@ -382,7 +382,7 @@ class NonuniformCellAxisSpec(AbstractAxisSpec):
         /,
         *,
         periodic: bool = False,
-    ):
+    ) -> None:
         edges = np.asarray(normalized_edges, dtype=np.float64)
         if (
             edges.ndim != 1
@@ -426,7 +426,7 @@ class NestedDyadicAxisSpec(AbstractAxisSpec):
     n: int
     initial_level: int
 
-    def __init__(self, n: int, *, initial_level: int = 1):
+    def __init__(self, n: int, *, initial_level: int = 1) -> None:
         self.n = _axis_count(n)
         intervals = int(n) - 1
         if intervals <= 0 or intervals & (intervals - 1):
@@ -516,7 +516,7 @@ class FourierAxisSpec(AbstractAxisSpec):
 
     n: int
 
-    def __init__(self, n: int):
+    def __init__(self, n: int) -> None:
         self.n = _axis_count(n)
 
     def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
@@ -550,7 +550,7 @@ class SineAxisSpec(AbstractAxisSpec):
 
     n: int
 
-    def __init__(self, n: int):
+    def __init__(self, n: int) -> None:
         self.n = _axis_count(n)
 
     def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
@@ -585,7 +585,7 @@ class CosineAxisSpec(AbstractAxisSpec):
 
     n: int
 
-    def __init__(self, n: int):
+    def __init__(self, n: int) -> None:
         self.n = _axis_count(n)
 
     def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
@@ -628,7 +628,9 @@ class LegendreAxisSpec(AbstractAxisSpec):
     n: int
     kind: Literal["gauss", "radau", "lobatto"]
 
-    def __init__(self, n: int, *, kind: Literal["gauss", "radau", "lobatto"] = "gauss"):
+    def __init__(
+        self, n: int, *, kind: Literal["gauss", "radau", "lobatto"] = "gauss"
+    ) -> None:
         self.n = _axis_count(n)
         if kind not in ("gauss", "radau", "lobatto"):
             raise ValueError("kind must be 'gauss', 'radau', or 'lobatto'.")

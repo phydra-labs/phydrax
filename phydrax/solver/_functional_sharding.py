@@ -40,7 +40,7 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
         policy_id: str = "functional-data-parallel",
         execution_group_id: str | None = None,
         coordinator_process: int = 0,
-    ):
+    ) -> None:
         mapping = frozendict(
             {str(sample): str(device) for sample, device in axis_mapping.items()}
         )

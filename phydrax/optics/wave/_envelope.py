@@ -55,7 +55,7 @@ class PulseEnvelopeField(StrictModule):
         /,
         *,
         polarization: PulseEnvelopePolarization = "scalar",
-    ):
+    ) -> None:
         if not isinstance(plane_space, PlaneFieldSpace):
             raise TypeError("plane_space must be a PlaneFieldSpace.")
         if not isinstance(time_space, PulseTimeSpace):
@@ -101,7 +101,7 @@ class PulseEnvelopeBridgePlan(StrictModule, NonTrainableState):
         *,
         carrier_grid_tolerance: float = 1.0e-10,
         spectral_support_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(time_space, PulseTimeSpace):
             raise TypeError("time_space must be a PulseTimeSpace.")
         if time_space.topology != "periodic-cell":
@@ -406,7 +406,7 @@ class GaussianPulseEnvelopePlan(StrictModule, NonTrainableState):
         jones_vector: ArrayLike | None = None,
         boundary_tolerance: float = 1.0e-6,
         spectral_edge_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(plane_space, PlaneFieldSpace):
             raise TypeError("plane_space must be a PlaneFieldSpace.")
         if not isinstance(time_space, PulseTimeSpace):

@@ -53,7 +53,7 @@ class ManeuverSchedule(StrictModule, NonTrainableState):
         impulses: tuple[ImpulseManeuver, ...] = (),
         finite_burns: tuple[FiniteBurnSegment, ...] = (),
         /,
-    ):
+    ) -> None:
         impulses_ = tuple(sorted(impulses, key=lambda value: value.epoch_seconds))
         burns = tuple(sorted(finite_burns, key=lambda value: value.start_seconds))
         if any(not np.isfinite(value.epoch_seconds) for value in impulses_):

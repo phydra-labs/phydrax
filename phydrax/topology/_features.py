@@ -32,7 +32,7 @@ class PersistenceFeaturePolicy(StrictModule, NonTrainableState):
         *,
         include_essential: bool = False,
         coordinates: Literal["birth-death", "birth-persistence"] = "birth-persistence",
-    ):
+    ) -> None:
         if int(degree) < 0:
             raise ValueError("Persistence feature degree must be non-negative.")
         if coordinates not in ("birth-death", "birth-persistence"):
@@ -148,7 +148,7 @@ class PersistenceFeatureEvidence(StrictModule, NonTrainableState):
         *,
         source_id: str,
         policy_id: str,
-    ):
+    ) -> None:
         value_ = jnp.asarray(value)
         valid = jnp.asarray(ordering_valid, dtype=jnp.bool_)
         self.value = value_

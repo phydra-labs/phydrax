@@ -156,7 +156,7 @@ class ConicProgram(StrictModule):
         bounds: Bounds | None = None,
         problem_id: str = "canonical-conic-program",
         convexity_evidence: str = "asserted",
-    ):
+    ) -> None:
         linear_ = jnp.asarray(linear)
         rhs = jnp.asarray(constraint_rhs)
         if linear_.ndim < 1:
@@ -348,7 +348,7 @@ class LinearProgram(StrictModule):
         inequality_rhs: ArrayLike | None = None,
         bounds: Bounds | None = None,
         problem_id: str = "canonical-linear-program",
-    ):
+    ) -> None:
         linear_ = jnp.asarray(linear)
         if linear_.ndim < 1:
             raise ValueError("linear must have at least one dimension.")

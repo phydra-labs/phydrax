@@ -67,7 +67,7 @@ class ParticleContactExchangePlan(StrictModule, NonTrainableState):
         plastic_fraction: float = 0.0,
         cohesion_fraction: float = 0.0,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         values = np.asarray(conductance)
         if (
             values.ndim != 2

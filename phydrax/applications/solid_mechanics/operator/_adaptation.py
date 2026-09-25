@@ -42,7 +42,7 @@ class MechanicsFineTuningPolicy(StrictModule, NonTrainableState):
         allowed_observable_ids: Sequence[str],
         residual_objective_id: str,
         policy_id: str,
-    ):
+    ) -> None:
         if not isinstance(context_policy, BoundedResidualAdaptationPolicy):
             raise TypeError("context_policy must be a BoundedResidualAdaptationPolicy.")
         observables = tuple(str(value) for value in allowed_observable_ids)

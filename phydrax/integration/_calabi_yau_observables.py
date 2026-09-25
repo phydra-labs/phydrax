@@ -50,7 +50,7 @@ class CalabiYauModuliObservablePlan(StrictModule):
         positivity_tolerance: float = 1e-10,
         yukawa_symmetry_tolerance: float = 1e-9,
         maximum_elements: int = 10_000_000,
-    ):
+    ) -> None:
         labels = tuple(str(value) for value in modulus_labels)
         kind = str(representative_kind)
         source = str(representative_source_id)
@@ -119,7 +119,7 @@ class PreparedCalabiYauModuliSamples(StrictModule):
         representatives: ArrayLike,
         yukawa_density: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, CalabiYauModuliObservablePlan):
             raise TypeError("plan must be CalabiYauModuliObservablePlan.")
         if not isinstance(measure, ProjectiveMeasureTarget):

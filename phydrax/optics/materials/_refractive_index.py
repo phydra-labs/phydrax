@@ -40,7 +40,7 @@ class AngularFrequencyValidity(StrictModule, NonTrainableState):
         /,
         *,
         extrapolation: ExtrapolationPolicy = "reject",
-    ):
+    ) -> None:
         lower = jnp.asarray(minimum)
         upper = jnp.asarray(maximum)
         if lower.ndim != 0 or upper.ndim != 0:
@@ -71,7 +71,7 @@ class RefractiveIndexProvenance(StrictModule, NonTrainableState):
     record_id: str = eqx.field(static=True)
     provenance_id: str = eqx.field(static=True)
 
-    def __init__(self, manifest: ArtifactManifest, /, *, record_id: str):
+    def __init__(self, manifest: ArtifactManifest, /, *, record_id: str) -> None:
         if not isinstance(manifest, ArtifactManifest):
             raise TypeError("manifest must be an ArtifactManifest.")
         identifier = str(record_id).strip()
@@ -194,7 +194,7 @@ class ConstantRefractiveIndex(AbstractRefractiveIndexLaw):
         provenance: RefractiveIndexProvenance,
         law_id: str,
         passive_branch: PassiveBranch = "as-given",
-    ):
+    ) -> None:
         speed, identifier, branch = _common_law_values(
             validity, reference_wave_speed, provenance, law_id, passive_branch
         )
@@ -239,7 +239,7 @@ class CauchyRefractiveIndex(AbstractRefractiveIndexLaw):
         reference_wave_speed: ArrayLike,
         provenance: RefractiveIndexProvenance,
         law_id: str,
-    ):
+    ) -> None:
         speed, identifier, branch = _common_law_values(
             validity,
             reference_wave_speed,
@@ -289,7 +289,7 @@ class SellmeierRefractiveIndex(AbstractRefractiveIndexLaw):
         reference_wave_speed: ArrayLike,
         provenance: RefractiveIndexProvenance,
         law_id: str,
-    ):
+    ) -> None:
         speed, identifier, branch = _common_law_values(
             validity,
             reference_wave_speed,
@@ -352,7 +352,7 @@ class LorentzDrudeRefractiveIndex(AbstractRefractiveIndexLaw):
         reference_wave_speed: ArrayLike,
         provenance: RefractiveIndexProvenance,
         law_id: str,
-    ):
+    ) -> None:
         speed, identifier, branch = _common_law_values(
             validity,
             reference_wave_speed,
@@ -420,7 +420,7 @@ class TabulatedComplexRefractiveIndex(AbstractRefractiveIndexLaw):
         provenance: RefractiveIndexProvenance,
         law_id: str,
         passive_branch: PassiveBranch = "as-given",
-    ):
+    ) -> None:
         speed, identifier, branch = _common_law_values(
             validity, reference_wave_speed, provenance, law_id, passive_branch
         )

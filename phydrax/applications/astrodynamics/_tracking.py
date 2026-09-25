@@ -36,7 +36,7 @@ class TrackingStationCatalog(StrictModule, NonTrainableState):
 
     def __init__(
         self, station_ids, position, velocity, horizon_elevation, context, provenance, /
-    ):
+    ) -> None:
         ids = tuple(str(value).strip() for value in station_ids)
         position_ = np.asarray(position, dtype=np.float64)
         velocity_ = np.asarray(velocity, dtype=np.float64)
@@ -94,7 +94,7 @@ class ObservationSchedule(StrictModule, NonTrainableState):
         mask,
         observable_kinds,
         /,
-    ):
+    ) -> None:
         times_ = np.asarray(times, dtype=np.float64)
         stations = np.asarray(station_index)
         kinds = np.asarray(observable_index)
@@ -171,7 +171,7 @@ class TrackingObservationPlan(StrictModule, NonTrainableState):
     schedule: ObservationSchedule
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, stations, schedule, /):
+    def __init__(self, stations, schedule, /) -> None:
         if not isinstance(stations, TrackingStationCatalog):
             raise TypeError("stations must be a TrackingStationCatalog.")
         if not isinstance(schedule, ObservationSchedule):

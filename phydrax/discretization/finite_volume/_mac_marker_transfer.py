@@ -42,7 +42,7 @@ class MACMarkerKernelPlan(StrictModule, NonTrainableState):
     regularity: int = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, name: MACMarkerKernelName = "cubic-bspline", /):
+    def __init__(self, name: MACMarkerKernelName = "cubic-bspline", /) -> None:
         if name not in (
             "cubic-bspline",
             "peskin-four-point",
@@ -394,7 +394,7 @@ class MACMarkerTransferPlan(StrictModule, NonTrainableState):
         kernel: MACMarkerKernelPlan | None = None,
         accumulation: MACMarkerAccumulation = "deterministic",
         maximum_resource_bytes: int = 1024**3,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if not isinstance(markers, LagrangianMarkerDiscretization):
@@ -465,7 +465,7 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
     accumulation: MACMarkerAccumulation = eqx.field(static=True)
 
-    def __init__(self, plan: MACMarkerTransferPlan, /):
+    def __init__(self, plan: MACMarkerTransferPlan, /) -> None:
         if not isinstance(plan, MACMarkerTransferPlan):
             raise TypeError("plan must be MACMarkerTransferPlan.")
         dimension = len(plan.operators.discretization.cell_shape)

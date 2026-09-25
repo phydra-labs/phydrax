@@ -164,7 +164,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
         maximum_rank_check_size: int = 256,
         condition_limit: float = 1.0e10,
         require_rank_certification: bool = True,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if not isinstance(transfer, PreparedMACMarkerTransfer):

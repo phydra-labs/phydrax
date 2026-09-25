@@ -96,7 +96,7 @@ class PfaffianJastrowAmplitude(StrictModule, ParameterOwner):
         pairing_id: str,
         cusp_id: str,
         policy: PfaffianPolicy,
-    ):
+    ) -> None:
         if not callable(pairing_evaluator) or not callable(jastrow):
             raise TypeError("pairing_evaluator and jastrow must be callable.")
         if isinstance(particle_count, bool) or not isinstance(particle_count, Integral):

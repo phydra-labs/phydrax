@@ -56,7 +56,7 @@ class CutCellRestartRegistry(StrictModule, NonTrainableState):
         coordinate_maps: Mapping[str, CoordinateMap | PatchCoordinateMapSet],
         level_sets: Mapping[str, LevelSet],
         /,
-    ):
+    ) -> None:
         map_entries = tuple(
             sorted((str(key), value) for key, value in coordinate_maps.items())
         )
@@ -112,7 +112,7 @@ class MultivaluedBlockAMRCheckpointPlan(StrictModule, NonTrainableState):
         /,
         *,
         dtype: str | np.dtype = np.float64,
-    ):
+    ) -> None:
         names = tuple(str(value) for value in component_names)
         dtype_ = np.dtype(dtype)
         if (

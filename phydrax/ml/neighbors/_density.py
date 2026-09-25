@@ -67,7 +67,7 @@ class KernelDensityModel(AbstractFittedModel):
         bandwidth: ArrayLike,
         feature_count: int,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         support_ = jnp.asarray(support)
         weight_ = jnp.asarray(support_weight)
         mask_ = jnp.asarray(support_mask, dtype=jnp.bool_)
@@ -153,7 +153,7 @@ class KernelDensityRecipe(AbstractRecipe):
         *,
         capacity: int | None = None,
         weight_policy: WeightPolicy = "measure",
-    ):
+    ) -> None:
         bandwidth_ = jnp.asarray(bandwidth, dtype=jnp.float64)
         if bandwidth_.ndim != 0:
             raise ValueError("bandwidth must be scalar.")
@@ -259,7 +259,7 @@ class LocalOutlierFactorModel(AbstractFittedModel):
         neighbor_count: int,
         feature_count: int,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         support_ = jnp.asarray(support)
         mask_ = jnp.asarray(support_mask, dtype=jnp.bool_)
         weight_ = jnp.asarray(support_weight)
@@ -378,7 +378,7 @@ class LocalOutlierFactorRecipe(AbstractRecipe):
         metric: Any = "euclidean",
         chunk_size: int = 128,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(neighbor_count) <= 0 or int(chunk_size) <= 0:
             raise ValueError("neighbor_count and chunk_size must be positive.")
         self.neighbor_count = int(neighbor_count)

@@ -32,7 +32,7 @@ class FrechetMeanResult(StrictModule):
         *,
         iterations: int,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
-    ):
+    ) -> None:
         point_ = jnp.asarray(point)
         evidence = (
             GeometryPrecisionPolicy().evidence_for(point_)

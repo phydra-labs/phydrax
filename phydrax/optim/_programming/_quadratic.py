@@ -209,7 +209,7 @@ class QuadraticProgram(StrictModule):
         bounds: Bounds | None = None,
         problem_id: str = "canonical-quadratic-program",
         convexity_evidence: str = "asserted",
-    ):
+    ) -> None:
         quadratic_value = jnp.asarray(quadratic)
         linear_value = jnp.asarray(linear)
         if (

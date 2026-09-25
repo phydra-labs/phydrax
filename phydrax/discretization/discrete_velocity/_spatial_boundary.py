@@ -100,7 +100,7 @@ class CompiledD2V17BoundaryTopology(StrictModule, NonTrainableState):
         *,
         periodic_axes: tuple[bool, bool],
         physical_owner: SmoothCompressibleD2VLinkOwner,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if (
@@ -314,7 +314,7 @@ class SmoothCompressibleD2VReservoirParameters(StrictModule):
         corner_particle_populations: ArrayLike | None = None,
         corner_total_energy_populations: ArrayLike | None = None,
         corner_data_present: ArrayLike | None = None,
-    ):
+    ) -> None:
         particles = jnp.asarray(face_particle_populations)
         energy = jnp.asarray(face_total_energy_populations)
         if particles.shape == (17,):
@@ -594,7 +594,7 @@ class PeriodicD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryPlan):
         /,
         *,
         retain_history: bool = False,
-    ):
+    ) -> None:
         history = _validate_retain_history(retain_history)
         topology = CompiledD2V17BoundaryTopology(
             quadrature,
@@ -647,7 +647,7 @@ class SpecularAdiabaticD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryPlan
         *,
         periodic_axes: tuple[bool, bool] = (False, False),
         retain_history: bool = False,
-    ):
+    ) -> None:
         history = _validate_retain_history(retain_history)
         topology = CompiledD2V17BoundaryTopology(
             quadrature,
@@ -708,7 +708,7 @@ class EquilibriumReservoirD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryP
         corner_total_energy_populations: ArrayLike | None = None,
         corner_data_present: ArrayLike | None = None,
         retain_history: bool = False,
-    ):
+    ) -> None:
         history = _validate_retain_history(retain_history)
         topology = CompiledD2V17BoundaryTopology(
             quadrature,
@@ -922,7 +922,7 @@ class OutwardExtrapolationD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryP
         *,
         periodic_axes: tuple[bool, bool] = (False, False),
         retain_history: bool = False,
-    ):
+    ) -> None:
         history = _validate_retain_history(retain_history)
         topology = CompiledD2V17BoundaryTopology(
             quadrature,
@@ -1036,7 +1036,7 @@ class MaxwellThermalD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryPlan):
         wall_velocity: ArrayLike,
         periodic_axes: tuple[bool, bool] = (False, False),
         retain_history: bool = False,
-    ):
+    ) -> None:
         history = _validate_retain_history(retain_history)
         topology = CompiledD2V17BoundaryTopology(
             quadrature,

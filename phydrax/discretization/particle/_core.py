@@ -69,7 +69,7 @@ class ParticleSetPlan(AbstractDiscretizationPlan):
         domain_labels: Sequence[str] = ("material_point",),
         coordinate_dtype: Any = "float64",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         ids_host = np.asarray(particle_ids)
         if ids_host.ndim != 1 or ids_host.size == 0:
             raise ValueError("particle_ids must be a non-empty rank-1 array.")
@@ -158,7 +158,7 @@ class ParticleDiscretization(AbstractPreparedDiscretization):
     numeric_version: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ParticleSetPlan, /, *, numeric_version: str = "0"):
+    def __init__(self, plan: ParticleSetPlan, /, *, numeric_version: str = "0") -> None:
         if not isinstance(plan, ParticleSetPlan):
             raise TypeError("plan must be a ParticleSetPlan.")
         version = str(numeric_version)

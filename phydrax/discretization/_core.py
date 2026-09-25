@@ -97,7 +97,7 @@ class DiscretizationKey(StrictModule, NonTrainableState):
         *,
         domain_labels: tuple[str, ...] | list[str] = (),
         key_id: str | None = None,
-    ):
+    ) -> None:
         name_ = nonempty_identifier("name", name)
         role_ = DiscretizationRole(role)
         labels = tuple(str(label) for label in domain_labels)
@@ -136,7 +136,7 @@ class PreparationReport(StrictModule, NonTrainableState):
         diagnostics: tuple[str, ...] | list[str] = (),
         resource_counts: dict[str, int] | tuple[tuple[str, int], ...] = (),
         report_id: str | None = None,
-    ):
+    ) -> None:
         capabilities_ = normalized_capabilities(capabilities)
         diagnostics_ = tuple(str(value) for value in diagnostics)
         if any(not value for value in diagnostics_):

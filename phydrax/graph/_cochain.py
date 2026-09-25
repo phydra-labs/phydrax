@@ -81,7 +81,7 @@ class CochainIncidence(StrictModule, NonTrainableState):
         upper_indices: Any,
         signs: Any,
         /,
-    ):
+    ) -> None:
         resolved_degree = int(degree)
         lower_size = int(lower_count)
         upper_size = int(upper_count)
@@ -185,7 +185,7 @@ class HarmonicSubspace(StrictModule, NonTrainableState):
         max_modes: int,
         boundary_policy: CochainBoundaryKind,
         complex_fingerprint: str,
-    ):
+    ) -> None:
         basis_tuple = tuple(jnp.asarray(value) for value in bases)
         eigenvalue_tuple = tuple(jnp.asarray(value) for value in eigenvalues)
         rank_tuple = tuple(ranks)
@@ -250,7 +250,7 @@ class CochainComplexIR(StrictModule, NonTrainableState):
         coordinates: Sequence[Any | None] | None = None,
         harmonic_subspace: HarmonicSubspace | None = None,
         validate: bool = True,
-    ):
+    ) -> None:
         counts = tuple(cell_counts)
         if not counts or any(value <= 0 for value in counts):
             raise ValueError("Cochain complexes require positive cell counts by degree.")

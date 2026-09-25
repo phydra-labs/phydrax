@@ -58,7 +58,7 @@ class ImageSpaceObservation(StrictModule):
         /,
         *,
         observation_id: str,
-    ):
+    ) -> None:
         if not isinstance(operator, PreparedObservationOperator):
             raise TypeError("operator must be PreparedObservationOperator.")
         observed_ = jnp.asarray(observed)
@@ -217,7 +217,7 @@ class NeurofluidInverseProblem(StrictModule):
         /,
         *,
         regularization: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(schema, NeurofluidParameterSchema):
             raise TypeError("schema must be NeurofluidParameterSchema.")
         if not isinstance(observation, ImageSpaceObservation):

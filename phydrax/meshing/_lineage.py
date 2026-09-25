@@ -57,7 +57,7 @@ class EntityLineage(StrictModule, NonTrainableState):
         *,
         created_target_ids: ArrayLike = (),
         deleted_source_ids: ArrayLike = (),
-    ):
+    ) -> None:
         source_set = str(source_entity_set_id).strip()
         target_set = str(target_entity_set_id).strip()
         if not source_set or not target_set:
@@ -129,7 +129,7 @@ class MeshLineage(StrictModule, NonTrainableState):
         target_topology_id: str,
         entities: tuple[EntityLineage, ...],
         /,
-    ):
+    ) -> None:
         source = str(source_topology_id).strip()
         target = str(target_topology_id).strip()
         records = tuple(entities)
@@ -183,7 +183,7 @@ class VertexInterpolationStencil(StrictModule, NonTrainableState):
         /,
         *,
         preserves_constants: bool = True,
-    ):
+    ) -> None:
         source_set = str(source_entity_set_id).strip()
         target_set = str(target_entity_set_id).strip()
         targets = np.asarray(target_global_ids, dtype=np.int64)
@@ -272,7 +272,7 @@ class CellMeshTransition(StrictModule, NonTrainableState):
         /,
         *,
         vertex_stencil: VertexInterpolationStencil | None = None,
-    ):
+    ) -> None:
         mesh_id = str(source_mesh_id).strip()
         topology_id = str(source_topology_id).strip()
         if not mesh_id or not topology_id:

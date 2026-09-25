@@ -54,7 +54,7 @@ class LatticeBoltzmannExecutionProvenance(StrictModule, NonTrainableState):
         lattice_id: str,
         step_count: int,
         /,
-    ):
+    ) -> None:
         if execution_kind not in ("reference", "sharded", "fused"):
             raise ValueError("Unknown LBM execution kind.")
         identifiers = tuple(str(value) for value in (plan_id, step_id, lattice_id))
@@ -342,7 +342,7 @@ class ReferenceLatticeBoltzmannExecutionPlan(StrictModule, NonTrainableState):
         *,
         step_id: str,
         backend: str = "jax",
-    ):
+    ) -> None:
         if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):
             raise TypeError("velocity_set must be a LatticeBoltzmannVelocitySet.")
         if not callable(step):

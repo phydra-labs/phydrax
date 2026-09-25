@@ -43,7 +43,7 @@ class AffineScaler(_AbstractScaler):
         scale_value: ArrayLike = 1.0,
         alpha: ArrayLike = 1.0,
         beta: ArrayLike = 0.0,
-    ):
+    ) -> None:
         """Construct an affine scaler.
 
         **Arguments:**
@@ -97,7 +97,7 @@ class MinMaxScaler(_AbstractScalerSpecifier):
         min: ArrayLike = 0.0,
         max: ArrayLike = 1.0,
         axis: AxisLike = None,
-    ):
+    ) -> None:
         """Construct a min-max scaler from reference data.
 
         **Arguments:**
@@ -141,7 +141,7 @@ class MaxAbsScaler(_AbstractScalerSpecifier):
         /,
         *,
         axis: AxisLike = None,
-    ):
+    ) -> None:
         """Construct a max-absolute-value scaler from reference data.
 
         **Arguments:**
@@ -168,7 +168,7 @@ class StdScaler(_AbstractScalerSpecifier):
         /,
         *,
         axis: AxisLike = None,
-    ):
+    ) -> None:
         """Construct a standard scaler from reference data.
 
         **Arguments:**
@@ -198,7 +198,7 @@ class NormScaler(_AbstractScalerSpecifier):
         *,
         ord: int | float = 2,
         axis: AxisLike = None,
-    ):
+    ) -> None:
         """Construct a norm scaler from reference data.
 
         **Arguments:**

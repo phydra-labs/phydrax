@@ -54,7 +54,7 @@ class CanonicalPatchBucket(StrictModule, NonTrainableState):
         cell_active: np.ndarray,
         leaf_active: np.ndarray,
         boxes: Sequence[LogicalPatchBox | None],
-    ):
+    ) -> None:
         if not isinstance(plan, PatchBucketPlan):
             raise TypeError("Canonical patch buckets require PatchBucketPlan.")
         lane_count = plan.lane_capacity
@@ -142,7 +142,7 @@ class CanonicalPatchLevel(StrictModule, NonTrainableState):
         spacing: Sequence[float],
         buckets: Sequence[CanonicalPatchBucket],
         /,
-    ):
+    ) -> None:
         level_ = int(level)
         ratio = int(refinement_ratio)
         shape = tuple(global_cell_shape)
@@ -218,7 +218,7 @@ class CanonicalPatchHierarchy(StrictModule, NonTrainableState):
         periodic_axes: Sequence[bool],
         layout_id: str,
         /,
-    ):
+    ) -> None:
         levels_ = tuple(levels)
         periodic = tuple(bool(value) for value in periodic_axes)
         if (
@@ -289,7 +289,7 @@ class BlockAMRResourceEvidence(StrictModule, NonTrainableState):
         reserved_device_bytes: int,
         host_byte_limit: int | None,
         device_byte_limit: int | None,
-    ):
+    ) -> None:
         values = (
             patch_slots,
             cell_slots,
@@ -369,7 +369,7 @@ class BlockAMRResourcePlan(StrictModule, NonTrainableState):
         maximum_communication_peers: int = 1,
         host_byte_limit: int | None = None,
         device_byte_limit: int | None = None,
-    ):
+    ) -> None:
         capacities = tuple(
             (
                 maximum_components_per_cell,

@@ -42,7 +42,7 @@ class ImplicitRigidShapePlan(StrictModule, NonTrainableState):
         distance_error_bound: float = 0.0,
         lipschitz_bound: float = 1.0,
         shape_id: str,
-    ):
+    ) -> None:
         if not callable(signed_distance_function) or not callable(normal_function):
             raise TypeError(
                 "Implicit shape distance and normal functions must be callable."

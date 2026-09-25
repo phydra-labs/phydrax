@@ -51,7 +51,7 @@ class OperatorStochasticGeometryPlan(StrictModule):
         target: Literal["expected_log_likelihood"],
         population_size: int,
         geometry_epoch: int = 0,
-    ):
+    ) -> None:
         if target != "expected_log_likelihood":
             raise ValueError(
                 "Stochastic operator geometry defines only expected_log_likelihood."
@@ -96,7 +96,7 @@ class OperatorFactorSamplingPlan(StrictModule):
         sampling_probabilities: ArrayLike | None = None,
         estimator_weights: ArrayLike | None = None,
         geometry: OperatorStochasticGeometryPlan | None = None,
-    ):
+    ) -> None:
         if design not in (
             "complete",
             "iid_nonuniform_with_replacement",
@@ -186,7 +186,7 @@ class OperatorLikelihoodData(StrictModule):
         query_sampling_probabilities: ArrayLike | None = None,
         query_estimator_weights: ArrayLike | None = None,
         geometry_epoch: int = 0,
-    ):
+    ) -> None:
         if not isinstance(batch, OperatorBatch):
             raise TypeError("batch must be an OperatorBatch.")
         if not isinstance(output_spec, OperatorOutputSpec):
@@ -269,7 +269,7 @@ class OperatorBatchObservationLikelihood(AbstractObservationFactor):
         | None = None,
         label: str = "operator_observation",
         factor_id: str = "operator-observation",
-    ):
+    ) -> None:
         if not callable(predict):
             raise TypeError("predict must be callable.")
         if not isinstance(likelihood, AbstractLikelihood):
@@ -342,7 +342,7 @@ class OperatorMinibatchSource:
         field_name: str,
         observation_mask: ArrayLike | None = None,
         factor_sampling: OperatorFactorSamplingPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(loader, OperatorBatchLoader):
             raise TypeError("loader must be an OperatorBatchLoader.")
         if loader.drop_last:
@@ -558,7 +558,7 @@ class FixedOperatorObservationLikelihood(AbstractPosteriorTerm):
         parameters: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.AxisArray]]
         | None = None,
         label: str = "operator_observation",
-    ):
+    ) -> None:
         if not callable(predict):
             raise TypeError("predict must be callable.")
         if not isinstance(batch, OperatorBatch):

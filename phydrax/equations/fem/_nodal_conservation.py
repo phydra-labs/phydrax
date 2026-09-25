@@ -105,7 +105,7 @@ class NodalDGConservationMethodPlan(StrictModule):
         differentiability: BranchDifferentiationPolicy = (
             BranchDifferentiationPolicy.BRANCHWISE
         ),
-    ):
+    ) -> None:
         if not isinstance(interface_flux, AbstractArbitraryNormalNumericalFluxPlan):
             raise TypeError("Nodal DG requires an arbitrary-normal interface flux.")
         volume = (
@@ -198,7 +198,7 @@ class NodalDGPreparationReport(StrictModule, NonTrainableState):
         mass_evidence_id: str,
         compilation_id: str,
         /,
-    ):
+    ) -> None:
         self.volume_quadrature = volume_quadrature
         self.interior_quadrature = interior_quadrature
         self.exterior_quadrature = exterior_quadrature
@@ -1035,7 +1035,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         *,
         source: Callable | None = None,
         entropy_pair: ConvexEntropyPair | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("Nodal DG requires FiniteElementDiscretization.")
         if not isinstance(method, NodalDGConservationMethodPlan):

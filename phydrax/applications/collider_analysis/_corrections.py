@@ -38,7 +38,7 @@ class CorrectionMap(StrictModule, NonTrainableState):
         output_name: str,
         correlation_id: str,
         source_id: str,
-    ):
+    ) -> None:
         coordinates_ = np.asarray(coordinates, dtype=np.float64)
         values_ = np.asarray(values, dtype=np.float64)
         uncertainties_ = np.asarray(uncertainties, dtype=np.float64)

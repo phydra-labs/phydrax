@@ -38,7 +38,7 @@ class DivergenceFreeMagneticTransferPlan(StrictModule, NonTrainableState):
         /,
         *,
         refinement_ratio: int = 2,
-    ):
+    ) -> None:
         ratio = int(refinement_ratio)
         if (
             coarse.dimension != fine.dimension
@@ -154,7 +154,7 @@ class ElectromotiveForceRegister(StrictModule):
         /,
         *,
         register_id: str,
-    ):
+    ) -> None:
         coarse = jnp.asarray(coarse_integral)
         fine = jnp.asarray(fine_integral_restricted, dtype=coarse.dtype)
         if coarse.shape != fine.shape or not register_id:
@@ -169,7 +169,7 @@ class ConstrainedMHDAMRSynchronizationPlan(StrictModule, NonTrainableState):
     coarse_bridge: StructuredCochainBridge
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, coarse_bridge: StructuredCochainBridge, /):
+    def __init__(self, coarse_bridge: StructuredCochainBridge, /) -> None:
         if coarse_bridge.dimension not in (2, 3):
             raise ValueError("MHD AMR synchronization requires 2D or 3D cochains.")
         self.coarse_bridge = coarse_bridge
@@ -204,7 +204,7 @@ class VariablePatchCochainSynchronizationPlan(StrictModule, NonTrainableState):
     complex: VariablePatchEntityComplex
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, complex: VariablePatchEntityComplex, /):
+    def __init__(self, complex: VariablePatchEntityComplex, /) -> None:
         if not isinstance(
             complex, VariablePatchEntityComplex
         ) or complex.complex.dimension not in (2, 3):
@@ -260,7 +260,7 @@ class CutCellCochainSynchronizationPlan(StrictModule, NonTrainableState):
     state: CutCellCochainState
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, state: CutCellCochainState, /):
+    def __init__(self, state: CutCellCochainState, /) -> None:
         if not isinstance(state, CutCellCochainState):
             raise TypeError(
                 "Cut-cell cochain synchronization requires CutCellCochainState."

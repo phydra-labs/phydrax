@@ -84,7 +84,7 @@ class MPAXPlan(StrictModule):
         warm_start: bool = False,
         feasibility_polishing: bool = False,
         unroll: bool = False,
-    ):
+    ) -> None:
         if algorithm not in ("rapdhg", "r2hpdhg"):
             raise ValueError("algorithm must be 'rapdhg' or 'r2hpdhg'.")
         if representation not in ("dense", "sparse"):
@@ -141,7 +141,7 @@ class PreparedMPAX(StrictModule):
     solver: Any
     backend_version: str = eqx.field(static=True)
 
-    def __init__(self, plan: MPAXPlan, solver: Any, /, *, backend_version: str):
+    def __init__(self, plan: MPAXPlan, solver: Any, /, *, backend_version: str) -> None:
         if not isinstance(plan, MPAXPlan):
             raise TypeError("plan must be an MPAXPlan.")
         version = str(backend_version)

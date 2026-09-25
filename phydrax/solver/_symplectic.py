@@ -35,7 +35,7 @@ class SeparableHamiltonianResult(StrictModule):
         steps: int,
         step_size: ArrayLike,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
-    ):
+    ) -> None:
         position_ = jnp.asarray(position)
         step_size_ = jnp.asarray(step_size)
         evidence = (

@@ -51,7 +51,7 @@ class DetectorTrajectoryRoute(StrictModule, NonTrainableState):
         *,
         position_unit: UnitDefinition = METER,
         time_unit: UnitDefinition = SECOND,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be StateLayout.")
         indices = tuple(position_components)
@@ -136,7 +136,7 @@ class PrescribedShockleyRamoPlan(StrictModule, NonTrainableState):
         /,
         *,
         closure_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(weighting_plan, DetectorWeightingFieldPlan):
             raise TypeError("weighting_plan must be DetectorWeightingFieldPlan.")
         if not isinstance(weighting, DetectorWeightingFieldResult):

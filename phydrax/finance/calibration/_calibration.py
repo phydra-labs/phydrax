@@ -64,7 +64,7 @@ class CalibrationPlan(StrictModule):
         tolerance: float = 1.0e-9,
         initial_damping: float = 1.0e-3,
         fail_on_arbitrage: bool = True,
-    ):
+    ) -> None:
         if family not in ("svi", "essvi"):
             raise ValueError("calibration family must be svi or essvi.")
         expiries = jnp.asarray(slice_expiries, dtype=jnp.float64)

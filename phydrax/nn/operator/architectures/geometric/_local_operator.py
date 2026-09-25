@@ -149,7 +149,7 @@ class LocalIntegralOperator(AbstractOperatorModel):
         source_key: str | None = None,
         query_chunk_size: int = 256,
         max_neighbors: int | None = None,
-    ):
+    ) -> None:
         self.kernel_model = kernel_model
         self.coord_dim = int(coord_dim)
         self.in_size = in_channels
@@ -290,7 +290,7 @@ class LocalDifferentialOperator(AbstractOperatorModel):
         source_key: str | None = None,
         query_chunk_size: int = 256,
         max_neighbors: int | None = None,
-    ):
+    ) -> None:
         self.kernel_model = kernel_model
         self.coord_dim = int(coord_dim)
         self.radius = float(radius)
@@ -443,7 +443,7 @@ class LocalGlobalOperator(AbstractOperatorModel):
         local_operator: AbstractOperatorModel,
         fusion: LocalGlobalFusion = "sum",
         mixer: Linear | None = None,
-    ):
+    ) -> None:
         self.global_operator = global_operator
         self.local_operator = local_operator
         self.fusion = fusion

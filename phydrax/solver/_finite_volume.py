@@ -66,7 +66,7 @@ class FiniteVolumeStageStateProvider(StrictModule, NonTrainableState):
         /,
         *,
         provider_id: str,
-    ):
+    ) -> None:
         identity = str(provider_id)
         if not callable(callback):
             raise TypeError("callback must be callable.")
@@ -727,7 +727,7 @@ class UnsplitFiniteVolumeSSPRK3Plan(StrictModule):
     temporal_method_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: PreparedFVDynamics, /):
+    def __init__(self, dynamics: PreparedFVDynamics, /) -> None:
         if not isinstance(
             dynamics,
             (
@@ -782,7 +782,7 @@ class DirectionalSplitFiniteVolumePlan(StrictModule):
         /,
         *,
         splitting: SplittingKind = "strang",
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedFiniteVolumeDynamics):
             raise TypeError("Directional splitting requires finite-volume dynamics.")
         if not isinstance(dynamics.method.interface_solver, AbstractNumericalFluxPlan):

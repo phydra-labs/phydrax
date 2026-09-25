@@ -54,7 +54,7 @@ class FiniteElementGeometrySnapshot(StrictModule, NonTrainableState):
         *,
         topology_id: str,
         geometry_layout_id: str,
-    ):
+    ) -> None:
         values = jnp.asarray(coordinates)
         velocity = jnp.asarray(coordinate_velocity)
         time_ = jnp.asarray(time)
@@ -260,7 +260,9 @@ class MovingTraceRoute(StrictModule, NonTrainableState):
     next: PreparedDGTraceRoute
     route_id: str = eqx.field(static=True)
 
-    def __init__(self, current: PreparedDGTraceRoute, next: PreparedDGTraceRoute, /):
+    def __init__(
+        self, current: PreparedDGTraceRoute, next: PreparedDGTraceRoute, /
+    ) -> None:
         if (
             current.route_kind != next.route_kind
             or current.owner_dofs.shape != next.owner_dofs.shape
@@ -325,7 +327,7 @@ class ConservativeRemapPlan(StrictModule):
         target_mass: ArrayLike,
         cross_mass: ArrayLike,
         /,
-    ):
+    ) -> None:
         source = jnp.asarray(source_mass)
         target = jnp.asarray(target_mass)
         cross = jnp.asarray(cross_mass)

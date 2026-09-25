@@ -53,7 +53,7 @@ class ColorGradientLatticeBoltzmannProblem(StrictModule, NonTrainableState):
         *,
         reference_density: float = 1.0,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Color-gradient problem name must be non-empty.")

@@ -262,7 +262,7 @@ class ProductionCaseManifest(StrictModule, NonTrainableState):
         topology_id: str,
         geometry_layout_id: str,
         dtype: str,
-    ):
+    ) -> None:
         values = tuple(
             str(value)
             for value in (
@@ -304,7 +304,7 @@ class CheckpointGenerationPolicy(StrictModule, NonTrainableState):
     retention: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, retention: int = 3, /):
+    def __init__(self, retention: int = 3, /) -> None:
         retention_ = int(retention)
         if retention_ <= 0:
             raise ValueError("Checkpoint retention must be positive.")
@@ -410,7 +410,7 @@ class DurableCheckpointStore:
         /,
         *,
         encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
-    ):
+    ) -> None:
         self._root_descriptor = -1
         if not isinstance(manifest, ProductionCaseManifest) or not isinstance(
             policy, CheckpointGenerationPolicy
@@ -744,7 +744,7 @@ class ArtifactCheckpointStore:
         resource_request: ResourceRequest,
         artifact_id: str | None = None,
         encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(manifest, ProductionCaseManifest) or not isinstance(
             policy, CheckpointGenerationPolicy
         ):
@@ -1662,7 +1662,7 @@ class ProductionFailureRecord(StrictModule, NonTrainableState):
         error_code: str,
         last_checkpoint_id: str,
         /,
-    ):
+    ) -> None:
         category_ = str(category)
         code = str(error_code)
         if code not in _FAILURE_CODES.get(category_, ()):
@@ -1714,7 +1714,7 @@ class ProductionTerminalManifest(StrictModule, NonTrainableState):
         failure: ProductionFailureRecord | None,
         iteration_session_state: IterationSessionState | None = None,
         /,
-    ):
+    ) -> None:
         if status not in ("completed", "failed", "canceled"):
             raise ValueError("Terminal manifest status is not terminal.")
         if status == "failed":
@@ -1793,7 +1793,7 @@ class ProductionTriggerBinding(StrictModule, NonTrainableState):
         /,
         *,
         moment_components: Sequence[int] = (),
-    ):
+    ) -> None:
         name_ = str(name)
         indices = tuple(moment_indices)
         components = tuple(moment_components)
@@ -1849,7 +1849,7 @@ class ProductionIterationMetrics(StrictModule):
         output_due,
         checkpoint_due,
         /,
-    ):
+    ) -> None:
         self.time = jnp.asarray(time)
         self.accepted_step_size = jnp.asarray(accepted_step_size)
         self.retry_count = jnp.asarray(retry_count, dtype=jnp.int32)
@@ -1980,7 +1980,7 @@ class ProductionRunPlan(StrictModule):
         validator: Callable | None = None,
         validator_id: str | None = None,
         device_resident: bool = False,
-    ):
+    ) -> None:
         step = float(step_size)
         end = float(end_time)
         steps = int(maximum_steps)
@@ -2130,7 +2130,7 @@ class PreparedProductionRun:
         resolved_run_spec: ResolvedRunSpec | None = None,
         restart_relation: RuntimeRestartRelation | None = None,
         migration_report: MigrationReport | None = None,
-    ):
+    ) -> None:
         if (
             not isinstance(manifest, ProductionCaseManifest)
             or not isinstance(plan, ProductionRunPlan)

@@ -67,7 +67,7 @@ class PRISMPlan(StrictModule, NonTrainableState):
         relative_tolerance: float = 1.0e-8,
         maximum_iterations: int = 200,
         maximum_condition: float = 1.0e12,
-    ):
+    ) -> None:
         damping_ = float(damping)
         history = int(anderson_history)
         absolute = float(absolute_tolerance)
@@ -157,7 +157,7 @@ class PreparedPRISM(StrictModule, NonTrainableState):
         form_factor: FormFactorPlan,
         potential: SitePairPotentialPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, PRISMPlan):
             raise TypeError("plan must be PRISMPlan.")
         if not isinstance(transform, PreparedIsotropicRadialTransform):

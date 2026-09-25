@@ -37,7 +37,7 @@ class PreparedCochainTopology(StrictModule, NonTrainableState):
         *,
         boundary_masks: Sequence[ArrayLike] | None = None,
         key: DiscretizationKey | None = None,
-    ):
+    ) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("Prepared cochain topology requires CellComplexTopology.")
         counts = tuple(entity.count for entity in topology.entity_sets)
@@ -92,7 +92,7 @@ class CochainMetricEvidence(StrictModule, NonTrainableState):
         geometry_layout_id: str,
         active_masks: Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         family = str(geometry_family_id)
         layout = str(geometry_layout_id)
         masks = tuple(np.asarray(mask, dtype=np.bool_) for mask in active_masks)
@@ -130,7 +130,7 @@ class CochainMetricPlan(StrictModule, NonTrainableState):
         geometry_family_id: str,
         geometry_layout_id: str,
         coordinate_shapes: Sequence[tuple[int, int] | None] | None = None,
-    ):
+    ) -> None:
         if not isinstance(prepared_topology, PreparedCochainTopology):
             raise TypeError("Cochain metric plan requires PreparedCochainTopology.")
         counts = tuple(entity.count for entity in prepared_topology.topology.entity_sets)
@@ -246,7 +246,7 @@ class CochainMetricState(StrictModule):
         active_masks: Sequence[ArrayLike] | None = None,
         time: ArrayLike = 0.0,
         revision: ArrayLike = 0,
-    ):
+    ) -> None:
         if not isinstance(plan, CochainMetricPlan):
             raise TypeError("Cochain metric state requires CochainMetricPlan.")
         counts = tuple(

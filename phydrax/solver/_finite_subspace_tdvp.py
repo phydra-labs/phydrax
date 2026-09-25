@@ -42,7 +42,7 @@ class FiniteVariationalSubspaceTDVPProblem(StrictModule):
         *,
         tolerance: float = 1e-10,
         problem_id: str,
-    ):
+    ) -> None:
         metric, operator, coefficients = map(
             jnp.asarray, (overlap, hamiltonian, initial_coefficients)
         )

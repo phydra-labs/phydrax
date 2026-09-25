@@ -45,7 +45,7 @@ class ParticlePairKeySpace(StrictModule, NonTrainableState):
     pair_count: int = eqx.field(static=True)
     key_space_id: str = eqx.field(static=True)
 
-    def __init__(self, particles: ParticleDiscretization, /):
+    def __init__(self, particles: ParticleDiscretization, /) -> None:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
         ids = np.asarray(particles.particle_ids, dtype=np.int64)

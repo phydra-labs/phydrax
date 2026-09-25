@@ -73,7 +73,7 @@ class NucleotideMechanicalResponseData:
         twist_unit: UnitDefinition,
         source: ReferenceArtifactManifest,
         model: PreparedNucleotideModel,
-    ):
+    ) -> None:
         cases = tuple(case_ids)
         units = tuple(independent_unit_ids)
         conditions = tuple(condition_ids)

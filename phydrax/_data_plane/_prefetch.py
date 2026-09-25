@@ -36,7 +36,7 @@ class BoundedPrefetchIterator(Iterator[OutputT], Generic[InputT, OutputT]):
         *,
         capacity: int,
         thread_name: str,
-    ):
+    ) -> None:
         resolved_capacity = int(capacity)
         if resolved_capacity < 0:
             raise ValueError("capacity must be nonnegative.")

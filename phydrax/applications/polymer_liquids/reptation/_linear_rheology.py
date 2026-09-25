@@ -27,7 +27,7 @@ class DoiEdwardsTubePlan(StrictModule):
         /,
         *,
         odd_mode_count: int = 64,
-    ):
+    ) -> None:
         if (
             not math.isfinite(float(disengagement_time))
             or float(disengagement_time) <= 0.0
@@ -138,7 +138,7 @@ class LikhtmanMcLeishPlan(StrictModule):
         *,
         constraint_release_time: float = math.inf,
         odd_mode_count: int = 64,
-    ):
+    ) -> None:
         if int(entanglement_count) < 2:
             raise ValueError("entanglement_count must be at least two.")
         if not math.isfinite(float(entanglement_time)) or float(entanglement_time) <= 0.0:

@@ -42,7 +42,7 @@ class MixedTensorReconstructionPlan(StrictModule, NonTrainableState):
         *,
         payload_ndim: int = 0,
         bounds: MixedBoundsPolicy = "error",
-    ):
+    ) -> None:
         axes_ = tuple(axes)
         labels = tuple(str(label) for label in axis_labels)
         payload = int(payload_ndim)

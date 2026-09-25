@@ -58,7 +58,7 @@ class ReactingPlasmaWallPlan(StrictModule, NonTrainableState):
         /,
         *,
         surface_mass_per_recession: float = 1.0,
-    ):
+    ) -> None:
         velocity = jnp.asarray(wall_velocity)
         scale = float(surface_mass_per_recession)
         if (

@@ -75,7 +75,7 @@ class MACDeformableImmersedNewmarkMethod(StrictModule, NonTrainableState):
         *,
         beta: float = 0.25,
         gamma: float = 0.5,
-    ):
+    ) -> None:
         if not isinstance(base, MACDeformableImmersedBackwardEulerMethod):
             raise TypeError("base must be MACDeformableImmersedBackwardEulerMethod.")
         beta_ = float(beta)

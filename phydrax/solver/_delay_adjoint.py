@@ -20,7 +20,7 @@ class CheckpointedDelayAdjoint(dfx.AbstractAdjoint):
 
     checkpointing: dfx.RecursiveCheckpointAdjoint
 
-    def __init__(self, checkpoints: int | None = None):
+    def __init__(self, checkpoints: int | None = None) -> None:
         if checkpoints is not None and (
             not isinstance(checkpoints, int)
             or isinstance(checkpoints, bool)
@@ -57,7 +57,7 @@ class SegmentedDelayAdjoint(dfx.AbstractAdjoint):
         /,
         *,
         checkpoints: int | None = None,
-    ):
+    ) -> None:
         if (
             not isinstance(max_segments, int)
             or isinstance(max_segments, bool)

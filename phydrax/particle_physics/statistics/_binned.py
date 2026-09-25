@@ -50,7 +50,7 @@ class StatisticalParameter(StrictModule, NonTrainableState):
         constraint_kind: ParameterConstraintKind = ParameterConstraintKind.UNCONSTRAINED,
         constraint_mean: float = 0.0,
         constraint_standard_deviation: float = 1.0,
-    ):
+    ) -> None:
         name_ = str(name).strip()
         values = tuple(
             map(
@@ -114,7 +114,7 @@ class BinnedStatisticalModel(StrictModule, NonTrainableState):
         channel_names: Sequence[str],
         sample_names: Sequence[str],
         bin_active: ArrayLike | None = None,
-    ):
+    ) -> None:
         nominal = np.asarray(nominal_samples, dtype=np.float64)
         observed = np.asarray(observations, dtype=np.float64)
         effects = np.asarray(modifier_effects, dtype=np.float64)

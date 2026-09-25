@@ -54,7 +54,7 @@ class ResolvedProteinChemistry:
     source_id: str
     profile: str = "canonical-L-single-chain-explicit"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             self.profile != "canonical-L-single-chain-explicit"
             or len(self.construct.chain_ids) != 1

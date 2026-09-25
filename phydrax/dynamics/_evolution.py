@@ -230,7 +230,7 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         *,
         input_policy: AbstractInputPolicy | None = None,
         evolution_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, DiscreteSystem):
             raise TypeError("DiscreteEvolution system must be a DiscreteSystem.")
         if input_policy is not None and not isinstance(input_policy, AbstractInputPolicy):

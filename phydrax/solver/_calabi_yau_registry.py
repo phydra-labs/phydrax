@@ -29,7 +29,7 @@ class CalabiYauCheckpointRegistry:
     maximum_artifacts: int
     registry_id: str
 
-    def __init__(self, root: str | Path, /, *, maximum_artifacts: int = 1024):
+    def __init__(self, root: str | Path, /, *, maximum_artifacts: int = 1024) -> None:
         root_ = Path(root).expanduser().resolve()
         maximum = int(maximum_artifacts)
         if maximum < 1:

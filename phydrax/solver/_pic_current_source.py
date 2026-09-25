@@ -42,7 +42,7 @@ class PICMaxwellCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
 
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, source_id: str = "pic-midpoint-current", /):
+    def __init__(self, source_id: str = "pic-midpoint-current", /) -> None:
         identifier = str(source_id)
         if not identifier:
             raise ValueError("source_id must be nonempty.")

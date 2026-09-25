@@ -110,7 +110,7 @@ class FlowNUTSConfig(StrictModule):
         max_patience: int = 10,
         batch_size: int = 256,
         validation_fraction: float = 0.1,
-    ):
+    ) -> None:
         positive = {
             "num_adaptation_rounds": num_adaptation_rounds,
             "num_local_adaptation_steps": num_local_adaptation_steps,
@@ -233,7 +233,7 @@ class FlowNUTSResult(StrictModule):
         sampling_duration_seconds: float,
         duration_seconds: float,
         history_memory_bytes: int,
-    ):
+    ) -> None:
         if not isinstance(mcmc, MCMCResult):
             raise TypeError("mcmc must be an MCMCResult.")
         if not isinstance(config, FlowNUTSConfig):
@@ -1405,7 +1405,7 @@ def _write_flow_nuts_checkpoint(
     sampling_duration,
     duration_seconds,
     frozen_flow_fingerprint,
-):
+) -> None:
     arrays = {
         "step_sizes": step_sizes,
         "inverse_mass_matrices": inverse_mass_matrices,

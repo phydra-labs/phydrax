@@ -167,7 +167,7 @@ class FittedBellmanProblem(StrictModule):
         training_weights: ArrayLike | None = None,
         holdout_weights: ArrayLike | None = None,
         args: Any = None,
-    ):
+    ) -> None:
         if not isinstance(training_paths, ControlledPathBatch):
             raise TypeError("training_paths must be a ControlledPathBatch.")
         if not isinstance(holdout_paths, ControlledPathBatch):
@@ -233,7 +233,7 @@ class FittedBellmanPlan(StrictModule):
         solve_tolerance: float = 1e-8,
         maximum_condition: float | None = None,
         minimum_training_paths: int = 1,
-    ):
+    ) -> None:
         minimum = int(minimum_training_paths)
         if minimum < 1:
             raise ValueError("minimum_training_paths must be positive.")

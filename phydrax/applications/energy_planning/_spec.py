@@ -42,7 +42,7 @@ class Carrier(StrictModule):
     energy_content: float | None = None
     environmental: bool = eqx.field(static=True, default=False)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         if not self.name or not isinstance(self.unit, UnitDefinition):
             raise ValueError(
                 "A carrier requires a name and a UnitDefinition amount unit."
@@ -104,7 +104,7 @@ class InventoryBoundary(StrictModule):
     target: float | None = 0.0
     link: str | None = eqx.field(static=True, default=None)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         if self.terminal not in ("fixed", "free", "periodic", "linked"):
             raise ValueError("terminal must be fixed, free, periodic, or linked.")
         if self.initial is not None:
@@ -174,7 +174,7 @@ class ScenarioNode(StrictModule):
 class ScenarioTree(StrictModule):
     nodes: tuple[ScenarioNode, ...]
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         lookup = {node.name: node for node in self.nodes}
         if not self.nodes or len(lookup) != len(self.nodes):
             raise ValueError("Scenario node names must be nonempty and unique.")
@@ -233,7 +233,7 @@ class Horizon(StrictModule):
     representative: str = eqx.field(static=True, default="chronological")
     stage_start: int = eqx.field(static=True, default=0)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         values = np.asarray(self.durations)
         if (
             not self.name
@@ -263,7 +263,7 @@ class Chronology(StrictModule):
     financial_years: tuple[int, ...] = eqx.field(static=True, default=())
     scenario_tree: ScenarioTree | None = None
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         if not self.horizons or len({h.name for h in self.horizons}) != len(
             self.horizons
         ):
@@ -403,7 +403,7 @@ class Investment(StrictModule):
     fixed_build_cost: float = 0.0
     scenario_node: str | None = eqx.field(static=True, default=None)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         if self.technical_lifetime < 1 or self.financial_lifetime < 1:
             raise ValueError("Technical and financial lifetimes must be positive years.")
         for name, value in (
@@ -470,7 +470,7 @@ class EnergyPolicy(StrictModule):
     carbon_price: float = 0.0
     investment_budget: float | None = None
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         for name, value in (
             ("emissions_limit", self.emissions_limit),
             ("investment_budget", self.investment_budget),
@@ -491,7 +491,7 @@ class EnergySystem(StrictModule):
     investments: tuple[Investment, ...] = ()
     policy: EnergyPolicy = eqx.field(default_factory=EnergyPolicy)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         n = self.chronology.size
         for label, records in (
             ("carrier", self.carriers),

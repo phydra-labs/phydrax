@@ -337,7 +337,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         linear_dependence_tolerance: float = 1.0e-9,
         factorized_eri: FactorizedERITensor | None = None,
         direct_jk: PreparedDirectJK | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         if (

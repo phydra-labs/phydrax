@@ -13,6 +13,8 @@ exact coordinate transpose of its forward action. No constitutive term is omitte
 
 from __future__ import annotations
 
+from typing import NoReturn
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -308,7 +310,7 @@ class _CanonicalSparseOperator(AbstractSparseLinearOperator):
     action: AbstractLinearOperator
     storage: SparseStorage
 
-    def __init__(self, action, storage, /):
+    def __init__(self, action, storage, /) -> None:
         if storage.shape != (action.target.size, action.source.size):
             raise ValueError("Canonical sparse storage must match the action spaces.")
         self.action = action
@@ -370,7 +372,7 @@ class _Almonacid2024SetupOperator(AbstractLinearOperator):
         coordinates,
         *,
         dynamic,
-    ):
+    ) -> None:
         self.block_operator = blocks
         self.scalar_inverse = scalar_inverse
         self.mechanical_schur = mechanical_schur
@@ -407,7 +409,7 @@ class _Almonacid2024SetupOperator(AbstractLinearOperator):
     def adjoint_mv(self, vector, /):
         return jax.tree.map(jnp.conj, self.transpose_mv(jax.tree.map(jnp.conj, vector)))
 
-    def _materialize(self, /):
+    def _materialize(self, /) -> NoReturn:
         raise LinearCapabilityError(
             "Almonacid setup cannot materialize a global dense Jacobian."
         )
@@ -631,7 +633,7 @@ class _SparseDirectPreconditioner(AbstractPreconditioner, NonTrainableState):
 
     prepared: PreparedLinearSolve
 
-    def __init__(self, prepared, /):
+    def __init__(self, prepared, /) -> None:
         self.prepared = prepared
         self.space = prepared.problem.operator.source
         self.properties = _properties()
@@ -660,7 +662,7 @@ class _MechanicalPatchPreconditioner(AbstractPreconditioner, NonTrainableState):
 
     def __init__(
         self, blocks, gathers, valid, weights, space, /, *, transpose_action=False
-    ):
+    ) -> None:
         transpose_action = bool(transpose_action)
         factored = jnp.swapaxes(blocks, -1, -2) if transpose_action else blocks
         self.local_inverse = LocalBlockPreconditioner(
@@ -698,7 +700,9 @@ class _MechanicalSweepPreconditioner(AbstractPreconditioner, NonTrainableState):
     transpose_action: bool = eqx.field(static=True)
     sweeps: int = eqx.field(static=True)
 
-    def __init__(self, operator, lower, upper, /, *, transpose_action=False, sweeps=4):
+    def __init__(
+        self, operator, lower, upper, /, *, transpose_action=False, sweeps=4
+    ) -> None:
         self.operator = operator
         self.lower = lower
         self.upper = upper
@@ -753,7 +757,7 @@ class _Almonacid2024Preconditioner(AbstractPreconditioner):
 
     inner: BlockFactorizationPreconditioner
 
-    def __init__(self, inner, setup):
+    def __init__(self, inner, setup) -> None:
         self.inner = inner
         self.space = setup.source
         self.properties = inner.properties
@@ -778,7 +782,7 @@ def _source_setup(operator):
 class _Almonacid2024PreconditionerBuilder(AbstractPreconditionerBuilder):
     mechanical_solver: str = eqx.field(static=True)
 
-    def __init__(self, mechanical_solver=None):
+    def __init__(self, mechanical_solver=None) -> None:
         if mechanical_solver is None:
             selected = (
                 "full-mixed-jax-cpu"

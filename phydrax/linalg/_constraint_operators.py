@@ -91,7 +91,7 @@ class ConstraintOperatorEvidence(StrictModule, NonTrainableState):
         setup_matvec_count: int,
         factorization_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         singular_values_ = jnp.asarray(singular_values)
         scalars = tuple(
             jnp.asarray(value)
@@ -222,7 +222,7 @@ class ConstraintOperatorPlan(StrictModule, NonTrainableState):
         resources: SolveResourcePolicy | None = None,
         materialization: MaterializationPolicy | None = None,
         factorization_kind: ConstraintFactorizationKind = "auto",
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
@@ -312,7 +312,7 @@ class PreparedConstraintOperator(StrictModule, NonTrainableState):
         nullspace_operator: AbstractLinearOperator,
         evidence: ConstraintOperatorEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ConstraintOperatorPlan):
             raise TypeError("plan must be a ConstraintOperatorPlan.")
         if not isinstance(operator, AbstractLinearOperator):

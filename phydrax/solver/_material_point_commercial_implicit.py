@@ -43,7 +43,7 @@ class MPMImplicitUnknownLayout(StrictModule, NonTrainableState):
         *,
         contact_multiplier_capacity: int = 0,
         rigid_dof_capacity: int = 0,
-    ):
+    ) -> None:
         free = np.asarray(free_mask, dtype=np.bool_)
         essential = np.asarray(essential_mask, dtype=np.bool_)
         if free.shape != essential.shape or free.ndim < 3:
@@ -135,7 +135,7 @@ class MPMImplicitTopologyPlan(StrictModule, NonTrainableState):
         contact_digest: int,
         material_branch_digest: int,
         topology_generation: int,
-    ):
+    ) -> None:
         if not isinstance(layout, MPMImplicitUnknownLayout):
             raise TypeError("layout must be MPMImplicitUnknownLayout.")
         self.layout = layout
@@ -188,7 +188,7 @@ class MPMRouteSupersetPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, prepared: PreparedParticleGridSplat, /, *, minimum_margin: float = 1.0e-8
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedParticleGridSplat):
             raise TypeError("prepared must be PreparedParticleGridSplat.")
         margin = float(minimum_margin)
@@ -298,7 +298,7 @@ class MPMCompactImplicitOperator(StrictModule, NonTrainableState):
         storage: BlockSparseMPMNodalStoragePlan,
         active: SparseBlockTopologyState,
         /,
-    ):
+    ) -> None:
         if not isinstance(storage, BlockSparseMPMNodalStoragePlan):
             raise TypeError("storage must be BlockSparseMPMNodalStoragePlan.")
         if not isinstance(active, SparseBlockTopologyState) or not bool(
@@ -372,7 +372,7 @@ class MPMBlockJacobiPreconditioner(StrictModule, NonTrainableState):
     diagonal: Array
     minimum_diagonal: float = eqx.field(static=True)
 
-    def __init__(self, diagonal: ArrayLike, /, *, minimum_diagonal=1.0e-12):
+    def __init__(self, diagonal: ArrayLike, /, *, minimum_diagonal=1.0e-12) -> None:
         value = jnp.asarray(diagonal)
         minimum = float(minimum_diagonal)
         if value.ndim < 1 or minimum <= 0.0:
@@ -395,7 +395,7 @@ class MPMTwoLevelMultigrid(StrictModule, NonTrainableState):
     coarse_solve: Callable = eqx.field(static=True)
     smoother: MPMBlockJacobiPreconditioner
 
-    def __init__(self, restriction, prolongation, coarse_solve, smoother, /):
+    def __init__(self, restriction, prolongation, coarse_solve, smoother, /) -> None:
         if not all(
             callable(value) for value in (restriction, prolongation, coarse_solve)
         ):
@@ -471,7 +471,7 @@ class MPMSparseContactOperator(StrictModule, NonTrainableState):
     active: SparseBlockTopologyState
     contact: KWayMPMContactPlan
 
-    def __init__(self, storage, active, contact, /):
+    def __init__(self, storage, active, contact, /) -> None:
         if not isinstance(storage, BlockSparseMPMNodalStoragePlan):
             raise TypeError("storage must be BlockSparseMPMNodalStoragePlan.")
         if not isinstance(active, SparseBlockTopologyState):
@@ -504,7 +504,7 @@ class MPMSparsePhaseFieldOperator(StrictModule, NonTrainableState):
     spacing: tuple[float, ...] = eqx.field(static=True)
     periodic: tuple[bool, ...] = eqx.field(static=True)
 
-    def __init__(self, storage, active, spacing, periodic, /):
+    def __init__(self, storage, active, spacing, periodic, /) -> None:
         if not isinstance(storage, BlockSparseMPMNodalStoragePlan):
             raise TypeError("storage must be BlockSparseMPMNodalStoragePlan.")
         self.storage = storage

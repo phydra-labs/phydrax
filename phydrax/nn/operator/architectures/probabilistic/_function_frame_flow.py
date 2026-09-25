@@ -47,7 +47,7 @@ class ConditionalFunctionFrameFlowOperator(StrictModule):
         /,
         *,
         field_space_id: str,
-    ):
+    ) -> None:
         if not isinstance(encoder, FunctionFrameReconstructor):
             raise TypeError("encoder must be FunctionFrameReconstructor.")
         if not callable(coefficient_law_factory):

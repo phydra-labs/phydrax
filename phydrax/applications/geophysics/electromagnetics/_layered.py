@@ -43,7 +43,7 @@ class LayeredEarthModel(StrictModule):
         horizontal_permittivity_F_m: ArrayLike = VACUUM_PERMITTIVITY_F_M,
         vertical_permittivity_F_m: ArrayLike | None = None,
         permeability_H_m: ArrayLike = VACUUM_PERMEABILITY_H_M,
-    ):
+    ) -> None:
         thickness = jnp.asarray(thickness_m)
         horizontal = jnp.asarray(horizontal_conductivity_S_m)
         if thickness.ndim != 1 or horizontal.shape != (thickness.size + 1,):
@@ -182,7 +182,7 @@ class DigitalHankelTransformPlan(StrictModule, NonTrainableState):
         weights_m_inverse: ArrayLike,
         order: Literal[0, 1],
         /,
-    ):
+    ) -> None:
         wave = np.asarray(wavenumbers_m_inverse, dtype=np.float64)
         weights = np.asarray(weights_m_inverse, dtype=np.float64)
         if (

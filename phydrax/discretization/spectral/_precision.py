@@ -73,7 +73,7 @@ class SpectralPrecisionPolicy(StrictModule, NonTrainableState):
         certification_dtype: Any | None = None,
         output_dtype: Any | None = None,
         checkpoint_dtype: Any | None = None,
-    ):
+    ) -> None:
         physical = _dtype(physical_dtype)
         coefficient = _dtype(
             _complex_dtype(physical) if coefficient_dtype is None else coefficient_dtype

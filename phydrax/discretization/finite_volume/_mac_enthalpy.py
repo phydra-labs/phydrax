@@ -57,7 +57,7 @@ class MACThermalBoundaryCondition(StrictModule, NonTrainableState):
         /,
         *,
         function_id: str | None = None,
-    ):
+    ) -> None:
         if kind not in ("periodic", "temperature", "adiabatic", "heat_flux"):
             raise ValueError("Unknown MAC thermal boundary kind.")
         if callable(value):
@@ -138,7 +138,7 @@ class MACThermalBoundarySet(StrictModule, NonTrainableState):
             ],
         ]
         | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         supplied = (
@@ -292,7 +292,7 @@ class MACEnthalpyTransportPlan(StrictModule, NonTrainableState):
         /,
         *,
         advection: MACEnthalpyAdvection = "upwind",
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if not isinstance(boundaries, MACThermalBoundarySet):
@@ -323,7 +323,7 @@ class PreparedMACEnthalpyTransport(StrictModule, NonTrainableState):
     diffusion: PreparedConservativeDiffusion
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MACEnthalpyTransportPlan, /):
+    def __init__(self, plan: MACEnthalpyTransportPlan, /) -> None:
         if not isinstance(plan, MACEnthalpyTransportPlan):
             raise TypeError("plan must be MACEnthalpyTransportPlan.")
         operators = plan.operators

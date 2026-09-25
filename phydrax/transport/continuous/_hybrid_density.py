@@ -34,7 +34,7 @@ class ConditionalContinuousFlowLaw(AbstractProbabilityLaw):
         input_policy: Any,
         context_id: str,
         max_exact_dimension: int = 32,
-    ):
+    ) -> None:
         if not context_id:
             raise ValueError("context_id must be non-empty.")
         # The supplied transport must already be prepared at this fixed context.  Its
@@ -104,7 +104,7 @@ class PiecewiseContinuousFlowLaw(AbstractProbabilityLaw):
         tape_provider: Any,
         max_exact_dimension: int = 32,
         law_id: str | None = None,
-    ):
+    ) -> None:
         if (
             not callable(forward_event_map)
             or not callable(inverse_event_map)

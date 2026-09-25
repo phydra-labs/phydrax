@@ -44,7 +44,7 @@ class FreeBoundaryOperatorSpec(StrictModule, NonTrainableState):
         /,
         *,
         topology_changes: bool = False,
-    ):
+    ) -> None:
         if representation not in ("reference_map", "level_set", "phase_fraction"):
             raise ValueError("Unknown free-boundary representation.")
         geometry = str(geometry_field)

@@ -54,7 +54,7 @@ class PeriodicSpectroscopyRequest(StrictModule, NonTrainableState):
         *,
         request_born_charges: bool = True,
         request_raman_tensors: bool = True,
-    ):
+    ) -> None:
         structure = str(structure_id).strip()
         phonon = str(phonon_result_id).strip()
         atoms = tuple(str(atom).strip() for atom in atom_order)
@@ -96,7 +96,7 @@ class PeriodicSpectroscopyEvidence(StrictModule, NonTrainableState):
         raman_symmetry_residual: ArrayLike,
         converged: ArrayLike,
         /,
-    ):
+    ) -> None:
         neutrality = jnp.asarray(born_neutrality_residual, dtype=jnp.float64).reshape(())
         symmetry = jnp.asarray(raman_symmetry_residual, dtype=jnp.float64).reshape(())
         if (
@@ -139,7 +139,7 @@ class PeriodicSpectroscopyTensorResult(StrictModule, NonTrainableState):
         provider_id: str,
         source_hashes: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         born = jnp.asarray(born_effective_charges)
         raman = jnp.asarray(raman_tensors)
         provider = str(provider_id).strip()
@@ -204,7 +204,7 @@ class PeriodicVibrationalSpectroscopyPlan(StrictModule, NonTrainableState):
         laser_angular_frequency: float,
         gamma_tolerance: float = 1.0e-10,
         tensor_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         mass = jnp.asarray(masses, dtype=jnp.float64)
         incident = jnp.asarray(incident_polarizations, dtype=jnp.float64)
         scattered = jnp.asarray(scattered_polarizations, dtype=jnp.float64)
@@ -279,7 +279,7 @@ class PeriodicVibrationalSpectrumResult(StrictModule, NonTrainableState):
         plan_id: str,
         provider_result_id: str,
         /,
-    ):
+    ) -> None:
         self.ir_lines = ir_lines
         self.raman_lines = raman_lines
         self.mass_orthonormality_residual = jnp.asarray(

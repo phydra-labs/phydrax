@@ -169,7 +169,7 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
         references: Mapping[str, ArrayLike] | None = None,
         enforce_exchange: bool = False,
         law_id: str | None = None,
-    ):
+    ) -> None:
         gravity_ = jnp.asarray(gravity, dtype=jnp.float64)
         if (
             gravity_.shape not in ((2,), (3,))
@@ -438,7 +438,7 @@ class PreparedMACKSGS(StrictModule, NonTrainableState):
         momentum: PreparedMACMomentumOperators,
         scalar_field_name: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             plan,
             (StaticKSGSPlan, BuoyancyKSGSPlan, DynamicKSGSPlan, LowReKSGSPlan),
@@ -904,7 +904,7 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         /,
         *,
         compilation_id: str,
-    ):
+    ) -> None:
         discretization = momentum.operators.discretization
         residual_key = DiscretizationKey(
             "mac_scalar_buoyancy_form",

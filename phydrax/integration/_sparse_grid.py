@@ -73,7 +73,7 @@ class SparseGridRealization(StrictModule):
         level: int,
         num_terms: int,
         axis_rules: tuple[SmolyakAxisRule, ...],
-    ):
+    ) -> None:
         self.batch = batch
         self.previous = previous
         self.level = int(level)

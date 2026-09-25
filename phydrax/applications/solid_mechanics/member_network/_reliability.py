@@ -31,7 +31,7 @@ class StructuralRandomModel(StrictModule, NonTrainableState):
         /,
         *,
         model_id: str = "structural-random-model",
-    ):
+    ) -> None:
         mean_ = jnp.asarray(mean)
         covariance_ = jnp.asarray(covariance, dtype=mean_.dtype)
         if mean_.ndim != 1 or covariance_.shape != (mean_.size, mean_.size):
@@ -77,7 +77,7 @@ class StructuralLimitState(StrictModule, NonTrainableState):
         /,
         *,
         limit_state_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("Limit-state function must be callable.")
         self.function = function

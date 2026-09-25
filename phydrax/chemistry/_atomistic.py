@@ -43,7 +43,7 @@ class AtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
         potential: PreparedAtomisticPotentialProgram,
         neighborhood: AbstractPreparedParticleNeighborhood,
         /,
-    ):
+    ) -> None:
         if not isinstance(system, PreparedAtomisticSystem):
             raise TypeError("system must be PreparedAtomisticSystem.")
         if not isinstance(potential, PreparedAtomisticPotentialProgram):
@@ -134,7 +134,7 @@ class ExternalAtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySur
         system: PreparedAtomisticSystem,
         provider: AbstractExternalAtomisticProvider,
         /,
-    ):
+    ) -> None:
         if not isinstance(system, PreparedAtomisticSystem):
             raise TypeError("system must be PreparedAtomisticSystem.")
         if not isinstance(provider, AbstractExternalAtomisticProvider):
@@ -199,7 +199,7 @@ class SurfaceExternalAtomisticProvider(AbstractExternalAtomisticProvider):
     conservative: bool = eqx.field(static=True)
     differentiable: bool = eqx.field(static=True)
 
-    def __init__(self, surface: AbstractPreparedPotentialEnergySurface, /):
+    def __init__(self, surface: AbstractPreparedPotentialEnergySurface, /) -> None:
         if not isinstance(surface, AbstractPreparedPotentialEnergySurface):
             raise TypeError("surface must be a prepared potential-energy surface.")
         self.surface = surface

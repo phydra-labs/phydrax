@@ -67,7 +67,7 @@ class RandomPhaseApproximationPlan(StrictModule, NonTrainableState):
         residual_tolerance: float = 1.0e-8,
         imaginary_tolerance: float = 1.0e-8,
         degeneracy_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         a = jnp.asarray(a_matrix)
         b = jnp.asarray(b_matrix, dtype=a.dtype)
         dipoles = jnp.asarray(basis_transition_dipoles, dtype=a.dtype)

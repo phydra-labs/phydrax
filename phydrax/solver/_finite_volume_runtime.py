@@ -107,7 +107,7 @@ class FiniteVolumeStepPolicy(StrictModule, NonTrainableState):
         maximum_retries: int = 4,
         reduction_factor: float = 0.5,
         minimum_step_size: float = 1e-12,
-    ):
+    ) -> None:
         cfl_ = float(cfl)
         retries = int(maximum_retries)
         reduction = float(reduction_factor)
@@ -151,7 +151,7 @@ class FiniteVolumeStageFlux(StrictModule):
         interface_conservative_flux: ArrayLike,
         evidence: Any,
         /,
-    ):
+    ) -> None:
         fluxes = tuple(jnp.asarray(value) for value in replacement_normal_fluxes)
         masks = tuple(jnp.asarray(value, dtype=jnp.bool_) for value in replacement_masks)
         interface_flux = jnp.asarray(interface_conservative_flux)
@@ -186,7 +186,7 @@ class FiniteVolumeStageFluxProvider(StrictModule, NonTrainableState):
         /,
         *,
         provider_id: str,
-    ):
+    ) -> None:
         identity = str(provider_id)
         if not callable(callback):
             raise TypeError("callback must be callable.")
@@ -267,7 +267,7 @@ class FiniteVolumeStageFluxTrace(StrictModule):
         ],
         provider_id: str,
         /,
-    ):
+    ) -> None:
         if (
             not isinstance(stages, tuple)
             or len(stages) != 3
@@ -310,7 +310,7 @@ class FiniteVolumeRuntimeState(StrictModule):
         sliding_coupling: PeriodicSlidingCoupling | None = None,
         sliding_shift: ArrayLike = 0.0,
         sliding_event_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(content_state, FiniteVolumeConservativeContentState):
             raise TypeError("content_state must be FiniteVolumeConservativeContentState.")
         if not isinstance(topology_journal, FiniteVolumeTopologyEventJournal):
@@ -478,7 +478,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         topology_artifacts: FiniteVolumeTopologyArtifacts | None = None,
         stage_state_provider: FiniteVolumeStageStateProvider | None = None,
         stage_flux_provider: FiniteVolumeStageFluxProvider | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             dynamics,
             (

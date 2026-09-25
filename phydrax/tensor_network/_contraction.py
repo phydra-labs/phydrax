@@ -52,7 +52,7 @@ class ContractionResourcePolicy(StrictModule):
         maximum_workspace_bytes: int = 2**31,
         maximum_flops: int = 10**15,
         maximum_schedule_steps: int = 100_000,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_operand_elements,
@@ -91,7 +91,7 @@ class ContractionPlannerPolicy(StrictModule):
         *,
         maximum_search_states: int = 250_000,
         maximum_planning_seconds: float = 30.0,
-    ):
+    ) -> None:
         if not isinstance(maximum_search_states, Integral) or isinstance(
             maximum_search_states, bool
         ):
@@ -176,7 +176,7 @@ class ReverseContractionResult(StrictModule):
 class ContractionPlanCache(NonTrainableState):
     """Caller-owned, capacity-bounded host cache; no process-global cache exists."""
 
-    def __init__(self, capacity: int = 32, /):
+    def __init__(self, capacity: int = 32, /) -> None:
         if not isinstance(capacity, Integral) or isinstance(capacity, bool):
             raise TypeError("Contraction plan cache capacity must be an integer.")
         capacity_ = int(capacity)

@@ -30,7 +30,7 @@ class TimeLaw(StrictModule, NonTrainableState):
         /,
         *,
         law_id: str,
-    ):
+    ) -> None:
         if not all(
             callable(function)
             for function in (
@@ -142,7 +142,7 @@ class SolveStage(StrictModule, NonTrainableState):
         *,
         commit: Callable = lambda state, diagnostics: state,
         rollback: Callable = lambda committed, candidate, diagnostics: committed,
-    ):
+    ) -> None:
         identifier = str(stage_id)
         start = float(start_time)
         end = float(end_time)
@@ -184,7 +184,7 @@ class SolveSchedule(StrictModule, NonTrainableState):
     stages: tuple[SolveStage, ...]
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, stages: Sequence[SolveStage], /):
+    def __init__(self, stages: Sequence[SolveStage], /) -> None:
         stages_ = tuple(stages)
         if not stages_ or not all(isinstance(stage, SolveStage) for stage in stages_):
             raise ValueError("SolveSchedule requires one or more SolveStage values.")

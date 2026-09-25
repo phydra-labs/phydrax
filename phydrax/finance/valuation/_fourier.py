@@ -50,7 +50,7 @@ class HestonFourierPlan(StrictModule):
         damping: float = 1.5,
         upper_frequency: float = 150.0,
         num_nodes: int = 4096,
-    ):
+    ) -> None:
         damping_ = float(damping)
         upper = float(upper_frequency)
         if not isfinite(damping_) or damping_ <= 0.0:
@@ -68,7 +68,7 @@ class HestonCOSPlan(StrictModule):
     num_terms: int = eqx.field(static=True)
     truncation_width: float = eqx.field(static=True)
 
-    def __init__(self, *, num_terms: int = 256, truncation_width: float = 12.0):
+    def __init__(self, *, num_terms: int = 256, truncation_width: float = 12.0) -> None:
         width = float(truncation_width)
         if not isfinite(width) or width <= 2.0:
             raise ValueError("truncation_width must be finite and greater than two.")

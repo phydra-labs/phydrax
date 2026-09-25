@@ -58,7 +58,7 @@ class PrescribedFiberStimulusSchedule(StrictModule, NonTrainableState):
         amplitude_uA_per_cm2: ArrayLike,
         target_mask: ArrayLike,
         /,
-    ):
+    ) -> None:
         onset = _array(onset_ms, "onset_ms", 1)
         duration = _array(duration_ms, "duration_ms", 1)
         amplitude = _array(amplitude_uA_per_cm2, "amplitude_uA_per_cm2", 1)
@@ -123,7 +123,7 @@ class SkeletalFiberBundleState(StrictModule, NonTrainableState):
     time_ms: Array
     values: Array
 
-    def __init__(self, time_ms: ArrayLike, values: ArrayLike, /):
+    def __init__(self, time_ms: ArrayLike, values: ArrayLike, /) -> None:
         time = jnp.asarray(time_ms)
         state = jnp.asarray(values)
         if time.shape != ():
@@ -206,7 +206,7 @@ class SkeletalFiberBundlePlan(StrictModule, NonTrainableState):
         initial_step_ms: float = 1.0e-5,
         maximum_step_ms: float = 0.5,
         maximum_solver_steps: int = 131_072,
-    ):
+    ) -> None:
         ids = tuple(str(value).strip() for value in fiber_ids)
         if not ids or any(not value for value in ids) or len(set(ids)) != len(ids):
             raise ValueError("fiber_ids must be nonempty and unique.")
@@ -317,7 +317,9 @@ class PreparedSkeletalFiberBundle(StrictModule):
     solver: dfx.Kvaerno5
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: SkeletalFiberBundlePlan, model: ShortenFastTwitchModel, /):
+    def __init__(
+        self, plan: SkeletalFiberBundlePlan, model: ShortenFastTwitchModel, /
+    ) -> None:
         if not isinstance(plan, SkeletalFiberBundlePlan):
             raise TypeError("plan must be SkeletalFiberBundlePlan.")
         if not isinstance(model, ShortenFastTwitchModel):

@@ -53,7 +53,7 @@ class PreparedEmpiricalNTK(StrictModule):
         *,
         parameter_geometry: Any = None,
         ntk_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(linearization, PreparedLinearization):
             raise TypeError("linearization must be a PreparedLinearization.")
         jacobian = JacobianLinearOperator(
@@ -246,7 +246,7 @@ class NTKDiagnosticsPolicy(StrictModule):
         eigenvalue_count: int = 8,
         max_krylov_steps: int = 64,
         rank_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         integers = tuple(
             (
                 dense_max_dimension,

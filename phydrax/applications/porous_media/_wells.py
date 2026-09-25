@@ -30,7 +30,7 @@ class WellControl(StrictModule, NonTrainableState):
         *,
         minimum_pressure_Pa: float = -np.inf,
         maximum_pressure_Pa: float = np.inf,
-    ):
+    ) -> None:
         target_, minimum, maximum = (
             float(target),
             float(minimum_pressure_Pa),
@@ -82,7 +82,7 @@ class WellCompletionPlan(StrictModule, NonTrainableState):
         phase_enthalpy_J_kg: ArrayLike,
         cell_count: int,
         /,
-    ):
+    ) -> None:
         cells = np.asarray(cell_indices)
         indices = np.asarray(well_indices_m, dtype=np.float64)
         composition = np.asarray(phase_composition, dtype=np.float64)

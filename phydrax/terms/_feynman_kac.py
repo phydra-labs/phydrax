@@ -117,7 +117,7 @@ class FeynmanKacRegressionTerm(AbstractSamplingTerm):
         interior_weight: ArrayLike = 1.0,
         terminal_weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(problem, BSDEProblem):
             raise TypeError("problem must be a BSDEProblem.")
         if not isinstance(plan, FeynmanKacSamplingPlan):

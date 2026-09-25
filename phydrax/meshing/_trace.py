@@ -65,7 +65,7 @@ class MeshingDiagnostic(StrictModule, NonTrainableState):
         failure_category: MeshingFailureCategory | None = None,
         entity_ids: tuple[int, ...] = (),
         locations: tuple[tuple[float, ...], ...] = (),
-    ):
+    ) -> None:
         if not isinstance(severity, MeshingDiagnosticSeverity):
             raise TypeError("severity must be MeshingDiagnosticSeverity.")
         if failure_category is not None and not isinstance(
@@ -123,7 +123,7 @@ class MeshingStageReport(StrictModule, NonTrainableState):
         created_count: int = 0,
         modified_count: int = 0,
         deleted_count: int = 0,
-    ):
+    ) -> None:
         if not isinstance(stage, MeshingStageKind):
             raise TypeError("stage must be MeshingStageKind.")
         if not isinstance(status, MeshingStageStatus):
@@ -161,7 +161,7 @@ class MeshingTrace(StrictModule, NonTrainableState):
     successful: bool = eqx.field(static=True)
     trace_id: str = eqx.field(static=True)
 
-    def __init__(self, stages: tuple[MeshingStageReport, ...], /):
+    def __init__(self, stages: tuple[MeshingStageReport, ...], /) -> None:
         if not stages or not all(
             isinstance(stage, MeshingStageReport) for stage in stages
         ):

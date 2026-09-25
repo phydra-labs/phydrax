@@ -34,7 +34,7 @@ class AdaptiveActivation(StrictModule, ParameterOwner):
         *,
         shape: int | Sequence[int] | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         r"""**Arguments:**
 
         - `fn`: Base activation function $\sigma$.

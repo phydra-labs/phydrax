@@ -42,7 +42,7 @@ class FiniteVolumeEntropyDiagnostics(StrictModule):
         convective_entropy_rate: ArrayLike,
         admissible: ArrayLike,
         precision_evidence: PrecisionEvidenceEnvelope,
-    ):
+    ) -> None:
         identifier = str(pair_id)
         if not identifier:
             raise ValueError("pair_id must be non-empty.")

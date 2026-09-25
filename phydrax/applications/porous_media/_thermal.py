@@ -55,7 +55,7 @@ class PorousThermalMaterial(StrictModule):
         liquid_heat_capacity_J_kg_K=4180.0,
         reference_temperature_K=273.15,
         conductivity_unit: UnitDefinition = CONDUCTIVITY_UNIT,
-    ):
+    ) -> None:
         saturated = convert_value(
             conductivity_W_m_K, source=conductivity_unit, target=CONDUCTIVITY_UNIT
         )

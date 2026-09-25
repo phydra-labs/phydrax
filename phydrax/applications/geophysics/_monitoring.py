@@ -36,7 +36,7 @@ class MonitoringEpoch(StrictModule, NonTrainableState):
         geometry_id: str,
         acquisition_id: str,
         /,
-    ):
+    ) -> None:
         time = float(time_s)
         values = jnp.asarray(observation)
         geometry, acquisition = str(geometry_id).strip(), str(acquisition_id).strip()
@@ -76,7 +76,7 @@ class TimeLapseParameterization(StrictModule, NonTrainableState):
         parameter_count: int,
         temporal_prior: TemporalDifferencePrior,
         /,
-    ):
+    ) -> None:
         epochs, parameters = int(epoch_count), int(parameter_count)
         if (
             epochs < 2
@@ -145,7 +145,7 @@ class SequentialMonitoringPlan(StrictModule, NonTrainableState):
         *,
         dynamics_id: str,
         prediction_ids: Sequence[str],
-    ):
+    ) -> None:
         epochs_ = tuple(epochs)
         predictors = tuple(predictions)
         dynamics_identity = str(dynamics_id).strip()

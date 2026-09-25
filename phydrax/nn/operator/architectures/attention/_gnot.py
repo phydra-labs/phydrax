@@ -91,7 +91,7 @@ class GNOT(AbstractOperatorModel):
         accumulation_dtype: str = "input",
         norm_eps: float = 1e-6,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(in_channels, Mapping) or not in_channels:
             raise ValueError("GNOT in_channels must be a non-empty named mapping.")
         source_items = tuple(

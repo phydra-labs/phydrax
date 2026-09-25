@@ -42,7 +42,7 @@ class NollZernikeOPD(StrictModule):
         /,
         *,
         pupil_center: ArrayLike = (0.0, 0.0),
-    ):
+    ) -> None:
         indices = tuple(noll_indices)
         if not indices or any(index <= 0 for index in indices):
             raise ValueError("noll_indices must contain positive one-based indices.")

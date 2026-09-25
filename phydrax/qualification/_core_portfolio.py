@@ -140,7 +140,7 @@ class CoreQualificationObservation:
         gate_results: Mapping[str, bool],
         metrics: Mapping[str, float],
         /,
-    ):
+    ) -> None:
         if not isinstance(profile, CapabilityProfile):
             raise TypeError("profile must be CapabilityProfile.")
         gates = tuple(

@@ -124,7 +124,7 @@ class VirtualElementPlan(AbstractDiscretizationPlan):
         precision_policy: VirtualElementPrecisionPolicy | None = None,
         admissibility_policy: PolygonAdmissibilityPolicy | None = None,
         resource_budget: VirtualElementResourceBudget | None = None,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be CellMesh.")
         if mesh.topological_dimension != 2 or mesh.ambient_dimension != 2:
@@ -207,7 +207,9 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
 
-    def __init__(self, plan: VirtualElementPlan, /, *, numeric_version: str = "0"):
+    def __init__(
+        self, plan: VirtualElementPlan, /, *, numeric_version: str = "0"
+    ) -> None:
         if not isinstance(plan, VirtualElementPlan):
             raise TypeError("plan must be VirtualElementPlan.")
         version = str(numeric_version)

@@ -40,7 +40,7 @@ class RelicBackgroundPlan(StrictModule, NonTrainableState):
         effective_neutrinos=3.046,
         neutrino_temperature_ratio=(4.0 / 11.0) ** (1.0 / 3.0),
         /,
-    ):
+    ) -> None:
         self.photon_density_today = jnp.asarray(photon_density_today).reshape(())
         self.effective_neutrinos = jnp.asarray(effective_neutrinos).reshape(())
         self.neutrino_temperature_ratio = jnp.asarray(neutrino_temperature_ratio).reshape(
@@ -86,7 +86,7 @@ class BbnReactionNetworkPlan(StrictModule, NonTrainableState):
         /,
         *,
         network_id="bbn-network",
-    ):
+    ) -> None:
         self.stoichiometry = jnp.asarray(stoichiometry)
         self.baryon_numbers = jnp.asarray(baryon_numbers)
         self.rate_model = rate_model
@@ -154,7 +154,7 @@ class RecombinationPlan(StrictModule, NonTrainableState):
         residual_ionization=2.0e-4,
         recombination_redshift=1089.0,
         width=0.08,
-    ):
+    ) -> None:
         self.scale_factors = jnp.asarray(scale_factors)
         self.cmb_temperature_today = jnp.asarray(cmb_temperature_today).reshape(())
         self.residual_ionization = jnp.asarray(residual_ionization).reshape(())

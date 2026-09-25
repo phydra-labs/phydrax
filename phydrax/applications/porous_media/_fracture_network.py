@@ -61,7 +61,7 @@ class MixedDimensionalFractureNetworkPlan(StrictModule, NonTrainableState):
         matrix_cell_count: int,
         component_count: int,
         /,
-    ):
+    ) -> None:
         fracture_storage = np.asarray(fracture_storage_m3, dtype=np.float64)
         intersection_storage = np.asarray(intersection_storage_m3, dtype=np.float64)
         edges, connections = (

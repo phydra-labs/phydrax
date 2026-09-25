@@ -97,7 +97,7 @@ class StiefelManifold(AbstractRiemannianManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, rows: int, columns: int, /, *, tolerance: float = 1e-6):
+    def __init__(self, rows: int, columns: int, /, *, tolerance: float = 1e-6) -> None:
         n, p = _matrix_dimensions(rows, columns, "Stiefel")
         if p > n:
             raise ValueError("Stiefel columns must not exceed rows.")
@@ -198,7 +198,7 @@ class GrassmannManifold(AbstractRiemannianManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, rows: int, columns: int, /, *, tolerance: float = 1e-6):
+    def __init__(self, rows: int, columns: int, /, *, tolerance: float = 1e-6) -> None:
         n, p = _matrix_dimensions(rows, columns, "Grassmann")
         if p >= n:
             raise ValueError("Grassmann columns must be strictly less than rows.")
@@ -299,7 +299,7 @@ class ObliqueManifold(AbstractRiemannianManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, rows: int, columns: int, /, *, tolerance: float = 1e-6):
+    def __init__(self, rows: int, columns: int, /, *, tolerance: float = 1e-6) -> None:
         n, p = _matrix_dimensions(rows, columns, "Oblique")
         self.rows = n
         self.columns = p
@@ -412,7 +412,7 @@ class FixedRankManifold(AbstractRiemannianManifold):
         /,
         *,
         tolerance: float = 1e-6,
-    ):
+    ) -> None:
         n, p = _matrix_dimensions(rows, columns, "Fixed-rank")
         rank_value = int(rank)
         if rank_value <= 0 or rank_value >= min(n, p):
@@ -557,7 +557,7 @@ class SpecialOrthogonalManifold(AbstractRiemannianManifold):
         *,
         retraction: MatrixRetraction = "exponential",
         tolerance: float = 1e-6,
-    ):
+    ) -> None:
         geometry = SpecialOrthogonalStateGeometry(
             dimension,
             retraction=retraction,
@@ -661,7 +661,7 @@ class AffineInvariantSPDManifold(AbstractGeodesicManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, tolerance: float = 1e-8):
+    def __init__(self, dimension: int, /, *, tolerance: float = 1e-8) -> None:
         geometry = SymmetricPositiveDefiniteStateGeometry(
             dimension,
             tolerance=_tolerance(tolerance, "SPD(n)"),

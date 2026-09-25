@@ -66,7 +66,7 @@ class ScalablePfaffianPlan(StrictModule):
         antisymmetry_tolerance: float = 1e-10,
         pivot_tolerance: float = 1e-14,
         determinant_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         maximum = int(maximum_dimension)
         antisymmetry = float(antisymmetry_tolerance)
         pivot = float(pivot_tolerance)

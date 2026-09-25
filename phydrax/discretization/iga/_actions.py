@@ -96,7 +96,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
         structural_id: str,
         is_trace: bool,
         field_weights_from_geometry: bool = False,
-    ):
+    ) -> None:
         if not isinstance(tensor_plan, TensorBSplineJetPlan):
             raise TypeError("tensor_plan must be a TensorBSplineJetPlan.")
         rows = jnp.asarray(entity_rows, dtype=jnp.int32)
@@ -320,7 +320,7 @@ class IsogeometricGeometryActions(LocalGeometryActions):
         structural_id: str,
         facet_axis: int = -1,
         facet_side: int = 0,
-    ):
+    ) -> None:
         if not isinstance(tensor_plan, TensorBSplineJetPlan):
             raise TypeError("tensor_plan must be a TensorBSplineJetPlan.")
         if not isinstance(qualification_policy, IsogeometricH1QualificationPolicy):

@@ -51,7 +51,7 @@ class KerrPockelsMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
         field_bound: float,
         newton_steps: int = 12,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         bound = float(field_bound)
         steps = int(newton_steps)
         tolerance_ = float(tolerance)
@@ -106,7 +106,7 @@ class PreparedKerrPockelsMaxwellConstitutive(AbstractPreparedMaxwellConstitutive
         cochain: CochainDiscretization,
         layout: MaxwellCochainLayout,
         /,
-    ):
+    ) -> None:
         count = layout.electric_count
         epsilon = _positive_material("permittivity", plan.permittivity, count)
         mu = _positive_material("permeability", plan.permeability, layout.magnetic_count)
@@ -300,7 +300,7 @@ class ActiveGainMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
         permittivity: ArrayLike = 1.0,
         permeability: ArrayLike = 1.0,
         saturation_intensity: float = np.inf,
-    ):
+    ) -> None:
         saturation = float(saturation_intensity)
         if saturation <= 0.0 or np.isnan(saturation):
             raise ValueError("saturation_intensity must be positive or infinite.")
@@ -346,7 +346,7 @@ class PreparedActiveGainMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
         cochain: CochainDiscretization,
         layout: MaxwellCochainLayout,
         /,
-    ):
+    ) -> None:
         self.permittivity = _positive_material(
             "permittivity", plan.permittivity, layout.electric_count
         )
@@ -568,7 +568,9 @@ class MaxwellScalarMaterialAssemblyPolicy(StrictModule, NonTrainableState):
     quadrature_order: int = eqx.field(static=True)
     maximum_samples: int = eqx.field(static=True)
 
-    def __init__(self, *, quadrature_order: int = 3, maximum_samples: int = 10_000_000):
+    def __init__(
+        self, *, quadrature_order: int = 3, maximum_samples: int = 10_000_000
+    ) -> None:
         order, maximum = int(quadrature_order), int(maximum_samples)
         if order < 1 or maximum < 1:
             raise ValueError(

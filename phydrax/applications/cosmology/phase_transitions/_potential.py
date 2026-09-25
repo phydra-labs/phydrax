@@ -29,7 +29,7 @@ class ThermalQuarticPotential(StrictModule, NonTrainableState):
         cubic_coefficient: float,
         quartic_coefficient: float,
         reference_temperature: float,
-    ):
+    ) -> None:
         values = tuple(
             map(
                 float,

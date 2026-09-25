@@ -52,7 +52,7 @@ class MaterialBinding(StrictModule):
     region: Region
     material: Material
 
-    def __init__(self, region: Region, material: Material, /):
+    def __init__(self, region: Region, material: Material, /) -> None:
         self.region = _region(region, MeshZoneRole.MATERIAL)
         if not isinstance(material, (SemiconductorMaterial, DielectricMaterial)):
             raise TypeError(
@@ -67,7 +67,7 @@ class OhmicContact(StrictModule):
     name: str = eqx.field(static=True)
     region: Region
 
-    def __init__(self, name: str, region: Region, /):
+    def __init__(self, name: str, region: Region, /) -> None:
         self.name = _text(name, "terminal name")
         self.region = _region(region, MeshZoneRole.BOUNDARY)
 
@@ -91,7 +91,7 @@ class GateContact(StrictModule):
         *,
         potential_offset=0.0,
         voltage_unit: UnitDefinition = VOLT,
-    ):
+    ) -> None:
         self.name = _text(name, "terminal name")
         self.region = _region(region, MeshZoneRole.BOUNDARY)
         offset = _si(potential_offset, voltage_unit, VOLT)
@@ -146,7 +146,7 @@ def _resolve_dopants(support, baseline, attributes, name):
     return resolved
 
 
-def _require_pins(support, semiconductor, potential, ohmic):
+def _require_pins(support, semiconductor, potential, ohmic) -> None:
     """Reject disconnected gauge modes before a root solve is attempted."""
     count = support.positions.shape[0]
     edges = tuple(zip(np.asarray(support.tail), np.asarray(support.head), strict=True))
@@ -244,7 +244,7 @@ class DevicePlan(StrictModule):
         temperature=300.0,
         density_unit: UnitDefinition = PER_CUBIC_METER,
         temperature_unit: UnitDefinition = KELVIN,
-    ):
+    ) -> None:
         if not isinstance(support, TransportSupport):
             raise TypeError("DevicePlan requires a prepared TransportSupport.")
         if not isinstance(electrothermal, bool) or not isinstance(carrier_energy, bool):

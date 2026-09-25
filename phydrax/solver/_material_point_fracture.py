@@ -34,7 +34,7 @@ class MPMPhaseFieldFracturePlan(StrictModule, NonTrainableState):
         maximum_staggered_iterations: int = 3,
         maximum_damage_iterations: int = 100,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         staggered = int(maximum_staggered_iterations)
         damage = int(maximum_damage_iterations)
         tolerance_ = float(tolerance)
@@ -114,7 +114,7 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
         mechanics: PreparedMPMDynamics,
         plan: MPMPhaseFieldFracturePlan | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(mechanics, PreparedMPMDynamics):
             raise TypeError("mechanics must be PreparedMPMDynamics.")
         plan_ = MPMPhaseFieldFracturePlan() if plan is None else plan

@@ -120,7 +120,7 @@ class ClassicalYangMillsPlan(StrictModule, NonTrainableState):
         maximum_history_elements: int = 10_000_000,
         gauss_tolerance: float = 1.0e-8,
         courant_limit: float = 0.5,
-    ):
+    ) -> None:
         shape = tuple(lattice_shape)
         spacing_ = tuple(float(value) for value in spacing)
         dimension = len(shape)
@@ -220,7 +220,7 @@ class PreparedClassicalYangMillsEvolution(StrictModule, NonTrainableState):
         plan: ClassicalYangMillsPlan,
         state: ClassicalYangMillsState,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ClassicalYangMillsPlan):
             raise TypeError("plan must be ClassicalYangMillsPlan.")
         if (

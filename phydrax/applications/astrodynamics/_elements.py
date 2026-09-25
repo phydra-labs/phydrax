@@ -42,7 +42,7 @@ class ModifiedEquinoctialElements(StrictModule):
         /,
         *,
         retrograde_factor: int = 1,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         if isinstance(retrograde_factor, bool) or not isinstance(retrograde_factor, int):
@@ -73,7 +73,7 @@ class ClassicalOrbitalElements(StrictModule):
         values: ArrayLike,
         context: AstrodynamicsContext,
         /,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         values_ = jnp.asarray(values)

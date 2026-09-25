@@ -65,7 +65,7 @@ class ReactiveMonolithicSolverPlan(StrictModule, NonTrainableState):
             ReactiveMonolithicPreconditionerMode.LOCAL_BLOCK
         ),
         event_margin: float = 1.0e-10,
-    ):
+    ) -> None:
         method_ = NewtonKrylov() if method is None else method
         termination_ = (
             NonlinearTermination(

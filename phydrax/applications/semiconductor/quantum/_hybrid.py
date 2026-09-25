@@ -57,7 +57,7 @@ class QuantumClassicalInterface(StrictModule):
         energy_reference,
         provenance,
         maximum_steps=48,
-    ):
+    ) -> None:
         self.classical_terminal = _text(classical_terminal, "classical terminal")
         if quantum_terminal not in ("left", "right"):
             raise ValueError("quantum_terminal must be 'left' or 'right'.")

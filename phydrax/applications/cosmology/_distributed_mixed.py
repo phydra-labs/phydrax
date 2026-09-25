@@ -231,7 +231,7 @@ class DistributedMixedExecutionPlan(StrictModule):
         particle_receive_capacity: int | None = None,
         particle_ghost_capacity: int | None = None,
         particle_ghost_width: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(
             mixed, (PreparedWaveParticleCosmology, PreparedWaveParticleGasCosmology)
         ):
@@ -762,7 +762,7 @@ class PreparedDistributedMixedExecution(StrictModule):
         plan: DistributedMixedExecutionPlan,
         evidence: DistributedMixedPreparationEvidence,
         /,
-    ):
+    ) -> None:
         if not evidence.executable or evidence.plan_id != plan.plan_id:
             raise ValueError(
                 "Prepared distributed mixed execution requires admitted evidence."

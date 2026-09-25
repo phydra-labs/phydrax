@@ -53,7 +53,7 @@ class FixedBondGraphPlan(StrictModule, NonTrainableState):
         twisting_stiffness: ArrayLike,
         damping: ArrayLike = 0.0,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         left = np.asarray(left_particle_ids)
         right = np.asarray(right_particle_ids)
         identifiers = np.asarray(bond_ids)
@@ -150,7 +150,7 @@ class PreparedFixedBondGraph(StrictModule, NonTrainableState):
     rest_direction: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: FixedBondGraphPlan, bodies: PreparedRigidBodySet, /):
+    def __init__(self, plan: FixedBondGraphPlan, bodies: PreparedRigidBodySet, /) -> None:
         if not isinstance(plan, FixedBondGraphPlan):
             raise TypeError("plan must be a FixedBondGraphPlan.")
         if not isinstance(bodies, PreparedRigidBodySet):
@@ -366,7 +366,7 @@ class MixedModeBondDamagePlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         initiation = np.asarray(initiation_loading)
         failure = np.asarray(failure_loading)
         energy = np.asarray(fracture_energy)

@@ -31,7 +31,7 @@ class ContactPrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: Any = np.float64,
         certification_dtype: Any = np.float64,
         output_dtype: Any = np.float64,
-    ):
+    ) -> None:
         geometry = np.dtype(geometry_dtype)
         accumulation = np.dtype(accumulation_dtype)
         certification = np.dtype(certification_dtype)

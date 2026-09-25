@@ -42,7 +42,7 @@ class PyTreeCheckpointedAdjointPlan(StrictModule):
         /,
         *,
         mode: CheckpointMode = "recompute",
-    ):
+    ) -> None:
         if not callable(step):
             raise TypeError("step must be callable.")
         count = int(steps)
@@ -189,7 +189,7 @@ class MaxwellDFTAdjointPlan(StrictModule):
         adjoint_run: Callable[[Any], Any],
         contraction: Callable[[Any, Any, Any], Any],
         /,
-    ):
+    ) -> None:
         if not all(
             callable(value)
             for value in (forward_run, adjoint_source, adjoint_run, contraction)

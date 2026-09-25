@@ -62,7 +62,7 @@ class MechanicsEquilibriumProblem(StrictModule):
         admissibility_id: str | None = None,
         root_coordinates: MechanicsRootCoordinates | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if isinstance(problem, PreparedFieldEquilibrium):
             root = problem.problem
             prepared_realization = problem.realization_id

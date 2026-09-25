@@ -37,7 +37,7 @@ class CubatureMapEvaluation(StrictModule):
         orientation: Array,
         normal: Array | None = None,
         /,
-    ):
+    ) -> None:
         points_ = jnp.asarray(points)
         scale = jnp.asarray(measure_scale, dtype=jnp.real(points_).dtype)
         admissible_ = jnp.asarray(admissible, dtype=jnp.bool_)
@@ -150,7 +150,7 @@ class CubatureAtlas(StrictModule):
         source_entity_ids: Array,
         source_id: str,
         physical_tags: Sequence[str] | None = None,
-    ):
+    ) -> None:
         if not isinstance(mapping, AbstractCubatureMap):
             raise TypeError("CubatureAtlas mapping must be an AbstractCubatureMap.")
         entity_ids = jnp.asarray(source_entity_ids, dtype=jnp.int32).reshape((-1,))
@@ -256,7 +256,7 @@ class _SelectedCubatureMap(AbstractCubatureMap):
     base: AbstractCubatureMap
     chart_indices: Array
 
-    def __init__(self, base: AbstractCubatureMap, chart_indices: Array):
+    def __init__(self, base: AbstractCubatureMap, chart_indices: Array) -> None:
         self.base = base
         self.chart_indices = jnp.asarray(chart_indices, dtype=jnp.int32).reshape((-1,))
 
@@ -294,7 +294,7 @@ class _TranslatedCubatureMap(AbstractCubatureMap):
     base: AbstractCubatureMap
     offset: Array
 
-    def __init__(self, base: AbstractCubatureMap, offset: Array):
+    def __init__(self, base: AbstractCubatureMap, offset: Array) -> None:
         self.base = base
         self.offset = jnp.asarray(offset, dtype=jnp.float64)
 

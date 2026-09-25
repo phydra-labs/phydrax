@@ -59,7 +59,7 @@ class MechanicsGeometryMap(StrictModule, NonTrainableState):
         orientation: int = 1,
         coordinate_convention: Literal["reference", "physical"] = "reference",
         boundary_correspondence: Mapping[str, str] | None = None,
-    ):
+    ) -> None:
         if not callable(coordinate_map) or not callable(jacobian_map):
             raise TypeError(
                 "Mechanics geometry coordinate and Jacobian maps must be callable."
@@ -283,7 +283,7 @@ class OperatorTrialFieldAdapter(StrictModule, NonTrainableState):
         constraint_validators: Mapping[str, Callable] | None = None,
         field_domain_ids: Mapping[str, str] | None = None,
         query_support_ids: Mapping[str, str] | None = None,
-    ):
+    ) -> None:
         names = tuple(str(name) for name in field_names)
         if not names or any(not name for name in names) or len(set(names)) != len(names):
             raise ValueError("Operator trial field names must be non-empty and unique.")
@@ -473,7 +473,7 @@ class MechanicsOperatorCase:
     identities: frozendict[str, str]
     case_fingerprint: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.case, CanonicalOperatorCase):
             raise TypeError("case must be an OperatorCase.")
         if not isinstance(self.realization, MechanicsParameterRealization):
@@ -528,7 +528,7 @@ class MechanicsCaseBuilder:
         spatial_realization_id: str,
         validity: Callable | None = None,
         split_fingerprint: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(distribution, MechanicsParameterDistribution):
             raise TypeError("distribution must be a MechanicsParameterDistribution.")
         if not callable(geometry_factory) or not callable(case_factory):

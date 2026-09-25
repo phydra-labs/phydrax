@@ -45,7 +45,7 @@ class StateSpaceGaussianProcessLaplace(StrictModule):
         damping: float = 1.0,
         tolerance: float = 1e-5,
         minimum_curvature: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(max_iterations, Integral) or isinstance(max_iterations, bool):
             raise TypeError("max_iterations must be an integer.")
         count = int(max_iterations)

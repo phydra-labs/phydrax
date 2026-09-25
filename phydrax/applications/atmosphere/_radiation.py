@@ -57,7 +57,7 @@ class ColumnOpticalProperties(StrictModule, NonTrainableState):
         longwave_absorption: ArrayLike,
         reference_id: str,
         shortwave_asymmetry: ArrayLike = (0.0, 0.0, 0.0, 0.0),
-    ):
+    ) -> None:
         arrays = {
             "shortwave_absorption": np.asarray(shortwave_absorption, dtype=np.float64),
             "shortwave_scattering": np.asarray(shortwave_scattering, dtype=np.float64),
@@ -238,7 +238,7 @@ class ColumnRadiationPlan(StrictModule):
         shortwave_absorption_scale: ArrayLike = 1.0,
         shortwave_scattering_scale: ArrayLike = 1.0,
         longwave_absorption_scale: ArrayLike = 1.0,
-    ):
+    ) -> None:
         scales = tuple(
             np.asarray(x, dtype=np.float64)
             for x in (

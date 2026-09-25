@@ -37,7 +37,7 @@ class WaveDecomposition(StrictModule):
         left_fluctuation: Array,
         right_fluctuation: Array,
         /,
-    ):
+    ) -> None:
         waves_ = jnp.asarray(waves)
         speeds_ = jnp.asarray(speeds)
         left_ = jnp.asarray(left_fluctuation)
@@ -84,7 +84,7 @@ class RoeWavePropagationPlan(AbstractWavePropagationPlan):
 
     entropy_fix: float = eqx.field(static=True)
 
-    def __init__(self, *, entropy_fix: float = 0.0):
+    def __init__(self, *, entropy_fix: float = 0.0) -> None:
         fix = float(entropy_fix)
         if fix < 0.0:
             raise ValueError("entropy_fix must be non-negative.")
@@ -138,7 +138,7 @@ class WaveFamilyLimiterPlan(StrictModule, NonTrainableState):
     kind: WaveLimiterKind = eqx.field(static=True)
     limiter_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: WaveLimiterKind = "mc", /):
+    def __init__(self, kind: WaveLimiterKind = "mc", /) -> None:
         if kind not in ("minmod", "mc", "superbee", "van_leer"):
             raise ValueError("Unknown wave-family limiter.")
         self.kind = kind
@@ -188,7 +188,7 @@ class TransverseWaveSolverPlan(StrictModule, NonTrainableState):
 
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.plan_id = canonical_fingerprint({"kind": "transverse-wave-solver"})
 
     def split(

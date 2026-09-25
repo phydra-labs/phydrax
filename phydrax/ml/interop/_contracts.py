@@ -49,7 +49,7 @@ class ConversionProvenance(StrictModule, NonTrainableState):
         feature_names: Sequence[object] = (),
         class_labels: Sequence[object] = (),
         license_id: str,
-    ):
+    ) -> None:
         if isinstance(configuration, Mapping):
             items = configuration.items()
         else:
@@ -95,7 +95,7 @@ class ConversionResult(StrictModule):
         model: AbstractArrayModel,
         provenance: ConversionProvenance,
         /,
-    ):
+    ) -> None:
         if not isinstance(provenance, ConversionProvenance):
             raise TypeError("provenance must be ConversionProvenance.")
         self.model = model if isinstance(model, FrozenModel) else FrozenModel(model)

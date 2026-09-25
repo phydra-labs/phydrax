@@ -69,7 +69,7 @@ class TriangleRayQueryPlan(StrictModule, NonTrainableState):
         barycentric_tolerance: float = 1e-10,
         forward_tolerance: float = 1e-9,
         tie_tolerance: float = 1e-9,
-    ):
+    ) -> None:
         vertices_host = np.asarray(vertices)
         triangles_host = np.asarray(triangles)
         if vertices_host.ndim != 2 or vertices_host.shape[1:] != (3,):

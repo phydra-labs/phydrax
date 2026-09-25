@@ -252,34 +252,34 @@ class MedicalToolProvider:
 
 
 class Dcm2NiixProvider(MedicalToolProvider):
-    def __init__(self, executable: str = "dcm2niix", /):
+    def __init__(self, executable: str = "dcm2niix", /) -> None:
         super().__init__("dcm2niix", executable, ("--version",), "BSD-3-Clause")
 
 
 class GreedyRegistrationProvider(MedicalToolProvider):
-    def __init__(self, executable: str = "greedy", /):
+    def __init__(self, executable: str = "greedy", /) -> None:
         super().__init__("greedy", executable, ("-version",), "GPL-3.0-or-later")
 
 
 class ANTsRegistrationProvider(MedicalToolProvider):
-    def __init__(self, executable: str = "antsRegistration", /):
+    def __init__(self, executable: str = "antsRegistration", /) -> None:
         super().__init__("ants-registration", executable, ("--version",), "Apache-2.0")
 
 
 class FreeSurferProvider(MedicalToolProvider):
-    def __init__(self, executable: str = "recon-all", /):
+    def __init__(self, executable: str = "recon-all", /) -> None:
         super().__init__(
             "freesurfer", executable, ("-version",), "FreeSurfer-Software-License"
         )
 
 
 class FastSurferProvider(MedicalToolProvider):
-    def __init__(self, executable: str = "run_fastsurfer.sh", /):
+    def __init__(self, executable: str = "run_fastsurfer.sh", /) -> None:
         super().__init__("fastsurfer", executable, ("--version",), "Apache-2.0")
 
 
 class SynthSegProvider(MedicalToolProvider):
-    def __init__(self, executable: str = "mri_synthseg", /):
+    def __init__(self, executable: str = "mri_synthseg", /) -> None:
         super().__init__("synthseg", executable, ("--version",), "Apache-2.0")
 
 

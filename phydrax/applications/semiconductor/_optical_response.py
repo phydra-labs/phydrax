@@ -72,7 +72,7 @@ class ActiveRegionOpticalProjection(StrictModule, NonTrainableState):
         support_id: str,
         mode_id: str,
         provenance: str,
-    ):
+    ) -> None:
         volumes = np.asarray(control_volumes)
         active = np.asarray(active_fraction)
         mode = np.asarray(modal_power_density)
@@ -261,7 +261,7 @@ class LinearizedCarrierOpticalResponsePlan(StrictModule, NonTrainableState):
         reference_wave_speed: ArrayLike = _VACUUM_WAVE_SPEED,
         provenance: str,
         model_id: str | None = None,
-    ):
+    ) -> None:
         transparency = _positive_scalar(
             transparency_carrier_pair_density,
             "transparency_carrier_pair_density",
@@ -423,7 +423,7 @@ class TabulatedCarrierOpticalResponsePlan(StrictModule, NonTrainableState):
         reference_wave_speed: ArrayLike = _VACUUM_WAVE_SPEED,
         provenance: str,
         model_id: str | None = None,
-    ):
+    ) -> None:
         axes = tuple(
             np.asarray(value)
             for value in (

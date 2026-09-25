@@ -94,7 +94,7 @@ class FourierModalResourcePolicy(StrictModule, NonTrainableState):
         max_layers: int = 256,
         preparation_bytes: int = 8 * 2**30,
         workspace_bytes: int = 4 * 2**30,
-    ):
+    ) -> None:
         values = tuple(
             (
                 max_harmonics,
@@ -136,7 +136,7 @@ class FourierModalSolvePolicy(StrictModule, NonTrainableState):
         resources: FourierModalResourcePolicy | None = None,
         retain_boundary_fields: bool = True,
         power_audit_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         boundary_ = BoundaryCascadePolicy() if boundary is None else boundary
         resources_ = FourierModalResourcePolicy() if resources is None else resources
         audit_tolerance = float(power_audit_tolerance)
@@ -178,7 +178,7 @@ class FourierModalCapabilities(StrictModule, NonTrainableState):
     internal_sources: bool = eqx.field(static=True)
     brillouin_zone: bool = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.full_tensor_layers = True
         self.bianisotropic_layers = True
         self.patterned_ports = True
@@ -248,7 +248,7 @@ class FourierModalRefreshSpec(StrictModule, NonTrainableState):
         angular_frequency_changed: bool = False,
         bloch_wavevector_changed: bool = False,
         ports_changed: bool = False,
-    ):
+    ) -> None:
         updates = tuple(layer_updates)
         if any(
             value not in ("unchanged", "thickness", "translation", "material")

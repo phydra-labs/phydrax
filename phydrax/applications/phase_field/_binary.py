@@ -88,7 +88,7 @@ class BinaryPhaseFieldModel(StrictModule, NonTrainableState):
         *,
         closure: BinaryPhaseThermodynamicClosure | None = None,
         evolution_law: AbstractBulkEvolutionLaw | None = None,
-    ):
+    ) -> None:
         if not isinstance(thermodynamics, BinaryThermodynamicParameters):
             raise TypeError("thermodynamics must be BinaryThermodynamicParameters.")
         selected = BinaryPhaseThermodynamicClosure() if closure is None else closure
@@ -186,7 +186,7 @@ class PhaseFieldAcceptancePolicy(StrictModule, NonTrainableState):
         relative_energy_tolerance: float = 1.0e-8,
         absolute_mass_tolerance: float = 1.0e-8,
         relative_mass_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -245,7 +245,7 @@ class PhaseFieldResolutionEvidence(StrictModule, NonTrainableState):
         maximum_cell_diameter: ArrayLike,
         minimum_cells: float,
         /,
-    ):
+    ) -> None:
         width = jnp.asarray(characteristic_width)
         diameter = jnp.asarray(maximum_cell_diameter, dtype=width.dtype)
         minimum = float(minimum_cells)
@@ -358,7 +358,7 @@ class PhaseFieldProductionCase(StrictModule, NonTrainableState):
         topology_id: str,
         geometry_layout_id: str,
         dtype: str,
-    ):
+    ) -> None:
         name = str(case_name)
         if not name:
             raise ValueError("Phase-field production case name must be nonempty.")
@@ -1124,7 +1124,7 @@ class AllenCahnFEMPlan(StrictModule, NonTrainableState):
         acceptance: PhaseFieldAcceptancePolicy | None = None,
         execution_policy: FiniteElementExecutionPolicy | None = None,
         minimum_transition_cells: float = 4.0,
-    ):
+    ) -> None:
         if not isinstance(model, BinaryPhaseFieldModel):
             raise TypeError("model must be BinaryPhaseFieldModel.")
         mobility_ = _validated_mobility(
@@ -1204,7 +1204,7 @@ class PreparedAllenCahnFEM(AbstractFixedStepMethod, NonTrainableState):
         boundary: PhaseFieldBoundaryPlan | None = None,
         noise: PhaseFieldNoisePlan | None = None,
         constraints: Any = None,
-    ):
+    ) -> None:
         if not isinstance(plan, AllenCahnFEMPlan):
             raise TypeError("plan must be AllenCahnFEMPlan.")
         name = str(field_name)
@@ -1588,7 +1588,7 @@ class CahnHilliardFEMPlan(StrictModule, NonTrainableState):
         acceptance: PhaseFieldAcceptancePolicy | None = None,
         execution_policy: FiniteElementExecutionPolicy | None = None,
         minimum_transition_cells: float = 4.0,
-    ):
+    ) -> None:
         if not isinstance(model, BinaryPhaseFieldModel):
             raise TypeError("model must be BinaryPhaseFieldModel.")
         mobility_ = _validated_mobility(
@@ -1675,7 +1675,7 @@ class PreparedCahnHilliardFEM(AbstractFixedStepMethod, NonTrainableState):
         boundary: PhaseFieldBoundaryPlan | None = None,
         noise: PhaseFieldNoisePlan | None = None,
         constraints: Any = None,
-    ):
+    ) -> None:
         if not isinstance(plan, CahnHilliardFEMPlan):
             raise TypeError("plan must be CahnHilliardFEMPlan.")
         concentration = str(concentration_field)

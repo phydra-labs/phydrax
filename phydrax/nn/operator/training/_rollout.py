@@ -61,7 +61,7 @@ class OperatorRolloutRoute:
     transfer: Callable[[Any, Any, Any], Any] | None = None
     transfer_id: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for name, value in (
             ("source_name", self.source_name),
             ("prediction_name", self.prediction_name),
@@ -88,7 +88,7 @@ class OperatorRolloutControlRoute:
     policy: Callable[[OperatorBatch, Array, EvalKey], Any]
     policy_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.source_name or not self.policy_id or not callable(self.policy):
             raise ValueError(
                 "Control route requires source, callable policy, and identity."
@@ -105,7 +105,7 @@ class OperatorRolloutPolicy:
     truncate_every: int | None = None
     rematerialize: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if int(self.maximum_horizon) <= 0:
             raise ValueError("maximum_horizon must be positive.")
         if int(self.initial_horizon) <= 0:

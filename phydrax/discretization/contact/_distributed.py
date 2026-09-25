@@ -28,7 +28,7 @@ class DistributedContactPartitionPlan(StrictModule, NonTrainableState):
         *,
         rank_count: int,
         halo_capacity: int,
-    ):
+    ) -> None:
         owner = np.asarray(vertex_owner)
         ranks = int(rank_count)
         halo = int(halo_capacity)

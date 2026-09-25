@@ -189,7 +189,7 @@ class FinanceArchiveRecord(StrictModule, NonTrainableState):
         law_ids: Sequence[str],
         archive_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(result_manifest, ResultManifest):
             raise TypeError("result_manifest must be a ResultManifest.")
         values = _named_arrays(arrays)

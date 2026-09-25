@@ -34,7 +34,7 @@ class TwoBodyDecayPlan(StrictModule, NonTrainableState):
         *,
         branching_fraction: float,
         decay_model_id: str = "isotropic-two-body",
-    ):
+    ) -> None:
         daughters = tuple(daughter_pdg_ids)
         masses = tuple(float(value) for value in daughter_masses)
         fraction = float(branching_fraction)

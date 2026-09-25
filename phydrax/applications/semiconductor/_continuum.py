@@ -182,7 +182,7 @@ def _state_pattern(plan: DevicePlan) -> SparsePattern:
     row_parts: list[np.ndarray] = []
     column_parts: list[np.ndarray] = []
 
-    def couple(rows, columns):
+    def couple(rows, columns) -> None:
         row_values = np.asarray(rows, dtype=np.int32).reshape(-1)
         column_values = np.asarray(columns, dtype=np.int32).reshape(-1)
         row_parts.append(
@@ -257,7 +257,7 @@ class PreparedSemiconductorDevice(ClassicalPhysics):
     coloring: SparseColoring
     poisson_coloring: SparseColoring
 
-    def __init__(self, plan: DevicePlan):
+    def __init__(self, plan: DevicePlan) -> None:
         if not isinstance(plan, DevicePlan):
             raise TypeError("plan must be a DevicePlan.")
         count = plan.support.volumes.shape[0]

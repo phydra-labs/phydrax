@@ -177,7 +177,7 @@ class HistoryInitialGuess(AbstractInitialGuessProvider, NonTrainableState):
         rank_tolerance: float = 1.0e-10,
         constraint_id: str = "unconstrained",
         nullspace_policy_id: str = "none",
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be AbstractLinearOperator.")
         strategy_ = str(strategy)
@@ -447,7 +447,7 @@ class LearnedInitialGuess(AbstractInitialGuessProvider):
         /,
         *,
         provider_id: str = "learned-initial-guess",
-    ):
+    ) -> None:
         if _is_component(function):
             raise TypeError(
                 "function must map (data, baseline) to a proposed solution; hold an "

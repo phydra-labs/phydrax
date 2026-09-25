@@ -146,7 +146,7 @@ class MACVariableDensityPlan(StrictModule, NonTrainableState):
     momentum: PreparedMACMomentumOperators
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, momentum: PreparedMACMomentumOperators, /):
+    def __init__(self, momentum: PreparedMACMomentumOperators, /) -> None:
         if not isinstance(momentum, PreparedMACMomentumOperators):
             raise TypeError("momentum must be PreparedMACMomentumOperators.")
         unsupported = tuple(
@@ -180,7 +180,7 @@ class PreparedMACVariableDensityOperators(StrictModule, NonTrainableState):
     report: MACVariableDensityReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MACVariableDensityPlan, /):
+    def __init__(self, plan: MACVariableDensityPlan, /) -> None:
         if not isinstance(plan, MACVariableDensityPlan):
             raise TypeError("plan must be MACVariableDensityPlan.")
         identifier = canonical_fingerprint(

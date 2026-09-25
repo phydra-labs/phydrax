@@ -133,7 +133,7 @@ class FieldTracePolicy(StrictModule, NonTrainableState):
         /,
         *,
         sides: tuple[FieldTraceSide, ...] = _TRACE_SIDES,
-    ):
+    ) -> None:
         match kind:
             case "single-valued" | "cell-sided":
                 pass
@@ -179,7 +179,7 @@ class FieldSideBinding(StrictModule, NonTrainableState):
         /,
         *,
         reconstruction_id: str,
-    ):
+    ) -> None:
         if side not in _TRACE_SIDES:
             raise ValueError(f"side must be one of {_TRACE_SIDES}.")
         sites_ = np.asarray(sites)
@@ -225,7 +225,7 @@ class FieldQueryEvidence(StrictModule):
         /,
         *,
         kernel_id: str,
-    ):
+    ) -> None:
         status_ = jnp.asarray(status, dtype=jnp.int32)
         conditioning_ = jnp.asarray(conditioning)
         count = jnp.asarray(support_count, dtype=jnp.int32)
@@ -370,7 +370,7 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
         field_space_id: str,
         support_id: str,
         coefficient_linear: bool = True,
-    ):
+    ) -> None:
         from ..geometry import CompiledGeometry, GeometryKind
 
         if not isinstance(kernel, AbstractFieldReconstructionKernel):
@@ -817,7 +817,7 @@ class DiscreteFieldEvaluator(StrictModule, NonTrainableState):
         *,
         side: FieldSideBinding | None = None,
         derivative: tuple[int, ...] | None = None,
-    ):
+    ) -> None:
         if not isinstance(reconstruction, PreparedFieldReconstruction):
             raise TypeError("reconstruction must be a PreparedFieldReconstruction.")
         self.reconstruction = reconstruction
@@ -981,7 +981,7 @@ class DiscreteFieldFunctionView(StrictModule, NonTrainableState):
         *,
         variable: str,
         field_name: str | None = None,
-    ):
+    ) -> None:
         from ..domain import GeometryDomain
 
         if not isinstance(reconstruction, PreparedFieldReconstruction):

@@ -115,7 +115,7 @@ class MACPassiveTracerMacCormackPlan(StrictModule, NonTrainableState):
         correction_strength: float = 1.0,
         characteristic_integrator: MACPassiveTracerCharacteristicIntegrator = "midpoint",
         interpolation: MACPassiveTracerInterpolation = "multilinear",
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if not isinstance(tracer_space, DiscreteFieldSpace):
@@ -237,7 +237,7 @@ class PreparedMACPassiveTracerMacCormack(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MACPassiveTracerMacCormackPlan, /):
+    def __init__(self, plan: MACPassiveTracerMacCormackPlan, /) -> None:
         if not isinstance(plan, MACPassiveTracerMacCormackPlan):
             raise TypeError("plan must be MACPassiveTracerMacCormackPlan.")
         tracer_vector_space = plan.tracer_space.vector_space

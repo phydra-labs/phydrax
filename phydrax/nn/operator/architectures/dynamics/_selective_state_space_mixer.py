@@ -111,7 +111,7 @@ class SelectiveStateSpaceMixer(AbstractOperatorModel):
         training_delta_range: tuple[float, float] | None = None,
         dtype: Any = jnp.float32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_size = in_channels
         self.out_size = in_channels if out_channels is None else out_channels
         self.state_size = int(state_size)

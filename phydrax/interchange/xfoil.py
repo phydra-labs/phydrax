@@ -99,7 +99,7 @@ class XFOILPointResult:
 
 
 class XFOILConvergenceError(RuntimeError):
-    def __init__(self, result: XFOILPointResult):
+    def __init__(self, result: XFOILPointResult) -> None:
         self.result = result
         super().__init__(result.failure_reason)
 

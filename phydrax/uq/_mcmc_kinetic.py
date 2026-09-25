@@ -40,7 +40,7 @@ class MCMCMassAdaptationPlan(StrictModule):
         max_block_size: int = 0,
         rank: int = 0,
         memory_cap_bytes: int = 2**30,
-    ):
+    ) -> None:
         if kind not in ("diagonal", "blocks", "diagonal_low_rank"):
             raise ValueError("Unknown MCMC kinetic kind.")
         blocks = tuple(tuple(str(path) for path in block) for block in parameter_blocks)

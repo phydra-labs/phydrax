@@ -45,7 +45,7 @@ class AbstractSketchConstraint(StrictModule):
 
     weight: Array
 
-    def __init__(self, weight: float = 1.0):
+    def __init__(self, weight: float = 1.0) -> None:
         if not np.isfinite(weight) or weight <= 0.0:
             raise ValueError("constraint weight must be finite and positive.")
         self.weight = jnp.asarray(weight, dtype=jnp.float64).reshape(())
@@ -69,7 +69,9 @@ class Coincident(AbstractSketchConstraint):
     first_point: int = eqx.field(static=True)
     second_point: int = eqx.field(static=True)
 
-    def __init__(self, first_point: int, second_point: int, *, weight: float = 1.0):
+    def __init__(
+        self, first_point: int, second_point: int, *, weight: float = 1.0
+    ) -> None:
         super().__init__(weight)
         self.first_point = int(first_point)
         self.second_point = int(second_point)
@@ -83,7 +85,7 @@ class FixedPoint(AbstractSketchConstraint):
     point: int = eqx.field(static=True)
     target: Array
 
-    def __init__(self, point: int, target: Array, *, weight: float = 1.0):
+    def __init__(self, point: int, target: Array, *, weight: float = 1.0) -> None:
         super().__init__(weight)
         target_ = jnp.asarray(target, dtype=jnp.float64)
         if target_.shape != (2,):
@@ -108,7 +110,7 @@ class PointDistance(AbstractSketchConstraint):
         distance: float,
         *,
         weight: float = 1.0,
-    ):
+    ) -> None:
         super().__init__(weight)
         if not np.isfinite(distance) or distance < 0.0:
             raise ValueError("distance must be finite and non-negative.")
@@ -125,7 +127,7 @@ class PointDistance(AbstractSketchConstraint):
 class Horizontal(AbstractSketchConstraint):
     line: int = eqx.field(static=True)
 
-    def __init__(self, line: int, *, weight: float = 1.0):
+    def __init__(self, line: int, *, weight: float = 1.0) -> None:
         super().__init__(weight)
         self.line = int(line)
 
@@ -137,7 +139,7 @@ class Horizontal(AbstractSketchConstraint):
 class Vertical(AbstractSketchConstraint):
     line: int = eqx.field(static=True)
 
-    def __init__(self, line: int, *, weight: float = 1.0):
+    def __init__(self, line: int, *, weight: float = 1.0) -> None:
         super().__init__(weight)
         self.line = int(line)
 
@@ -150,7 +152,7 @@ class Parallel(AbstractSketchConstraint):
     first_line: int = eqx.field(static=True)
     second_line: int = eqx.field(static=True)
 
-    def __init__(self, first_line: int, second_line: int, *, weight: float = 1.0):
+    def __init__(self, first_line: int, second_line: int, *, weight: float = 1.0) -> None:
         super().__init__(weight)
         self.first_line = int(first_line)
         self.second_line = int(second_line)
@@ -167,7 +169,7 @@ class Perpendicular(AbstractSketchConstraint):
     first_line: int = eqx.field(static=True)
     second_line: int = eqx.field(static=True)
 
-    def __init__(self, first_line: int, second_line: int, *, weight: float = 1.0):
+    def __init__(self, first_line: int, second_line: int, *, weight: float = 1.0) -> None:
         super().__init__(weight)
         self.first_line = int(first_line)
         self.second_line = int(second_line)
@@ -184,7 +186,7 @@ class EqualLength(AbstractSketchConstraint):
     first_line: int = eqx.field(static=True)
     second_line: int = eqx.field(static=True)
 
-    def __init__(self, first_line: int, second_line: int, *, weight: float = 1.0):
+    def __init__(self, first_line: int, second_line: int, *, weight: float = 1.0) -> None:
         super().__init__(weight)
         self.first_line = int(first_line)
         self.second_line = int(second_line)
@@ -208,7 +210,7 @@ class LineAngle(AbstractSketchConstraint):
         angle: float,
         *,
         weight: float = 1.0,
-    ):
+    ) -> None:
         super().__init__(weight)
         if not np.isfinite(angle):
             raise ValueError("angle must be finite.")
@@ -229,7 +231,7 @@ class Midpoint(AbstractSketchConstraint):
     point: int = eqx.field(static=True)
     line: int = eqx.field(static=True)
 
-    def __init__(self, point: int, line: int, *, weight: float = 1.0):
+    def __init__(self, point: int, line: int, *, weight: float = 1.0) -> None:
         super().__init__(weight)
         self.point = int(point)
         self.line = int(line)
@@ -244,7 +246,7 @@ class PointOnLine(AbstractSketchConstraint):
     point: int = eqx.field(static=True)
     line: int = eqx.field(static=True)
 
-    def __init__(self, point: int, line: int, *, weight: float = 1.0):
+    def __init__(self, point: int, line: int, *, weight: float = 1.0) -> None:
         super().__init__(weight)
         self.point = int(point)
         self.line = int(line)
@@ -261,7 +263,7 @@ class Radius(AbstractSketchConstraint):
     circle: int = eqx.field(static=True)
     radius: Array
 
-    def __init__(self, circle: int, radius: float, *, weight: float = 1.0):
+    def __init__(self, circle: int, radius: float, *, weight: float = 1.0) -> None:
         super().__init__(weight)
         if not np.isfinite(radius) or radius <= 0.0:
             raise ValueError("radius must be finite and positive.")
@@ -285,7 +287,7 @@ class TangentLineCircle(AbstractSketchConstraint):
         *,
         side: Literal[-1, 1] = 1,
         weight: float = 1.0,
-    ):
+    ) -> None:
         super().__init__(weight)
         if side not in (-1, 1):
             raise ValueError("side must be -1 or +1.")
@@ -315,7 +317,7 @@ class TangentCircles(AbstractSketchConstraint):
         *,
         internal: bool = False,
         weight: float = 1.0,
-    ):
+    ) -> None:
         super().__init__(weight)
         self.first_circle = int(first_circle)
         self.second_circle = int(second_circle)
@@ -370,7 +372,7 @@ class SketchSolution(StrictModule):
         residual_norm,
         converged,
         iterations,
-    ):
+    ) -> None:
         self.points = jnp.asarray(points, dtype=jnp.float64)
         self.circle_radii = jnp.asarray(circle_radii, dtype=jnp.float64)
         self.residual = jnp.asarray(residual, dtype=jnp.float64)
@@ -398,7 +400,7 @@ class Sketch(StrictModule):
         circle_radii: Array | None = None,
         constraints: Sequence[AbstractSketchConstraint] = (),
         feature_id: str | None = None,
-    ):
+    ) -> None:
         points_host = np.asarray(points, dtype=np.float64)
         lines_host = (
             np.empty((0, 2), dtype=np.int32)
@@ -443,8 +445,10 @@ class Sketch(StrictModule):
         self.feature_id = feature_id or f"sketch-{uuid4().hex}"
 
     @staticmethod
-    def _validate_constraint_indices(constraints, num_points, num_lines, num_circles):
-        def require(indices, size, kind):
+    def _validate_constraint_indices(
+        constraints, num_points, num_lines, num_circles
+    ) -> None:
+        def require(indices, size, kind) -> None:
             if any(index < 0 or index >= size for index in indices):
                 raise ValueError(f"Constraint references an absent {kind}.")
 

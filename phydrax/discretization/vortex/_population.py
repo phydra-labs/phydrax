@@ -71,7 +71,9 @@ class VortexPopulationPlan(StrictModule, NonTrainableState):
     journal_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, capacity: int, dimension: int, /, *, journal_capacity: int = 256):
+    def __init__(
+        self, capacity: int, dimension: int, /, *, journal_capacity: int = 256
+    ) -> None:
         capacity_, dimension_, journal_capacity_ = (
             int(capacity),
             int(dimension),

@@ -31,7 +31,7 @@ class WienerNoiseBlock(StrictModule):
         /,
         *,
         basis_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name:
             raise ValueError("Wiener noise block name must be non-empty.")
         resolved_shape = tuple(shape)
@@ -65,7 +65,7 @@ class WienerNoiseLayout(StrictModule):
         /,
         *,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         values = []
         offset = 0
         for name, shape, basis_id in blocks:

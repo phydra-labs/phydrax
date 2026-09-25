@@ -132,7 +132,7 @@ class DarkRadiationFourForce(StrictModule, NonTrainableState):
         frame_id: str,
         unit_contract_id: str,
         frame_realization_id: str,
-    ):
+    ) -> None:
         radiation = jnp.asarray(radiation_four_force)
         matter = jnp.asarray(matter_four_force, dtype=radiation.dtype)
         time = jnp.asarray(endpoint_time, dtype=radiation.dtype)
@@ -281,7 +281,7 @@ class CosmologicalMultigroupM1System(StrictModule, NonTrainableState):
         reduced_light_speed: float | None = None,
         energy_floor: float = 1.0e-12,
         beam_risk_limit: float = 0.25,
-    ):
+    ) -> None:
         edges = jnp.asarray(group_edges)
         if edges.ndim != 1 or edges.size < 2:
             raise ValueError("Dark-radiation group_edges must be one dimensional.")
@@ -796,7 +796,7 @@ class DarkRadiationBoltzmannHierarchyPlan(StrictModule, NonTrainableState):
         closure_tolerance: float = 1.0e-3,
         self_interaction_rate: float = 0.0,
         frame: LocalRelativisticFramePlan,
-    ):
+    ) -> None:
         wave = jnp.asarray(wave_numbers)
         momentum = jnp.asarray(momentum_nodes, dtype=wave.dtype)
         weights = jnp.asarray(momentum_weights, dtype=wave.dtype)
@@ -1171,7 +1171,7 @@ class DarkRadiationVETPlan(StrictModule, NonTrainableState):
         *,
         maximum_iterations: int = 8,
         residual_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         direction = jnp.asarray(directions)
         weight = jnp.asarray(weights, dtype=direction.dtype)
         iterations = int(maximum_iterations)
@@ -1320,7 +1320,7 @@ class DarkRadiationConversionReceipt(StrictModule, NonTrainableState):
         target_representation: str,
         operation: str,
         differentiation_policy: str,
-    ):
+    ) -> None:
         source = jnp.asarray(source_integral)
         target = jnp.asarray(target_integral, dtype=source.dtype)
         if source.shape != target.shape:

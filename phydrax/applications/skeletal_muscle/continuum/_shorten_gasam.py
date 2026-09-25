@@ -35,7 +35,7 @@ class ShortenGasamActivationCalibration(StrictModule):
         resting_crossbridge_uM: ArrayLike,
         saturated_crossbridge_uM: ArrayLike,
         /,
-    ):
+    ) -> None:
         resting = jnp.asarray(resting_crossbridge_uM)
         saturated = jnp.asarray(saturated_crossbridge_uM)
         if resting.shape != () or saturated.shape != ():
@@ -139,7 +139,9 @@ class HomogenizedShortenGasamCouplingPlan(StrictModule, NonTrainableState):
     calibration_asset_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, source_weights: ArrayLike, /, *, calibration_asset_id: str):
+    def __init__(
+        self, source_weights: ArrayLike, /, *, calibration_asset_id: str
+    ) -> None:
         weights = jnp.asarray(source_weights)
         if weights.ndim != 2:
             raise ValueError("source_weights must have shape (fiber, node).")

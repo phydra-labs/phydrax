@@ -106,7 +106,7 @@ class MatrixFunctionPolicy(StrictModule):
         error_tolerance: float = 1e-8,
         differentiation: DifferentiationPolicy | None = None,
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         if method not in (
             "auto",
             "spectral",
@@ -157,7 +157,7 @@ class TransformDiagonalRepresentation(StrictModule):
         /,
         *,
         representation_id: str | None = None,
-    ):
+    ) -> None:
         if isinstance(analysis_or_transform, AbstractLinearTransform):
             if synthesis is not None:
                 raise ValueError(

@@ -55,7 +55,7 @@ class SemilinearDrift(StrictModule):
         spectral_representation: TransformDiagonalRepresentation | None = None,
         compatible_noise_eigenvalues: ArrayLike | None = None,
         compatible_noise_basis_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(linear_operator):
             raise TypeError(
                 "linear_operator must be an AbstractLinearOperator or callable."

@@ -33,7 +33,7 @@ class GeodesicEndpointInterpolant(AbstractEndpointInterpolant):
         source_coordinate: ArrayLike = 0.0,
         target_coordinate: ArrayLike = 1.0,
         interpolant_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, AbstractGeodesicManifold):
             raise TypeError("geometry must be an AbstractGeodesicManifold.")
         source = jnp.asarray(source_coordinate, dtype=jnp.float64).reshape(())

@@ -83,7 +83,7 @@ class ElectronicCalculationPlan(StrictModule, NonTrainableState):
         *,
         numerical: ElectronicNumericalPlan | None = None,
         precision: AtomisticPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         if isinstance(

@@ -83,7 +83,7 @@ class AndersonBathFitPlan(StrictModule, NonTrainableState):
         residual_tolerance: float = 2e-2,
         moment_tolerance: float = 2e-2,
         maximum_bytes: int = 64 * 1024**2,
-    ):
+    ) -> None:
         sites = _positive_int(site_count, "site_count")
         iterations = _positive_int(maximum_iterations, "maximum_iterations")
         lower = float(lower_energy)
@@ -265,7 +265,7 @@ class EDImpurityPolicy(StrictModule, NonTrainableState):
         hermiticity_tolerance: float = 1e-10,
         dyson_tolerance: float = 1e-8,
         moment_tolerance: float = 2e-1,
-    ):
+    ) -> None:
         self.maximum_modes = _positive_int(maximum_modes, "maximum_modes")
         self.maximum_sector_dimension = _positive_int(
             maximum_sector_dimension, "maximum_sector_dimension"
@@ -304,7 +304,7 @@ class ImpuritySolveRequest(StrictModule, NonTrainableState):
         indices: ArrayLike,
         environment: ImpurityEnvironment,
         /,
-    ):
+    ) -> None:
         onsite = float(onsite_energy)
         interaction_ = float(interaction)
         chemical = float(chemical_potential)
@@ -667,7 +667,7 @@ class ExactDiagonalizationImpurityProvider(AbstractImpurityProvider):
         /,
         *,
         provider_id: str = "phydrax.all-sector-ed.single-orbital",
-    ):
+    ) -> None:
         policy_ = EDImpurityPolicy() if policy is None else policy
         if not isinstance(policy_, EDImpurityPolicy):
             raise TypeError("policy must be EDImpurityPolicy or None.")

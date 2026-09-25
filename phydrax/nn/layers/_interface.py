@@ -76,7 +76,7 @@ class InterfaceFeatureLift(_AbstractBaseModel):
         include_signed_distance: bool = True,
         include_cusp: bool = True,
         include_side: bool = True,
-    ):
+    ) -> None:
         if not callable(level_set):
             raise TypeError("level_set must be callable.")
         dimension = int(in_size)

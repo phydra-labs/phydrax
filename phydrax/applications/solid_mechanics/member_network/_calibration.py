@@ -63,7 +63,7 @@ class StructuralObservationModel(StrictModule, NonTrainableState):
         *,
         discrepancy_covariance: ArrayLike | None = None,
         observation_id: str,
-    ):
+    ) -> None:
         if not callable(prediction):
             raise TypeError("Structural prediction must be callable.")
         observed_ = jnp.asarray(observed)
@@ -111,7 +111,7 @@ class StructuralCalibrationProblem(StrictModule, NonTrainableState):
         *,
         bounds: Bounds | None = None,
         problem_id: str = "structural-calibration",
-    ):
+    ) -> None:
         if not observations:
             raise ValueError("Calibration requires at least one observation model.")
         mean = jnp.asarray(prior_mean)

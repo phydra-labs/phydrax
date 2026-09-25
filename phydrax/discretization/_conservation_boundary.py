@@ -81,7 +81,7 @@ class ALEBoundaryContext(StrictModule, NonTrainableState):
         motion_plan_id: str,
         absolute_tolerance: float,
         relative_tolerance: float,
-    ):
+    ) -> None:
         topology_id = _canonical_ale_identity(topology_epoch_id, "topology_epoch_id")
         layout_id = _canonical_ale_identity(geometry_layout_id, "geometry_layout_id")
         version = _dynamic_geometry_version(geometry_version)
@@ -327,7 +327,7 @@ class AbstractConservationBoundary(StrictModule, NonTrainableState):
 class ExtrapolationBoundary(AbstractConservationBoundary):
     """Zero-normal-gradient exterior state."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.boundary_id = canonical_fingerprint({"kind": "fv-extrapolation"})
 
     def exterior_state(
@@ -360,7 +360,7 @@ class ConstantStateBoundary(AbstractConservationBoundary):
 
     value: Array
 
-    def __init__(self, value: ArrayLike, /):
+    def __init__(self, value: ArrayLike, /) -> None:
         value_ = jnp.asarray(value)
         if value_.ndim > 1:
             raise ValueError(
@@ -401,7 +401,7 @@ class PrescribedStateBoundary(AbstractConservationBoundary):
 
     target: BoundaryTarget = eqx.field(static=True)
 
-    def __init__(self, target: BoundaryTarget, /, *, boundary_id: str):
+    def __init__(self, target: BoundaryTarget, /, *, boundary_id: str) -> None:
         if not callable(target):
             raise TypeError("target must be callable.")
         identifier = str(boundary_id)
@@ -439,7 +439,7 @@ class PrescribedStateBoundary(AbstractConservationBoundary):
 class ReflectiveBoundary(AbstractConservationBoundary):
     """Equation-owned reflective state transformation."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.boundary_id = canonical_fingerprint({"kind": "fv-reflective"})
 
     def exterior_state(
@@ -473,7 +473,7 @@ class PrescribedNormalFluxBoundary(AbstractConservationBoundary):
 
     target: BoundaryTarget = eqx.field(static=True)
 
-    def __init__(self, target: BoundaryTarget, /, *, boundary_id: str):
+    def __init__(self, target: BoundaryTarget, /, *, boundary_id: str) -> None:
         if not callable(target):
             raise TypeError("target must be callable.")
         identifier = str(boundary_id)

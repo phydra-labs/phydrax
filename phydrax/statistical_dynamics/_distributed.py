@@ -57,7 +57,7 @@ class DistributedShard(StrictModule, NonTrainableState):
         /,
         *,
         owner_id: str,
-    ):
+    ) -> None:
         process = int(process_index)
         start_ = int(start)
         stop_ = int(stop)
@@ -97,7 +97,7 @@ class DistributedBatchLayout(StrictModule, NonTrainableState):
         *,
         item_bytes: int,
         maximum_local_bytes: int,
-    ):
+    ) -> None:
         size = _positive_integer(global_batch_size, "global_batch_size")
         processes = _positive_integer(process_count, "process_count")
         item = _positive_integer(item_bytes, "item_bytes")
@@ -177,7 +177,7 @@ class DistributedCovarianceLayout(StrictModule, NonTrainableState):
         factor_rank: int | None = None,
         dtype: Any = jnp.float64,
         maximum_local_bytes: int = 512 * 1024 * 1024,
-    ):
+    ) -> None:
         dimension = _positive_integer(covariance_dimension, "covariance_dimension")
         processes = _positive_integer(process_count, "process_count")
         maximum = _positive_integer(maximum_local_bytes, "maximum_local_bytes")
@@ -270,7 +270,7 @@ class DistributedStatisticalLayout(StrictModule, NonTrainableState):
         batch: DistributedBatchLayout,
         covariance: DistributedCovarianceLayout,
         /,
-    ):
+    ) -> None:
         if not isinstance(batch, DistributedBatchLayout) or not isinstance(
             covariance, DistributedCovarianceLayout
         ):
@@ -316,7 +316,7 @@ class DistributedRestartRelation(StrictModule, NonTrainableState):
         source: DistributedStatisticalLayout,
         target: DistributedStatisticalLayout,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, DistributedStatisticalLayout) or not isinstance(
             target, DistributedStatisticalLayout
         ):

@@ -51,7 +51,7 @@ class CoupledWaterHeatPlan(StrictModule):
         inflow_temperature_K=None,
         temperature_scale_K=300.0,
         energy_rate_scale_W=1000.0,
-    ):
+    ) -> None:
         if not isinstance(water, RichardsPlan) or not isinstance(
             thermal, PorousThermalMaterial
         ):

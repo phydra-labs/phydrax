@@ -60,7 +60,7 @@ class HodgeHomologyReport(StrictModule, NonTrainableState):
         next_eigenvalue: Array,
         ranks_match: Array,
         complete: Array,
-    ):
+    ) -> None:
         self.kernel_residuals = jnp.asarray(kernel_residuals)
         self.orthonormality_residual = jnp.asarray(orthonormality_residual)
         self.next_eigenvalue = jnp.asarray(next_eigenvalue)

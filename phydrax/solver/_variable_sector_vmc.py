@@ -77,7 +77,7 @@ class VariableSectorVMCPlan(StrictModule, NonTrainableState):
         minimum_tail_samples: int = 128,
         tail_probability_tolerance: float = 1e-3,
         tail_standard_error_multiplier: float = 3.0,
-    ):
+    ) -> None:
         chains, draws, transitions, warmup, minimum = map(
             int,
             (
@@ -146,7 +146,7 @@ class PreparedVariableSectorVMC(StrictModule):
         measure: VariableSectorMeasure,
         initial_configurations: Sequence[VariableParticleConfiguration],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, VariableSectorVMCPlan):
             raise TypeError("plan must be VariableSectorVMCPlan.")
         if not callable(model):
@@ -732,7 +732,7 @@ class VariableSectorTDVPPlan(StrictModule, NonTrainableState):
         /,
         *,
         evolution: EvolutionKind,
-    ):
+    ) -> None:
         step, count = float(time_step), int(step_count)
         if not np.isfinite(step) or step <= 0 or count < 1:
             raise ValueError("TDVP time_step/step_count must be finite and positive.")

@@ -53,7 +53,7 @@ class WienerCubaturePathData(StrictModule, NonTrainableState):
         family: str,
         source_rule_id: str,
         maximum_path_bytes: int = _DEFAULT_PATH_BYTES,
-    ):
+    ) -> None:
         increments_host = np.asarray(increments, dtype=np.float64)
         widths_host = np.asarray(segment_widths, dtype=np.float64).reshape((-1,))
         weights_host = np.asarray(weights, dtype=np.float64).reshape((-1,))

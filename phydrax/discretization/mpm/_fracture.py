@@ -34,7 +34,7 @@ class MPMFieldPartitionFracturePlan(StrictModule, NonTrainableState):
         /,
         *,
         damage_threshold: float = 0.95,
-    ):
+    ) -> None:
         maximum = int(maximum_fields)
         threshold = float(damage_threshold)
         if maximum < 2 or not 0.0 < threshold <= 1.0:
@@ -89,7 +89,7 @@ class CPICFracturePlan(StrictModule, NonTrainableState):
     maximum_tags: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_tags: int, /):
+    def __init__(self, maximum_tags: int, /) -> None:
         maximum = int(maximum_tags)
         if maximum < 2:
             raise ValueError("CPIC requires at least two compatibility tags.")

@@ -46,7 +46,7 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
         *,
         quadrature_order: int,
         numeric_version: str,
-    ):
+    ) -> None:
         if not isinstance(region, MeshRegion):
             raise TypeError("[geometry] 3D Galerkin preparation requires a MeshRegion.")
         version = str(numeric_version)

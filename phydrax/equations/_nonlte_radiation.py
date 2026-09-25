@@ -44,7 +44,7 @@ class NonLTELevelPopulationPlan(StrictModule, NonTrainableState):
         level_energies: ArrayLike,
         level_degeneracies: ArrayLike,
         /,
-    ):
+    ) -> None:
         count = int(species_count)
         owners = np.asarray(level_species, dtype=np.int32)
         energies = np.asarray(level_energies, dtype=np.float64)
@@ -198,7 +198,7 @@ class NonLTERadiationCoefficientPlan(StrictModule, NonTrainableState):
         spontaneous_rates: ArrayLike,
         absorption_cross_sections: ArrayLike,
         /,
-    ):
+    ) -> None:
         groups = int(group_count)
         lower = np.asarray(lower_levels, dtype=np.int32)
         upper = np.asarray(upper_levels, dtype=np.int32)

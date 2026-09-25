@@ -80,7 +80,7 @@ class AmortizedGaussianMarkovEncoder(StrictModule, ParameterOwner):
         *,
         key: Array,
         dtype: DTypeLike = jnp.float32,
-    ):
+    ) -> None:
         inputs = int(input_size)
         hidden = int(hidden_size)
         state = int(state_size)
@@ -197,7 +197,7 @@ class AmortizedGaussianMarkovFamily(AbstractVariationalFamily):
         *,
         scale_floor: float = 1e-6,
         context_mask: Array | None = None,
-    ):
+    ) -> None:
         if not isinstance(encoder, AmortizedGaussianMarkovEncoder):
             raise TypeError("encoder must be AmortizedGaussianMarkovEncoder.")
         if not isinstance(problem, StateSpaceProblem):
@@ -309,7 +309,7 @@ class AmortizedStateSpaceVariationalConfig(StrictModule):
         optimization: VariationalConfig | None = None,
         hidden_size: int = 64,
         scale_floor: float = 1e-6,
-    ):
+    ) -> None:
         optimization_ = VariationalConfig() if optimization is None else optimization
         if not isinstance(optimization_, VariationalConfig):
             raise TypeError("optimization must be VariationalConfig or None.")

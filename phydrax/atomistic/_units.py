@@ -141,7 +141,7 @@ class AtomisticUnitSystem(StrictModule, NonTrainableState):
         charge_unit: UnitDefinition,
         temperature_unit: UnitDefinition,
         constant_set_id: str,
-    ):
+    ) -> None:
         if not isinstance(scale, AtomisticScaleContract):
             raise TypeError("scale must be an AtomisticScaleContract.")
         reference = scale.length_unit.reference_system_id

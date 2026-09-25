@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import Any
+from typing import Any, NoReturn
 
 import jax
 import jax.numpy as jnp
@@ -23,12 +23,12 @@ class _IndexedFieldEvaluator(StrictModule, BatchEvaluator, NonTrainableState):
     index_key: str
     owner: str
 
-    def __init__(self, values: Array, index_key: str, owner: str, /):
+    def __init__(self, values: Array, index_key: str, owner: str, /) -> None:
         self.values = jax.lax.stop_gradient(jnp.asarray(values))
         self.index_key = str(index_key)
         self.owner = str(owner)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key=None, **kwargs: Any) -> NoReturn:
         del args, key, kwargs
         raise TypeError(f"{self.owner} requires structured batch evaluation.")
 

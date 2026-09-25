@@ -42,7 +42,7 @@ class ActuatorLineFlowPlan(StrictModule, NonTrainableState):
         /,
         *,
         core_radius: float,
-    ):
+    ) -> None:
         if not isinstance(rotor, BladeElementRotorPlan) or float(core_radius) <= 0.0:
             raise ValueError("Actuator line requires rotor and positive core radius.")
         azimuth, hub, axis_ = (

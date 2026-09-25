@@ -61,7 +61,7 @@ class OneLoopEdSSPTPlan(StrictModule, NonTrainableState):
         angular_order: int = 64,
         radial_ratio_domain: tuple[float, float] = (1.0e-3, 1.0e3),
         maximum_relative_correction: float = 0.5,
-    ):
+    ) -> None:
         k = np.asarray(output_wavenumbers, dtype=np.float64).reshape((-1,))
         r_order = int(radial_order)
         x_order = int(angular_order)

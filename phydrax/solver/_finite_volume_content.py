@@ -79,7 +79,7 @@ class FiniteVolumeConservativeContentState(StrictModule):
         evidence_policy_id: str,
         evidence_version: ArrayLike,
         precision: FiniteVolumePrecisionPolicy,
-    ):
+    ) -> None:
         if not isinstance(precision, FiniteVolumePrecisionPolicy):
             raise TypeError("precision must be a FiniteVolumePrecisionPolicy.")
         content = precision.storage(conservative_content)

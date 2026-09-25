@@ -114,7 +114,7 @@ class InterpolationSet(StrictModule):
         /,
         *,
         evaluations: Any,
-    ):
+    ) -> None:
         points_ = jnp.asarray(points)
         residuals_ = jnp.asarray(residuals)
         center_ = jnp.asarray(center)

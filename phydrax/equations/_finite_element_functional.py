@@ -49,7 +49,7 @@ class FiniteElementFunctional(StrictModule, NonTrainableState):
         *,
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
-    ):
+    ) -> None:
         identifier = str(functional_id)
         field = str(field_name)
         if not identifier or not field or not callable(density):

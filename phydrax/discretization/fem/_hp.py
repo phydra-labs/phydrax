@@ -61,7 +61,7 @@ class FiniteElementHPTopology(StrictModule, NonTrainableState):
         parent_slots: ArrayLike | None = None,
         child_slots: ArrayLike | None = None,
         child_valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         kind = cell_kind
         identifier = str(topology_id)
         identifiers = np.asarray(cell_global_ids, dtype=np.int64)
@@ -239,7 +239,7 @@ class FiniteElementHPLineage(StrictModule, NonTrainableState):
         /,
         *,
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         source_id = str(source_topology_id)
         target_id = str(target_topology_id)
         source_count = int(source_capacity)
@@ -342,7 +342,7 @@ class FiniteElementHPWorksetPlan(StrictModule, NonTrainableState):
         cell_valid: ArrayLike,
         cell_bucket: ArrayLike,
         /,
-    ):
+    ) -> None:
         identifier = str(topology_id)
         topology_plan = str(topology_plan_id)
         degrees = np.asarray(bucket_degrees, dtype=np.int32)
@@ -490,7 +490,7 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
         valid: ArrayLike | None = None,
         pairing_adjoint: ArrayLike | None = None,
         mass_projection: ArrayLike | None = None,
-    ):
+    ) -> None:
         source_id = str(source_topology_id)
         target_id = str(target_topology_id)
         source_plan = str(source_plan_id)

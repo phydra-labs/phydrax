@@ -97,7 +97,7 @@ class KernelPCAModel(AbstractFittedModel):
         feature_count: int,
         component_count: int,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.support = support
         self.support_mask = support_mask
         self.normalized_weight = normalized_weight
@@ -152,7 +152,7 @@ class KernelPCARecipe(AbstractRecipe):
         n_components: int,
         eigenvalue_floor: ArrayLike = 1e-10,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.kernel = validate_kernel(kernel)
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
@@ -264,7 +264,7 @@ class NystromModel(AbstractFittedModel):
         feature_count: int,
         component_count: int,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.landmarks = landmarks
         self.whitening = whitening
         self.kernel = kernel
@@ -322,7 +322,7 @@ class NystromRecipe(AbstractRecipe):
         selection: Literal["even", "random"] = "even",
         eigenvalue_floor: ArrayLike = 1e-10,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.kernel = validate_kernel(kernel)
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
@@ -442,7 +442,7 @@ class RandomFourierFeatureModel(AbstractFittedModel):
         scale: Array,
         feature_count: int,
         component_count: int,
-    ):
+    ) -> None:
         self.frequencies = frequencies
         self.phases = phases
         self.scale = scale
@@ -481,7 +481,7 @@ class RandomFourierFeaturesRecipe(AbstractRecipe):
     kernel: SquaredExponentialKernel
     n_components: int = eqx.field(static=True)
 
-    def __init__(self, kernel: SquaredExponentialKernel, /, *, n_components: int):
+    def __init__(self, kernel: SquaredExponentialKernel, /, *, n_components: int) -> None:
         if not isinstance(kernel, SquaredExponentialKernel):
             raise TypeError(
                 "Exact random Fourier sampling is supported only for SquaredExponentialKernel."

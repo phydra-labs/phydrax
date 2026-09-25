@@ -60,7 +60,7 @@ class PointwiseEvaluator(StrictModule):
         /,
         *,
         binding: FunctionBinding | None = None,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("PointwiseEvaluator.function must be callable.")
         if binding is not None and not isinstance(binding, FunctionBinding):

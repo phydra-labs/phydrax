@@ -46,7 +46,7 @@ class PointInTimePanel(StrictModule, NonTrainableState):
         /,
         *,
         observation_ids: Sequence[Sequence[str]],
-    ):
+    ) -> None:
         if not isinstance(layout, RiskFactorLayout):
             raise TypeError("layout must be a RiskFactorLayout.")
         event_host = np.asarray(event_time_ns, dtype=np.int64)
@@ -225,7 +225,7 @@ class MarketEventStream(StrictModule, NonTrainableState):
         /,
         *,
         archive_time: FinancialTimestamp,
-    ):
+    ) -> None:
         if not isinstance(archive_time, FinancialTimestamp):
             raise TypeError("archive_time must be a FinancialTimestamp.")
         values = tuple(observations)
@@ -299,7 +299,7 @@ class PreparedMarketEventStream(StrictModule, NonTrainableState):
         capacity: int,
         tie_policy: QuoteTiePolicy,
         max_age_ns: int | None,
-    ):
+    ) -> None:
         if not isinstance(stream, MarketEventStream):
             raise TypeError("stream must be a MarketEventStream.")
         if not isinstance(layout, RiskFactorLayout):

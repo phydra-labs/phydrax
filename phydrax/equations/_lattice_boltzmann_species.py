@@ -61,7 +61,7 @@ class SpeciesLatticeBoltzmannProblemIR(StrictModule, NonTrainableState):
         boundaries=(),
         volumetric_source: ArrayLike | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         boundary_values = tuple(boundaries)
         if not name_:
@@ -136,7 +136,7 @@ class CompiledSpeciesLatticeBoltzmannProblem(StrictModule, NonTrainableState):
         step_size: float,
         cell_measure: ArrayLike,
         /,
-    ):
+    ) -> None:
         shape = tuple(spatial_shape)
         dx = float(spacing)
         dt = float(step_size)
@@ -243,7 +243,7 @@ class CompiledSpeciesLatticeBoltzmannProblem(StrictModule, NonTrainableState):
         )
         return concentration
 
-    def _validate_state(self, state):
+    def _validate_state(self, state) -> None:
         if not isinstance(state, SpeciesLatticeBoltzmannState):
             raise TypeError("state must be a SpeciesLatticeBoltzmannState.")
         if state.state_id != self.compilation_id:

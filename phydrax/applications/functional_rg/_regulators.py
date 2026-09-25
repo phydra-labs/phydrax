@@ -38,7 +38,7 @@ class Regulator(StrictModule, NonTrainableState):
     family: RegulatorName = eqx.field(static=True)
     regulator_id: str = eqx.field(static=True)
 
-    def __init__(self, family: RegulatorName, /, *, power: float = 1.0):
+    def __init__(self, family: RegulatorName, /, *, power: float = 1.0) -> None:
         if family not in ("optimized", "exponential", "power-law"):
             raise ValueError("Unknown functional-RG regulator family.")
         power_ = float(power)
@@ -130,7 +130,7 @@ class ThresholdQuadraturePlan(StrictModule, NonTrainableState):
         quadrature_order: int = 48,
         momentum_upper: float = 24.0,
         maximum_nodes: int = 512,
-    ):
+    ) -> None:
         dimension_ = float(dimension)
         order = int(quadrature_order)
         upper = float(momentum_upper)

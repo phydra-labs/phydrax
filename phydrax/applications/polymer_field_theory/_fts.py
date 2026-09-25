@@ -51,7 +51,7 @@ class PartialSaddleFTSPlan(StrictModule, NonTrainableState):
         maximum_incompressibility: float = 1.0e-4,
         realization_id: int = 0,
         maximum_state_size: int = 1_000_000,
-    ):
+    ) -> None:
         steps = int(num_steps)
         step = float(step_size)
         mobility_ = float(mobility)
@@ -119,7 +119,7 @@ class PreparedPartialSaddleFTS(StrictModule, NonTrainableState):
     scft: PreparedSCFT
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: PartialSaddleFTSPlan, scft: PreparedSCFT, /):
+    def __init__(self, plan: PartialSaddleFTSPlan, scft: PreparedSCFT, /) -> None:
         if not isinstance(plan, PartialSaddleFTSPlan):
             raise TypeError("plan must be PartialSaddleFTSPlan.")
         if not isinstance(scft, PreparedSCFT):
@@ -263,7 +263,7 @@ class ComplexFTSPlan(StrictModule, NonTrainableState):
     langevin: ComplexLangevinPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, langevin: ComplexLangevinPlan, /):
+    def __init__(self, langevin: ComplexLangevinPlan, /) -> None:
         if not isinstance(langevin, ComplexLangevinPlan):
             raise TypeError("langevin must be ComplexLangevinPlan.")
         self.langevin = langevin
@@ -281,7 +281,7 @@ class PreparedComplexFTS(StrictModule, NonTrainableState):
     langevin: PreparedComplexLangevin
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ComplexFTSPlan, scft: PreparedSCFT, /):
+    def __init__(self, plan: ComplexFTSPlan, scft: PreparedSCFT, /) -> None:
         if not isinstance(plan, ComplexFTSPlan):
             raise TypeError("plan must be ComplexFTSPlan.")
         if not isinstance(scft, PreparedSCFT):

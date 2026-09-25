@@ -88,7 +88,7 @@ class WeakFieldRelativisticPMPolicy(StrictModule, NonTrainableState):
         maximum_grid_points: int = 16_777_216,
         maximum_workspace_bytes: int = 8 * 1024**3,
         differentiation: WeakFieldDifferentiation = "piecewise-fixed-route",
-    ):
+    ) -> None:
         values = (
             float(maximum_scalar_metric_fraction),
             float(maximum_vector_metric_fraction),
@@ -284,7 +284,7 @@ class WeakFieldRelativisticPMPlan(StrictModule, NonTrainableState):
         gravitational_constant: float | None = None,
         scalar_only: bool = False,
         policy: WeakFieldRelativisticPMPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(stress_transfer, RelativisticStressDepositPlan):
             raise TypeError("stress_transfer must be RelativisticStressDepositPlan.")
         if not isinstance(spectral, TensorSpectralDiscretization):

@@ -47,7 +47,7 @@ class EinsteinWaldEntropyPlan(StrictModule, NonTrainableState):
     scale: RelativityScaleContract
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, scale: RelativityScaleContract, /):
+    def __init__(self, scale: RelativityScaleContract, /) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         if not scale.quantum_constants_explicit:
@@ -144,7 +144,7 @@ class KerrNewmanThermodynamicsPlan(StrictModule, NonTrainableState):
         ensemble="microcanonical",
         extremality_tolerance=1.0e-8,
         residual_tolerance=1.0e-6,
-    ):
+    ) -> None:
         mass = float(np.asarray(geometric_mass))
         spin = float(np.asarray(specific_angular_momentum))
         charge = float(np.asarray(geometric_charge))
@@ -329,7 +329,7 @@ class KerrNewmanAdSThermodynamicsPlan(StrictModule, NonTrainableState):
         ensemble="canonical-charge",
         extremality_tolerance=1.0e-8,
         residual_tolerance=1.0e-6,
-    ):
+    ) -> None:
         radius = float(np.asarray(horizon_radius))
         spin = float(np.asarray(specific_angular_momentum))
         charge = float(np.asarray(charge_parameter))
@@ -548,7 +548,7 @@ class ReissnerNordstromCavityPlan(StrictModule, NonTrainableState):
         ensemble="canonical-charge",
         extremality_tolerance=1.0e-8,
         residual_tolerance=1.0e-6,
-    ):
+    ) -> None:
         radius = float(np.asarray(horizon_radius))
         charge = float(np.asarray(geometric_charge))
         wall = float(np.asarray(cavity_radius))
@@ -769,7 +769,7 @@ def _validate_ensemble(ensemble):
     return value
 
 
-def _validate_tolerances(extremality_tolerance, residual_tolerance):
+def _validate_tolerances(extremality_tolerance, residual_tolerance) -> None:
     if (
         not np.isfinite(extremality_tolerance)
         or extremality_tolerance <= 0.0

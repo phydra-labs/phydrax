@@ -41,7 +41,7 @@ class FiniteVolumeVerificationCase(StrictModule):
         /,
         *,
         exact_state: VerificationField | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         final = float(final_time)
         if not name_ or not isinstance(system, AbstractConservationSystem):

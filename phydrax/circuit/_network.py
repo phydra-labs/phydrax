@@ -72,7 +72,7 @@ class ScatteringNetworkPolicy(StrictModule):
         compatibility_atol: float = 1e-12,
         residual_tolerance: float = 1e-10,
         linear: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if maximum_channels <= 0 or maximum_matrix_bytes <= 0 or maximum_rhs_bytes <= 0:
             raise ValueError("Resource limits must be positive.")
         if min(compatibility_rtol, compatibility_atol, residual_tolerance) < 0.0:
@@ -152,7 +152,7 @@ class WaveExcitation(StrictModule):
         /,
         *,
         port_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         value = jnp.asarray(incident)
         if value.ndim < 2 or not jnp.issubdtype(value.dtype, jnp.number):
             raise ValueError(
@@ -190,7 +190,7 @@ class ScatteringNetworkResult(StrictModule):
 
 
 class _Flattened:
-    def __init__(self):
+    def __init__(self) -> None:
         self.leaves: list[tuple[tuple[str, ...], AbstractScatteringComponent]] = []
         self.connections: list[tuple[tuple[str, ...], tuple[str, ...], Any]] = []
         self.probes: list[tuple[str, tuple[str, ...]]] = []

@@ -46,7 +46,7 @@ class IdentificationStateTransform(StrictModule, NonTrainableState):
         unit_contract_id: str,
         partition_id: str,
         source_artifact_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(physical_layout, StateLayout):
             raise TypeError("physical_layout must be a StateLayout.")
         if kind not in ("affine", "log-affine"):
@@ -167,7 +167,7 @@ class IdentifiedDynamicsArtifact(StrictModule, NonTrainableState):
         support_id: str,
         formulation_id: str,
         evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(transform, IdentificationStateTransform):
             raise TypeError("transform must be IdentificationStateTransform.")
         if not isinstance(system, (ContinuousSystem, DiscreteSystem)):

@@ -44,7 +44,7 @@ class ParticlePopulation(StrictModule, NonTrainableState):
         role: ParticlePopulationRole,
         state_shape: Sequence[int] | None = None,
         population_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Particle population name must be non-empty.")
@@ -105,7 +105,7 @@ class ParticleInteractionKey(StrictModule, NonTrainableState):
         /,
         *,
         reciprocal: bool,
-    ):
+    ) -> None:
         if not isinstance(target_population, ParticlePopulation) or not isinstance(
             source_population, ParticlePopulation
         ):
@@ -135,7 +135,7 @@ class ParticleAssemblyStateLayout(StrictModule, NonTrainableState):
     total_size: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, populations: Sequence[ParticlePopulation], /):
+    def __init__(self, populations: Sequence[ParticlePopulation], /) -> None:
         dynamic = tuple(population for population in populations if population.dynamic)
         names = tuple(population.name for population in dynamic)
         shapes = tuple(population.state_shape for population in dynamic)
@@ -186,7 +186,7 @@ class ParticleAssemblyPlan(StrictModule, NonTrainableState):
     state_layout: ParticleAssemblyStateLayout
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, populations: Sequence[ParticlePopulation], /):
+    def __init__(self, populations: Sequence[ParticlePopulation], /) -> None:
         values = tuple(populations)
         if not values or any(
             not isinstance(population, ParticlePopulation) for population in values

@@ -63,7 +63,7 @@ class PeriodicCell(StrictModule, NonTrainableState):
         periodic_axes: tuple[bool, ...] | None = None,
         maximum_condition_number: float | None = None,
         maximum_image_count: int = 4096,
-    ):
+    ) -> None:
         matrix = np.asarray(vectors)
         if matrix.ndim != 2 or matrix.shape[0] == 0 or matrix.shape[1] == 0:
             raise ValueError("PeriodicCell vectors must have shape (rank > 0, d > 0).")

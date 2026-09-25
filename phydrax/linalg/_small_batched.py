@@ -31,7 +31,7 @@ class SmallLinearSolvePlan(StrictModule, NonTrainableState):
         singular_tolerance: float = 1e-12,
         maximum_condition: float = 1e12,
         refinement_iterations: int = 1,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (1, 2, 3, 4):
             raise ValueError("SmallLinearSolvePlan supports dimensions 1 through 4.")

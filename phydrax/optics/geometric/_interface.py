@@ -30,7 +30,7 @@ class OpticalRayState(StrictModule, NonTrainableState):
         refractive_indices: ArrayLike,
         geometric_path_lengths: ArrayLike | None = None,
         optical_path_lengths: ArrayLike | None = None,
-    ):
+    ) -> None:
         origins_ = jnp.asarray(origins)
         directions_ = jnp.asarray(directions)
         indices_ = jnp.asarray(refractive_indices)

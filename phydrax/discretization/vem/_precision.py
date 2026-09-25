@@ -37,7 +37,7 @@ class VirtualElementPrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: Any | None = None,
         output_dtype: Any | None = None,
         certification_dtype: Any = "float64",
-    ):
+    ) -> None:
         geometry = real_precision_dtype_name(geometry_dtype)
         projection = real_precision_dtype_name(projection_dtype)
         accumulation = real_precision_dtype_name(
@@ -116,7 +116,7 @@ class VirtualElementResourceBudget(StrictModule, NonTrainableState):
         maximum_local_dofs: int = 256,
         maximum_cells: int = 1_000_000,
         maximum_projector_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         local = int(maximum_local_dofs)
         cells = int(maximum_cells)
         storage = int(maximum_projector_bytes)

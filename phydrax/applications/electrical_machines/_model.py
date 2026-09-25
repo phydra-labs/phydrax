@@ -56,7 +56,7 @@ class LinearMagneticRegion(StrictModule):
         remanence: ArrayLike | Sequence[float] = (0.0, 0.0),
         winding_turn_density: ArrayLike | Sequence[float] = (),
         rotating: bool = False,
-    ):
+    ) -> None:
         mu = float(relative_permeability)
         br = np.asarray(remanence, dtype=np.float64)
         winding = np.asarray(winding_turn_density, dtype=np.float64)
@@ -123,7 +123,7 @@ class PlanarMachine(StrictModule):
         axial_length: float = 0.1,
         contour_edges: ArrayLike | Sequence[Sequence[int]] = (),
         contour_cells: ArrayLike | Sequence[Sequence[int]] = (),
-    ):
+    ) -> None:
         if (
             not isinstance(mesh, CellMesh)
             or mesh.ambient_dimension != 2

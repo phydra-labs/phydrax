@@ -150,7 +150,7 @@ class FiniteResponseProblem(StrictModule):
         /,
         *,
         problem_id: str = "finite-time-domain-response",
-    ):
+    ) -> None:
         values = jnp.asarray(frequencies)
         if not isinstance(ground_state, MatrixProductState):
             raise TypeError("ground_state must be MatrixProductState.")
@@ -202,7 +202,7 @@ class FiniteResponsePolicy(StrictModule):
         maximum_history_elements: int = 10_000_000,
         maximum_state_elements: int = 10_000_000,
         integrator: MatrixFunctionPolicy | None = None,
-    ):
+    ) -> None:
         step = float(step_size)
         count = int(steps)
         bond = int(maximum_bond_dimension)

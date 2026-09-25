@@ -148,7 +148,7 @@ class ApparentHorizonSearchPlan(StrictModule, NonTrainableState):
         active: ArrayLike | None = None,
         equivalence_tolerance: float = 1.0e-5,
         nesting_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if not isinstance(mots_plan, MOTSSolvePlan):
             raise TypeError("mots_plan must be a MOTSSolvePlan.")
         radii = np.asarray(seed_radii, dtype=np.float64).reshape((-1,))
@@ -394,7 +394,7 @@ class HorizonTrackerPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_relative_area_change: float = 0.25,
-    ):
+    ) -> None:
         if not isinstance(mots_plan, MOTSSolvePlan):
             raise TypeError("mots_plan must be a MOTSSolvePlan.")
         maximum_change = float(maximum_relative_area_change)

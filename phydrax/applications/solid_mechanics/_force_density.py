@@ -125,7 +125,7 @@ class ForceDensityInputSignature(StrictModule, NonTrainableState):
     load_dtypes: tuple[str, ...] = eqx.field(static=True)
     signature_id: str = eqx.field(static=True)
 
-    def __init__(self, inputs: ForceDensityInputs, /):
+    def __init__(self, inputs: ForceDensityInputs, /) -> None:
         load_tree, load_paths, load_shapes, load_dtypes = _load_tree_contract(
             inputs.load_parameters
         )
@@ -178,7 +178,7 @@ class ForceDensityTolerances(StrictModule, NonTrainableState):
         minimum_force_density: float = 1.0e-8,
         minimum_member_length: float = 1.0e-12,
         prescribed_position: float = 1.0e-12,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -215,7 +215,7 @@ class ForceDensityInputs(StrictModule):
         prescribed_values: ArrayLike,
         load_parameters: Any,
         /,
-    ):
+    ) -> None:
         densities = jnp.asarray(force_densities)
         prescribed = jnp.asarray(prescribed_values)
         for name, value in (
@@ -251,7 +251,7 @@ class ForceDensityProblem(StrictModule, NonTrainableState):
         fixed_signs: ArrayLike | None = None,
         tolerances: ForceDensityTolerances | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(structure, ForceDensityStructure):
             raise TypeError("structure must be a ForceDensityStructure.")
         model = FixedNodalLoadModel() if load_model is None else load_model

@@ -49,7 +49,7 @@ class ChemicalConditionalAffineScaling(StrictModule, NonTrainableState):
         *,
         driver_output_transform: DriverOutputTransform = "direct",
         scaling_id: str | None = None,
-    ):
+    ) -> None:
         state = jnp.asarray(state_scale)
         if state.ndim != 1:
             raise ValueError("state_scale must be one-dimensional.")
@@ -122,7 +122,7 @@ class StoichiometricRateCorrection(StrictModule):
         *,
         log_multiplier_bound: float | None = None,
         correction_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(context_model, AbstractArrayModel) or not isinstance(
             species_model, AbstractArrayModel
         ):
@@ -248,7 +248,7 @@ class ChemicalConditionalAffineOperator(AbstractOperatorModel):
         temperature_name: str = "temperature",
         pressure_name: str = "pressure",
         query_name: str = "time",
-    ):
+    ) -> None:
         if not isinstance(chemistry, PreparedChemicalConditionalAffine):
             raise TypeError("chemistry must be PreparedChemicalConditionalAffine.")
         if not isinstance(driver_model, AbstractOperatorModel):

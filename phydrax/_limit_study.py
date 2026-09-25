@@ -57,7 +57,7 @@ class ScientificLimitAxis:
         *,
         transform: AxisTransform = "identity",
         minimum_span: float = 0.0,
-    ):
+    ) -> None:
         name_ = _identifier(name, "axis name")
         target_ = _finite(target, "axis target")
         if transform not in ("identity", "inverse", "square", "log"):
@@ -118,7 +118,7 @@ class ScientificLimitDatum:
         /,
         *,
         ancestry_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         datum = _identifier(datum_id, "datum_id")
         if not isinstance(coordinates, Mapping) or not coordinates:
             raise TypeError("coordinates must be a non-empty mapping.")
@@ -169,7 +169,7 @@ class ScientificLimitVariation:
         *,
         included_datum_ids: Sequence[str] = (),
         minimum_points: int = 0,
-    ):
+    ) -> None:
         identifier = _identifier(variation_id, "variation_id")
         if not isinstance(axis_orders, Mapping) or not axis_orders:
             raise TypeError("axis_orders must be a non-empty mapping.")
@@ -211,7 +211,7 @@ class ScientificLimitStudyPlan:
         /,
         *,
         maximum_condition_number: float = 1e12,
-    ):
+    ) -> None:
         axes_ = tuple(axes)
         variations_ = tuple(variations)
         if not axes_ or any(not isinstance(item, ScientificLimitAxis) for item in axes_):

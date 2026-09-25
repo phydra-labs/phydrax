@@ -88,7 +88,7 @@ class BEMExecutionEnvelope(StrictModule, NonTrainableState):
         error_evidence: tuple[str, ...],
         non_goals: tuple[str, ...],
         accelerated: bool,
-    ):
+    ) -> None:
         dimension = int(ambient_dimension)
         strings = tuple(
             str(value).strip()
@@ -290,7 +290,7 @@ class FusedBlockedBEMAction3D(StrictModule, NonTrainableState):
         *,
         formulation: BoundaryGalerkinFormulation = "strong",
         provider: str = "blocked-direct-dp0-galerkin-3d",
-    ):
+    ) -> None:
         if not isinstance(prepared, LaplaceSingleLayerDP0Galerkin3D):
             raise TypeError("Fused blocked action requires prepared 3D Laplace DP0 BEM.")
         if not bool(prepared.assembly_report.accuracy_supported):
@@ -481,7 +481,7 @@ class LaplaceDP0ExactNearProvider3D(AbstractExactNearProvider3D):
         formulation: BoundaryGalerkinFormulation = "strong",
         max_block_entries: int = 1_000_000,
         max_block_workspace_bytes: int = 256 * 1024 * 1024,
-    ):
+    ) -> None:
         if not isinstance(prepared, LaplaceSingleLayerDP0Galerkin3D):
             raise TypeError("Exact-near provider requires prepared 3D Laplace DP0 BEM.")
         if formulation not in ("weak", "strong"):

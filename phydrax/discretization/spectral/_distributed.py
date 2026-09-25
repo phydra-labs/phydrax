@@ -77,7 +77,7 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
         devices: Sequence[jax.Device] | None = None,
         axis_names: Sequence[str] | None = None,
         execution_group_id: str | None = None,
-    ):
+    ) -> None:
         if isinstance(mesh_or_shape, Mesh):
             if devices is not None or axis_names is not None:
                 raise ValueError(
@@ -209,7 +209,7 @@ class SpectralLayout(StrictModule, NonTrainableState):
         /,
         *,
         padded: bool = False,
-    ):
+    ) -> None:
         shape = _positive_shape(global_shape, "global_shape")
         entries = tuple(_partition_entry(value) for value in partition)
         if len(entries) != len(shape):
@@ -304,7 +304,7 @@ class SpectralTranspose(StrictModule, NonTrainableState):
         split_axis: int,
         concat_axis: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, SpectralLayout) or not isinstance(
             target, SpectralLayout
         ):
@@ -398,7 +398,7 @@ class SpectralResourceReport(StrictModule, NonTrainableState):
         closure_bytes: int = 0,
         maximum_bytes: int,
         reasons: Sequence[str] = (),
-    ):
+    ) -> None:
         values = tuple(
             index(value)
             for value in (
@@ -453,7 +453,7 @@ class SpectralResourceError(MemoryError):
 
     report: SpectralResourceReport
 
-    def __init__(self, report: SpectralResourceReport, /):
+    def __init__(self, report: SpectralResourceReport, /) -> None:
         self.report = report
         super().__init__(
             "Distributed spectral resource preflight refused: "
@@ -536,7 +536,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         closure_workspace_bytes: int = 0,
         maximum_bytes: int = 2 * 1024**3,
         horizontal_axes: Sequence[int] = (0, 2),
-    ):
+    ) -> None:
         if not isinstance(topology, SpectralMeshTopology):
             raise TypeError("topology must be SpectralMeshTopology.")
         shape = _positive_shape(spatial_shape, "spatial_shape")

@@ -215,7 +215,7 @@ class PreparedRegistrationEvaluation(StrictModule, NonTrainableState):
         length_unit_id: str,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         points = jax.lax.stop_gradient(jnp.asarray(reference_points_mm))
         if points.ndim < 1 or points.shape[-1] != 3:
             raise ValueError("reference_points_mm must end in three coordinates.")

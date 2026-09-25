@@ -72,7 +72,7 @@ class PreparedNonlinearSolve(StrictModule):
         /,
         *,
         numeric_version: Any,
-    ):
+    ) -> None:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be a NonlinearSystemProblem.")
         if problem.state_space is None or problem.residual_space is None:

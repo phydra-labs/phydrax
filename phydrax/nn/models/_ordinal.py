@@ -32,7 +32,7 @@ class OrdinalCumulativeLinkHead(AbstractArrayModel):
         location_model: AbstractArrayModel,
         cutpoints: OrderedOrdinalCutpoints,
         /,
-    ):
+    ) -> None:
         if not isinstance(location_model, AbstractArrayModel):
             raise TypeError("location_model must be an AbstractArrayModel.")
         if not isinstance(cutpoints, OrderedOrdinalCutpoints):

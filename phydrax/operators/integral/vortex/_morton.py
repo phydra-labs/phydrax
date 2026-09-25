@@ -50,7 +50,7 @@ class VortexMortonHierarchyPlan(StrictModule, NonTrainableState):
         *,
         bits_per_axis: int = 10,
         maximum_cell_occupancy: int = 64,
-    ):
+    ) -> None:
         lower_, upper_ = (
             jnp.asarray(lower, dtype=jnp.float64),
             jnp.asarray(upper, dtype=jnp.float64),

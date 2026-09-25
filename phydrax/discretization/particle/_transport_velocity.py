@@ -25,7 +25,7 @@ class TransportVelocityStateLayout(StrictModule, NonTrainableState):
     width: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, particle_capacity: int, ambient_dimension: int, /):
+    def __init__(self, particle_capacity: int, ambient_dimension: int, /) -> None:
         self.particle_capacity = int(particle_capacity)
         self.ambient_dimension = int(ambient_dimension)
         self.width = 3 * self.ambient_dimension + 1
@@ -73,7 +73,7 @@ class TransportVelocitySPHMethodPlan(StrictModule, NonTrainableState):
     background_pressure: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, background_pressure: float, /):
+    def __init__(self, background_pressure: float, /) -> None:
         pressure = float(background_pressure)
         if not np.isfinite(pressure) or pressure <= 0.0:
             raise ValueError("Transport background pressure must be finite and positive.")
@@ -101,7 +101,7 @@ class PreparedTransportVelocityDynamics(StrictModule, NonTrainableState):
         base: PreparedWeaklyCompressibleSPHDynamics,
         plan: TransportVelocitySPHMethodPlan,
         /,
-    ):
+    ) -> None:
         if not base.state_layout.density_evolved:
             raise ValueError("Transport velocity requires continuity density.")
         if base.method.free_surface_detection is not None:

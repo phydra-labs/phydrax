@@ -466,7 +466,7 @@ class GammaLawEOS(AbstractRelativisticEOS):
         minimum_specific_internal_energy: float = 0.0,
         maximum_specific_internal_energy: float | None = None,
         provenance: str = "analytic gamma-law",
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         gamma = float(adiabatic_index)
@@ -634,7 +634,7 @@ class PiecewisePolytropicEOS(AbstractRelativisticEOS):
         maximum_density: float | None = None,
         cold_constraint_tolerance: float = 1.0e-7,
         provenance: str = "analytic continuous piecewise polytrope",
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         breaks = np.asarray(density_breaks, dtype=np.float64)
@@ -929,7 +929,7 @@ class HybridColdThermalEOS(AbstractRelativisticEOS):
         minimum_thermal_specific_energy: float = 0.0,
         maximum_thermal_specific_energy: float | None = None,
         provenance: str = "analytic hybrid cold-plus-thermal EOS",
-    ):
+    ) -> None:
         if not isinstance(cold_eos, PiecewisePolytropicEOS):
             raise TypeError("cold_eos must be a PiecewisePolytropicEOS.")
         gamma = float(thermal_adiabatic_index)
@@ -1128,7 +1128,7 @@ class TabulatedFiniteTemperatureEOS(AbstractRelativisticEOS):
         provenance: str,
         source_checksum: str,
         license_id: str,
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         density = np.asarray(density_nodes, dtype=np.float64)

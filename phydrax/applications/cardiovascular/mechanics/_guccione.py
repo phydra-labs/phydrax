@@ -43,7 +43,7 @@ class Guccione1991Parameters(StrictModule, NonTrainableState):
         transverse_exponent: ArrayLike,
         fiber_shear_exponent: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -131,7 +131,7 @@ class Guccione1991Energy(StrictModule, NonTrainableState):
         cell_index: int | None = None,
         frame_tolerance: float = 1.0e-8,
         energy_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(parameters, Guccione1991Parameters):
             raise TypeError("parameters must be Guccione1991Parameters.")
         frame, identifier, selected_cell = resolve_material_frame(

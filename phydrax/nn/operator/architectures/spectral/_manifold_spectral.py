@@ -48,7 +48,7 @@ class _ManifoldSpectralMixer(StrictModule):
         in_channels: int,
         out_channels: int,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         in_size = int(in_channels)
         out_size = int(out_channels)
         if min(in_size, out_size) <= 0:
@@ -140,7 +140,7 @@ class ManifoldSpectralOperator(AbstractOperatorModel):
         activation: Callable[[Array], Array] = jax.nn.gelu,
         residual: bool = True,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(source_plan, SpectralDecomposition):
             raise TypeError("source_plan must be a SpectralDecomposition.")
         if target_plan is not None and not isinstance(target_plan, SpectralDecomposition):

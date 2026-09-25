@@ -71,7 +71,7 @@ class ScoreMatchingPolicy(StrictModule):
         num_probes: int = 16,
         distribution: Literal["rademacher", "normal"] = "rademacher",
         policy_id: str | None = None,
-    ):
+    ) -> None:
         if method not in ("exact", "implicit", "sliced"):
             raise ValueError("method must be 'exact', 'implicit', or 'sliced'.")
         count = int(num_probes)
@@ -108,7 +108,7 @@ class ScoreMatchingBatch(StrictModule):
         /,
         *,
         batch_id: str,
-    ):
+    ) -> None:
         if not isinstance(samples, TrajectoryStateTimeSamples):
             raise TypeError("samples must be TrajectoryStateTimeSamples.")
         if not batch_id:
@@ -196,7 +196,7 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
         sampling_mode: ScoreMatchingSamplingMode = "fixed",
         scalar_weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(score_name, str) or not score_name:
             raise ValueError("score_name must be a non-empty string.")
         if sampling_mode not in ("fixed", "resample"):

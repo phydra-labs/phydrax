@@ -88,7 +88,7 @@ class ScientificStatus(StrictModule):
         qualified: ArrayLike,
         derivative_valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.status = jnp.asarray(status, dtype=jnp.int32).reshape(())
         self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
         self.converged = jnp.asarray(converged, dtype=jnp.bool_).reshape(())

@@ -37,7 +37,7 @@ class SignedMetricValidationReport(StrictModule):
         observed_near_zero: Array,
         minimum_absolute_eigenvalue: Array,
         maximum_condition_number: Array,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.maximum_asymmetry = jnp.asarray(maximum_asymmetry)

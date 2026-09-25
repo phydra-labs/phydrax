@@ -71,7 +71,7 @@ class DiscreteGaussianDiffusionSchedule(StrictModule):
     num_steps: int = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, beta: ArrayLike, /, *, schedule_id: str | None = None):
+    def __init__(self, beta: ArrayLike, /, *, schedule_id: str | None = None) -> None:
         host = np.asarray(beta, dtype=np.float64).reshape((-1,))
         if (
             host.size <= 0
@@ -247,7 +247,7 @@ class AncestralGaussianDiffusion(StrictModule):
         prediction_kind="epsilon",
         terminal_relationship: DiscreteTerminalRelationship = "approximate",
         terminal_reference_id: str = "standard-normal",
-    ):
+    ) -> None:
         if not isinstance(schedule, DiscreteGaussianDiffusionSchedule) or not callable(
             predictor
         ):
@@ -337,7 +337,7 @@ class DDIMTransport(StrictModule):
         prediction_kind: DiffusionPredictionKind = "epsilon",
         terminal_relationship: DiscreteTerminalRelationship = "approximate",
         terminal_reference_id: str = "standard-normal",
-    ):
+    ) -> None:
         if not isinstance(schedule, DiscreteGaussianDiffusionSchedule) or not callable(
             predictor
         ):

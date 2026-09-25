@@ -59,7 +59,7 @@ class InterferometerGeometry(StrictModule, NonTrainableState):
         /,
         *,
         frame_id: str = "itrs",
-    ):
+    ) -> None:
         identifier = str(detector_id).strip()
         frame = str(frame_id).strip()
         vertex = np.asarray(vertex_m, dtype=np.float64)
@@ -126,7 +126,7 @@ class DetectorResponsePlan(StrictModule, NonTrainableState):
         earth_orientation: PreparedEarthOrientation | None = None,
         gps_to_utc: PreparedTimeRoute | None = None,
         time_origin_gps: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(network, DetectorNetworkData):
             raise TypeError("network must be DetectorNetworkData.")
         items = tuple(geometries)

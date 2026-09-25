@@ -82,7 +82,7 @@ class PseudoTransient(AbstractNonlinearMethod):
         growth_limit: float = 10.0,
         rejection_shrink: float = 0.25,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         jacobian_ = JacobianPolicy() if jacobian is None else jacobian
         linear_ = LinearSolvePolicy() if linear is None else linear
         if not isinstance(jacobian_, JacobianPolicy):

@@ -348,7 +348,7 @@ class KFACUpdateRule(AbstractKernelUpdateRule):
     plan: KFACPlan = eqx.field(static=True)
     rule_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: KFACPlan, /):
+    def __init__(self, plan: KFACPlan, /) -> None:
         if not isinstance(plan, KFACPlan):
             raise TypeError("plan must be a KFACPlan.")
         self.plan = plan
@@ -775,7 +775,7 @@ def solve_kfac(
             resumed_from_step=start_step,
         )
 
-    def publish_checkpoint(checkpoint_solver, checkpoint_state, *, final=False):
+    def publish_checkpoint(checkpoint_solver, checkpoint_state, *, final=False) -> None:
         if training is None or training.checkpoint is None:
             return
         if sharding_policy is not None:

@@ -84,7 +84,7 @@ class IGASolidFormulation(StrictModule, NonTrainableState):
         deformed_certificate: DeformedJacobianCertificate
         | GlobalInjectivityCertificate
         | None = None,
-    ):
+    ) -> None:
         if material is None:
             raise TypeError("material must be an existing mechanics material object.")
         prepared_ = _prepared(prepared)

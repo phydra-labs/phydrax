@@ -90,7 +90,7 @@ class KadanoffBaym2PIPlan(StrictModule, NonTrainableState):
         maximum_modes: int = 1024,
         maximum_work_elements: int = 20_000_000,
         energy_tolerance: float = 5.0e-3,
-    ):
+    ) -> None:
         if not isinstance(grid, ClosedTimePathGrid):
             raise TypeError("grid must be ClosedTimePathGrid.")
         coupling_ = float(coupling)
@@ -152,7 +152,7 @@ class PreparedKadanoffBaym2PI(StrictModule, NonTrainableState):
     retarded_support_mask: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: KadanoffBaym2PIPlan, frequencies: ArrayLike, /):
+    def __init__(self, plan: KadanoffBaym2PIPlan, frequencies: ArrayLike, /) -> None:
         if not isinstance(plan, KadanoffBaym2PIPlan):
             raise TypeError("plan must be KadanoffBaym2PIPlan.")
         frequency = np.asarray(frequencies, dtype=np.float64)

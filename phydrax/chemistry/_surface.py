@@ -43,7 +43,7 @@ class PotentialEnergySurfaceCapabilities(StrictModule, NonTrainableState):
         hessian: bool = False,
         conservative: bool = True,
         differentiable: bool = False,
-    ):
+    ) -> None:
         if not energy:
             raise ValueError("A potential-energy surface must provide energy.")
         if hessian and not forces:
@@ -81,7 +81,7 @@ class PotentialEnergySurfaceEvaluation(StrictModule, NonTrainableState):
         *,
         provider_id: str,
         source_result_id: str,
-    ):
+    ) -> None:
         energy_ = jnp.asarray(energy).reshape(())
         forces_ = jnp.asarray(forces, dtype=energy_.dtype)
         if forces_.ndim != 2 or forces_.shape[-1] != 3:
@@ -149,7 +149,7 @@ class ElectronicPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
     surface_id: str = eqx.field(static=True)
     capabilities: PotentialEnergySurfaceCapabilities
 
-    def __init__(self, calculation: AbstractPreparedElectronicCalculation, /):
+    def __init__(self, calculation: AbstractPreparedElectronicCalculation, /) -> None:
         if not isinstance(calculation, AbstractPreparedElectronicCalculation):
             raise TypeError(
                 "calculation must implement AbstractPreparedElectronicCalculation."
@@ -229,7 +229,7 @@ class CallablePotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
         provider_id: str,
         capabilities: PotentialEnergySurfaceCapabilities,
         /,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         if not isinstance(units, AtomisticUnitSystem):
@@ -283,7 +283,7 @@ class CompositePotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
         surfaces: Sequence[AbstractPreparedPotentialEnergySurface],
         coefficients: Sequence[float],
         /,
-    ):
+    ) -> None:
         surfaces_ = tuple(surfaces)
         coefficients_ = tuple(float(value) for value in coefficients)
         if not surfaces_ or any(

@@ -108,7 +108,7 @@ class EndpointCouplingSample(StrictModule):
         coupling_status: ArrayLike = 0,
         coupling_id: str,
         provenance: str,
-    ):
+    ) -> None:
         source_array = jnp.asarray(source)
         target_array = jnp.asarray(target, dtype=source_array.dtype)
         if source_array.shape != target_array.shape or source_array.ndim < 1:

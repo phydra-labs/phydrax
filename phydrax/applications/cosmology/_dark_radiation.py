@@ -67,7 +67,7 @@ class DarkRadiationPacket(StrictModule, NonTrainableState):
         physical_momentum: ArrayLike,
         comoving_position: ArrayLike,
         emission_scale_factor: ArrayLike,
-    ):
+    ) -> None:
         energy = jnp.asarray(physical_energy)
         if not jnp.issubdtype(energy.dtype, jnp.floating):
             raise TypeError("Dark-radiation packet energy must use a floating dtype.")
@@ -159,7 +159,7 @@ class DarkRadiationLedgerPlan(StrictModule, NonTrainableState):
         position_unit: str = "comoving-length",
         absolute_balance_tolerance: float = 0.0,
         relative_balance_tolerance: float = 64.0 * np.finfo(np.float64).eps,
-    ):
+    ) -> None:
         capacity_ = int(capacity)
         dimension_ = int(dimension)
         light_speed = float(speed_of_light)

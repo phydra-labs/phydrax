@@ -39,7 +39,7 @@ class FLRWBackground(StrictModule):
         dark_energy_w0: ArrayLike = -1.0,
         dark_energy_wa: ArrayLike = 0.0,
         scale: CosmologyScaleContract = CODE_COSMOLOGY_SCALE,
-    ):
+    ) -> None:
         if not isinstance(scale, CosmologyScaleContract):
             raise TypeError("scale must be a CosmologyScaleContract.")
         dtype = jnp.result_type(

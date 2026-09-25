@@ -62,7 +62,7 @@ class ProbabilisticStefanBatch(StrictModule, NonTrainableState):
         solid_paths: ArrayLike,
         test_centers: ArrayLike,
         test_inverse_widths: ArrayLike,
-    ):
+    ) -> None:
         times_ = jnp.asarray(times, dtype=jnp.float64)
         points = jnp.asarray(domain_points, dtype=jnp.float64)
         weights = jnp.asarray(domain_weights, dtype=jnp.float64)
@@ -140,7 +140,7 @@ class ProbabilisticStefanParameters(StrictModule, NonTrainableState):
         interface_width: float,
         maximum_phase_change: float = 1.0,
         jump_penalty: float = 0.0,
-    ):
+    ) -> None:
         self.latent_heat = _positive_scalar(latent_heat, "latent_heat")
         self.liquid_mass = _positive_scalar(liquid_mass, "liquid_mass")
         self.solid_mass = _positive_scalar(solid_mass, "solid_mass")
@@ -171,7 +171,7 @@ class ProbabilisticStefanLoss(StrictModule):
 class ProbabilisticLevelSetStefan(StrictModule):
     level_set: Callable[[Array], Array]
 
-    def __init__(self, level_set: Callable[[Array], Array], /):
+    def __init__(self, level_set: Callable[[Array], Array], /) -> None:
         if not callable(level_set):
             raise TypeError("level_set must be callable.")
         self.level_set = level_set

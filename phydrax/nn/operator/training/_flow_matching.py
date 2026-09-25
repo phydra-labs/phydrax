@@ -35,7 +35,7 @@ class OperatorFlowMatchingMetric(AbstractFlowMatchingMetric, NonTrainableState):
         channel_metric: ArrayLike | None = None,
         precision: GeometryPrecisionPolicy | None = None,
         metric_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(query, FunctionSamples):
             raise TypeError("query must be FunctionSamples.")
         if not isinstance(output_spec, OperatorOutputSpec):

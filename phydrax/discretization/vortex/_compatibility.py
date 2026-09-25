@@ -21,7 +21,7 @@ class VortexPropertyRequirements(StrictModule, NonTrainableState):
     volume: bool = eqx.field(static=True)
     requirements_id: str = eqx.field(static=True)
 
-    def __init__(self, *, core_radius: bool = False, volume: bool = False):
+    def __init__(self, *, core_radius: bool = False, volume: bool = False) -> None:
         core, volume_ = bool(core_radius), bool(volume)
         self.core_radius = core
         self.volume = volume_
@@ -55,7 +55,7 @@ class VortexVelocityCompatibility(StrictModule, NonTrainableState):
         source_kind: str,
         target_topology: str,
         requested_fields: tuple[str, ...] = ("velocity",),
-    ):
+    ) -> None:
         if not isinstance(capabilities, VortexVelocityCapabilities):
             raise TypeError("capabilities must be VortexVelocityCapabilities.")
         sources, targets = int(source_capacity), int(target_capacity)

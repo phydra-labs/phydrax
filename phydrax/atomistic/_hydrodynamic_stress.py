@@ -42,7 +42,7 @@ class HydrodynamicStressPlan(StrictModule):
         require_brownian_extra: bool = False,
         stress_symmetry_tolerance: float = 1.0e-10,
         incompressibility_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         values = (dynamic_viscosity, volume, boltzmann_constant)
         if any(
             not math.isfinite(float(value)) or float(value) <= 0.0 for value in values

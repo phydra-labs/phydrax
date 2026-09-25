@@ -28,7 +28,7 @@ class RollingSpinningResistancePlan(StrictModule, NonTrainableState):
         rolling_coefficient: float,
         spinning_coefficient: float,
         regularization: float = 1.0e-10,
-    ):
+    ) -> None:
         rolling = float(rolling_coefficient)
         spinning = float(spinning_coefficient)
         regularization_ = float(regularization)

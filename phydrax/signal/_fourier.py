@@ -105,7 +105,7 @@ class FourierSpectrumResult(StrictModule, NonTrainableState):
         successful: ArrayLike,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         frequency = jnp.asarray(frequencies)
         transformed = jnp.asarray(spectrum)
         samples = jnp.asarray(windowed_samples)
@@ -169,7 +169,7 @@ class FourierSpectrumPlan(StrictModule, NonTrainableState):
         window: FourierWindow = FourierWindow.RECTANGULAR,
         tukey_alpha: float = 0.5,
         parseval_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         count = _positive_int(sample_count, "sample_count")
         interval = float(sample_interval)
         padding = _nonnegative_int(padding_count, "padding_count")

@@ -27,7 +27,7 @@ class GaussianPriorWhitening(StrictModule):
     location: PyTree[Array]
     scale: PyTree[Array]
 
-    def __init__(self, location: PyTree[Array], scale: PyTree[Array], /):
+    def __init__(self, location: PyTree[Array], scale: PyTree[Array], /) -> None:
         if jax.tree_util.tree_structure(location) != jax.tree_util.tree_structure(scale):
             raise ValueError("Whitening location and scale structures must match.")
         scale_leaves = jax.tree_util.tree_leaves(scale)

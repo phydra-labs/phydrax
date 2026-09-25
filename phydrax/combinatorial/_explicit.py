@@ -115,7 +115,7 @@ class ExplicitDecisionSpace(AbstractCombinatorialSpace):
         /,
         *,
         valid: Any | None = None,
-    ):
+    ) -> None:
         (
             decision_values,
             decision_count,
@@ -256,7 +256,9 @@ class ExhaustiveLinearOracle(AbstractLinearCombinatorialMethod):
     batch_size: int = eqx.field(static=True)
     maximum_candidates: int = eqx.field(static=True)
 
-    def __init__(self, batch_size: int = 256, *, maximum_candidates: int = 1_000_000):
+    def __init__(
+        self, batch_size: int = 256, *, maximum_candidates: int = 1_000_000
+    ) -> None:
         if isinstance(batch_size, bool) or not isinstance(batch_size, Integral):
             raise TypeError("batch_size must be a positive integer.")
         if isinstance(maximum_candidates, bool) or not isinstance(

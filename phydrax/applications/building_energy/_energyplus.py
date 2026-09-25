@@ -37,7 +37,7 @@ class EnergyPlusVariable(StrictModule):
         meaning: str = "interval_average",
         scale: float = 1.0,
         offset: float = 0.0,
-    ):
+    ) -> None:
         if (
             not column
             or not quantity
@@ -67,7 +67,7 @@ class EnergyPlusReference(StrictModule):
 
     def __init__(
         self, model: bytes, *, model_format: str = "idf", provenance: Sequence[str]
-    ):
+    ) -> None:
         if not model or model_format not in ("idf", "epjson") or not provenance:
             raise ValueError(
                 "Reference requires model bytes, supported format, and provenance."

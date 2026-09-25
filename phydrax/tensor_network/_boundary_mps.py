@@ -35,7 +35,7 @@ class BoundaryMPSPolicy(StrictModule):
         singular_value_cutoff: float = 0.0,
         maximum_tensor_elements: int = 100_000_000,
         maximum_workspace_bytes: int = 2**31,
-    ):
+    ) -> None:
         if any(
             not isinstance(value, Integral) or isinstance(value, bool)
             for value in (

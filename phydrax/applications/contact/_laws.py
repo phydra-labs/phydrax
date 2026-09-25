@@ -107,7 +107,7 @@ class PenaltyContactLaw(AbstractNormalContactLaw):
 
     penalty: Array
 
-    def __init__(self, penalty: ArrayLike, /):
+    def __init__(self, penalty: ArrayLike, /) -> None:
         penalty_ = _positive_scalar(penalty, "Contact penalty")
         self.penalty = penalty_
         self.law_id = canonical_fingerprint(
@@ -164,7 +164,7 @@ class FrictionlessPDASContactLaw(AbstractNormalContactLaw):
 
     active_set_scale: Array
 
-    def __init__(self, active_set_scale: ArrayLike, /):
+    def __init__(self, active_set_scale: ArrayLike, /) -> None:
         scale = _positive_scalar(active_set_scale, "PDAS active-set scale")
         self.active_set_scale = scale
         self.law_id = canonical_fingerprint(
@@ -204,7 +204,7 @@ class AugmentedLagrangianContactLaw(AbstractNormalContactLaw):
 
     augmentation: Array
 
-    def __init__(self, augmentation: ArrayLike, /):
+    def __init__(self, augmentation: ArrayLike, /) -> None:
         augmentation = _positive_scalar(augmentation, "Contact augmentation")
         self.augmentation = augmentation
         self.law_id = canonical_fingerprint(
@@ -264,7 +264,7 @@ class CoulombContactLaw(StrictModule, NonTrainableState):
         coefficient: ArrayLike,
         tangential_penalty: ArrayLike,
         /,
-    ):
+    ) -> None:
         coefficient_ = jnp.asarray(coefficient)
         if (
             coefficient_.shape != ()

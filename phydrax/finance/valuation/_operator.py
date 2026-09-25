@@ -54,7 +54,7 @@ class OperatorValuationApplicability(StrictModule):
         validation_tolerance: float,
         constraint_tolerance: float,
         maximum_output_values: int,
-    ):
+    ) -> None:
         if not isinstance(pricing_law, PricingLaw):
             raise TypeError("pricing_law must be a PricingLaw.")
         if not isinstance(problem_spec, OperatorProblemSpec):
@@ -121,7 +121,7 @@ class OperatorDomainEvidence(StrictModule):
         factor_layout_id: str,
         evidence_id: str,
         tolerance: float,
-    ):
+    ) -> None:
         violation = jnp.asarray(maximum_support_violation, dtype=jnp.float64)
         identifiers = tuple(
             str(value) for value in (domain_id, support_id, factor_layout_id, evidence_id)
@@ -158,7 +158,7 @@ class OperatorCausalityEvidence(StrictModule):
         evidence_id: str,
         checked_rollout_steps: int,
         tolerance: float,
-    ):
+    ) -> None:
         dependency = jnp.asarray(maximum_future_dependency, dtype=jnp.float64)
         filtration = str(filtration_id)
         identifier = str(evidence_id)

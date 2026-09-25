@@ -61,7 +61,7 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
         boundary_depth_m: ArrayLike = 0.0,
         boundary_velocity_m_s: ArrayLike = 0.0,
         gravity_m_s2: float = 9.80665,
-    ):
+    ) -> None:
         area, bed = (
             np.asarray(cell_areas_m2, dtype=np.float64),
             np.asarray(bed_elevation_m, dtype=np.float64),

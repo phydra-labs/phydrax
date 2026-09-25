@@ -74,7 +74,7 @@ class TiogaOptions(StrictModule, NonTrainableState):
         exclusion_layers: int = 3,
         timeout_seconds: float = 300.0,
         tolerance: float = 1e-9,
-    ):
+    ) -> None:
         for name, value, minimum in (
             ("ranks", ranks, 1),
             ("fringe_layers", fringe_layers, 1),
@@ -140,7 +140,9 @@ class TiogaPartBlanking(StrictModule, NonTrainableState):
     cell_iblank: Array
     report_id: str = eqx.field(static=True)
 
-    def __init__(self, part: MeshPart, node_iblank: ArrayLike, cell_iblank: ArrayLike, /):
+    def __init__(
+        self, part: MeshPart, node_iblank: ArrayLike, cell_iblank: ArrayLike, /
+    ) -> None:
         if not isinstance(part, MeshPart) or not isinstance(
             part.carrier, CellMeshingResult
         ):
@@ -190,7 +192,7 @@ class TiogaDonorEvidence(StrictModule, NonTrainableState):
         donor_cell_ids: ArrayLike,
         raw_weights: ArrayLike,
         /,
-    ):
+    ) -> None:
         cells, weights = (
             np.asarray(donor_cell_ids),
             np.asarray(raw_weights, dtype=np.float64),
@@ -235,7 +237,7 @@ class TiogaAssemblyResult(StrictModule, NonTrainableState):
         runtime: MeshingRuntimeInfo,
         provenance: SemanticProvenance,
         /,
-    ):
+    ) -> None:
         if {item.part_id for item in blanking} != {
             part.part_id for part in assembly.parts
         } or len(blanking) != len(assembly.parts):
@@ -659,7 +661,7 @@ def _couplings(
 
 
 class TiogaProvider:
-    def __init__(self, options: TiogaOptions | None = None):
+    def __init__(self, options: TiogaOptions | None = None) -> None:
         self.options = TiogaOptions() if options is None else options
         if not isinstance(self.options, TiogaOptions):
             raise TypeError("options must be TiogaOptions.")

@@ -44,7 +44,7 @@ class SampledAirfoilPolar(StrictModule, NonTrainableState):
         /,
         *,
         endpoint: Literal["clamp", "error"] = "clamp",
-    ):
+    ) -> None:
         alpha = jnp.asarray(angle, dtype=jnp.float64)
         cl = jnp.asarray(lift, dtype=jnp.float64)
         cd = jnp.asarray(drag, dtype=jnp.float64)
@@ -133,7 +133,7 @@ class VortexStepPlan(StrictModule, NonTrainableState):
         nonlinear_method: AbstractNonlinearMethod | None = None,
         termination: NonlinearTermination | None = None,
         derivative_policy: ImplicitRootDerivativePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(lattice, SteadyVortexLatticePlan) or not isinstance(
             polar, SampledAirfoilPolar
         ):

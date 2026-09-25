@@ -121,7 +121,7 @@ class LocalVelocitySaturation(StrictModule):
         velocity_unit=VELOCITY_UNIT,
         field_unit=FIELD_UNIT,
         temperature_unit=KELVIN,
-    ):
+    ) -> None:
         self.reference_velocity = _positive_scalar(
             reference_velocity, velocity_unit, VELOCITY_UNIT, "saturation velocity"
         )
@@ -248,7 +248,7 @@ class LocalImpactIonization(StrictModule):
         field_unit=FIELD_UNIT,
         energy_unit=JOULE,
         temperature_unit=KELVIN,
-    ):
+    ) -> None:
         self.prefactors = jnp.stack(
             tuple(
                 _positive_scalar(

@@ -40,7 +40,7 @@ class IncompressibleFlowOperators(StrictModule, NonTrainableState):
         *,
         subcycle: Callable | None = None,
         operators_id: str = "incompressible-flow-operators",
-    ):
+    ) -> None:
         callables = (advection, velocity_solve, divergence, pressure_solve, gradient)
         if not all(callable(value) for value in callables):
             raise TypeError("Every incompressible-flow operator must be callable.")
@@ -75,7 +75,7 @@ class IncompressibleFlowPolicy(StrictModule, NonTrainableState):
         *,
         pressure_increment: bool = True,
         advection_subcycles: int = 1,
-    ):
+    ) -> None:
         subcycles = int(advection_subcycles)
         if subcycles < 1:
             raise ValueError("Advection subcycles must be positive.")
@@ -102,7 +102,7 @@ class IncompressibleFlowState(StrictModule):
         /,
         *,
         velocity_history: Sequence[ArrayLike] = (),
-    ):
+    ) -> None:
         velocity_ = jnp.asarray(velocity)
         pressure_ = jnp.asarray(pressure)
         history = tuple(jnp.asarray(value) for value in velocity_history)

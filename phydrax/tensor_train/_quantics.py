@@ -67,7 +67,7 @@ class TensorizedGrid(StrictModule):
         axis_nodes: Sequence[ArrayLike],
         axis_weights: Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         nodes = tuple(jnp.asarray(axis) for axis in axis_nodes)
         weights = tuple(jnp.asarray(axis) for axis in axis_weights)
         if not nodes or len(nodes) != len(weights):
@@ -196,7 +196,7 @@ class QuanticsLayout(StrictModule):
         /,
         *,
         ordering: DigitOrdering = "interleaved",
-    ):
+    ) -> None:
         sizes = tuple(axis_sizes)
         digits = tuple(tuple(axis) for axis in axis_digit_sizes)
         if not sizes or len(sizes) != len(digits) or any(size <= 0 for size in sizes):
@@ -338,7 +338,7 @@ class TensorFunction(StrictModule):
         *,
         vectorized: bool,
         name: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("TensorFunction function must be callable.")
         name_ = str(name)

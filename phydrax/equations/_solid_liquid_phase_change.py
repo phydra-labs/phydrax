@@ -78,7 +78,7 @@ class SolidLiquidEnthalpyPlan(StrictModule, NonTrainableState):
         buoyancy_reference_temperature=None,
         mushy_resistance_coefficient=1.0e6,
         mushy_regularization=1.0e-3,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -371,7 +371,7 @@ class BinaryAlloyPhaseDiagramPlan(StrictModule, NonTrainableState):
         mushy_regularization=1.0e-3,
         maximum_root_steps=30,
         root_tolerance=1.0e-9,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

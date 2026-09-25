@@ -62,7 +62,7 @@ class ParticleConversionProblemIR(StrictModule, NonTrainableState):
         reactions=None,
         phase_changes=None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         material_values = tuple(materials)
         if not name_:
@@ -146,7 +146,7 @@ class PreparedParticleConversionDynamics(StrictModule, NonTrainableState):
     batches: tuple[PreparedParticleInternalBatch, ...]
     dynamics_id: str = eqx.field(static=True)
 
-    def __init__(self, problem, batches, /):
+    def __init__(self, problem, batches, /) -> None:
         if not isinstance(problem, ParticleConversionProblemIR):
             raise TypeError("problem must be a ParticleConversionProblemIR.")
         batch_values = tuple(batches)
@@ -303,7 +303,7 @@ class CompiledParticleConversionProblem(StrictModule, NonTrainableState):
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
 
-    def __init__(self, problem, dynamics, bundle, /):
+    def __init__(self, problem, dynamics, bundle, /) -> None:
         self.problem = problem
         self.dynamics = dynamics
         self.discretization_bundle = bundle

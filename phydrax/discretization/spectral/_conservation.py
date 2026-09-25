@@ -53,7 +53,7 @@ class SpectralSplitFormPlan(StrictModule):
         pair_chunk_size: int = 4096,
         maximum_pair_workspace_bytes: int = 512 * 1024**2,
         certification_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(volume_flux, AbstractSymmetricTwoPointFluxPlan):
             raise TypeError("volume_flux must be a symmetric two-point flux plan.")
         if not isinstance(volume_flux, EntropyConservativeEulerFluxPlan):
@@ -122,7 +122,7 @@ class SpectralConservationMethodPlan(StrictModule):
         differentiability: BranchDifferentiationPolicy = (
             BranchDifferentiationPolicy.SMOOTH
         ),
-    ):
+    ) -> None:
         if (pseudospectral is None) == (split_form is None):
             raise ValueError(
                 "Select exactly one of pseudospectral or split_form execution."
@@ -214,7 +214,7 @@ class PreparedSpectralConservationMethod(StrictModule):
         pseudospectral: PreparedPseudospectralMethod | None,
         split_form: PreparedSpectralSplitForm | None,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.discretization = discretization
         self.pseudospectral = pseudospectral
@@ -392,7 +392,7 @@ class PreparedSpectralConservationDynamics(StrictModule):
         *,
         source: Any = None,
         entropy_pair: "ConvexEntropyPair | None" = None,
-    ):
+    ) -> None:
         from ...equations import AbstractConservationSystem, ConvexEntropyPair
 
         if not isinstance(system, AbstractConservationSystem):

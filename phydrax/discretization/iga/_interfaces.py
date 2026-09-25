@@ -49,7 +49,7 @@ class TraceRoute(StrictModule, NonTrainableState):
     side: int = eqx.field(static=True)
     route_id: str = eqx.field(static=True)
 
-    def __init__(self, axis: int, side: int, /):
+    def __init__(self, axis: int, side: int, /) -> None:
         axis_ = int(axis)
         side_ = int(side)
         if axis_ < 0 or side_ not in (-1, 1):
@@ -83,7 +83,7 @@ class InterfaceParameterMap(StrictModule, NonTrainableState):
         /,
         *,
         rank_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         matrix_host = np.asarray(matrix, dtype=np.float64)
         offset_host = np.asarray(offset, dtype=np.float64)
         tolerance = _positive_finite("rank_tolerance", rank_tolerance)
@@ -164,7 +164,7 @@ class PeriodicSelfInterface(StrictModule, NonTrainableState):
         /,
         *,
         dimension: int | None = None,
-    ):
+    ) -> None:
         patch = str(patch_id)
         if not patch:
             raise ValueError("patch_id must be non-empty.")
@@ -220,7 +220,7 @@ class PatchInterface(StrictModule, NonTrainableState):
         right_parameter_map: InterfaceParameterMap,
         orientation: int,
         periodic: bool = False,
-    ):
+    ) -> None:
         left_id = str(left_patch_id)
         right_id = str(right_patch_id)
         left_chart_ = int(left_chart)
@@ -664,7 +664,9 @@ class PeriodicCompatibilityAdapter(StrictModule, NonTrainableState):
     certificate: InterfaceCertificate
     adapter_id: str = eqx.field(static=True)
 
-    def __init__(self, interface: PatchInterface, certificate: InterfaceCertificate, /):
+    def __init__(
+        self, interface: PatchInterface, certificate: InterfaceCertificate, /
+    ) -> None:
         if not isinstance(interface, PatchInterface):
             raise TypeError("interface must be a PatchInterface.")
         if not isinstance(certificate, InterfaceCertificate):
@@ -789,7 +791,7 @@ class H1NitscheInterfacePlan(StrictModule, NonTrainableState):
         certificate: InterfaceCertificate,
         coercivity: H1NitscheCoercivityCertificate,
         /,
-    ):
+    ) -> None:
         if not isinstance(interface, PatchInterface):
             raise TypeError("interface must be a PatchInterface.")
         if not isinstance(certificate, InterfaceCertificate):
@@ -845,7 +847,7 @@ class MortarCrosspointPlan(StrictModule, NonTrainableState):
         crosspoint_trace_dofs: Sequence[int] = (),
         excluded_multiplier_dofs: Sequence[int] = (),
         owner_patch_id: str,
-    ):
+    ) -> None:
         primal_size = int(primal_trace_size)
         multiplier_size_ = int(multiplier_size)
         crosspoints = tuple(crosspoint_trace_dofs)
@@ -984,7 +986,7 @@ class MortarInterfacePlan(StrictModule, NonTrainableState):
         normalized_coupling: ArrayLike,
         stability: MortarInfSupCertificate,
         /,
-    ):
+    ) -> None:
         if not isinstance(interface, PatchInterface):
             raise TypeError("interface must be a PatchInterface.")
         if not isinstance(certificate, InterfaceCertificate):

@@ -111,7 +111,7 @@ class LatticeBoltzmannHardwareTarget(StrictModule, NonTrainableState):
         host_count: int = 1,
         devices_per_host: int = 1,
         maximum_device_bytes: int,
-    ):
+    ) -> None:
         platform_ = _identifier(platform, "platform")
         if platform_ not in ("cpu", "gpu", "tpu"):
             raise ValueError("LBM hardware platform must be 'cpu', 'gpu', or 'tpu'.")
@@ -182,7 +182,7 @@ class LatticeBoltzmannOperatingPoint(StrictModule):
         capillary_number: ArrayLike = 0.0,
         relative_mass_drift: ArrayLike = 0.0,
         spurious_current_ratio: ArrayLike = 0.0,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -235,7 +235,7 @@ class LatticeBoltzmannEnvelopeAdmission(StrictModule, NonTrainableState):
         margins: ArrayLike,
         envelope_id: str,
         /,
-    ):
+    ) -> None:
         checks_ = jnp.asarray(checks, dtype=jnp.bool_)
         margins_ = jnp.asarray(margins)
         if checks_.shape != (len(_ENVELOPE_CHECKS),):
@@ -300,7 +300,7 @@ class LatticeBoltzmannResourceEstimate(StrictModule, NonTrainableState):
         output_bytes: int,
         maximum_device_bytes: int,
         precision_resource_assumptions_id: str,
-    ):
+    ) -> None:
         components = tuple(
             (
                 state_bytes,
@@ -395,7 +395,7 @@ class LatticeBoltzmannOperatingEnvelopePlan(StrictModule, NonTrainableState):
         maximum_capillary_number: float = 0.0,
         maximum_relative_mass_drift: float = 0.0,
         maximum_spurious_current_ratio: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(lattice, LatticeBoltzmannVelocitySet):
             raise TypeError("lattice must be a LatticeBoltzmannVelocitySet.")
         if not isinstance(collision, _COLLISION_TYPES):
@@ -700,7 +700,7 @@ class PreparedLatticeBoltzmannOperatingEnvelope(StrictModule, NonTrainableState)
         plan: LatticeBoltzmannOperatingEnvelopePlan,
         resources: LatticeBoltzmannResourceEstimate,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, LatticeBoltzmannOperatingEnvelopePlan):
             raise TypeError("plan must be a LatticeBoltzmannOperatingEnvelopePlan.")
         if not isinstance(resources, LatticeBoltzmannResourceEstimate):

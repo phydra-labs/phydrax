@@ -77,7 +77,7 @@ class SampledSeries(StrictModule):
         alignment: SeriesAlignment = "node",
         value_valid: Any | None = None,
         series_id: str,
-    ):
+    ) -> None:
         if not isinstance(support, SeriesSupport):
             raise TypeError("support must be a SeriesSupport.")
         if alignment not in ("node", "edge"):

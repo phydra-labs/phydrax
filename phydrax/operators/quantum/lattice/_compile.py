@@ -37,7 +37,7 @@ class QuantumLatticeResourcePolicy(StrictModule):
         maximum_branches_per_input: int,
         maximum_sector_dimension: int,
         maximum_workspace_bytes: int,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_terms,

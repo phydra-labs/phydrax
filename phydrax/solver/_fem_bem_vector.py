@@ -112,7 +112,7 @@ class ElasticityFEMBEMInterfaceQualification3D(StrictModule, NonTrainableState):
         matching: bool = True,
         spatial_dimension: int = 3,
         continuum_certified: bool = False,
-    ):
+    ) -> None:
         identifiers = tuple(
             str(value)
             for value in (

@@ -56,7 +56,7 @@ class MarkerFlowOutputPlan(StrictModule, NonTrainableState):
         discretization: FiniteVolumeDiscretization,
         marker_ids: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteVolumeDiscretization):
             raise TypeError("discretization must be FiniteVolumeDiscretization.")
         ids = np.asarray(marker_ids)
@@ -276,7 +276,7 @@ class MarkerFlowOutputPlan(StrictModule, NonTrainableState):
         def points3(value):
             return np.pad(value, ((0, 0), (0, 1))) if value.shape[1] == 2 else value
 
-        def write_cloud(name, position, fields):
+        def write_cloud(name, position, fields) -> None:
             point_data = {
                 field_name: value
                 for field_name, value in fields.items()

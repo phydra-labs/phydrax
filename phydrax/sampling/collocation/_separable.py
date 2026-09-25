@@ -46,7 +46,7 @@ class SeparableCollocationPopulation(StrictModule):
         axis_active_by_axis: Mapping[str, cx.AxisArray] | None = None,
         refresh_count: int | Array = 0,
         last_refresh: int | Array = 0,
-    ):
+    ) -> None:
         axis_fields = _axis_fields(batch)
         if axis_age_by_axis is None:
             ages = {
@@ -134,7 +134,7 @@ class SeparableCollocationPolicy(AbstractCollocationPolicy):
 
     refresh_every: int
 
-    def __init__(self, *, refresh_every: int = 100):
+    def __init__(self, *, refresh_every: int = 100) -> None:
         if int(refresh_every) <= 0:
             raise ValueError("refresh_every must be positive.")
         self.refresh_every = int(refresh_every)
@@ -218,7 +218,7 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
         refresh_every: int = 100,
         refinement_fraction: float = 0.1,
         epsilon: float = 1e-12,
-    ):
+    ) -> None:
         if int(refresh_every) <= 0:
             raise ValueError("refresh_every must be positive.")
         if not 0.0 < float(refinement_fraction) <= 1.0:

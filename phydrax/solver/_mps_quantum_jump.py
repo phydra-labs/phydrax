@@ -25,7 +25,7 @@ class LocalMPSJump(StrictModule):
     site: int = eqx.field(static=True)
     jump_id: str = eqx.field(static=True)
 
-    def __init__(self, site: int, operator: ArrayLike, /, *, jump_id: str):
+    def __init__(self, site: int, operator: ArrayLike, /, *, jump_id: str) -> None:
         value = jnp.asarray(operator)
         if value.ndim != 2 or value.shape[0] != value.shape[1]:
             raise ValueError("Local jump operator must be square.")
@@ -71,7 +71,7 @@ class MPSQuantumJumpProblem(StrictModule):
         /,
         *,
         problem_id: str = "mps-quantum-jump",
-    ):
+    ) -> None:
         jumps_ = tuple(jumps)
         if not jumps_:
             raise ValueError("At least one MPS jump operator is required.")
@@ -110,7 +110,7 @@ class MPSQuantumTrajectoryResult(StrictModule):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         self.final_state = final_state
         self.jump_times = jnp.asarray(jump_times)
         self.jump_channels = jnp.asarray(jump_channels, dtype=jnp.int32)

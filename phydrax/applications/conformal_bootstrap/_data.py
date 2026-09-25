@@ -34,7 +34,7 @@ class ExternalScalarOperator(StrictModule):
         /,
         *,
         reality: Literal["real", "complex", "pseudoreal"] = "real",
-    ):
+    ) -> None:
         name = str(label)
         dimension = float(scaling_dimension)
         representation = str(representation_label)
@@ -81,7 +81,7 @@ class ExchangedOperatorSector(StrictModule):
         parity: Literal["even", "odd", "mixed"] = "mixed",
         minimum_dimension: float,
         includes_identity: bool = False,
-    ):
+    ) -> None:
         name = str(label)
         representation = str(representation_label)
         spin_values = tuple(spins)
@@ -143,7 +143,7 @@ class CrossingChannel(StrictModule):
         /,
         *,
         involutive: bool,
-    ):
+    ) -> None:
         name = str(label)
         values = tuple(permutation)
         if not name:
@@ -191,7 +191,7 @@ class ConformalDataPlan(StrictModule):
         coordinate_convention: str = "z-zbar-euclidean",
         block_normalization: str = "unit-leading-radial-primary",
         maximum_tensor_structures: int = 256,
-    ):
+    ) -> None:
         dimension = float(spacetime_dimension)
         externals = tuple(external_operators)
         sectors = tuple(exchanged_sectors)

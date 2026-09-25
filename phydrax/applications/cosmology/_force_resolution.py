@@ -53,7 +53,7 @@ class PeriodicImageForcePlan(StrictModule, NonTrainableState):
         image_shells: int = 1,
         absolute_tolerance: float = 1.0e-6,
         relative_tolerance: float = 1.0e-3,
-    ):
+    ) -> None:
         lengths = tuple(float(value) for value in box_size)
         gravity = float(gravitational_constant)
         epsilon = float(softening)

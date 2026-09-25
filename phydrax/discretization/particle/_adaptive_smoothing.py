@@ -29,7 +29,7 @@ class AlgebraicSmoothingLengthPlan(StrictModule, NonTrainableState):
     maximum_h: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, eta: float, minimum_h: float, maximum_h: float, /):
+    def __init__(self, eta: float, minimum_h: float, maximum_h: float, /) -> None:
         eta_ = float(eta)
         minimum = float(minimum_h)
         maximum = float(maximum_h)
@@ -77,7 +77,7 @@ class CoupledSummationSmoothingLengthPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 20,
         tolerance: float = 1e-8,
         relaxation: float = 0.7,
-    ):
+    ) -> None:
         if eta <= 0.0 or minimum_h <= 0.0 or maximum_h < minimum_h:
             raise ValueError("Coupled smoothing-length bounds are invalid.")
         if maximum_iterations <= 0 or tolerance <= 0.0 or not 0.0 < relaxation <= 1.0:

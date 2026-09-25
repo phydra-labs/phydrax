@@ -64,7 +64,7 @@ class ConditionalMutationLaw(StrictModule, NonTrainableState):
         prior_scale: ArrayLike,
         source_case_ids: tuple[str, ...],
         parent_case_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(batch, MutationProfileBatch):
             raise TypeError("batch must be a MutationProfileBatch.")
         if kind not in ("binary-accessibility", "context", "hierarchical"):
@@ -258,7 +258,7 @@ class ConditionalMappingLadder(StrictModule, NonTrainableState):
         baseline: ConditionalMutationLaw,
         context: ConditionalMutationLaw,
         hierarchical: ConditionalMutationLaw,
-    ):
+    ) -> None:
         laws = (baseline, context, hierarchical)
         if (
             tuple(law.kind for law in laws)

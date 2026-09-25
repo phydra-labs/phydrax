@@ -37,7 +37,7 @@ class ResidualBlockLayout(StrictModule, NonTrainableState):
         sizes: Sequence[int] | None = None,
         event_axis: int = 0,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         names_ = tuple(str(name) for name in names)
         if not names_ or any(not name for name in names_):
             raise ValueError("Residual block names must be non-empty.")
@@ -120,7 +120,7 @@ class ResidualBlockRef(StrictModule, NonTrainableState):
     term_index: int = eqx.field(static=True)
     block_name: str | None = eqx.field(static=True)
 
-    def __init__(self, term_index: int, block_name: str | None = None, /):
+    def __init__(self, term_index: int, block_name: str | None = None, /) -> None:
         index = int(term_index)
         if index < 0:
             raise ValueError("term_index must be non-negative.")

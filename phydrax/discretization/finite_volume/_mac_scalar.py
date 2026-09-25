@@ -67,7 +67,7 @@ class MACScalarLayout(StrictModule, NonTrainableState):
         operators: PreparedMACOperators,
         field_names: Sequence[str],
         /,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         names = _canonical_names(field_names)
@@ -172,7 +172,7 @@ class MACScalarBoundaryCondition(StrictModule, NonTrainableState):
         /,
         *,
         function_id: str | None = None,
-    ):
+    ) -> None:
         if kind not in ("periodic", "dirichlet", "neumann", "flux"):
             raise ValueError("Unknown MAC scalar boundary kind.")
         if callable(value):
@@ -269,7 +269,7 @@ class MACScalarBoundarySet(StrictModule, NonTrainableState):
             ],
         ]
         | None = None,
-    ):
+    ) -> None:
         if not isinstance(layout, MACScalarLayout):
             raise TypeError("layout must be MACScalarLayout.")
         supplied = (
@@ -410,7 +410,7 @@ class MACScalarTransport(StrictModule, NonTrainableState):
         advection: MACScalarAdvection = "upwind",
         source: Any = None,
         source_id: str | None = None,
-    ):
+    ) -> None:
         field_name = str(name)
         if not field_name:
             raise ValueError("MAC scalar transport requires a non-empty field name.")
@@ -469,7 +469,7 @@ class MACScalarReaction(StrictModule, NonTrainableState):
         *,
         rate_bounds: Mapping[str, float],
         reaction_id: str,
-    ):
+    ) -> None:
         names = _canonical_names(field_names)
         if not callable(rate):
             raise TypeError("MAC scalar reaction rate must be callable.")
@@ -513,7 +513,7 @@ class MACScalarSGSField(StrictModule, NonTrainableState):
         turbulent_prandtl_number: float | None = None,
         turbulent_schmidt_number: float | None = None,
         no_sgs: bool = False,
-    ):
+    ) -> None:
         field_name = str(name)
         if not field_name:
             raise ValueError("MAC scalar SGS declarations require a field name.")
@@ -558,7 +558,7 @@ class MACScalarSGSPlan(StrictModule, NonTrainableState):
     field_names: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, fields: Sequence[MACScalarSGSField], /):
+    def __init__(self, fields: Sequence[MACScalarSGSField], /) -> None:
         values = tuple(fields)
         if not values or any(
             not isinstance(value, MACScalarSGSField) for value in values
@@ -608,7 +608,7 @@ class PreparedMACScalarSGS(StrictModule, NonTrainableState):
         transport: PreparedMACScalarTransport,
         field_names: Sequence[str],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, MACScalarSGSPlan):
             raise TypeError("plan must be MACScalarSGSPlan.")
         if not isinstance(transport, PreparedMACScalarTransport):
@@ -690,7 +690,7 @@ class MACScalarProblem(StrictModule, NonTrainableState):
         *,
         reaction: MACScalarReaction | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         values = tuple(transports)
         if not values or any(
             not isinstance(value, MACScalarTransport) for value in values
@@ -841,7 +841,7 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
         layout: MACScalarLayout,
         boundaries: MACScalarBoundarySet,
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, MACScalarProblem):
             raise TypeError("problem must be MACScalarProblem.")
         if not isinstance(layout, MACScalarLayout):

@@ -742,7 +742,7 @@ class BiomembranePlan(StrictModule, NonTrainableState):
         reaction_matrix: ArrayLike | None = None,
         geometry_tolerance: float = 1.0e-12,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         raw_faces = np.asarray(faces)
         if raw_faces.ndim != 2 or raw_faces.shape[1:] != (3,) or raw_faces.shape[0] < 4:
             raise ValueError(
@@ -936,7 +936,7 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
         /,
         *,
         reference_face_area: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, BiomembranePlan):
             raise TypeError("plan must be BiomembranePlan.")
         raw = np.asarray(reference_positions)

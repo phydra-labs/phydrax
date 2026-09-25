@@ -169,7 +169,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
         morton_bits: int = 10,
         maximum_tree_depth: int = 64,
         maximum_traversal_visits: int,
-    ):
+    ) -> None:
         if not isinstance(scene, PreparedCollisionScene):
             raise TypeError("scene must be PreparedCollisionScene.")
         capacities = (
@@ -814,7 +814,7 @@ class CompiledContactSearchPlan(StrictModule, NonTrainableState):
         edge_edge_capacity: int,
         face_vertex_capacity: int,
         activation_distance: float,
-    ):
+    ) -> None:
         if not isinstance(scene, PreparedCollisionScene):
             raise TypeError("scene must be PreparedCollisionScene.")
         capacities = (

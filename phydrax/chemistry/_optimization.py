@@ -49,7 +49,7 @@ class MolecularGeometryConvergencePlan(StrictModule, NonTrainableState):
         step_tolerance: float = 1.0e-8,
         maximum_steps: int = 256,
         maximum_evaluations: int = 2048,
-    ):
+    ) -> None:
         maximum = float(maximum_force)
         rms = float(rms_force)
         step = float(step_tolerance)
@@ -112,7 +112,7 @@ class MolecularGeometryOptimizationResult(StrictModule, NonTrainableState):
         successful: ArrayLike,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(initial_structure, AtomicStructure) or not isinstance(
             final_structure, AtomicStructure
         ):
@@ -169,7 +169,7 @@ class MolecularGeometryOptimizationPlan(StrictModule, NonTrainableState):
         *,
         method: AbstractMinimizationMethod | None = None,
         convergence: MolecularGeometryConvergencePlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         if not isinstance(surface, AbstractPreparedPotentialEnergySurface):

@@ -40,7 +40,7 @@ class PersistenceDiagram(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         degree_array = np.asarray(degrees, dtype=np.int32)
         births = np.asarray(birth_values)
         deaths = np.asarray(death_values)
@@ -113,7 +113,7 @@ class PackedPersistenceDiagram(StrictModule, NonTrainableState):
         diagram: PersistenceDiagram,
         capacity: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(diagram, PersistenceDiagram):
             raise TypeError("Packing requires a PersistenceDiagram.")
         size = int(capacity)

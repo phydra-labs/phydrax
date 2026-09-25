@@ -160,7 +160,7 @@ class BrosaPlanellaSpmeSeiParameters(StrictModule):
         sei_conductivity_s_m: ArrayLike,
         electrolyte_thermodynamic_factor: _PropertyLaw | None = None,
         initial_sei_film_thickness_m: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not isinstance(spme_parameters, Marquis2019SpmeParameters):
             raise TypeError("spme_parameters must be Marquis2019SpmeParameters.")
         thermodynamic_factor = (
@@ -273,7 +273,7 @@ class BrosaPlanellaSpmeSeiInitialCondition(StrictModule):
         negative_stoichiometry: ArrayLike,
         positive_stoichiometry: ArrayLike,
         /,
-    ):
+    ) -> None:
         initial = Marquis2019SpmeInitialCondition(
             negative_stoichiometry, positive_stoichiometry
         )
@@ -296,7 +296,7 @@ class BrosaPlanellaSpmeSeiState(StrictModule):
         electrolyte_amount_mol: ArrayLike,
         negative_porosity: ArrayLike,
         /,
-    ):
+    ) -> None:
         base = Marquis2019SpmeState(
             negative_amount_mol,
             positive_amount_mol,
@@ -409,7 +409,7 @@ class BrosaPlanellaSpmeSeiPlan(StrictModule, NonTrainableState):
         ledger_film_mass_absolute_tolerance_kg: float = 1.0e-12,
         ledger_porosity_absolute_tolerance: float = 1.0e-10,
         ledger_relative_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         weak = float(weak_side_reaction_threshold)
         overpotential = float(small_overpotential_threshold_v)
         film_mass_atol = float(ledger_film_mass_absolute_tolerance_kg)
@@ -495,7 +495,7 @@ class PreparedBrosaPlanellaSpmeSei(StrictModule, NonTrainableState):
     marquis: PreparedMarquis2019Spme
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: BrosaPlanellaSpmeSeiPlan, /):
+    def __init__(self, plan: BrosaPlanellaSpmeSeiPlan, /) -> None:
         if not isinstance(plan, BrosaPlanellaSpmeSeiPlan):
             raise TypeError("plan must be BrosaPlanellaSpmeSeiPlan.")
         marquis = plan.marquis_plan.prepare()
@@ -1505,7 +1505,7 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
     observable_names: tuple[str, ...] = eqx.field(static=True)
     observable_units: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, plan: BrosaPlanellaSpmeSeiPlan, /):
+    def __init__(self, plan: BrosaPlanellaSpmeSeiPlan, /) -> None:
         if not isinstance(plan, BrosaPlanellaSpmeSeiPlan):
             raise TypeError("plan must be BrosaPlanellaSpmeSeiPlan.")
         self.plan = plan

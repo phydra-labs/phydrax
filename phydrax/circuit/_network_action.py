@@ -76,7 +76,7 @@ class ScatteringActionPolicy(StrictModule):
         compatibility_atol: float = 1e-12,
         residual_tolerance: float = 1e-8,
         linear: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         limits = (
             int(maximum_channels),
             int(maximum_operator_bytes),

@@ -47,7 +47,7 @@ class PointProcessObservation(StrictModule):
         start_time: ArrayLike,
         end_time: ArrayLike,
         channel_count: int,
-    ):
+    ) -> None:
         times_ = jnp.asarray(times)
         channels_ = jnp.asarray(channels, dtype=jnp.int32)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
@@ -117,7 +117,7 @@ class ExponentialHawkesProcess(StrictModule):
         excitation: ArrayLike,
         decay: ArrayLike,
         /,
-    ):
+    ) -> None:
         baseline_ = jnp.asarray(baseline)
         excitation_ = jnp.asarray(excitation)
         decay_ = jnp.asarray(decay)
@@ -169,7 +169,7 @@ class HawkesLikelihoodPlan(StrictModule):
         *,
         tie_policy: HawkesTiePolicy = "simultaneous",
         require_stable: bool = True,
-    ):
+    ) -> None:
         capacity_ = int(capacity)
         channels = int(channel_count)
         if capacity_ < 1 or channels < 1:

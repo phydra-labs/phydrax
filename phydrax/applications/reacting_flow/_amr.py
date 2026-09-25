@@ -60,7 +60,7 @@ class ReactingAMRSynchronizationPlan(StrictModule, NonTrainableState):
         correction_sweeps: int = 3,
         tolerance: float = 1.0e-8,
         maximum_temperature_iterations: int = 64,
-    ):
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         pressure = float(thermodynamic_pressure)

@@ -70,7 +70,7 @@ class ActivePhaseStoragePlan(StrictModule, NonTrainableState):
         activation_tolerance: float = 1.0e-12,
         pruning_tolerance: float = 1.0e-14,
         minimum_dwell: int = 2,
-    ):
+    ) -> None:
         cells = np.asarray(cell_dofs, dtype=np.int32)
         phases = int(phase_count)
         capacity = int(local_capacity)

@@ -34,7 +34,7 @@ class CliffordAlgebraSpec(StrictModule, NonTrainableState):
         basis_labels: Sequence[str] | None = None,
         orientation: int = 1,
         budget: CliffordResourceBudget | None = None,
-    ):
+    ) -> None:
         entries = tuple(diagonal)
         if not entries:
             raise ValueError("Clifford algebra dimension must be positive.")

@@ -20,7 +20,7 @@ class ABCDBackgroundPlan(StrictModule, NonTrainableState):
     correlation_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, closure_uncertainty: float, /, *, correlation_id: str):
+    def __init__(self, closure_uncertainty: float, /, *, correlation_id: str) -> None:
         uncertainty = float(closure_uncertainty)
         correlation = str(correlation_id).strip()
         if not math.isfinite(uncertainty) or uncertainty < 0.0 or not correlation:

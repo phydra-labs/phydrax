@@ -324,7 +324,7 @@ class MappedMACGeometryPlan(StrictModule, NonTrainableState):
         *,
         mapping_id: str,
         tolerance: float = 1e-9,
-    ):
+    ) -> None:
         if not isinstance(reference, FiniteVolumeDiscretization) or not callable(
             coordinate_map
         ):
@@ -376,7 +376,7 @@ class PreparedMappedMACGeometry(StrictModule, NonTrainableState):
     report: MappedMACReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MappedMACGeometryPlan, /):
+    def __init__(self, plan: MappedMACGeometryPlan, /) -> None:
         if not isinstance(plan, MappedMACGeometryPlan):
             raise TypeError("plan must be MappedMACGeometryPlan.")
         (

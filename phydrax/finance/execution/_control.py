@@ -59,7 +59,7 @@ class ExecutionFeedbackPolicy(StrictModule):
         /,
         *,
         policy_id: str,
-    ):
+    ) -> None:
         matrix = jnp.asarray(gain)
         offset = jnp.asarray(bias)
         lower = jnp.asarray(lower_bounds)
@@ -128,7 +128,7 @@ class JumpExecutionDefinition(StrictModule):
         /,
         *,
         definition_id: str,
-    ):
+    ) -> None:
         if not isinstance(instrument, InstrumentReference):
             raise TypeError("instrument must be an InstrumentReference.")
         if not isinstance(physical_law, PhysicalLaw):
@@ -155,7 +155,7 @@ class JumpExecutionPlan(StrictModule):
         *,
         definition_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(control_plan, ControlledJumpPlan):
             raise TypeError("control_plan must be a ControlledJumpPlan.")
         self.control_plan = control_plan
@@ -271,7 +271,7 @@ class HJBExecutionDefinition(StrictModule):
         /,
         *,
         definition_id: str,
-    ):
+    ) -> None:
         if not isinstance(instrument, InstrumentReference):
             raise TypeError("instrument must be an InstrumentReference.")
         if not isinstance(physical_law, PhysicalLaw):
@@ -301,7 +301,7 @@ class HJBExecutionPlan(StrictModule):
         refinement_relative_tolerance: float,
         definition_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         values = (
             residual_tolerance,
             refinement_absolute_tolerance,
@@ -370,7 +370,7 @@ class ImpulseExecutionDefinition(StrictModule):
         /,
         *,
         definition_id: str,
-    ):
+    ) -> None:
         if not isinstance(instrument, InstrumentReference):
             raise TypeError("instrument must be an InstrumentReference.")
         if not isinstance(physical_law, PhysicalLaw):

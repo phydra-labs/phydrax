@@ -29,7 +29,7 @@ class CameraRig(StrictModule):
         cameras: Sequence[CameraModel],
         *,
         camera_valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         cameras_ = tuple(cameras)
         if not cameras_:
             raise ValueError("A camera rig must have positive capacity.")

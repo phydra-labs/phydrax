@@ -45,7 +45,7 @@ class _DiracNormalOperator(AbstractLinearOperator):
 
     dirac: AbstractPseudofermionDiracOperator
 
-    def __init__(self, dirac: AbstractPseudofermionDiracOperator, /):
+    def __init__(self, dirac: AbstractPseudofermionDiracOperator, /) -> None:
         if not isinstance(dirac, AbstractPseudofermionDiracOperator):
             raise TypeError("dirac must implement AbstractPseudofermionDiracOperator.")
         self.dirac = dirac
@@ -112,7 +112,7 @@ class PseudofermionSolveRoles(StrictModule):
         action: RationalFunctionPolicy | None = None,
         force: RationalFunctionPolicy | None = None,
         acceptance: RationalFunctionPolicy | None = None,
-    ):
+    ) -> None:
         action_ = _default_policy(1.0e-5, 1.0e-7) if action is None else action
         refresh_ = action_ if refresh is None else refresh
         force_ = _default_policy(1.0e-4, 1.0e-6) if force is None else force
@@ -211,7 +211,7 @@ class TwoFlavorPseudofermionTerm(StrictModule):
         /,
         *,
         solves: PseudofermionSolveRoles | None = None,
-    ):
+    ) -> None:
         normal = _validate_dirac_interval(dirac, spectral_interval)
         solves_ = PseudofermionSolveRoles() if solves is None else solves
         if not isinstance(solves_, PseudofermionSolveRoles):
@@ -265,7 +265,7 @@ class HasenbuschRatioPseudofermionTerm(StrictModule):
         *,
         mass_shift: float,
         solves: PseudofermionSolveRoles | None = None,
-    ):
+    ) -> None:
         normal = _validate_dirac_interval(dirac, spectral_interval)
         shift = float(mass_shift)
         if not math.isfinite(shift) or shift <= 0.0:
@@ -333,7 +333,7 @@ class FractionalPowerPseudofermionTerm(StrictModule):
         *,
         determinant_power: float,
         solves: PseudofermionSolveRoles | None = None,
-    ):
+    ) -> None:
         normal = _validate_dirac_interval(dirac, spectral_interval)
         power = float(determinant_power)
         if not math.isfinite(power) or power <= 0.0:

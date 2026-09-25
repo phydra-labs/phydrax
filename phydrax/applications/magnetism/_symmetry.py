@@ -63,7 +63,7 @@ class MagneticSymmetryRepresentationPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
         rank_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(group, FiniteMetricIsometryGroup):
             raise TypeError("group must be FiniteMetricIsometryGroup.")
         if group.algebra.dimension != 3:

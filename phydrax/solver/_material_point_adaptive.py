@@ -52,7 +52,7 @@ class MPMAdaptivePolicy(StrictModule, NonTrainableState):
         safety_factor: float = 0.9,
         minimum_step_size: float = 1.0e-12,
         maximum_step_size: float = np.inf,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         retries = int(maximum_retries)
         reduction = float(reduction_factor)
@@ -145,7 +145,7 @@ class AdaptiveMPMRolloutPlan(StrictModule, NonTrainableState):
         *,
         final_time: float,
         initial_step_size: float,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedMPMDynamics):
             raise TypeError("dynamics must be PreparedMPMDynamics.")
         if not isinstance(policy, MPMAdaptivePolicy):

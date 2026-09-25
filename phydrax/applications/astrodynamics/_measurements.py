@@ -52,7 +52,7 @@ class OrbitMeasurementPlan(StrictModule, NonTrainableState):
         /,
         *,
         measurement_id: str,
-    ):
+    ) -> None:
         if kind not in ("range", "range_rate", "right_ascension_declination"):
             raise ValueError("Unknown orbit measurement kind.")
         if not isinstance(context, AstrodynamicsContext):

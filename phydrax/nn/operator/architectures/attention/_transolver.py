@@ -62,7 +62,7 @@ class _PhysicsSliceTokenizer(StrictModule):
         top_k: int,
         temperature: float,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         self.channels = int(channels)
         self.num_slices = int(num_slices)
         self.top_k = int(top_k)
@@ -205,7 +205,7 @@ class Transolver(AbstractEncodedOperatorModel):
         attention_block_size: int = 256,
         accumulation_dtype: str = "input",
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_channels = _get_size(in_channels)
         self.out_channels = _get_size(out_channels)
         self.coord_dim = int(coord_dim)

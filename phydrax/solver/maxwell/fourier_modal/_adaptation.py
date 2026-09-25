@@ -43,7 +43,7 @@ class FourierModalHarmonicAdaptationPolicy(StrictModule, NonTrainableState):
         observable_tolerances: ArrayLike,
         maximum_epochs: int,
         /,
-    ):
+    ) -> None:
         candidates = tuple(candidate_plans)
         tolerances = np.asarray(observable_tolerances, dtype=np.float64)
         epochs = int(maximum_epochs)

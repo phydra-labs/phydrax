@@ -81,7 +81,7 @@ class IntervalKernelMean(AbstractKernelMean):
         *,
         normalized: bool = False,
         target_id: str = "interval",
-    ):
+    ) -> None:
         if not isinstance(interval, Interval1d):
             raise TypeError("interval must be an Interval1d.")
         base, amplitude = _single_scale(kernel)
@@ -174,7 +174,7 @@ class FiniteMeasureKernelMean(AbstractKernelMean):
         *,
         block_size: int = 256,
         target_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a positive-definite kernel.")
         if not isinstance(block_size, Integral) or isinstance(block_size, bool):
@@ -241,7 +241,7 @@ class FiniteFeatureKernelMean(AbstractKernelMean):
         target_mass: ArrayLike = 1.0,
         target_id: str,
         normalized: bool = True,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractFiniteFeatureKernel):
             raise TypeError("kernel must be an AbstractFiniteFeatureKernel.")
         moment = jnp.asarray(feature_moment, dtype=kernel.feature_factor.dtype)

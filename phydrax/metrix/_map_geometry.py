@@ -73,7 +73,7 @@ class RiemannianMapGeometry(StrictModule):
         source_metric: RiemannianMetric,
         target_metric: RiemannianMetric,
         /,
-    ):
+    ) -> None:
         if not isinstance(map, (DifferentiableMap, Immersion, ChartTransition)):
             raise TypeError("map must be a differentiable coordinate map.")
         if not isinstance(source_metric, RiemannianMetric) or not isinstance(

@@ -32,7 +32,7 @@ class TreeTensorNetwork(StrictModule):
         /,
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(structure, ContractionStructure):
             raise TypeError("structure must be ContractionStructure.")
         arrays = tuple(jnp.asarray(value) for value in tensors)

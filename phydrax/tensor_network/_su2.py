@@ -336,7 +336,7 @@ class SU2ReducedLeg(StrictModule):
         *,
         orientation: int,
         active_multiplicities: ArrayLike | None = None,
-    ):
+    ) -> None:
         spins = tuple(_spin(value) for value in twice_spins)
         allocated = tuple(capacities)
         if not spins or len(spins) != len(allocated) or len(set(spins)) != len(spins):
@@ -392,7 +392,7 @@ class SU2ReducedTensor(StrictModule):
         /,
         *,
         total_twice_spin: int = 0,
-    ):
+    ) -> None:
         legs_ = tuple(legs)
         sectors_ = tuple(tuple(sector) for sector in sectors)
         blocks_ = tuple(jnp.asarray(block) for block in blocks)
@@ -591,7 +591,7 @@ class SU2SectorState(StrictModule):
 
     def __init__(
         self, twice_spin: int, amplitudes: ArrayLike, /, *, normalize: bool = True
-    ):
+    ) -> None:
         spin, values = _spin(twice_spin), jnp.asarray(amplitudes)
         if values.ndim != 1 or values.shape[0] < 1:
             raise ValueError("SU2 amplitudes must be a nonempty vector.")
@@ -617,7 +617,9 @@ class SU2InvariantOperator(StrictModule):
     blocks: tuple[Array, ...]
     operator_id: str = eqx.field(static=True)
 
-    def __init__(self, twice_spins: Sequence[int], blocks: Sequence[ArrayLike], /):
+    def __init__(
+        self, twice_spins: Sequence[int], blocks: Sequence[ArrayLike], /
+    ) -> None:
         spins, values = (
             tuple(_spin(value) for value in twice_spins),
             tuple(jnp.asarray(value) for value in blocks),
@@ -785,7 +787,7 @@ class SU2MatrixProductState(StrictModule):
         /,
         *,
         normalize: bool = True,
-    ):
+    ) -> None:
         sites = tuple(_spin(value) for value in site_twice_spins)
         total = _spin(total_twice_spin)
         if len(sites) < 2:
@@ -831,7 +833,7 @@ class SU2MatrixProductOperator(StrictModule):
         site_twice_spins: Sequence[int],
         operator: SU2InvariantOperator,
         /,
-    ):
+    ) -> None:
         sites = tuple(_spin(value) for value in site_twice_spins)
         if len(sites) < 2 or not isinstance(operator, SU2InvariantOperator):
             raise TypeError("SU2 MPO sites or invariant operator are invalid.")

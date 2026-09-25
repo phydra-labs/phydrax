@@ -28,7 +28,7 @@ class PhaseGeometryMetrics(StrictModule):
         measure: ArrayLike,
         centroid: ArrayLike,
         centroid_defined: ArrayLike,
-    ):
+    ) -> None:
         self.measure = jnp.asarray(measure)
         self.centroid = jnp.asarray(centroid)
         self.centroid_defined = jnp.asarray(centroid_defined, dtype=jnp.bool_)
@@ -47,7 +47,7 @@ class InterfaceDistanceMetrics(StrictModule):
         symmetric_mean_distance: ArrayLike,
         hausdorff_distance: ArrayLike,
         percentile_hausdorff_distance: ArrayLike,
-    ):
+    ) -> None:
         self.symmetric_mean_distance = jnp.asarray(symmetric_mean_distance)
         self.hausdorff_distance = jnp.asarray(hausdorff_distance)
         self.percentile_hausdorff_distance = jnp.asarray(percentile_hausdorff_distance)

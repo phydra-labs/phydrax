@@ -30,7 +30,7 @@ class CoherentAmplitudePlan(StrictModule, NonTrainableState):
         *,
         phase_convention_id: str,
         normalization_evidence_id: str,
-    ):
+    ) -> None:
         names = tuple(str(value).strip() for value in component_names)
         phase = str(phase_convention_id).strip()
         evidence = str(normalization_evidence_id).strip()

@@ -35,7 +35,7 @@ class WarpingBeamSection(StrictModule, NonTrainableState):
         monosymmetry_y: ArrayLike = 0.0,
         monosymmetry_z: ArrayLike = 0.0,
         section_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(base, BeamSection):
             raise TypeError("base must be a BeamSection.")
         values = tuple(

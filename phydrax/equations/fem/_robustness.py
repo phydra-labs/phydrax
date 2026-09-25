@@ -39,7 +39,7 @@ class ConservativeSubcellPlan(StrictModule, NonTrainableState):
     evidence: ConservativeSubcellEvidence
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, element: FiniteElementSpec, volume_rule: Any, /):
+    def __init__(self, element: FiniteElementSpec, volume_rule: Any, /) -> None:
         from ...integration._rules import reference_rule_data
 
         if not isinstance(element, FiniteElementSpec):
@@ -136,7 +136,7 @@ class RobustnessSensorPlan(StrictModule, NonTrainableState):
         activation: float = 0.2,
         release: float = 0.1,
         hysteresis_steps: int = 2,
-    ):
+    ) -> None:
         activation_ = float(activation)
         release_ = float(release)
         steps = int(hysteresis_steps)
@@ -216,7 +216,9 @@ class EntropyViscosityPlan(StrictModule, NonTrainableState):
     maximum_fraction: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, coefficient: float = 0.5, maximum_fraction: float = 0.5, /):
+    def __init__(
+        self, coefficient: float = 0.5, maximum_fraction: float = 0.5, /
+    ) -> None:
         coefficient_ = float(coefficient)
         maximum_ = float(maximum_fraction)
         if (
@@ -271,7 +273,7 @@ class ConservationCorrectionLadderPlan(StrictModule, NonTrainableState):
         differentiability: BranchDifferentiationPolicy = (
             BranchDifferentiationPolicy.BRANCHWISE
         ),
-    ):
+    ) -> None:
         if not isinstance(differentiability, BranchDifferentiationPolicy):
             raise TypeError("differentiability must be a BranchDifferentiationPolicy.")
         match differentiability:

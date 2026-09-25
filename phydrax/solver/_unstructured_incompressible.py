@@ -45,7 +45,7 @@ class _WeightedGaugedPressureAction(StrictModule, NonTrainableState):
         operators: PreparedUnstructuredCollocatedOperators,
         face_inverse_momentum: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.operators = operators
         self.face_inverse_momentum = operators.validate_face_scalar(
             face_inverse_momentum, "Face inverse momentum"
@@ -99,7 +99,7 @@ class UnstructuredPressureProjectionPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 200,
         dtype: Any | None = None,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedUnstructuredCollocatedOperators):
             raise TypeError("operators must be PreparedUnstructuredCollocatedOperators.")
         density_ = float(density)
@@ -315,7 +315,7 @@ class UnstructuredPressureCorrectionPlan(StrictModule, NonTrainableState):
         projection: UnstructuredPressureProjectionPlan,
         correctors: int = 2,
         /,
-    ):
+    ) -> None:
         if not isinstance(projection, UnstructuredPressureProjectionPlan):
             raise TypeError("projection must be UnstructuredPressureProjectionPlan.")
         correctors_ = int(correctors)

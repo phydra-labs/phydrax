@@ -72,7 +72,7 @@ class PointCloudPlan(StrictModule):
         degree: int = 2,
         neighbor_count: int | None = None,
         condition_limit: float = 1e8,
-    ):
+    ) -> None:
         points_ = np.asarray(points, dtype=np.float64)
         weights = np.asarray(quadrature_weights, dtype=np.float64)
         if points_.ndim != 2 or points_.shape[0] == 0 or points_.shape[1] == 0:
@@ -185,7 +185,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
     preparation: PreparationReport
     trust_radius: Array
 
-    def __init__(self, plan: PointCloudPlan, /):
+    def __init__(self, plan: PointCloudPlan, /) -> None:
         points = np.asarray(plan.points)
         count, dimension = points.shape
         tree = cKDTree(points)

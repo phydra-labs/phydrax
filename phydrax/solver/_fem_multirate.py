@@ -28,7 +28,7 @@ class DGMultirateTracePlan(StrictModule, NonTrainableState):
         /,
         *,
         history_depth: int = 3,
-    ):
+    ) -> None:
         levels = jnp.asarray(facet_levels, dtype=jnp.int32)
         depth = int(history_depth)
         if levels.ndim != 2 or levels.shape[1] != 2 or levels.size == 0:
@@ -73,7 +73,7 @@ class DGTraceHistory(StrictModule):
         times: ArrayLike,
         effective_depth: ArrayLike,
         /,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         times_ = jnp.asarray(times)
         effective = jnp.asarray(effective_depth, dtype=jnp.int32)
@@ -199,7 +199,7 @@ class TimeSlabFluxLedger(StrictModule):
         /,
         *,
         ledger_id: str,
-    ):
+    ) -> None:
         flux = jnp.asarray(integrated_flux)
         accumulated = jnp.asarray(accumulated_duration)
         expected = jnp.asarray(expected_duration)
@@ -274,7 +274,7 @@ class ConservativeLocalTimeStepPlan(StrictModule, NonTrainableState):
         macro_step_size: float,
         trace_plan: DGMultirateTracePlan,
         /,
-    ):
+    ) -> None:
         levels = jnp.asarray(cell_levels, dtype=jnp.int32)
         step = float(macro_step_size)
         if (

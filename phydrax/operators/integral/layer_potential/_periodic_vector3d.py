@@ -148,7 +148,7 @@ class _DyadicEwaldBlock:
         scalar_reciprocal_shell: float,
         dyadic_real_shell: float,
         dyadic_reciprocal_shell: float,
-    ):
+    ) -> None:
         self.value = value
         self.scalar_real_shell = float(scalar_real_shell)
         self.scalar_reciprocal_shell = float(scalar_reciprocal_shell)

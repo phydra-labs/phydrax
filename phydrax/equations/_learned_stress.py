@@ -177,7 +177,7 @@ class PeriodicLearnedStressPlan(StrictModule, NonTrainableState):
         /,
         *,
         energy_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         _validate_binding_abi(binding)
         tolerance = float(energy_tolerance)
         if not isfinite(tolerance) or tolerance < 0.0:
@@ -229,7 +229,7 @@ class PreparedPeriodicLearnedStress(StrictModule, NonTrainableState):
         discretization: TensorSpectralDiscretization,
         projector: PeriodicLerayProjector,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, PeriodicLearnedStressPlan):
             raise TypeError("plan must be a PeriodicLearnedStressPlan.")
         if not isinstance(discretization, TensorSpectralDiscretization):
@@ -425,7 +425,7 @@ class MACLearnedStressPlan(StrictModule, NonTrainableState):
         *,
         energy_tolerance: float = 1.0e-9,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         _validate_binding_abi(binding)
         energy = float(energy_tolerance)
         conservation = float(conservation_tolerance)
@@ -495,7 +495,7 @@ class PreparedMACLearnedStress(StrictModule, NonTrainableState):
         momentum: PreparedMACMomentumOperators,
         projection: MACPressureProjectionPlan,
         /,
-    ):
+    ) -> None:
         from ..solver._structured_incompressible import MACPressureProjectionPlan
 
         if not isinstance(plan, MACLearnedStressPlan):

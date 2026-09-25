@@ -46,7 +46,7 @@ class FDResourceEstimate(StrictModule, NonTrainableState):
         plan_id: str,
         precision_policy_id: str,
         precision_resource_assumptions_id: str,
-    ):
+    ) -> None:
         values = tuple(
             (
                 state_bytes,
@@ -118,7 +118,7 @@ class FDExecutionPreflightPlan(StrictModule, NonTrainableState):
         checkpoint_copies: int = 1,
         precision: FDExecutionPrecisionPolicy | None = None,
         memory_budget_bytes: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("FD execution preflight requires PreparedTensorGrid.")
         fields = int(field_count)

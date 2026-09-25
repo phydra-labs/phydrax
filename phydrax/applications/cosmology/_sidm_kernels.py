@@ -406,7 +406,7 @@ class TwoBodyDifferentialKernelPlan(StrictModule, NonTrainableState):
         normalization_tolerance: float = 1.0e-10,
         unbounded_speed: bool = False,
         isotropic_specialization: bool = False,
-    ):
+    ) -> None:
         if not isinstance(first_species, DarkSectorSpeciesPlan) or not isinstance(
             second_species, DarkSectorSpeciesPlan
         ):
@@ -910,7 +910,7 @@ class SmallAngleSplitPlan(StrictModule, NonTrainableState):
         /,
         *,
         reconstruction_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(kernel, TwoBodyDifferentialKernelPlan):
             raise TypeError(
                 "Small-angle splitting requires TwoBodyDifferentialKernelPlan."

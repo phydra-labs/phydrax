@@ -24,7 +24,7 @@ class NucleotideAtomMapping:
     nucleotide_keys: tuple[NucleotideKey, ...]
     atom_names: tuple[str, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if any(
             not isinstance(x, tuple)
             for x in (self.atom_ids, self.nucleotide_keys, self.atom_names)

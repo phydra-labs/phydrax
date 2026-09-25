@@ -121,7 +121,7 @@ class IQPAngleMap(AbstractFittedModel, NonTrainableState):
         *,
         repetitions: int = 1,
         dtype: DTypeLike = jnp.float64,
-    ):
+    ) -> None:
         size = int(input_size)
         repeats = int(repetitions)
         selected_dtype = jnp.dtype(dtype)
@@ -198,7 +198,7 @@ class ReuploadingAngleMap(AbstractFittedModel):
         /,
         *,
         dtype: DTypeLike = jnp.float64,
-    ):
+    ) -> None:
         size = int(input_size)
         indices = tuple(feature_indices)
         selected_dtype = jnp.dtype(dtype)

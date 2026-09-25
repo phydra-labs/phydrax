@@ -84,7 +84,7 @@ class GaussianCoefficientRealization(StrictModule):
         realization_id: str | None = None,
         parent_realization_id: str | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         identifiers = _validate_mode_ids(mode_ids)
         values = jnp.asarray(coefficients, dtype=jnp.float64)
         if values.ndim < 1 or values.shape[-1] != len(identifiers):
@@ -207,7 +207,7 @@ class SpatialBasisSynthesis(StrictModule):
         basis_id: str,
         discretization_id: str | None = None,
         mean: ArrayLike = 0.0,
-    ):
+    ) -> None:
         mode_array = jnp.asarray(modes, dtype=jnp.float64)
         if mode_array.ndim < 2:
             raise ValueError("modes must have shape spatial_shape + (rank,).")
@@ -353,7 +353,7 @@ class RandomFieldSample(StrictModule):
         coefficient_realization_id: str,
         coupling_id: str,
         transform_id: str | None = None,
-    ):
+    ) -> None:
         array = jnp.asarray(values)
         sample = tuple(sample_shape)
         spatial = tuple(spatial_shape)
@@ -423,7 +423,7 @@ class StaticGaussianRandomField(StrictModule):
         *,
         role: RandomFieldRole = "input",
         source: str = "latent",
-    ):
+    ) -> None:
         if not isinstance(synthesis, SpatialBasisSynthesis):
             raise TypeError("synthesis must be a SpatialBasisSynthesis.")
         resolved_role = _validate_role(role)
@@ -507,7 +507,7 @@ class TransformedRandomField(StrictModule):
         /,
         *,
         transform_id: str,
-    ):
+    ) -> None:
         if not isinstance(base, StaticGaussianRandomField):
             raise TypeError("base must be a StaticGaussianRandomField.")
         if not callable(transform_function):
@@ -591,7 +591,7 @@ class GaussianFieldCoupling(StrictModule):
         /,
         *,
         label: str | None = None,
-    ):
+    ) -> None:
         resolved = tuple(fields)
         if len(resolved) < 2:
             raise ValueError("A GaussianFieldCoupling requires at least two fields.")

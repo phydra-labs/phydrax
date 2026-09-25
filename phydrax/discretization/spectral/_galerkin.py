@@ -79,7 +79,7 @@ class SpectralGalerkinMethodPlan(StrictModule, NonTrainableState):
         *,
         maximum_dense_dimension: int = 512,
         compatibility: Literal["error", "minimum_norm"] = "error",
-    ):
+    ) -> None:
         maximum = int(maximum_dense_dimension)
         if maximum <= 0:
             raise ValueError("maximum_dense_dimension must be positive.")
@@ -116,7 +116,7 @@ class PreparedSpectralGalerkin(StrictModule, NonTrainableState):
         plan: SpectralGalerkinMethodPlan,
         discretization: TensorSpectralDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, SpectralGalerkinMethodPlan):
             raise TypeError("plan must be a SpectralGalerkinMethodPlan.")
         if not isinstance(discretization, TensorSpectralDiscretization):

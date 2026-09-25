@@ -45,7 +45,7 @@ class ContactInterfacePlan(StrictModule, NonTrainableState):
         minus_node_count: int,
         route_keys: ArrayLike | None = None,
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         plus_index = np.asarray(plus_indices)
         minus_index = np.asarray(minus_indices)
         plus_weight = np.asarray(plus_weights, dtype=np.float64)

@@ -590,7 +590,7 @@ class BatteryGroupSplit:
         calibration_cell_ids: Sequence[str],
         test_cell_ids: Sequence[str],
         pipeline_ids: BatteryPipelineIDs,
-    ):
+    ) -> None:
         observations = tuple(records)
         if not observations:
             raise ValueError("Battery group splits require observation records.")
@@ -767,7 +767,7 @@ class TransformedBatteryTimeSeries(StrictModule):
         *,
         record_id: str,
         transformation_id: str,
-    ):
+    ) -> None:
         self.time_s = time_s
         self.values = values
         self.valid_mask = valid_mask
@@ -797,7 +797,7 @@ class BatteryChannelTransformation(StrictModule, NonTrainableState):
         preprocessing_id: str,
         normalization_id: str,
         training_record_ids: tuple[str, ...],
-    ):
+    ) -> None:
         location_array = _host_vector(location, "location")
         scale_array = _host_vector(scale, "scale")
         if location_array.shape != (3,) or scale_array.shape != (3,):

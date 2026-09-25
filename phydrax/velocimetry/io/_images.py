@@ -57,7 +57,7 @@ class LazyImageSequence2D(StrictModule, NonTrainableState):
         source_id: str | None = None,
         maximum_file_bytes: int = 2 * 1024 * 1024 * 1024,
         maximum_decoded_bytes: int = 4 * 1024 * 1024 * 1024,
-    ):
+    ) -> None:
         paths_ = tuple(Path(path) for path in paths)
         if not paths_:
             raise ValueError("Lazy image sequences require at least one path.")

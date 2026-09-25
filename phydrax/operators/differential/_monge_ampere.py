@@ -47,7 +47,7 @@ class _KahlerPotentialCallable(StrictModule):
         operation: Operation,
         normalization,
         /,
-    ):
+    ) -> None:
         self.potential = potential
         self.reference_metric = reference_metric
         self.convention = convention

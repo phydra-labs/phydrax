@@ -68,7 +68,7 @@ class IdealGasMaterial(AbstractThermodynamicMaterial):
         *,
         density_floor: float = 1e-12,
         pressure_floor: float = 1e-12,
-    ):
+    ) -> None:
         gamma_ = float(gamma)
         gas_constant_ = float(gas_constant)
         density_floor_ = float(density_floor)
@@ -147,7 +147,7 @@ class StiffenedGasMaterial(AbstractThermodynamicMaterial):
         reference_energy: float = 0.0,
         density_floor: float = 1e-12,
         pressure_floor: float = 1e-12,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -367,7 +367,7 @@ class TwoMaterialEOSClosure(StrictModule, NonTrainableState):
         mass_floor: float = 1.0e-12,
         energy_floor: float = 1.0e-12,
         identity: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(material_0, (IdealGasMaterial, StiffenedGasMaterial)):
             raise TypeError(
                 "material_0 must be an IdealGasMaterial or StiffenedGasMaterial."

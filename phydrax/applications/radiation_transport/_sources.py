@@ -56,7 +56,7 @@ class AliasSpectrumPlan(StrictModule, NonTrainableState):
         *,
         commercial_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         energy = np.asarray(energies, dtype=np.float64)
         probability = np.asarray(probabilities, dtype=np.float64)
         if not isinstance(energy_unit, UnitDefinition):
@@ -147,7 +147,7 @@ class DiagnosticXRaySourcePlan(StrictModule, NonTrainableState):
         *,
         cone_half_angle: float,
         source_id: str,
-    ):
+    ) -> None:
         position_ = np.asarray(position, dtype=np.float64)
         axis_ = np.asarray(axis, dtype=np.float64)
         angle = float(cone_half_angle)

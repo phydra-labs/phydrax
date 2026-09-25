@@ -160,7 +160,7 @@ class ReducedRodPlan(StrictModule, NonTrainableState):
         quadrature_tolerance: float = 1.0e-6,
         certification_tolerance: float = 1.0e-6,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(basis, RodStrainBasisPlan):
             raise TypeError("basis must be a RodStrainBasisPlan.")
         if base_policy not in ("reference", "fixed"):
@@ -268,7 +268,7 @@ class ReducedRodState(StrictModule):
         coefficients: ArrayLike,
         coefficient_velocities: ArrayLike,
         /,
-    ):
+    ) -> None:
         coefficients_ = jnp.asarray(coefficients)
         velocities_ = jnp.asarray(coefficient_velocities)
         if coefficients_.ndim != 1 or coefficients_.shape[0] < 1:
@@ -388,7 +388,7 @@ class PreparedReducedRod(StrictModule, NonTrainableState):
     velocity_slice: slice = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, rod: PreparedRod, plan: ReducedRodPlan, /):
+    def __init__(self, rod: PreparedRod, plan: ReducedRodPlan, /) -> None:
         if not isinstance(rod, PreparedRod):
             raise TypeError("rod must be a PreparedRod.")
         if not isinstance(plan, ReducedRodPlan):

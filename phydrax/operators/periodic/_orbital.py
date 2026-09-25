@@ -42,7 +42,7 @@ class PeriodicBlochGauge(StrictModule, NonTrainableState):
     kind: BlochGaugeKind = eqx.field(static=True)
     gauge_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: BlochGaugeKind, /):
+    def __init__(self, kind: BlochGaugeKind, /) -> None:
         if kind not in ("lattice", "atomic"):
             raise ValueError("Periodic Bloch gauge must be 'lattice' or 'atomic'.")
         self.kind = kind
@@ -74,7 +74,7 @@ class PeriodicOrbitalBasisPlan(StrictModule, NonTrainableState):
         /,
         *,
         spin_order: SpinOrderKind = "spinless",
-    ):
+    ) -> None:
         if not isinstance(cell, PeriodicCell):
             raise TypeError("Periodic orbital bases require PeriodicCell.")
         labels_ = tuple(str(value).strip() for value in labels)
@@ -166,7 +166,7 @@ class PeriodicOrbitalPencilPlan(StrictModule, NonTrainableState):
         *,
         overlap_eigenvalue_floor: float = 1.0e-10,
         maximum_overlap_condition: float = 1.0e10,
-    ):
+    ) -> None:
         if not isinstance(basis, PeriodicOrbitalBasisPlan):
             raise TypeError("basis must be PeriodicOrbitalBasisPlan.")
         prepared_h = prepare_periodic_translation_family(
@@ -279,7 +279,7 @@ class PreparedPeriodicOrbitalPencil(StrictModule, NonTrainableState):
     overlap: PreparedPeriodicTranslationFamily
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: PeriodicOrbitalPencilPlan, /):
+    def __init__(self, plan: PeriodicOrbitalPencilPlan, /) -> None:
         if not isinstance(plan, PeriodicOrbitalPencilPlan):
             raise TypeError("plan must be PeriodicOrbitalPencilPlan.")
         hamiltonian = prepare_periodic_translation_family(

@@ -255,7 +255,7 @@ class CompositeAcceptedStepTransform(AbstractAcceptedStepTransform):
     transforms: tuple[AbstractAcceptedStepTransform, ...]
     transform_id: str = eqx.field(static=True)
 
-    def __init__(self, transforms: Sequence[AbstractAcceptedStepTransform], /):
+    def __init__(self, transforms: Sequence[AbstractAcceptedStepTransform], /) -> None:
         values = tuple(transforms)
         if any(not isinstance(value, AbstractAcceptedStepTransform) for value in values):
             raise TypeError("Every transform must be an AbstractAcceptedStepTransform.")
@@ -428,7 +428,7 @@ class LearnedStepCorrection(AbstractAcceptedStepTransform):
         lower_bounds: Any = None,
         ports: ModelPorts | None = None,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
         shape = tuple(index(extent) for extent in state_shape)
@@ -633,7 +633,7 @@ class CallableSSPRKStageTransform(AbstractSSPRKStageTransform, NonTrainableState
     )
     transform_id: str = eqx.field(static=True)
 
-    def __init__(self, transform, transform_id: str, /):
+    def __init__(self, transform, transform_id: str, /) -> None:
         if not callable(transform):
             raise TypeError("transform must be callable.")
         identifier = str(transform_id)
@@ -686,7 +686,7 @@ class RobustRetryPolicy(StrictModule, NonTrainableState):
         *,
         maximum_retries: int = 4,
         reduction_factor: float = 0.5,
-    ):
+    ) -> None:
         retries = int(maximum_retries)
         factor = float(reduction_factor)
         if retries < 0 or not 0.0 < factor < 1.0:
@@ -758,7 +758,7 @@ class CallableFixedStepMethod(AbstractFixedStepMethod):
         ],
         method_id: str,
         /,
-    ):
+    ) -> None:
         if not callable(step_function):
             raise TypeError("step_function must be callable.")
         identifier = str(method_id)
@@ -797,7 +797,7 @@ class AbstractSSPRKFixedStepMethod(AbstractFixedStepMethod):
         order: int,
         transform: AbstractAcceptedStepTransform | None = None,
         stage_transform: AbstractSSPRKStageTransform | None = None,
-    ):
+    ) -> None:
         if not callable(vector_field):
             raise TypeError("vector_field must be callable.")
         if order not in (3, 4):
@@ -877,7 +877,7 @@ class SSPRK33FixedStepMethod(AbstractSSPRKFixedStepMethod):
         *,
         transform: AbstractAcceptedStepTransform | None = None,
         stage_transform: AbstractSSPRKStageTransform | None = None,
-    ):
+    ) -> None:
         super().__init__(
             vector_field,
             order=3,
@@ -904,7 +904,7 @@ class SSPRK54FixedStepMethod(AbstractSSPRKFixedStepMethod):
         *,
         transform: AbstractAcceptedStepTransform | None = None,
         stage_transform: AbstractSSPRKStageTransform | None = None,
-    ):
+    ) -> None:
         super().__init__(
             vector_field,
             order=4,
@@ -971,7 +971,7 @@ class FixedStepProblem(StrictModule):
         state_geometry: AbstractStateGeometry | None = None,
         discretization_bundle: DiscretizationBundle | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(method, AbstractFixedStepMethod):
             raise TypeError("method must be an AbstractFixedStepMethod.")
         if state_geometry is None:
@@ -1153,7 +1153,7 @@ class FixedStepReplayPolicy(StrictModule, NonTrainableState):
         *,
         block_size: int | None = None,
         schedule: PreparedReplaySchedule | None = None,
-    ):
+    ) -> None:
         if mode not in ("full", "step", "block", "scheduled"):
             raise ValueError("Unknown fixed-step replay mode.")
         size = None if block_size is None else int(block_size)
@@ -1205,7 +1205,7 @@ class FixedStepIterationMetrics(StrictModule):
         transform_applied,
         transform_correction_norm,
         /,
-    ):
+    ) -> None:
         self.time = jnp.asarray(time)
         self.residual = jnp.asarray(residual)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int64)
@@ -1338,7 +1338,7 @@ class FixedStepRolloutPlan(StrictModule):
         checkpoint_stride: int = 1,
         replay: FixedStepReplayPolicy | None = None,
         iteration: IterationPlan | None = None,
-    ):
+    ) -> None:
         if retention not in ("final", "checkpoints", "trajectory"):
             raise ValueError("Unknown fixed-step retention policy.")
         stride = int(checkpoint_stride)

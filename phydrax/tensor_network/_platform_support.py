@@ -99,7 +99,7 @@ class TensorNetworkSupportTuple(StrictModule, NonTrainableState):
         differentiation: str = "none",
         distribution: str = "single-process",
         maturity: TensorNetworkMaturity = TensorNetworkMaturity.EXPERIMENTAL,
-    ):
+    ) -> None:
         representation_ = _identifier(representation, "representation")
         if representation_ not in ("mps", "mpo", "lpdo", "array-pytree"):
             raise ValueError("Tensor-network representation is not supported.")
@@ -183,7 +183,7 @@ class TensorNetworkResourcePolicy(StrictModule, NonTrainableState):
         maximum_array_leaves: int = 100_000,
         maximum_array_rank: int = 16,
         maximum_elements: int = 1_000_000_000,
-    ):
+    ) -> None:
         from ..solver._production_resources import ProductionResourceBudget
 
         budget = ProductionResourceBudget(
@@ -242,7 +242,7 @@ class TensorNetworkResourceForecast(StrictModule, NonTrainableState):
         production: ProductionResourceForecast,
         shape_admitted: bool,
         /,
-    ):
+    ) -> None:
         from ..solver._production_resources import ProductionResourceForecast
 
         support_id = _identifier(support_tuple_id, "support_tuple_id")
@@ -317,7 +317,7 @@ class TensorNetworkResourceAdmission(StrictModule, NonTrainableState):
         admitted: bool,
         failure: TensorNetworkFailure,
         reasons: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(forecast, TensorNetworkResourceForecast):
             raise TypeError("forecast must be TensorNetworkResourceForecast.")
         failure_ = TensorNetworkFailure(failure)
@@ -351,7 +351,7 @@ class TensorNetworkAdmissionError(RuntimeError):
     failure: TensorNetworkFailure
     reasons: tuple[str, ...]
 
-    def __init__(self, failure: TensorNetworkFailure, reasons: Sequence[str], /):
+    def __init__(self, failure: TensorNetworkFailure, reasons: Sequence[str], /) -> None:
         failure_ = TensorNetworkFailure(failure)
         reasons_ = tuple(str(value) for value in reasons)
         if failure_ == TensorNetworkFailure.NONE or not reasons_:
@@ -563,7 +563,7 @@ class TensorNetworkExecutionManifest(StrictModule, NonTrainableState):
         precision_policy_id: str,
         source_id: str,
         input_id: str,
-    ):
+    ) -> None:
         if not isinstance(support, TensorNetworkSupportTuple):
             raise TypeError("support must be TensorNetworkSupportTuple.")
         if not isinstance(admission, TensorNetworkResourceAdmission):

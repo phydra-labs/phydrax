@@ -49,7 +49,7 @@ class TabulatedCoolingCurve(StrictModule, NonTrainableState):
         temperature_scale: float = 1.0,
         rate_scale: float = 1.0,
         bounds_policy: RadiativeCoolingBoundsPolicy = "error",
-    ):
+    ) -> None:
         nodes = np.asarray(log_temperature_nodes, dtype=np.float64)
         values = np.asarray(log_rate_values, dtype=np.float64)
         temperature_scale_ = float(temperature_scale)

@@ -46,7 +46,7 @@ class UnbalancedTransportProblem(StrictModule):
         *,
         source_marginal_penalty: ArrayLike,
         target_marginal_penalty: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(source, _FiniteTransportMeasure):
             raise TypeError("source must be a canonical finite transport measure.")
         if not isinstance(target, _FiniteTransportMeasure):

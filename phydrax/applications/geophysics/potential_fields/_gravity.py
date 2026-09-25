@@ -45,7 +45,7 @@ class GravityQuadratureSource(StrictModule, NonTrainableState):
         cell_indices: ArrayLike,
         cell_count: int,
         /,
-    ):
+    ) -> None:
         points = np.asarray(points_m, dtype=np.float64)
         weights = np.asarray(volume_weights_m3, dtype=np.float64)
         indices = np.asarray(cell_indices)
@@ -140,7 +140,7 @@ class FreeSpaceGravityPlan(StrictModule, NonTrainableState):
         *,
         minimum_separation_m: float,
         block_size: int = 4096,
-    ):
+    ) -> None:
         if not isinstance(source, GravityQuadratureSource):
             raise TypeError("Free-space gravity requires GravityQuadratureSource.")
         if not isinstance(coordinates, GeospatialContract):

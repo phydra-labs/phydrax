@@ -32,7 +32,7 @@ class ChargedParticlePlan(StrictModule, NonTrainableState):
         *,
         require_constant_specific_charge: bool = True,
         tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         values = np.asarray(charges)
         identifier = str(species_id)
         tolerance_ = float(tolerance)
@@ -72,7 +72,9 @@ class PreparedChargedParticles(StrictModule, NonTrainableState):
     reference_specific_charge: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ChargedParticlePlan, particles: ParticleDiscretization, /):
+    def __init__(
+        self, plan: ChargedParticlePlan, particles: ParticleDiscretization, /
+    ) -> None:
         if not isinstance(plan, ChargedParticlePlan):
             raise TypeError("plan must be ChargedParticlePlan.")
         if not isinstance(particles, ParticleDiscretization):

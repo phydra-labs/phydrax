@@ -24,7 +24,7 @@ from ._adaptive import (
 class _NarrowBandTermProxy:
     def __init__(
         self, term: PointwiseSamplingTerm, policy: "NarrowBandCollocationPolicy"
-    ):
+    ) -> None:
         self.term = term
         self.narrow_band_policy = policy
 
@@ -90,7 +90,7 @@ class NarrowBandCollocationPolicy(AbstractCollocationPolicy):
         band_strength: float = 1.0,
         residual_strength: float = 1.0,
         normalization_epsilon: float = 1.0e-12,
-    ):
+    ) -> None:
         name = str(level_set_field)
         width = float(band_width)
         band = float(band_strength)

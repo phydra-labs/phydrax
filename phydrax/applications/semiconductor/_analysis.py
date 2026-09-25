@@ -207,7 +207,7 @@ def _evidence(records, point_valid, shape):
     )
 
 
-def _require_dynamic_charge_storage(prepared):
+def _require_dynamic_charge_storage(prepared) -> None:
     if any(
         isinstance(model, SemiconductorMaterial)
         and model.incomplete_ionization is not None
@@ -461,7 +461,7 @@ def semiconductor_sensitivity(
     )
 
 
-def _same_topology(left, right):
+def _same_topology(left, right) -> None:
     a, b = left.plan, right.plan
     if (
         a.support.source_topology_id != b.support.source_topology_id

@@ -38,7 +38,7 @@ class QnmModeTable(StrictModule, NonTrainableState):
         *,
         time_unit="geometric-time",
         frequency_convention="cycles-per-time",
-    ):
+    ) -> None:
         if not isinstance(provenance, ObservationDataProvenance):
             raise TypeError("provenance must be ObservationDataProvenance.")
         unit = str(time_unit).strip()
@@ -114,7 +114,7 @@ class RingdownPlan(StrictModule, NonTrainableState):
     modes: QnmModeTable
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, modes: QnmModeTable, /):
+    def __init__(self, modes: QnmModeTable, /) -> None:
         if not isinstance(modes, QnmModeTable):
             raise TypeError("modes must be a QnmModeTable.")
         self.modes = modes

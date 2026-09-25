@@ -106,7 +106,7 @@ class FirstOrderAVR(StrictModule):
     lower: float = -math.inf
     upper: float = math.inf
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         _positive(self.gain, "AVR gain")
         _positive(self.time_constant, "AVR time_constant")
         _limits(self.lower, self.upper, "AVR limits")
@@ -128,7 +128,7 @@ class DroopGovernor(StrictModule):
     lower: float = -math.inf
     upper: float = math.inf
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         _positive(self.droop, "Governor droop")
         _positive(self.time_constant, "Governor time_constant")
         _limits(self.lower, self.upper, "Governor limits")
@@ -149,7 +149,7 @@ class ClassicalMachine(StrictModule):
     stator_resistance: float = 0.0
     governor: FixedGovernor | DroopGovernor = eqx.field(default_factory=FixedGovernor)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         _machine_parameters(self)
         _positive(self.xd_prime, "xd_prime")
 
@@ -175,7 +175,7 @@ class Order4Machine(StrictModule):
     avr: FixedExciter | FirstOrderAVR = eqx.field(default_factory=FixedExciter)
     governor: FixedGovernor | DroopGovernor = eqx.field(default_factory=FixedGovernor)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         _machine_parameters(self)
         for name, value in (
             ("xd", self.xd),
@@ -728,7 +728,7 @@ class PowerEvent(StrictModule):
     target: str = eqx.field(static=True)
     admittance: complex = eqx.field(static=True, default=0j)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         if not math.isfinite(self.time):
             raise ValueError("Event time must be finite.")
         if self.kind not in ("fault", "clear", "trip", "reclose"):

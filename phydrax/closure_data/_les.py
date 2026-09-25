@@ -57,7 +57,7 @@ class LESAnalysisReference(StrictModule, NonTrainableState):
         filter_id: str,
         target_id: str,
         analysis_dag_id: str,
-    ):
+    ) -> None:
         values = tuple(
             str(value).strip()
             for value in (
@@ -124,7 +124,7 @@ class PeriodicLESAnalysisContext(StrictModule, NonTrainableState):
         /,
         *,
         reference_manifest_id: str,
-    ):
+    ) -> None:
         if not isinstance(source, TensorSpectralDiscretization) or not isinstance(
             resolved, TensorSpectralDiscretization
         ):

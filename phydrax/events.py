@@ -39,7 +39,7 @@ class DeterministicEventAddress(StrictModule, NonTrainableState):
         channel: int,
         ordinal: int,
         /,
-    ):
+    ) -> None:
         realization = str(realization_id).strip()
         integers = tuple(
             (
@@ -88,7 +88,7 @@ class FixedCapacityEventState(StrictModule):
         active_mask: ArrayLike,
         overflow: ArrayLike,
         /,
-    ):
+    ) -> None:
         source = jnp.asarray(source_ids)
         recipient = jnp.asarray(recipient_ids, dtype=source.dtype)
         channel = jnp.asarray(channels, dtype=jnp.int32)

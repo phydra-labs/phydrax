@@ -91,7 +91,7 @@ class StochasticVolterraProblem(StrictModule):
         free_term: VolterraFreeTerm | None = None,
         args: Any = None,
         problem_id: str = "stochastic-volterra-problem",
-    ):
+    ) -> None:
         if not callable(drift):
             raise TypeError("drift must be callable.")
         if diffusion is not None and not callable(diffusion):
@@ -219,7 +219,7 @@ class ConvolutionVolterraProblem(StrictModule):
         free_term: VolterraFreeTerm | None = None,
         args: Any = None,
         problem_id: str = "convolution-volterra-problem",
-    ):
+    ) -> None:
         if kernel is not None and not callable(kernel):
             raise TypeError("kernel must be callable or None.")
         if diffusion_kernel is not None and not callable(diffusion_kernel):
@@ -330,7 +330,7 @@ class MemoryEquationSolution(StrictModule):
         resolved_method: str | None = None,
         metadata: Mapping[str, Any] | None = None,
         continuation: Any = None,
-    ):
+    ) -> None:
         if realization is not None and not isinstance(realization, WienerRealization):
             raise TypeError("realization must be a WienerRealization or None.")
         sample_shape = () if realization is None else realization.sample_shape

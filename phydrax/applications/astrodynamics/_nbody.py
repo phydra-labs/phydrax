@@ -35,7 +35,7 @@ class NBodyState(StrictModule):
         particles: ParticleDiscretization,
         context: AstrodynamicsContext,
         /,
-    ):
+    ) -> None:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
         if not isinstance(context, AstrodynamicsContext):
@@ -82,7 +82,7 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
         gravitational_constant: ArrayLike = 1.0,
         softening: ArrayLike = 0.0,
         collision_distance: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
         if particles.ambient_dimension != 3:
@@ -198,7 +198,7 @@ class NBodyPropagationPlan(StrictModule, NonTrainableState):
     times: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, gravity: DirectNBodyGravityPlan, times: ArrayLike, /):
+    def __init__(self, gravity: DirectNBodyGravityPlan, times: ArrayLike, /) -> None:
         if not isinstance(gravity, DirectNBodyGravityPlan):
             raise TypeError("gravity must be a DirectNBodyGravityPlan.")
         times_host = np.asarray(times, dtype=np.float64)

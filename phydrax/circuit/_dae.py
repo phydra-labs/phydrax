@@ -48,7 +48,7 @@ class CircuitInputBinding(StrictModule):
         input_names: Sequence[str],
         indices: Sequence[int],
         /,
-    ):
+    ) -> None:
         identifier = str(instance_id)
         names = tuple(str(name) for name in input_names)
         bound = tuple(indices)

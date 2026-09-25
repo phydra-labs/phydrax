@@ -35,7 +35,7 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
     default_dof_points: Array
     dof_map_id: str = eqx.field(static=True)
 
-    def __init__(self, mesh: CellMesh, element: VirtualElementSpec, /):
+    def __init__(self, mesh: CellMesh, element: VirtualElementSpec, /) -> None:
         if not isinstance(mesh.connectivity, PolygonalConnectivity):
             raise TypeError(
                 "Virtual elements require two-dimensional polygon connectivity."

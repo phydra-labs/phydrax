@@ -40,7 +40,7 @@ class NucleotideStructureQualifier(StrictModule):
 
     def __init__(
         self, binding, *, maximum_ring_deviation, backbone_interval, image_policy
-    ):
+    ) -> None:
         if (
             image_policy not in ("nonperiodic", "unwrapped")
             or not np.isfinite(maximum_ring_deviation)

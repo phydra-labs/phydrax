@@ -102,7 +102,7 @@ class SINDyProblem(StrictModule):
         data: TrajectoryData,
         library: AbstractFeatureLibrary,
         formulation: AbstractSINDyFormulation,
-    ):
+    ) -> None:
         if not isinstance(data, TrajectoryData):
             raise TypeError("data must be TrajectoryData.")
         if not isinstance(library, AbstractFeatureLibrary):
@@ -278,7 +278,7 @@ class StrongSINDyFormulation(AbstractSINDyFormulation):
     formulation: SINDyFormulationKind = eqx.field(static=True)
     formulation_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.formulation = "strong"
         self.formulation_id = "strong:pointwise-derivative"
 
@@ -334,7 +334,7 @@ class DiscreteSINDyFormulation(AbstractSINDyFormulation):
     formulation_id: str = eqx.field(static=True)
     lag: int = eqx.field(static=True)
 
-    def __init__(self, *, lag: int = 1):
+    def __init__(self, *, lag: int = 1) -> None:
         resolved_lag = int(lag)
         if resolved_lag < 1:
             raise ValueError("lag must be positive.")
@@ -528,7 +528,7 @@ class IntegralSINDyFormulation(AbstractSINDyFormulation):
         stride: int = 1,
         quadrature: WindowQuadrature = "trapezoid",
         boundary: WindowBoundary = "drop",
-    ):
+    ) -> None:
         if quadrature not in ("left", "trapezoid"):
             raise ValueError("quadrature must be 'left' or 'trapezoid'.")
         if boundary not in ("drop", "partial"):
@@ -625,7 +625,7 @@ class WeakSINDyFormulation(AbstractSINDyFormulation):
         test_orders: Sequence[int] = (1,),
         quadrature: WindowQuadrature = "trapezoid",
         boundary: WindowBoundary = "drop",
-    ):
+    ) -> None:
         orders = tuple(test_orders)
         if (
             not orders

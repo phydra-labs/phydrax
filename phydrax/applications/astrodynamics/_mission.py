@@ -35,7 +35,7 @@ class TargetingResidualPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, propagator, terminal_projection, target, /, *, plan_id="mission-targeting"
-    ):
+    ) -> None:
         if not callable(propagator) or not callable(terminal_projection):
             raise TypeError("Targeting models must be callable.")
         self.propagator = propagator
@@ -76,7 +76,7 @@ class AccessPlan(StrictModule, NonTrainableState):
         horizon_elevation: ArrayLike = 0.0,
         maximum_range: ArrayLike = np.finfo(np.float32).max,
         /,
-    ):
+    ) -> None:
         horizon = np.asarray(horizon_elevation, dtype=np.float64)
         maximum = np.asarray(maximum_range, dtype=np.float64)
         if (
@@ -145,7 +145,7 @@ class ConjunctionPlan(StrictModule, NonTrainableState):
     hard_body_radius: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, hard_body_radius: ArrayLike, /):
+    def __init__(self, hard_body_radius: ArrayLike, /) -> None:
         radius = np.asarray(hard_body_radius, dtype=np.float64)
         if radius.shape != () or not np.isfinite(radius) or radius < 0.0:
             raise ValueError("hard_body_radius must be a finite nonnegative scalar.")

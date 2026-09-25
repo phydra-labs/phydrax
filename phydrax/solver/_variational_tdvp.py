@@ -75,7 +75,7 @@ class VariationalTDVPPolicy(StrictModule):
         final_chain_diagnostics: bool = True,
         linear_policy: LinearSolvePolicy | None = None,
         nullspace_policy: NullspacePolicy | None = None,
-    ):
+    ) -> None:
         if mode not in ("real-time", "imaginary-time"):
             raise ValueError("mode must be 'real-time' or 'imaginary-time'.")
         steps = int(num_steps)

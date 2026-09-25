@@ -36,7 +36,7 @@ class AerothermodynamicValidationCase(StrictModule, NonTrainableState):
         reference_values: ArrayLike,
         uncertainties: ArrayLike,
         /,
-    ):
+    ) -> None:
         name_ = str(name)
         domain_ = str(domain)
         observables = tuple(str(value) for value in observable_names)
@@ -107,7 +107,7 @@ class AerothermodynamicValidationCampaignPlan(StrictModule, NonTrainableState):
         /,
         *,
         acceptance_sigma: float = 3.0,
-    ):
+    ) -> None:
         cases_ = tuple(cases)
         sigma = float(acceptance_sigma)
         if (

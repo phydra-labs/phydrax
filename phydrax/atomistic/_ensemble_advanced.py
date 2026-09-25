@@ -42,7 +42,7 @@ class AtomisticSplittingPlan(StrictModule, NonTrainableState):
     coefficients: tuple[float, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, operators, coefficients, /):
+    def __init__(self, operators, coefficients, /) -> None:
         ops = tuple(operators)
         coeff = tuple(float(value) for value in coefficients)
         if (
@@ -118,7 +118,7 @@ class BussiThermostatPlan(AbstractThermostatPlan):
     time_constant: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, temperature: float, time_constant: float, /):
+    def __init__(self, temperature: float, time_constant: float, /) -> None:
         if min(float(temperature), float(time_constant)) <= 0.0:
             raise ValueError("Bussi temperature and time constant must be positive.")
         self.temperature, self.time_constant = float(temperature), float(time_constant)
@@ -175,7 +175,7 @@ class NoseHooverChainPlan(AbstractThermostatPlan):
 
     def __init__(
         self, temperature: float, /, *, chain_length: int = 3, time_constant: float = 0.1
-    ):
+    ) -> None:
         if float(temperature) <= 0 or int(chain_length) <= 0 or float(time_constant) <= 0:
             raise ValueError("Nose-Hoover chain parameters are invalid.")
         self.temperature, self.chain_length, self.time_constant = (
@@ -250,7 +250,7 @@ class GeneralizedLangevinPlan(AbstractThermostatPlan):
 
     def __init__(
         self, drift_matrix: ArrayLike, diffusion_factor: ArrayLike, temperature: float, /
-    ):
+    ) -> None:
         drift_host = np.asarray(drift_matrix, dtype=np.float64)
         diffusion_host = np.asarray(diffusion_factor, dtype=np.float64)
         if (
@@ -329,7 +329,7 @@ class NoisyForceLangevinPlan(AbstractThermostatPlan):
 
     def __init__(
         self, friction: float, force_noise_variance: float, temperature: float, /
-    ):
+    ) -> None:
         if min(friction, force_noise_variance, temperature) <= 0:
             raise ValueError("Noisy-force Langevin parameters must be positive.")
         base = GeneralizedLangevinPlan(
@@ -375,7 +375,7 @@ class AnisotropicPressurePlan(StrictModule, NonTrainableState):
         /,
         *,
         semi_isotropic: bool = False,
-    ):
+    ) -> None:
         pressure_host = np.asarray(target_pressure, dtype=np.float64)
         compress_host = np.asarray(compressibility, dtype=np.float64)
         if (
@@ -464,7 +464,7 @@ class RigidAtomisticCoordinateMap(StrictModule, NonTrainableState):
         local_positions: ArrayLike,
         site_ids: ArrayLike,
         /,
-    ):
+    ) -> None:
         index, local, ids = (
             jnp.asarray(body_indices, dtype=jnp.int32),
             jnp.asarray(local_positions),
@@ -533,7 +533,7 @@ class BrownianDynamicsPlan(StrictModule, NonTrainableState):
     temperature: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, mobility: float, temperature: float, /):
+    def __init__(self, mobility: float, temperature: float, /) -> None:
         if min(float(mobility), float(temperature)) <= 0:
             raise ValueError("Brownian mobility and temperature must be positive.")
         self.mobility, self.temperature = float(mobility), float(temperature)

@@ -353,7 +353,7 @@ class StochasticPathEnsemblePlan(StrictModule):
         dense: bool = False,
         throw: bool = False,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("time_grid must be a TimeGrid.")
         count = int(path_count)

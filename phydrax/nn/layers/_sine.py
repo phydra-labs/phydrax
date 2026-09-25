@@ -41,7 +41,7 @@ class SineLayer(_AbstractBaseModel):
         use_bias: bool = True,
         dtype: Any | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         omega_value = float(omega)
         if not math.isfinite(omega_value) or omega_value <= 0.0:
             raise ValueError("omega must be finite and positive.")

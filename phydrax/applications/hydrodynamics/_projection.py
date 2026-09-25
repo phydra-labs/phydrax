@@ -56,7 +56,7 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 200,
-    ):
+    ) -> None:
 
         if not isinstance(surface, PreparedGraphSurfaceALE):
             raise TypeError("surface must be PreparedGraphSurfaceALE.")

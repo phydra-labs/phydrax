@@ -48,7 +48,7 @@ class QuantumSpinObservablePlan(StrictModule):
     components: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, model: QuantumSpinModel, components: Sequence[str], /):
+    def __init__(self, model: QuantumSpinModel, components: Sequence[str], /) -> None:
         if not isinstance(model, QuantumSpinModel):
             raise TypeError("model must be QuantumSpinModel.")
         values = tuple(str(value) for value in components)

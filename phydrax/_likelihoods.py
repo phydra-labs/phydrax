@@ -119,7 +119,7 @@ class ScalarNaturalExponentialFamilyLikelihood(_AbstractElementwiseLikelihood):
 
     family: AbstractExponentialFamily
 
-    def __init__(self, family: AbstractExponentialFamily):
+    def __init__(self, family: AbstractExponentialFamily) -> None:
         if not isinstance(family, AbstractExponentialFamily):
             raise TypeError("family must implement AbstractExponentialFamily.")
         signature = family.signature
@@ -165,7 +165,7 @@ class CategoricalExponentialFamilyLikelihood(AbstractLikelihood):
         family: CategoricalFamily,
         *,
         prediction_coordinates: Literal["natural", "full_logits"],
-    ):
+    ) -> None:
         if not isinstance(family, CategoricalFamily):
             raise TypeError("family must be a CategoricalFamily.")
         if prediction_coordinates not in ("natural", "full_logits"):
@@ -256,7 +256,7 @@ class IndependentBernoulliLikelihood(AbstractLikelihood):
 
     label_count: int = eqx.field(static=True)
 
-    def __init__(self, label_count: int):
+    def __init__(self, label_count: int) -> None:
         count = int(label_count)
         if count <= 0:
             raise ValueError("label_count must be positive.")
@@ -323,7 +323,7 @@ class OrdinalCumulativeLinkLikelihood(AbstractLikelihood):
         *,
         class_count: int | None = None,
         prediction_mode: Literal["location", "cumulative_logits"] = "location",
-    ):
+    ) -> None:
         if prediction_mode not in ("location", "cumulative_logits"):
             raise ValueError("prediction_mode must be 'location' or 'cumulative_logits'.")
         if prediction_mode == "location":
@@ -449,7 +449,7 @@ class GaussianLikelihood(_AbstractElementwiseLikelihood):
 
     scale: Array
 
-    def __init__(self, scale: ArrayLike):
+    def __init__(self, scale: ArrayLike) -> None:
         scale_array = jnp.asarray(scale, dtype=jnp.float64)
         if bool(jnp.any(~jnp.isfinite(scale_array))) or bool(jnp.any(scale_array <= 0.0)):
             raise ValueError("Gaussian scale must be finite and strictly positive.")
@@ -488,7 +488,7 @@ class GaussianLocationScaleLikelihood(_AbstractElementwiseLikelihood):
 
     min_scale: float
 
-    def __init__(self, *, min_scale: float = 1e-6):
+    def __init__(self, *, min_scale: float = 1e-6) -> None:
         minimum = float(min_scale)
         if not jnp.isfinite(minimum) or minimum <= 0.0:
             raise ValueError("min_scale must be finite and strictly positive.")
@@ -554,7 +554,7 @@ class StudentTLikelihood(_AbstractElementwiseLikelihood):
     df: Array
     scale: Array
 
-    def __init__(self, df: ArrayLike, scale: ArrayLike):
+    def __init__(self, df: ArrayLike, scale: ArrayLike) -> None:
         df_array = jnp.asarray(df, dtype=jnp.float64)
         scale_array = jnp.asarray(scale, dtype=jnp.float64)
         if bool(jnp.any(~jnp.isfinite(df_array))) or bool(jnp.any(df_array <= 0.0)):
@@ -615,7 +615,7 @@ class CircularComplexGaussianLikelihood(AbstractLikelihood):
 
     scale: Array
 
-    def __init__(self, scale: ArrayLike):
+    def __init__(self, scale: ArrayLike) -> None:
         scale_array = jnp.asarray(scale)
         if not jnp.issubdtype(scale_array.dtype, jnp.floating):
             raise TypeError("Circular complex Gaussian scale must be real floating.")
@@ -701,7 +701,7 @@ class ComplexGaussianLikelihood(AbstractLikelihood):
         regularization: ArrayLike = 0.0,
         hermitian_tolerance: float = 0.0,
         symmetry_tolerance: float = 0.0,
-    ):
+    ) -> None:
         covariance_array = jnp.asarray(covariance)
         if (
             covariance_array.ndim != 2
@@ -858,7 +858,7 @@ class ContaminatedGaussianLikelihood(_AbstractElementwiseLikelihood):
         *,
         outlier_scale_factor: ArrayLike = 10.0,
         outlier_probability: ArrayLike = 0.01,
-    ):
+    ) -> None:
         scale = jnp.asarray(scale, dtype=jnp.float64)
         factor = jnp.asarray(outlier_scale_factor, dtype=jnp.float64)
         probability = jnp.asarray(outlier_probability, dtype=jnp.float64)
@@ -948,7 +948,7 @@ class CensoredGaussianLikelihood(_AbstractElementwiseLikelihood):
     lower: Array
     upper: Array
 
-    def __init__(self, scale: ArrayLike, lower: ArrayLike, upper: ArrayLike):
+    def __init__(self, scale: ArrayLike, lower: ArrayLike, upper: ArrayLike) -> None:
         scale = jnp.asarray(scale, dtype=jnp.float64)
         lower = jnp.asarray(lower, dtype=jnp.float64)
         upper = jnp.asarray(upper, dtype=jnp.float64)
@@ -1032,7 +1032,7 @@ class HuberObjective(StrictModule):
 
     transition: Array
 
-    def __init__(self, transition: ArrayLike):
+    def __init__(self, transition: ArrayLike) -> None:
         value = jnp.asarray(transition, dtype=jnp.float64)
         if bool(jnp.any(~jnp.isfinite(value))) or bool(jnp.any(value <= 0)):
             raise ValueError("Huber transition must be finite and strictly positive.")

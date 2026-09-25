@@ -58,7 +58,7 @@ class HardwareTopology(StrictModule):
         couplings: Sequence[tuple[str, str]],
         native_gate_set: Sequence[str],
         /,
-    ):
+    ) -> None:
         wires = tuple(str(value) for value in physical_wire_ids)
         if (
             not wires
@@ -138,7 +138,7 @@ class QuantumCompilationPolicy(StrictModule):
         route_strategy: RouteStrategy,
         maximum_swaps: int,
         gate_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         swaps = int(maximum_swaps)
         tolerance = float(gate_tolerance)
         if route_strategy not in ("swap", "interval"):

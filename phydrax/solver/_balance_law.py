@@ -49,7 +49,7 @@ class BalanceLawProcessState(StrictModule):
         field_names: tuple[str, ...],
         values: tuple[ArrayLike, ...],
         /,
-    ):
+    ) -> None:
         identifier = str(process_id)
         names = tuple(str(name) for name in field_names)
         arrays = tuple(jnp.asarray(value) for value in values)
@@ -200,7 +200,7 @@ class BalanceLawRuntimeState(StrictModule):
         process_states: tuple[BalanceLawProcessState, ...],
         accepted_budget: BalanceLawAcceptedBudget,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             transport_state, (FiniteVolumeRuntimeState, ConstrainedMHDState)
         ):
@@ -268,7 +268,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         *,
         accepted_step_couplings: tuple[AbstractPreparedAcceptedStepCoupling, ...] = (),
         composition: BalanceLawCompositionPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(transport, AbstractPreparedBalanceLawTransport):
             raise TypeError("transport must be a prepared balance-law transport.")
         prepared = tuple(processes)
@@ -731,7 +731,7 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
         /,
         *,
         replay: FiniteVolumeReplayPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(runtime, PreparedBalanceLawRuntime):
             raise TypeError("runtime must be PreparedBalanceLawRuntime.")
         if not isinstance(temporal_mesh, TemporalMesh):

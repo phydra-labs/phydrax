@@ -41,7 +41,7 @@ class MachineSolvePolicy(StrictModule):
         residual_relative: float = 1e-8,
         torque_absolute: float = 1e-8,
         torque_relative: float = 1e-6,
-    ):
+    ) -> None:
         values = tuple(
             map(
                 float,

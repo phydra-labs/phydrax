@@ -28,7 +28,7 @@ _DEFAULT_FINITE_SEARCH = FiniteExhaustiveSearch()
 class _MAPCandidateEvaluator(StrictModule):
     problem: PosteriorProblem
 
-    def __init__(self, problem: PosteriorProblem, /):
+    def __init__(self, problem: PosteriorProblem, /) -> None:
         self.problem = problem
 
     def __call__(self, position: PyTree[Array], /) -> tuple[Array, Array]:
@@ -76,7 +76,7 @@ class MAPCandidateSearchResult(StrictModule):
         invalid_evaluations: int,
         effective_batch_size: int,
         candidate_signature: str,
-    ):
+    ) -> None:
         valid_ = bool(valid)
         if valid_ != (position is not None):
             raise ValueError("A valid MAP candidate result requires one position.")

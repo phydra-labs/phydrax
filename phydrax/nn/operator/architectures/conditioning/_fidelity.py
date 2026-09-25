@@ -262,7 +262,7 @@ class FidelityCorrectionOperator(AbstractOperatorModel):
         *,
         source_level_id: str | None = None,
         target_level_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(baseline_operator, AbstractOperatorModel) or not isinstance(
             correction_operator, AbstractOperatorModel
         ):

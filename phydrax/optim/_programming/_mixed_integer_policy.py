@@ -57,7 +57,7 @@ class MixedIntegerMethodCapabilities(StrictModule, NonTrainableState):
         independent_global_bound: bool,
         exact_arithmetic: bool,
         deterministic: bool,
-    ):
+    ) -> None:
         self.linear_program = bool(linear_program)
         self.quadratic_program = bool(quadratic_program)
         self.conic_program = bool(conic_program)
@@ -116,7 +116,7 @@ class NativeMixedIntegerBranchAndBound(AbstractMixedIntegerMethod):
         tree: BranchAndBoundPolicy | None = None,
         branching_rule: MixedIntegerBranchingRule = "most-fractional",
         inherit_relaxation_start: bool = False,
-    ):
+    ) -> None:
         relaxation_ = ConvexSolvePolicy() if relaxation is None else relaxation
         tree_ = BranchAndBoundPolicy() if tree is None else tree
         if not isinstance(relaxation_, ConvexSolvePolicy):
@@ -193,7 +193,7 @@ class MixedIntegerCertification(StrictModule, NonTrainableState):
         feasibility: float = 1e-7,
         integrality: float = 1e-7,
         objective: float = 1e-7,
-    ):
+    ) -> None:
         values = tuple(float(value) for value in (feasibility, integrality, objective))
         if any(not isfinite(value) or value < 0.0 for value in values):
             raise ValueError(
@@ -217,7 +217,7 @@ class MixedIntegerSolvePolicy(StrictModule):
         /,
         *,
         certification: MixedIntegerCertification | None = None,
-    ):
+    ) -> None:
         method_ = NativeMixedIntegerBranchAndBound() if method is None else method
         certification_ = (
             MixedIntegerCertification() if certification is None else certification

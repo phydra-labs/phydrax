@@ -155,7 +155,7 @@ class BlackHoleArtifactRights(StrictModule, NonTrainableState):
         derivative_use: bool,
         model_execution: bool,
         export: bool,
-    ):
+    ) -> None:
         if artifact_kind not in _ARTIFACT_KINDS:
             raise ValueError("Unknown black-hole artifact kind.")
         if type(size_bytes) is not int:
@@ -287,7 +287,7 @@ class BlackHoleArtifactUsePolicy(StrictModule, NonTrainableState):
         derivative_use: bool = False,
         model_execution: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         intended = _identifier(intended_use, "Intended use")
         licenses = _identifiers(
             accepted_license_ids, "Accepted license IDs", nonempty=True
@@ -337,7 +337,7 @@ class BlackHoleArtifactSchema(StrictModule, NonTrainableState):
         source_format: str,
         semantic_bindings: Mapping[str, str] | Sequence[tuple[str, str]],
         /,
-    ):
+    ) -> None:
         if artifact_kind not in _ARTIFACT_KINDS:
             raise ValueError("Unknown black-hole artifact kind.")
         source = _identifier(source_format, "Source format").lower()
@@ -389,7 +389,7 @@ class NeutralBlackHoleArtifact(StrictModule, NonTrainableState):
         report: AdapterReport,
         artifact_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(resource, BoundedResource) or not isinstance(
             admission, AdmittedExternalArtifact
         ):

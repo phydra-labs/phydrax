@@ -32,7 +32,7 @@ class AdjacentLatticeMaterializer(StrictModule, NonTrainableState):
 
     tie_up: bool = eqx.field(static=True)
 
-    def __init__(self, *, tie_up: bool = True):
+    def __init__(self, *, tie_up: bool = True) -> None:
         self.tie_up = bool(tie_up)
 
     def materialize(
@@ -84,7 +84,7 @@ class MixedIntegerProposalManifest(StrictModule, NonTrainableState):
         /,
         *,
         support_id: str = "unqualified-support",
-    ):
+    ) -> None:
         structure = str(structure_id)
         model = str(model_id)
         support = str(support_id)
@@ -127,7 +127,7 @@ class ParametricMixedIntegerProposal(StrictModule):
         /,
         *,
         materializer: AdjacentLatticeMaterializer | None = None,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
         if not isinstance(manifest, MixedIntegerProposalManifest):

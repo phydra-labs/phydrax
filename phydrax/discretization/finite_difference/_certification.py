@@ -50,7 +50,7 @@ class FDConsistencyReport(StrictModule, NonTrainableState):
         failed_rows: tuple[int, ...],
         tolerance: float,
         stencil_id: str,
-    ):
+    ) -> None:
         self.derivative_order = int(derivative_order)
         self.requested_accuracy_order = int(requested_accuracy_order)
         self.minimum_accuracy_order = int(minimum_accuracy_order)
@@ -94,7 +94,7 @@ class FDAdjointReport(StrictModule, NonTrainableState):
         pairing_adjoint_residual: float,
         tolerance: float,
         operator_id: str,
-    ):
+    ) -> None:
         coordinate = float(coordinate_transpose_residual)
         pairing = float(pairing_adjoint_residual)
         tolerance_ = float(tolerance)
@@ -131,7 +131,7 @@ class FDConservationReport(StrictModule, NonTrainableState):
         global_balance_residual: float | None,
         tolerance: float,
         operator_id: str,
-    ):
+    ) -> None:
         constant = float(constant_state_residual)
         balance = (
             None if global_balance_residual is None else float(global_balance_residual)
@@ -176,7 +176,7 @@ class FDStabilityReport(StrictModule, NonTrainableState):
         assumptions: tuple[str, ...],
         evidence: FDEvidenceKind,
         subject_id: str,
-    ):
+    ) -> None:
         name = str(property_name)
         if not name or evidence not in ("analytic", "algebraic", "numerical", "unknown"):
             raise ValueError("Stability property name/evidence is invalid.")

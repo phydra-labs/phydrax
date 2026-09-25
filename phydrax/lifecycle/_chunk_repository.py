@@ -72,7 +72,7 @@ class CheckpointResourcePolicy(StrictModule, NonTrainableState):
         maximum_outbox_records: int,
         maximum_outbox_bytes: int,
         maximum_json_nesting: int = 32,
-    ):
+    ) -> None:
         resource = _identifier(resource_policy_id, "resource_policy_id")
         names = (
             "maximum_manifest_bytes",
@@ -273,7 +273,7 @@ class RepositoryTransaction(StrictModule, NonTrainableState):
         base_manifest_id: str | None,
         base_pointer_token: str | None,
         started_at: int,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         artifact = _identifier(artifact_id, "artifact_id")
         writer = _identifier(writer_id, "writer_id")
@@ -353,7 +353,7 @@ class ChunkRecord(StrictModule, NonTrainableState):
         encoding: ChunkEncoding,
         object_key: str,
         /,
-    ):
+    ) -> None:
         transaction = _digest(transaction_id, "transaction_id")
         logical = _identifier(logical_name, "logical_name")
         index_ = _nonnegative(index, "index")
@@ -441,7 +441,7 @@ class ArtifactManifest(StrictModule, NonTrainableState):
         *,
         metadata: Mapping[str, str] | Sequence[tuple[str, str]] = (),
         committed_at: int,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         artifact = _identifier(artifact_id, "artifact_id")
         transaction = _digest(transaction_id, "transaction_id")
@@ -538,7 +538,7 @@ class LeaseRecord(StrictModule, NonTrainableState):
         issued_at: int,
         expires_at: int,
         /,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         artifact = _identifier(artifact_id, "artifact_id")
         holder = _identifier(holder_id, "holder_id")
@@ -602,7 +602,7 @@ class LegalHoldRecord(StrictModule, NonTrainableState):
         authority: str,
         placed_at: int,
         /,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         artifact = _identifier(artifact_id, "artifact_id")
         hold = _identifier(hold_id, "hold_id")
@@ -657,7 +657,7 @@ class RetentionPolicy(StrictModule, NonTrainableState):
         keep_latest_commits: int = 1,
         minimum_age_seconds: int = 0,
         abandoned_attempt_grace_seconds: int = 3600,
-    ):
+    ) -> None:
         keep = _nonnegative(keep_latest_commits, "keep_latest_commits")
         age = _nonnegative(minimum_age_seconds, "minimum_age_seconds")
         grace = _nonnegative(
@@ -711,7 +711,7 @@ class TombstoneRecord(StrictModule, NonTrainableState):
         created_at: int,
         eligible_at: int,
         /,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         artifact = _identifier(artifact_id, "artifact_id")
         reason_ = str(reason).strip()
@@ -773,7 +773,7 @@ class GarbageCollectionReport(StrictModule, NonTrainableState):
         removed_artifact_ids: Sequence[str],
         expired_lease_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         collected = _timestamp(collected_at, "collected_at")
         attempts = _identifiers(removed_attempt_ids, "removed_attempt_ids")

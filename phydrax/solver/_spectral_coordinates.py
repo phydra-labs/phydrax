@@ -116,7 +116,7 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
         evolution: AbstractDifferentiableEvolution,
         coordinates: HermitianSpectralCoordinates,
         /,
-    ):
+    ) -> None:
         if not isinstance(evolution, AbstractDifferentiableEvolution):
             raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         if not isinstance(coordinates, HermitianSpectralCoordinates):

@@ -80,7 +80,7 @@ class _UBJArray(list[Any]):
 
     __slots__ = ("marker",)
 
-    def __init__(self, values: list[Any], marker: str | None = None):
+    def __init__(self, values: list[Any], marker: str | None = None) -> None:
         super().__init__(values)
         self.marker = marker
 
@@ -98,7 +98,7 @@ class _UBJSONDecoder:
         "L": (">q", 8),
     }
 
-    def __init__(self, data: bytes):
+    def __init__(self, data: bytes) -> None:
         self.data = data
         self.position = 0
 
@@ -824,7 +824,7 @@ class _TreeData:
         threshold: np.ndarray,
         cover: np.ndarray,
         vector_leaf: bool,
-    ):
+    ) -> None:
         self.categories = categories
         self.categorical_features = categorical_features
         self.default_left = default_left

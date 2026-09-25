@@ -56,7 +56,7 @@ class MACFiniteVolumeCheckpointPlan(StrictModule):
 
     def __init__(
         self, adaptive: MACAdaptiveRolloutPlan, template: MACAdaptiveRuntimeState, /
-    ):
+    ) -> None:
         if not isinstance(adaptive, MACAdaptiveRolloutPlan) or not isinstance(
             template, MACAdaptiveRuntimeState
         ):

@@ -50,7 +50,7 @@ class GaugeCovariantWignerProfile(StrictModule, NonTrainableState):
     production_ready: bool = eqx.field(static=True)
     profile_id: str = eqx.field(static=True)
 
-    def __init__(self, production_evidence_ids: Sequence[str] = (), /):
+    def __init__(self, production_evidence_ids: Sequence[str] = (), /) -> None:
         evidence = tuple(
             _identifier(value, "production_evidence_id")
             for value in production_evidence_ids
@@ -123,7 +123,7 @@ class GaugeCovariantWignerPlan(StrictModule, NonTrainableState):
         nonabelian_link_owner_id: str | None = None,
         maximum_work_bytes: int = 256_000_000,
         production_evidence_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(quantum_support, QuantumKineticState):
             raise TypeError("quantum_support must be a QuantumKineticState.")
         if not isinstance(link_space, MatrixGaugeLinkSpace):

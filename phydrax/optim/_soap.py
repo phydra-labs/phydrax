@@ -25,7 +25,7 @@ class SOAPPreconditioner:
 
     matrices: tuple[PreconditionerMatrix, ...]
 
-    def __init__(self, matrices: Iterable[PreconditionerMatrix], /):
+    def __init__(self, matrices: Iterable[PreconditionerMatrix], /) -> None:
         self.matrices = tuple(matrices)
 
     def tree_flatten(self):

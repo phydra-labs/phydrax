@@ -43,7 +43,7 @@ class OptimistixMethod(AbstractMinimizationMethod):
         *,
         adjoint: optx.AbstractAdjoint | None = None,
         options: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(solver, optx.AbstractMinimiser):
             raise TypeError("solver must be an optimistix.AbstractMinimiser.")
         adjoint_ = optx.ImplicitAdjoint() if adjoint is None else adjoint

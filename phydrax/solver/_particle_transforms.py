@@ -36,7 +36,7 @@ class ShepardDensityRenormalizationTransform(
         apply_every_steps: int,
         first_step: int | None = None,
         maximum_relative_correction: float = 0.5,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedWeaklyCompressibleSPHDynamics):
             raise TypeError("dynamics must be PreparedWeaklyCompressibleSPHDynamics.")
         if not dynamics.state_layout.density_evolved:

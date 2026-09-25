@@ -30,7 +30,7 @@ class PreparedTaylorEOS(StrictModule, NonTrainableState):
     inverse_factorials: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, estimate: SusceptibilityEstimate, /):
+    def __init__(self, estimate: SusceptibilityEstimate, /) -> None:
         if not isinstance(estimate, SusceptibilityEstimate):
             raise TypeError("estimate must be SusceptibilityEstimate.")
         exponents = np.asarray(
@@ -212,7 +212,7 @@ class HeavyIonConstraintPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
         maximum_iterations: int = 32,
-    ):
+    ) -> None:
         ratio = float(charge_to_baryon_ratio)
         tolerance_ = float(tolerance)
         iterations = int(maximum_iterations)

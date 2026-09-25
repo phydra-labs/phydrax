@@ -30,7 +30,7 @@ class NonlinearPotentialFlowPolicy3D(StrictModule, NonTrainableState):
         viscosity: float = 0.0,
         maximum_surface_speed: float,
         minimum_vertical_clearance: float,
-    ):
+    ) -> None:
         values = tuple(
             map(
                 float,
@@ -175,7 +175,9 @@ class SecondOrderPotentialFlowPlan3D(StrictModule, NonTrainableState):
     maximum_frequency_pairs: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, frequencies: ArrayLike, /, *, maximum_frequency_pairs: int):
+    def __init__(
+        self, frequencies: ArrayLike, /, *, maximum_frequency_pairs: int
+    ) -> None:
         values = np.asarray(frequencies, dtype=np.float64)
         limit = int(maximum_frequency_pairs)
         if (

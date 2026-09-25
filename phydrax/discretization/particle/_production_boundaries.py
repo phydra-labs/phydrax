@@ -71,7 +71,7 @@ class WallRelaxationPlan(StrictModule, NonTrainableState):
         *,
         iterations: int = 20,
         step_fraction: float = 0.1,
-    ):
+    ) -> None:
         if target_spacing <= 0.0 or iterations <= 0 or not 0.0 < step_fraction <= 0.5:
             raise ValueError("Wall relaxation parameters are invalid.")
         self.iterations = int(iterations)
@@ -156,7 +156,7 @@ class FreeSurfaceReconstructionPlan(StrictModule, NonTrainableState):
     maximum_fit_residual: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_fit_residual: float = 0.25, /):
+    def __init__(self, maximum_fit_residual: float = 0.25, /) -> None:
         if maximum_fit_residual <= 0.0:
             raise ValueError("maximum_fit_residual must be positive.")
         self.maximum_fit_residual = float(maximum_fit_residual)
@@ -231,7 +231,7 @@ class ContactAnglePlan(StrictModule, NonTrainableState):
     angle: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, angle: float, /):
+    def __init__(self, angle: float, /) -> None:
         angle_ = float(angle)
         if not 0.0 < angle_ < np.pi:
             raise ValueError("Contact angle must be in (0, pi).")

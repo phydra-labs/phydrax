@@ -28,7 +28,7 @@ class FockContinuationPolicy(StrictModule):
         *,
         top_probability_tolerance: float = 1e-6,
         observable_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         maxima = tuple(maximum_cutoffs)
         increments_ = tuple(increments)
         top_tolerance = float(top_probability_tolerance)
@@ -70,7 +70,7 @@ class FockContinuationStage(StrictModule):
         *,
         cutoffs: tuple[int, ...],
         evidence_valid: ArrayLike = True,
-    ):
+    ) -> None:
         self.state = jnp.asarray(state)
         self.observable = jnp.asarray(observable)
         self.top_probabilities = jnp.asarray(top_probabilities)
@@ -96,7 +96,7 @@ class FockContinuationResult(StrictModule):
         *,
         converged: ArrayLike,
         exhausted: ArrayLike,
-    ):
+    ) -> None:
         self.stages = tuple(stages)
         self.converged = jnp.asarray(converged, dtype=jnp.bool_)
         self.exhausted = jnp.asarray(exhausted, dtype=jnp.bool_)
@@ -118,7 +118,7 @@ class PreparedFockRefinementPlan(StrictModule):
         observable_tolerance: float,
         boundary_tolerance: float,
         plan_id: str,
-    ):
+    ) -> None:
         spaces = tuple(BosonicFockSpace(cutoffs) for cutoffs in cutoff_sequence)
         if len(spaces) < 2:
             raise ValueError("Prepared Fock refinement requires at least two epochs.")

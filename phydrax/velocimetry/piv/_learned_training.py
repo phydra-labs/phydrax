@@ -79,7 +79,7 @@ class LearnedPIVDataset(StrictModule, NonTrainableState):
         scenario_ids: Sequence[str] = (),
         partition: DatasetPartition = "training",
         dataset_id: str | None = None,
-    ):
+    ) -> None:
         first = jnp.asarray(first_images)
         second = jnp.asarray(second_images)
         if first.ndim != 4 or second.shape != first.shape:
@@ -260,7 +260,7 @@ class LearnedPIVTrainingConfig(StrictModule, NonTrainableState):
         maximum_gradient_norm: float = 1.0,
         loss: MultiScaleRobustPIVLoss | None = None,
         jit: bool = True,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         batch = int(batch_size)
         rate = float(learning_rate)

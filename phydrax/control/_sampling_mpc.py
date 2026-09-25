@@ -60,7 +60,7 @@ class SamplingMPCRealizations(StrictModule, NonTrainableState):
         campaign_id: str,
         policy: SamplingMPCRealizationPolicy = "fixed",
         batch_id: str | None = None,
-    ):
+    ) -> None:
         identifiers = tuple(str(value) for value in realization_ids)
         if not identifiers or any(not value for value in identifiers):
             raise ValueError("realization_ids must be non-empty identifiers.")

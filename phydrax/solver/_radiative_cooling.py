@@ -68,7 +68,7 @@ class RadiativeCoolingProcessPlan(AbstractBalanceLawProcessPlan):
         accuracy_fraction: float = 0.1,
         maximum_iterations: int = 20,
         tolerance: float = 1e-9,
-    ):
+    ) -> None:
         if not isinstance(curve, TabulatedCoolingCurve):
             raise TypeError("curve must be TabulatedCoolingCurve.")
         amplitude_ = float(amplitude)
@@ -156,7 +156,7 @@ class PreparedRadiativeCoolingProcess(AbstractPreparedBalanceLawProcess):
         plan: RadiativeCoolingProcessPlan,
         transport: AbstractPreparedBalanceLawTransport,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, RadiativeCoolingProcessPlan):
             raise TypeError("plan must be RadiativeCoolingProcessPlan.")
         if not isinstance(

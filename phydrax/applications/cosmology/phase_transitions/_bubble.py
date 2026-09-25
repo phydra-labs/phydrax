@@ -38,7 +38,7 @@ class ThinWallBubblePlan(StrictModule, NonTrainableState):
         maximum_steps: int,
         minimum_radius: float = 1.0e-8,
         maximum_energy_residual: float = 1.0e-6,
-    ):
+    ) -> None:
         values = tuple(
             map(
                 float,
@@ -108,7 +108,7 @@ class BubbleParticleEnsemble(StrictModule, NonTrainableState):
         inside: ArrayLike,
         active: ArrayLike,
         /,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions)
         momenta_ = jnp.asarray(momenta, dtype=positions_.dtype)
         weights_ = jnp.asarray(weights, dtype=positions_.dtype)

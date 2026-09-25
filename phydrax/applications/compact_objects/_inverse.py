@@ -60,7 +60,7 @@ class FixedBranchModelEvaluation(StrictModule):
         topology_fixed: ArrayLike = True,
         realization_id: str,
         branch_id: str,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values).reshape((-1,))
         signature = jax.lax.stop_gradient(
             jnp.asarray(branch_signature, dtype=jnp.int32).reshape((-1,))
@@ -170,7 +170,7 @@ class FixedBranchInverseAdapter(StrictModule, NonTrainableState):
         adapter_id: str,
         evaluator_semantic_id: str | None = None,
         evaluator_numeric_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         parameters = int(parameter_count)

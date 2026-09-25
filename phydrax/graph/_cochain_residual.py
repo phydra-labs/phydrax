@@ -116,7 +116,7 @@ class CochainResidualProgram(StrictModule):
         residual_fn: Callable[..., Mapping[str, Any]],
         residual_semantic_id: str | None = None,
         residual_numeric_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(residual_fn):
             raise TypeError("CochainResidualProgram residual_fn must be callable.")
         self.input_specs = _validate_specs("input", inputs)

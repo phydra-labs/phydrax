@@ -53,7 +53,7 @@ class HolomorphicTraceCertificate(StrictModule, NonTrainableState):
         field_id: str,
         topology_assumptions: tuple[str, ...] = (),
         residual_bound: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if evidence_kind not in (
             "finite-functional-exact",
             "continuous-subspace-exact",
@@ -116,7 +116,7 @@ class HolomorphicContourFunctional(StrictModule, NonTrainableState):
         output_index: int = 0,
         component_weight: complex = 1.0 + 0.0j,
         construction: str = "holomorphic-contour-moment",
-    ):
+    ) -> None:
         nodes_raw = np.asarray(nodes, dtype=np.complex128)
         if nodes_raw.ndim == 1:
             nodes_raw = nodes_raw[:, None]
@@ -221,7 +221,7 @@ class DiskHolomorphicTracePlan(StrictModule, NonTrainableState):
         *,
         center: complex = 0.0j,
         radius: float = 1.0,
-    ):
+    ) -> None:
         mode = int(maximum_mode)
         center_ = complex(center)
         radius_ = float(radius)
@@ -309,7 +309,7 @@ class DiskHolomorphicTraceLift(StrictModule, NonTrainableState):
         plan: DiskHolomorphicTracePlan,
         coefficient_vector: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, DiskHolomorphicTracePlan):
             raise TypeError("plan must be DiskHolomorphicTracePlan.")
         coefficients = jnp.asarray(coefficient_vector)

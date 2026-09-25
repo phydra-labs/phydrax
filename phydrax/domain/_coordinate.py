@@ -37,7 +37,7 @@ class CoordinateSpec(StrictModule):
         kind: CoordinateKind,
         differentiable: bool,
         dtype: str | None = "float",
-    ):
+    ) -> None:
         if event_shape is not None:
             shape = tuple(event_shape)
             if any(size <= 0 for size in shape):

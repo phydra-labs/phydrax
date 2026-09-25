@@ -31,7 +31,7 @@ class CollectiveVariableFeatureLibrary(AbstractFeatureLibrary):
         dynamics: PreparedAtomisticDynamics,
         variables: AbstractCollectiveVariableProgram,
         /,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedAtomisticDynamics):
             raise TypeError("dynamics must be PreparedAtomisticDynamics.")
         if not isinstance(variables, AbstractCollectiveVariableProgram):

@@ -53,7 +53,7 @@ class MomentumSubtractionScheme(StrictModule, NonTrainableState):
         subtraction_point: ArrayLike,
         subtraction_degree: int,
         /,
-    ):
+    ) -> None:
         name_ = str(name).strip()
         scale_ = float(scale)
         point = np.asarray(subtraction_point, dtype=np.float64)
@@ -99,7 +99,7 @@ class PolynomialCounterterm(StrictModule, NonTrainableState):
         *,
         perturbative_order: int,
         maximum_terms: int = 4_096,
-    ):
+    ) -> None:
         powers = np.asarray(exponents)
         values = np.asarray(coefficients, dtype=np.complex128)
         order, maximum = int(perturbative_order), int(maximum_terms)
@@ -185,7 +185,7 @@ class BPHZSubtractionPlan(StrictModule, NonTrainableState):
         *,
         maximum_terms: int = 4_096,
         maximum_matrix_elements: int = 1_000_000,
-    ):
+    ) -> None:
         if not isinstance(scheme, MomentumSubtractionScheme):
             raise TypeError("scheme must be a MomentumSubtractionScheme.")
         shape = tuple(polynomial_shape)
@@ -286,7 +286,7 @@ class PreparedBPHZSubtraction(StrictModule, NonTrainableState):
         condition_matrix: Array,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.subtraction_operator = subtraction_operator
         self.condition_matrix = condition_matrix

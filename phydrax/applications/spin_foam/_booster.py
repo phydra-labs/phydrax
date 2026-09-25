@@ -34,7 +34,7 @@ class SL2CBoosterReferencePlan(StrictModule):
         radial_cutoff: float = 16.0,
         quadrature_order: int = 256,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         cutoff = float(radial_cutoff)
         order = int(quadrature_order)
         tolerance_value = float(tolerance)

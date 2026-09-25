@@ -53,7 +53,7 @@ class UVVisibleSpectrumResult(StrictModule, NonTrainableState):
         axis: SpectralAxis,
         source_result_id: str,
         /,
-    ):
+    ) -> None:
         positions = jnp.asarray(line_positions)
         strengths = jnp.asarray(oscillator_strengths, dtype=positions.dtype)
         dipoles = jnp.asarray(transition_dipoles, dtype=positions.dtype)
@@ -132,7 +132,7 @@ class UVVisibleSpectrumPlan(StrictModule, NonTrainableState):
         grid_size: int = 2001,
         fwhm: float,
         area_tolerance: float = 5.0e-3,
-    ):
+    ) -> None:
         if not isinstance(axis, SpectralAxis) or not isinstance(
             line_shape, SpectralLineShape
         ):

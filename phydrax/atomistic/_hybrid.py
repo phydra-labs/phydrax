@@ -97,7 +97,7 @@ class RegionMaskedPotential(AbstractAtomisticEnergyTerm):
         /,
         *,
         name: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(term, AbstractAtomisticEnergyTerm):
             raise TypeError("term must be AbstractAtomisticEnergyTerm.")
         if not term.capabilities.local_energy:
@@ -148,7 +148,7 @@ class PreparedRegionMaskedPotential(AbstractPreparedAtomisticEnergyTerm):
         term: AbstractPreparedAtomisticEnergyTerm,
         mask: Array,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.term = term
         self.mask = jnp.asarray(mask, dtype=jnp.bool_)
@@ -188,7 +188,7 @@ class RESPAPlan(StrictModule, NonTrainableState):
         *,
         fast_group: int = 0,
         slow_group: int = 1,
-    ):
+    ) -> None:
         step = float(outer_step_size)
         inner = int(inner_steps)
         fast = int(fast_group)

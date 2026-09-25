@@ -202,7 +202,7 @@ class GaussianOperatorDistribution(AbstractOperatorDistribution):
         case_axes: tuple[str, ...] = (),
         case_shape: tuple[int, ...] = (),
         uncertainty_source: UncertaintySource = "observation",
-    ):
+    ) -> None:
         mean_array = jnp.asarray(mean)
         scale_array = jnp.asarray(scale)
         axes = tuple(str(axis) for axis in case_axes)

@@ -62,7 +62,7 @@ class CellwiseDiffusivity(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     diffusivity_id: str = eqx.field(static=True)
 
-    def __init__(self, tensor_mm2_per_ms: ArrayLike, /):
+    def __init__(self, tensor_mm2_per_ms: ArrayLike, /) -> None:
         tensor_host = np.asarray(tensor_mm2_per_ms, dtype=np.float64)
         if (
             tensor_host.ndim != 3
@@ -166,7 +166,7 @@ class CellStimulusPulse(StrictModule, NonTrainableState):
         stop_ms: float,
         amplitude_per_ms: float,
         /,
-    ):
+    ) -> None:
         ids = tuple(cell_ids)
         if not ids or len(set(ids)) != len(ids) or any(value < 0 for value in ids):
             raise ValueError("cell_ids must be nonempty, unique, and nonnegative.")
@@ -216,7 +216,7 @@ class PhenomenologicalMonodomainPlan(StrictModule, NonTrainableState):
         *,
         pulses: Sequence[CellStimulusPulse] = (),
         field_name: str = "activation",
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError(
                 "discretization must be a prepared FiniteElementDiscretization."
@@ -335,7 +335,7 @@ class PreparedPhenomenologicalMonodomain(StrictModule, NonTrainableState):
         dt_ms: float,
         diffusion_step_limit_ms: float,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.stiffness = stiffness
         self.lumped_mass = lumped_mass

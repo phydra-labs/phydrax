@@ -52,7 +52,7 @@ class DensityGradient1D(StrictModule):
         coefficient=1.0,
         energy_reference,
         provenance,
-    ):
+    ) -> None:
         x = _array(positions, "density-gradient cell centers")
         if x.ndim != 1 or x.size < 2:
             raise ValueError("DensityGradient1D requires at least two cells.")

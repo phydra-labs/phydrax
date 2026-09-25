@@ -19,7 +19,7 @@ class Port:
     orientation: tuple[float, ...]
     frame_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not self.port_id
             or not self.frame_id
@@ -34,7 +34,7 @@ class ScatteringMatrix(StrictModule, NonTrainableState):
     reference_impedances_ohm: Array
     network_id: str = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, reference_impedances_ohm: ArrayLike, /):
+    def __init__(self, values: ArrayLike, reference_impedances_ohm: ArrayLike, /) -> None:
         s = jnp.asarray(values)
         z = jnp.asarray(reference_impedances_ohm)
         if s.ndim != 3 or s.shape[-1] != s.shape[-2] or z.shape != (s.shape[-1],):

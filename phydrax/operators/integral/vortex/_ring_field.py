@@ -31,7 +31,7 @@ class PreparedRingSheetField3D(StrictModule):
     state: VortexRingSheetState
     evaluator_id: str = eqx.field(static=True)
 
-    def __init__(self, state: VortexRingSheetState, /):
+    def __init__(self, state: VortexRingSheetState, /) -> None:
         if not isinstance(state, VortexRingSheetState):
             raise TypeError("state must be VortexRingSheetState.")
         self.state = state

@@ -44,7 +44,7 @@ class MolecularCoarseMapPlan(StrictModule, NonTrainableState):
         *,
         topology: MolecularTopologyPlan | None = None,
         name: str = "molecular-coarse-map",
-    ):
+    ) -> None:
         bead_ids = np.asarray(bead_particle_ids)
         bead_types = np.asarray(bead_type_ids)
         membership = np.asarray(particle_to_bead)
@@ -121,7 +121,9 @@ class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
     anchor_indices: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MolecularCoarseMapPlan, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: MolecularCoarseMapPlan, system: PreparedAtomisticSystem, /
+    ) -> None:
         if not isinstance(plan, MolecularCoarseMapPlan):
             raise TypeError("plan must be MolecularCoarseMapPlan.")
         if not isinstance(system, PreparedAtomisticSystem):
@@ -335,7 +337,7 @@ class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
         validation_batch: AtomisticBatch | None = None,
         validation_fine_forces: ArrayLike | None = None,
         validation_prior_forces: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(mapping, PreparedMolecularCoarseMap):
             raise TypeError("mapping must be PreparedMolecularCoarseMap.")
         if not isinstance(fine_batch, AtomisticBatch):

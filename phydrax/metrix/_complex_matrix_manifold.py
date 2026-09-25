@@ -94,7 +94,7 @@ class UnitaryGroup(AbstractLieGroup):
 
     algebra_shape: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7):
+    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7) -> None:
         dimension_ = int(dimension)
         if dimension_ < 1:
             raise ValueError("Unitary dimension must be positive.")
@@ -186,7 +186,7 @@ class SpecialUnitaryGroup(AbstractLieGroup):
     point_shape: tuple[int, int] = eqx.field(static=True)
     algebra_shape: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7):
+    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7) -> None:
         if int(dimension) < 2:
             raise ValueError("Special-unitary dimension must be at least two.")
         self.unitary = UnitaryGroup(dimension, tolerance=tolerance)
@@ -278,7 +278,7 @@ class UnitaryManifold(AbstractGeodesicManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7):
+    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7) -> None:
         self.group = UnitaryGroup(dimension, tolerance=tolerance)
         self.dimension = self.group.dimension
         self.manifold_id = f"manifold:unitary:{dimension}"
@@ -383,7 +383,7 @@ class SpecialUnitaryManifold(AbstractGeodesicManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7):
+    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7) -> None:
         self.group = SpecialUnitaryGroup(dimension, tolerance=tolerance)
         self.dimension = self.group.dimension
         self.manifold_id = f"manifold:special-unitary:{dimension}"
@@ -486,7 +486,7 @@ class AffineInvariantHPDManifold(AbstractGeodesicManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, tolerance: float = 1e-8):
+    def __init__(self, dimension: int, /, *, tolerance: float = 1e-8) -> None:
         dimension_ = int(dimension)
         if dimension_ < 1:
             raise ValueError("HPD dimension must be positive.")
@@ -636,7 +636,7 @@ class ComplexStiefelManifold(AbstractRiemannianManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, rows: int, columns: int, /, *, tolerance: float = 1e-8):
+    def __init__(self, rows: int, columns: int, /, *, tolerance: float = 1e-8) -> None:
         rows_ = int(rows)
         columns_ = int(columns)
         if not 1 <= columns_ <= rows_:

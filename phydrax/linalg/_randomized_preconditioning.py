@@ -115,7 +115,7 @@ class RandomizedNystromDiagnostics(StrictModule):
         requested_rank: int,
         sketch_size: int,
         refresh_count: int,
-    ):
+    ) -> None:
         self.ritz_values = jnp.asarray(ritz_values)
         self.effective_rank = jnp.asarray(effective_rank, dtype=jnp.int32)
         self.core_minimum_eigenvalue = jnp.asarray(core_minimum_eigenvalue)
@@ -149,7 +149,7 @@ class RandomizedNystromPreconditioner(AbstractPreconditioner, NonTrainableState)
         *,
         space: ArraySpace | PyTreeSpace,
         preconditioner_id: str,
-    ):
+    ) -> None:
         basis_ = jnp.asarray(basis)
         values = jnp.asarray(ritz_values)
         shift_ = jnp.asarray(shift, dtype=values.real.dtype).reshape(())
@@ -242,7 +242,7 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
         probe_refresh: ProbeRefresh = "reuse",
         stabilization: float | None = None,
         psd_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         rank_ = int(rank)
         oversampling_ = int(oversampling)
         shift_ = float(shift)

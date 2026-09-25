@@ -46,7 +46,7 @@ class SelectiveSequenceModel(StrictModule, ParameterOwner):
         return_mode: SelectiveReturnMode = "sequence",
         dtype: Any = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         resolved_depth = int(depth)
         if resolved_depth <= 0:
             raise ValueError("depth must be positive.")

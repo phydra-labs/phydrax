@@ -78,7 +78,7 @@ class FunctionProjectionPolicy(StrictModule, NonTrainableState):
         require_physical_quadrature: bool = False,
         rank_policy: FunctionProjectionRankPolicy = "error",
         channel_metric: Array | None = None,
-    ):
+    ) -> None:
         ridge_ = float(ridge)
         if not math.isfinite(ridge_) or ridge_ < 0.0:
             raise ValueError("ridge must be finite and nonnegative.")
@@ -176,7 +176,7 @@ class FunctionProjectionReport(StrictModule):
         case_shape: tuple[int, ...],
         frame_id: str,
         method: str,
-    ):
+    ) -> None:
         shape = tuple(case_shape)
         coefficient_array = jnp.asarray(coefficients)
         if coefficient_array.shape[: len(shape)] != shape:
@@ -336,7 +336,7 @@ class TopologyFunctionFrameEvaluator(AbstractFunctionFrameEvaluator):
         *,
         feature_name: str,
         evaluator_id: str,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be AbstractArrayModel.")
         if not feature_name or not evaluator_id:
@@ -391,7 +391,7 @@ class PreparedManifoldFunctionFrameEvaluator(AbstractFunctionFrameEvaluator):
     evaluator: Callable[..., Array]
     evidence_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluator: Callable[..., Array], /, *, evidence_id: str):
+    def __init__(self, evaluator: Callable[..., Array], /, *, evidence_id: str) -> None:
         if not callable(evaluator) or not evidence_id:
             raise ValueError(
                 "Prepared manifold evaluator requires callable and evidence id."
@@ -446,7 +446,7 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
         offset_model: AbstractArrayModel | None = None,
         evaluator: AbstractFunctionFrameEvaluator | None = None,
         frame_id: str,
-    ):
+    ) -> None:
         if basis_model is not None and not isinstance(
             basis_model,
             AbstractArrayModel,
@@ -842,7 +842,7 @@ class ProjectionBranchEncoder(AbstractBranchEncoder):
         policy: FunctionProjectionPolicy | None = None,
         coefficient_map: AbstractArrayModel | None = None,
         latent_size: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(frame, LearnedFunctionFrame):
             raise TypeError("frame must be a LearnedFunctionFrame.")
         resolved_policy = FunctionProjectionPolicy() if policy is None else policy
@@ -940,7 +940,7 @@ class FunctionFrameSource(StrictModule):
         *,
         projection_policy: FunctionProjectionPolicy | None = None,
         coefficient_map: AbstractArrayModel | None = None,
-    ):
+    ) -> None:
         if not name:
             raise ValueError("FunctionFrameSource name must be nonempty.")
         if not isinstance(frame, LearnedFunctionFrame):
@@ -981,7 +981,7 @@ class FunctionFrameEncoding(StrictModule):
         case_shape: tuple[int, ...],
         frame_ids: Sequence[tuple[str, str]],
         fusion: Literal["sum", "product", "concat"],
-    ):
+    ) -> None:
         coefficient_values = frozendict(
             (str(name), jnp.asarray(value)) for name, value in coefficients.items()
         )
@@ -1031,7 +1031,7 @@ class FunctionFrameReconstructor(AbstractEncodedOperatorModel):
         target_frame: LearnedFunctionFrame,
         fusion: Literal["sum", "product", "concat"] = "sum",
         branch_mixer: AbstractArrayModel | None = None,
-    ):
+    ) -> None:
         source_values = (
             tuple(sources.values()) if isinstance(sources, Mapping) else tuple(sources)
         )

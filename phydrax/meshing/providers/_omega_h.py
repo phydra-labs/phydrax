@@ -430,7 +430,7 @@ class OmegaHProvider:
         mpi_launcher: Sequence[str] = ("mpiexec",),
         environment: Mapping[str, str] | None = None,
         timeout: float = 300.0,
-    ):
+    ) -> None:
         self.executable = str(executable) if executable is not None else None
         self.mpi_launcher = tuple(str(value) for value in mpi_launcher)
         self.environment = dict(environment or {})

@@ -120,7 +120,7 @@ class TransportSupport(StrictModule):
         entity_ids=(),
         entity_vertices=(),
         entity_set_ids=(),
-    ):
+    ) -> None:
         points = np.asarray(positions, dtype=np.float64)
         tails, heads = np.asarray(tail), np.asarray(head)
         weights, measure = (

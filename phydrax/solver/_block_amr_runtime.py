@@ -82,7 +82,7 @@ class AMRTimeSchedulePlan(StrictModule, NonTrainableState):
         subcycling: bool = True,
         temporal_method_id: str = "temporal:ssprk33",
         edge_substeps: Sequence[int] | None = None,
-    ):
+    ) -> None:
         if not isinstance(hierarchy, PreparedFDAMRHierarchy):
             raise TypeError("hierarchy must be PreparedFDAMRHierarchy.")
         if not isinstance(subcycling, bool):
@@ -138,7 +138,7 @@ class BlockAMRRuntimeState(StrictModule):
         accepted_step: ArrayLike = 0,
         level_accepted_steps: ArrayLike | None = None,
         last_status: ArrayLike = BlockAMRAdvancePhase.SUCCESS,
-    ):
+    ) -> None:
         if not isinstance(hierarchy_state, BlockHierarchyState):
             raise TypeError("hierarchy_state must be BlockHierarchyState.")
         if not isinstance(topology_journal, FiniteVolumeTopologyEventJournal):
@@ -225,7 +225,7 @@ class _BlockAMREdgeRoute(StrictModule, NonTrainableState):
         fine: Any,
         coarse_spacing: Sequence[float],
         /,
-    ):
+    ) -> None:
         if coarse.level + 1 != fine.level or coarse.axis != fine.axis:
             raise ValueError(
                 "Coarse/fine face routes must describe one adjacent edge/axis."
@@ -333,7 +333,7 @@ class BlockAMRRuntimePlan(StrictModule):
         indicator_id: str | None = None,
         topology_transaction: Callable[..., Any] | None = None,
         topology_transaction_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(finite_volume, BlockAMRFiniteVolumePlan):
             raise TypeError("finite_volume must be BlockAMRFiniteVolumePlan.")
         if subcycling is not None and not isinstance(subcycling, bool):
@@ -422,7 +422,9 @@ class PreparedBlockAMRRuntime(StrictModule):
     topology_artifacts: FiniteVolumeTopologyArtifacts
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: BlockAMRRuntimePlan, topology: BlockHierarchyTopology, /):
+    def __init__(
+        self, plan: BlockAMRRuntimePlan, topology: BlockHierarchyTopology, /
+    ) -> None:
         if not isinstance(plan, BlockAMRRuntimePlan):
             raise TypeError("plan must be BlockAMRRuntimePlan.")
         if not isinstance(topology, BlockHierarchyTopology) or (

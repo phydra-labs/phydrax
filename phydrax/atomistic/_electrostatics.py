@@ -49,7 +49,7 @@ class DirectCoulombPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, *, name: str = "direct-coulomb", force_group: int = 0):
+    def __init__(self, *, name: str = "direct-coulomb", force_group: int = 0) -> None:
         identifier = str(name).strip()
         group = int(force_group)
         if not identifier or group < 0:
@@ -88,7 +88,9 @@ class PreparedDirectCoulombPotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan: DirectCoulombPotential, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: DirectCoulombPotential, system: PreparedAtomisticSystem, /
+    ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name
@@ -157,7 +159,7 @@ class EwaldReferencePotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         charge_tolerance: float = 1.0e-10,
         name: str = "ewald-reference",
         force_group: int = 0,
-    ):
+    ) -> None:
         alpha_ = float(alpha)
         cutoff = float(real_cutoff)
         extent = int(reciprocal_extent)
@@ -227,7 +229,9 @@ class PreparedEwaldReferencePotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan: EwaldReferencePotential, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: EwaldReferencePotential, system: PreparedAtomisticSystem, /
+    ) -> None:
         cell = system.cell
         if cell is None:
             raise RuntimeError("Validated periodic cell unexpectedly absent.")
@@ -373,7 +377,7 @@ class ParticleMeshEwaldPotential(AbstractAtomisticEnergyTerm, NonTrainableState)
         charge_tolerance: float = 1.0e-10,
         name: str = "particle-mesh-ewald",
         force_group: int = 0,
-    ):
+    ) -> None:
         alpha_ = float(alpha)
         cutoff = float(real_cutoff)
         shape = tuple(grid_shape)
@@ -451,7 +455,7 @@ class PreparedParticleMeshEwaldPotential(AbstractPreparedAtomisticEnergyTerm):
 
     def __init__(
         self, plan: ParticleMeshEwaldPotential, system: PreparedAtomisticSystem, /
-    ):
+    ) -> None:
         cell = system.cell
         if cell is None:
             raise RuntimeError("Validated PME cell unexpectedly absent.")

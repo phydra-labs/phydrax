@@ -98,7 +98,7 @@ class _VectorizedDenseInterpolation(StrictModule):
         precision: TemporalPrecisionPolicy,
         state_adapter: _PreparedDiffraxStateAdapter,
         /,
-    ):
+    ) -> None:
         samples = tuple(sample_shape)
         batch_shape = tuple(jnp.shape(interpolation.t0_if_trivial))
         if batch_shape != samples:

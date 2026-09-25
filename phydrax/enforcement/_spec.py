@@ -75,7 +75,7 @@ class EnforcementProofObligations(StrictModule):
         output_dtype: str | None = None,
         support_identity: str,
         provider_certified: bool = False,
-    ):
+    ) -> None:
         if not pivot_identity or not support_identity:
             raise ValueError("Enforcement proof identities must be nonempty.")
         self.derivative_requirements = tuple(derivative_requirements)
@@ -110,7 +110,7 @@ class TraceLifting(StrictModule):
         wavespeed: Any = 1.0,
         lame_lambda: Any = 1.0,
         shear_modulus: Any = 1.0,
-    ):
+    ) -> None:
         if kind not in (
             "dirichlet",
             "neumann",
@@ -220,7 +220,7 @@ class DerivativeRequirement(StrictModule):
     variable: str = eqx.field(static=True)
     order: int = eqx.field(static=True)
 
-    def __init__(self, field: str, variable: str, order: int, /):
+    def __init__(self, field: str, variable: str, order: int, /) -> None:
         resolved_order = int(order)
         if resolved_order < 0:
             raise ValueError("Derivative requirement order must be nonnegative.")
@@ -369,7 +369,7 @@ class EnforcementSpec(StrictModule):
         transform: AffineEnforcementTransform | None = None,
         realization: AbstractFieldRealization | None = None,
         options: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         resolved_options = {} if options is None else dict(options)
         if isinstance(condition, Condition):
             if not isinstance(realization, AbstractFieldRealization):

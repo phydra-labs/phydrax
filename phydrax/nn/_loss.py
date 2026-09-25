@@ -39,7 +39,7 @@ class ModelLossTerm(StrictModule, NonTrainableState):
         *,
         weight: Any = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not callable(penalty):
             raise TypeError("Model loss penalty must be callable.")
         self.penalty = _ensure_special_kwonly_args(penalty)
@@ -80,7 +80,7 @@ class ModelWithLoss(
         *,
         loss_terms: Sequence[ModelLossTerm] = (),
         loss_identity: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, ModelEvaluator):
             raise TypeError(
                 "ModelWithLoss requires a model with an explicit input binding."

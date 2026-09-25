@@ -31,7 +31,7 @@ class Eigenproblem(StrictModule):
         *,
         constraints: LinearSubspace | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         _validate_self_adjoint_endomorphism(operator, "operator")
         _validate_constraints(constraints, operator)
         self.operator = operator
@@ -73,7 +73,7 @@ class GeneralizedEigenproblem(StrictModule):
         *,
         constraints: LinearSubspace | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         _validate_self_adjoint_endomorphism(operator, "operator")
         _validate_self_adjoint_endomorphism(metric_operator, "metric_operator")
         if not metric_operator.properties.certifies("positive_definite"):

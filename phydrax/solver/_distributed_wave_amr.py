@@ -263,7 +263,7 @@ class _PackedCompositeRoutes(StrictModule, NonTrainableState):
         layout: Any,
         diffusion: Any,
         /,
-    ):
+    ) -> None:
         flat_leaf = np.asarray(layout.flat_leaf_mask, dtype=np.bool_)
         leaf_cells = np.flatnonzero(flat_leaf).astype(np.int32)
         compact = np.full((flat_leaf.size,), -1, dtype=np.int32)
@@ -507,7 +507,7 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
         kinetic_spectral_upper_bound: float,
         source_prepared_id: str,
         physics_id: str,
-    ):
+    ) -> None:
         if not isinstance(hierarchy, PreparedDistributedBlockAMRHierarchy):
             raise TypeError("hierarchy must be PreparedDistributedBlockAMRHierarchy.")
         if execution_plan is not None and not isinstance(execution_plan, ExecutionPlan):
@@ -2189,7 +2189,7 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
         target: PreparedDistributedWaveAMR,
         transition: BlockFieldTopologyTransition,
         /,
-    ):
+    ) -> None:
         if (
             not isinstance(source, PreparedDistributedWaveAMR)
             or not isinstance(target, PreparedDistributedWaveAMR)

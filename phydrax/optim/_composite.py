@@ -68,7 +68,7 @@ class CompositeLeastSquaresProblem(StrictModule):
         /,
         *,
         problem_id: str = "composite-least-squares",
-    ):
+    ) -> None:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         if scalar_objective is not None and not callable(scalar_objective):
@@ -145,7 +145,7 @@ class CompositeLeastSquaresResult(StrictModule):
         /,
         *,
         iteration_evidence: IterationEvidence | None = None,
-    ):
+    ) -> None:
         if not isinstance(diagnostics, OptimizationDiagnostics):
             raise TypeError("diagnostics must be OptimizationDiagnostics.")
         if not isinstance(provenance, OptimizationProvenance):
@@ -186,7 +186,7 @@ class _CompositeModel(StrictModule):
         scalar_objective: Any,
         scalar_gradient: PyTree[Any],
         scalar_linearized: Any,
-    ):
+    ) -> None:
         self.residual_model = residual_model
         self.residual = residual_model.residual
         self.gradient = _tree_add_scaled(
@@ -301,7 +301,7 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
         damping_increase: float = 10.0,
         damping_decrease: float = 0.2,
         maximum_trials: int = 6,
-    ):
+    ) -> None:
         policy = (
             _default_composite_linear_policy() if linear_policy is None else linear_policy
         )

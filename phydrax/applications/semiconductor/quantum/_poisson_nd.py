@@ -36,7 +36,7 @@ class QuantumPoissonND(StrictModule):
         fixed_charge_density: ArrayLike,
         boundary_voltages: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(basis, EffectiveMassND):
             raise TypeError("basis must be EffectiveMassND.")
         shape = basis.grid_shape

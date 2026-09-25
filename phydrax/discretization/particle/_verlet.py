@@ -62,7 +62,7 @@ class VerletParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
         *,
         name: str = "verlet-particle-neighborhood",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(base, AbstractParticleNeighborhoodPlan):
             raise TypeError("base must be an AbstractParticleNeighborhoodPlan.")
         interaction = float(interaction_radius)
@@ -125,7 +125,7 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
 
     def __init__(
         self, plan: VerletParticleNeighborhoodPlan, particles: ParticleDiscretization, /
-    ):
+    ) -> None:
         if not isinstance(plan, VerletParticleNeighborhoodPlan):
             raise TypeError("plan must be a VerletParticleNeighborhoodPlan.")
         if not isinstance(particles, ParticleDiscretization):

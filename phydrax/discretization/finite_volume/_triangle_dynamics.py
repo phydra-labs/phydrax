@@ -56,7 +56,7 @@ class TriangleFiniteVolumeBoundarySet(StrictModule, NonTrainableState):
         patch_names: tuple[str, ...],
         boundaries: Mapping[str, AbstractConservationBoundary],
         /,
-    ):
+    ) -> None:
         names = tuple(patch_names)
         if set(boundaries) != set(names):
             raise ValueError(
@@ -114,7 +114,7 @@ class TriangleFiniteVolumeMethodPlan(StrictModule):
         *,
         viscous: TriangleViscousFluxPlan | None = None,
         closure: AbstractFaceClosurePlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             reconstruction,
             (
@@ -178,7 +178,7 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
         source: SourceFunction | None = None,
         source_id: str | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, TriangleFiniteVolumeDiscretization):
             raise TypeError("discretization must be triangular finite-volume geometry.")
         if not isinstance(method, TriangleFiniteVolumeMethodPlan):

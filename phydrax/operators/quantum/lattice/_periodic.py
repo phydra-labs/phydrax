@@ -43,7 +43,7 @@ class FermionInteractionTerm(StrictModule):
         *,
         add_adjoint: bool = False,
         label: str,
-    ):
+    ) -> None:
         values = tuple((str(mode), str(action)) for mode, action in operations)
         scalar = jnp.asarray(coefficient)
         name = str(label)
@@ -90,7 +90,7 @@ class FermionInteractionPlan(StrictModule):
         units_id: str,
         maximum_terms: int,
         maximum_operations_per_term: int,
-    ):
+    ) -> None:
         values = tuple(terms)
         provenance = str(provenance_id)
         units = str(units_id)

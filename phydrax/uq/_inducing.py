@@ -27,7 +27,7 @@ class InducingPointSelection(StrictModule):
     indices: Array
     diagnostics: Any
 
-    def __init__(self, points: Array, indices: Array, diagnostics: Any, /):
+    def __init__(self, points: Array, indices: Array, diagnostics: Any, /) -> None:
         points_ = jnp.asarray(points, dtype=jnp.float64)
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
         if points_.ndim < 2:

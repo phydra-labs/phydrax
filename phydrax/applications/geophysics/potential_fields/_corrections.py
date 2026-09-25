@@ -24,7 +24,7 @@ class TerrainCorrectionPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, gravity: FreeSpaceGravityPlan, density_contrast_kg_m3: ArrayLike, /
-    ):
+    ) -> None:
         if not isinstance(gravity, FreeSpaceGravityPlan):
             raise TypeError("Terrain correction requires a free-space gravity plan.")
         contrast = jnp.broadcast_to(
@@ -53,7 +53,7 @@ class RegionalTrendPlan(StrictModule, NonTrainableState):
     terms: tuple[tuple[int, int], ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, x: ArrayLike, y: ArrayLike, /, *, total_degree: int):
+    def __init__(self, x: ArrayLike, y: ArrayLike, /, *, total_degree: int) -> None:
         x_, y_ = np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)
         degree = int(total_degree)
         if (
@@ -111,7 +111,7 @@ class FourierContinuationPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_amplification: float = 100.0,
-    ):
+    ) -> None:
         shape_ = tuple(shape)
         spacing = tuple(float(value) for value in spacing_m)
         height = float(height_change_m)

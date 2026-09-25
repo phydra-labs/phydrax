@@ -90,7 +90,7 @@ class VariationalKineticTrainingPolicy(StrictModule):
         patience: int | None = None,
         maximum_transitions: int = 100_000,
         reversible: bool = False,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         interval = int(validation_interval)
         capacity = int(maximum_transitions)
@@ -147,7 +147,7 @@ class ModelFeatureLibrary(AbstractFeatureLibrary):
         *,
         model_id: str,
         base: AbstractFeatureLibrary | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must implement AbstractArrayModel.")
         if not isinstance(state_layout, StateLayout):
@@ -221,7 +221,7 @@ class VariationalCoordinateModel(AbstractArrayModel):
         mean: ArrayLike,
         rotations: ArrayLike,
         /,
-    ):
+    ) -> None:
         mean_ = jnp.asarray(mean)
         rotations_ = jnp.asarray(rotations)
         if (
@@ -545,7 +545,7 @@ def fit_variational_kinetic_model(
         },
     )
 
-    def save(committed):
+    def save(committed) -> None:
         assert checkpoint is not None
         save_training_checkpoint(
             checkpoint,

@@ -26,7 +26,7 @@ class NoiseSpectralFactor(StrictModule):
         /,
         *,
         source_ids: tuple[str, ...] | None = None,
-    ):
+    ) -> None:
         value = jnp.asarray(factor, dtype=jnp.complex128)
         if value.ndim < 2 or bool(jnp.any(~jnp.isfinite(value))):
             raise ValueError("Noise spectral factor must be a finite matrix or batch.")

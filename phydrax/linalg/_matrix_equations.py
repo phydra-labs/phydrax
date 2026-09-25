@@ -68,7 +68,7 @@ class MatrixEquationTerm(StrictModule):
         /,
         *,
         coefficient: ArrayLike = 1.0,
-    ):
+    ) -> None:
         left_ = _coerce_square_operator(left, "left")
         right_ = _coerce_square_operator(right, "right")
         if not left_.capabilities.transpose or not right_.capabilities.transpose:
@@ -113,7 +113,7 @@ class MatrixEquationLinearOperator(AbstractLinearOperator):
         *,
         dtype: Any | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         terms_ = tuple(terms)
         if not terms_ or any(not isinstance(term, MatrixEquationTerm) for term in terms_):
             raise TypeError(
@@ -251,7 +251,7 @@ class MatrixEquationProblem(StrictModule):
         kind: MatrixEquationKind = "generalized",
         expected_self_adjoint_solution: bool = False,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if kind not in (
             "generalized",
             "sylvester",
@@ -350,7 +350,7 @@ class MatrixEquationPolicy(StrictModule):
         linear: LinearSolvePolicy | None = None,
         structure_tolerance: float = 1e-8,
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         linear_ = LinearSolvePolicy() if linear is None else linear
         tolerance = float(structure_tolerance)
         failure_ = FailurePolicy() if failure is None else failure

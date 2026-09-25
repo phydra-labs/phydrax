@@ -56,7 +56,7 @@ class HydrodynamicBrownianPlan(StrictModule, NonTrainableState):
         differentiation: HydrodynamicDifferentiationPolicy = "pathwise",
         realization_id: int = 0,
         maximum_displacement: float | None = None,
-    ):
+    ) -> None:
         step = float(step_size)
         thermal = float(temperature)
         epsilon = float(drift_epsilon)
@@ -141,7 +141,7 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
         dynamics: PreparedAtomisticDynamics,
         mobility: AbstractHydrodynamicMobilityPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, HydrodynamicBrownianPlan):
             raise TypeError("plan must be HydrodynamicBrownianPlan.")
         if not isinstance(dynamics, PreparedAtomisticDynamics):

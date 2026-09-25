@@ -52,7 +52,7 @@ class OutlierDiagnostics(StrictModule):
         condition: Any = jnp.nan,
         converged: Any = True,
         method: str,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)

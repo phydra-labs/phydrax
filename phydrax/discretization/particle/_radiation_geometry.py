@@ -41,7 +41,7 @@ class VoxelRadiationGeometryPlan(StrictModule, NonTrainableState):
         /,
         *,
         material_count: int,
-    ):
+    ) -> None:
         lower_ = np.asarray(lower, dtype=np.float64)
         upper_ = np.asarray(upper, dtype=np.float64)
         materials = np.asarray(material_indices)

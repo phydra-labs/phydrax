@@ -76,7 +76,7 @@ class FieldSlot(StrictModule, NonTrainableState):
         /,
         *,
         value_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         name_ = str(name)
         space = str(space_id)
         shape = tuple(value_shape)
@@ -120,7 +120,7 @@ class RegionIR(StrictModule, NonTrainableState):
         domain_id: str,
         rule_ids: Sequence[tuple[str, str]],
         /,
-    ):
+    ) -> None:
         domain = str(domain_id)
         rules = tuple(sorted((str(block), str(rule)) for block, rule in rule_ids))
         if not domain or any(not block or not rule for block, rule in rules):
@@ -167,7 +167,7 @@ class FiniteElementActionIR(StrictModule, NonTrainableState):
         region: RegionIR,
         kernel_id: str,
         /,
-    ):
+    ) -> None:
         outputs = tuple(str(name) for name in output_slots)
         inputs = tuple(str(name) for name in input_slots)
         operations = tuple((str(name), operation) for name, operation in operators)
@@ -225,7 +225,7 @@ class LocalActionIR(StrictModule, NonTrainableState):
         slots: Sequence[FieldSlot],
         actions: Sequence[FiniteElementActionIR],
         /,
-    ):
+    ) -> None:
         slots_ = tuple(slots)
         actions_ = tuple(actions)
         if not slots_ or not actions_:
@@ -296,7 +296,7 @@ class OperatorValue(StrictModule, NonTrainableState):
         value_shape: Sequence[int] = (),
         dtype_name: str = "dynamic",
         layout_id: str,
-    ):
+    ) -> None:
         name_ = str(name)
         shape = tuple(value_shape)
         dtype = str(dtype_name)
@@ -355,7 +355,7 @@ class OperatorNode(StrictModule, NonTrainableState):
         *,
         ad_policy: OperatorADPolicy = "autodiff",
         recompute: bool = False,
-    ):
+    ) -> None:
         inputs = tuple(str(value) for value in input_names)
         outputs = tuple(str(value) for value in output_names)
         kernel = str(kernel_id)
@@ -418,7 +418,7 @@ class OperatorProgram(StrictModule, NonTrainableState):
         /,
         *,
         bucket_id: str,
-    ):
+    ) -> None:
         values_ = tuple(values)
         nodes_ = tuple(nodes)
         outputs = tuple(str(value) for value in output_names)
@@ -538,7 +538,7 @@ class OperatorFusionPlan(StrictModule, NonTrainableState):
     groups: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, program: OperatorProgram, /):
+    def __init__(self, program: OperatorProgram, /) -> None:
         if not isinstance(program, OperatorProgram):
             raise TypeError("program must be OperatorProgram.")
         consumers: dict[str, int] = {}
@@ -580,7 +580,7 @@ class LoweredOperatorProgram(StrictModule, NonTrainableState):
         program: OperatorProgram,
         kernels: Mapping[str, Callable],
         /,
-    ):
+    ) -> None:
         if not isinstance(program, OperatorProgram):
             raise TypeError("program must be OperatorProgram.")
         required = tuple(dict.fromkeys(node.kernel_id for node in program.nodes))

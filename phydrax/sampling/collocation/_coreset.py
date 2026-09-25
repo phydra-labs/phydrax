@@ -81,7 +81,7 @@ class _CoresetCollocationDiagnostics(StrictModule):
         coverage_baseline_fill_distance: float | Array = 0.0,
         coverage_guard_triggered: bool | Array = False,
         selection_kernel_evaluations: int | Array = 0,
-    ):
+    ) -> None:
         self.selection_valid = jnp.asarray(selection_valid, dtype=jnp.bool_)
         self.selection_accepted = jnp.asarray(selection_accepted, dtype=jnp.bool_)
         self.selection_mmd = jnp.asarray(selection_mmd, dtype=jnp.float64)
@@ -167,7 +167,7 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
         kernel: AbstractPositiveDefiniteKernel | None = None,
         kernel_scale_factor: float = 1.0,
         block_size: int = 256,
-    ):
+    ) -> None:
         refresh = int(refresh_every)
         activation = 2 * refresh if start_at is None else int(start_at)
         multiplier = int(candidate_multiplier)

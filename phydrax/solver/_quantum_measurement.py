@@ -45,7 +45,7 @@ class QuantumPOVM(StrictModule):
     tolerance: float = eqx.field(static=True)
     povm_id: str = eqx.field(static=True)
 
-    def __init__(self, effects: ArrayLike, /, *, tolerance: float = 1e-8):
+    def __init__(self, effects: ArrayLike, /, *, tolerance: float = 1e-8) -> None:
         values = jnp.asarray(effects)
         tolerance_ = float(tolerance)
         if values.ndim != 3 or values.shape[0] < 1 or values.shape[1] != values.shape[2]:
@@ -113,7 +113,7 @@ class QuantumInstrument(StrictModule):
         /,
         *,
         tolerance: float = 1e-8,
-    ):
+    ) -> None:
         operators = jnp.asarray(kraus)
         mask = jnp.asarray(kraus_mask, dtype=jnp.bool_)
         tolerance_ = float(tolerance)

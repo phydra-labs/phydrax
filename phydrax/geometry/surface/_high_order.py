@@ -61,7 +61,7 @@ class HighOrderSurfacePolicy(StrictModule, NonTrainableState):
         maximum_evaluation_points: int = 1_000_000,
         corner_tolerance: float = 1.0e-10,
         minimum_jacobian: float = 0.0,
-    ):
+    ) -> None:
         capacities = (
             int(maximum_order),
             int(maximum_cells),
@@ -123,7 +123,7 @@ class HighOrderSurfaceReport(StrictModule, NonTrainableState):
         model_id: str,
         policy_id: str,
         corner_maximum_error: float,
-    ):
+    ) -> None:
         if not isinstance(source, HighOrderSurfaceSource):
             raise TypeError("source must be HighOrderSurfaceSource.")
         if not isinstance(length_unit, UnitDefinition):
@@ -192,7 +192,7 @@ class HighOrderSurfaceFrameEvidence(StrictModule, NonTrainableState):
         finite: Array,
         nondegenerate: Array,
         report: HighOrderSurfaceReport,
-    ):
+    ) -> None:
         finite_ = jnp.asarray(finite, dtype=jnp.bool_)
         nondegenerate_ = jnp.asarray(nondegenerate, dtype=jnp.bool_)
         self.chart_indices = jnp.asarray(chart_indices, dtype=jnp.int32)
@@ -238,7 +238,7 @@ class _PatchTriangleMap(AbstractBoundaryMap):
     patch: BSplineSurfacePatch
     cell_parameters: Array
 
-    def __init__(self, patch: BSplineSurfacePatch, cell_parameters: ArrayLike, /):
+    def __init__(self, patch: BSplineSurfacePatch, cell_parameters: ArrayLike, /) -> None:
         self.patch = patch
         self.cell_parameters = jnp.asarray(cell_parameters, dtype=jnp.float64)
 
@@ -282,7 +282,7 @@ class _AtlasTriangleMap(AbstractBoundaryMap):
         source_chart_indices: ArrayLike,
         cell_parameters: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.atlas = atlas
         self.source_chart_indices = jnp.asarray(source_chart_indices, dtype=jnp.int32)
         self.cell_parameters = jnp.asarray(cell_parameters, dtype=jnp.float64)
@@ -322,7 +322,7 @@ class _IsoparametricTriangleMap(AbstractBoundaryMap):
     exponents: Array
     order: int = eqx.field(static=True)
 
-    def __init__(self, coordinate_nodes, coefficients, exponents, order: int, /):
+    def __init__(self, coordinate_nodes, coefficients, exponents, order: int, /) -> None:
         self.coordinate_nodes = jnp.asarray(coordinate_nodes, dtype=jnp.float64)
         self.coefficients = jnp.asarray(coefficients, dtype=jnp.float64)
         self.exponents = jnp.asarray(exponents, dtype=jnp.int32)
@@ -387,7 +387,7 @@ class HighOrderSurfaceRealization(StrictModule, NonTrainableState):
         policy: HighOrderSurfacePolicy,
         report: HighOrderSurfaceReport,
         /,
-    ):
+    ) -> None:
         if mapping.num_charts != int(model.mesh.connectivity.cell_count):
             raise ValueError(
                 "High-order chart count must equal authoritative cell count."

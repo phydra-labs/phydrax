@@ -78,7 +78,7 @@ class MixedIntegerProgramPlan(StrictModule, NonTrainableState):
         program: MixedIntegerProgram,
         policy: MixedIntegerSolvePolicy | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(program, MixedIntegerProgram):
             raise TypeError("program must be a MixedIntegerProgram.")
         policy_ = MixedIntegerSolvePolicy() if policy is None else policy

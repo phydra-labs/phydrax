@@ -98,7 +98,7 @@ class PlanarEmbedding:
         y_axis: Sequence[float],
         normal: Sequence[float],
         /,
-    ):
+    ) -> None:
         origin_ = _vector3(origin, "origin")
         x_axis_ = _vector3(x_axis, "x_axis")
         y_axis_ = _vector3(y_axis, "y_axis")

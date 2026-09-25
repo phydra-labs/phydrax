@@ -64,7 +64,7 @@ class InternalOptimizationResult(StrictModule, NonTrainableState):
         source_result_ids,
         plan_id,
         /,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions)
         internals = jnp.asarray(internal_coordinates, dtype=positions_.dtype)
         energies_ = jnp.asarray(energies, dtype=positions_.dtype)
@@ -133,7 +133,7 @@ class InternalCoordinateOptimizationPlan(StrictModule, NonTrainableState):
         internal_gradient_tolerance: float = 1.0e-5,
         trust_radius: float = 0.1,
         maximum_iterations: int = 200,
-    ):
+    ) -> None:
         if (
             not isinstance(system, AtomisticSystemPlan)
             or not isinstance(surface, AbstractPreparedPotentialEnergySurface)
@@ -338,7 +338,7 @@ class DimerSaddleRefinementPlan(StrictModule, NonTrainableState):
         dimer_separation=1.0e-3,
         force_tolerance=1.0e-4,
         maximum_iterations=200,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan) or not isinstance(
             surface, AbstractPreparedPotentialEnergySurface
         ):
@@ -462,7 +462,9 @@ class TransitionStateRatePlan(StrictModule, NonTrainableState):
     hbar: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, temperature, boltzmann_constant, planck_constant, /, *, hbar):
+    def __init__(
+        self, temperature, boltzmann_constant, planck_constant, /, *, hbar
+    ) -> None:
         values = tuple(
             float(value)
             for value in (temperature, boltzmann_constant, planck_constant, hbar)
@@ -531,7 +533,9 @@ class ReactionNetworkPlan(StrictModule, NonTrainableState):
     conservation_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, rate_matrix: ArrayLike, /, *, conservation_tolerance=1.0e-12):
+    def __init__(
+        self, rate_matrix: ArrayLike, /, *, conservation_tolerance=1.0e-12
+    ) -> None:
         rates_host = np.asarray(rate_matrix)
         tolerance = float(conservation_tolerance)
         if (

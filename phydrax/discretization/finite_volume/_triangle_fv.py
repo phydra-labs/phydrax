@@ -158,7 +158,7 @@ class TriangleFiniteVolumePlan(AbstractDiscretizationPlan):
         boundary_patches: Mapping[str, ArrayLike] | None = None,
         field_name: str = "state",
         component_names: Sequence[str] = ("value",),
-    ):
+    ) -> None:
         points = np.asarray(vertices, dtype=np.float64)
         cells = np.asarray(triangles, dtype=np.int32)
         if points.ndim != 2 or points.shape[1] != 2 or points.shape[0] < 3:
@@ -272,7 +272,9 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     preparation: PreparationReport
     quality: TriangleFiniteVolumeQualityReport
 
-    def __init__(self, plan: TriangleFiniteVolumePlan, /, *, numeric_version: str = "0"):
+    def __init__(
+        self, plan: TriangleFiniteVolumePlan, /, *, numeric_version: str = "0"
+    ) -> None:
         if not isinstance(plan, TriangleFiniteVolumePlan):
             raise TypeError("plan must be TriangleFiniteVolumePlan.")
         mesh = plan.mesh

@@ -49,7 +49,7 @@ class DiscreteGradientBulkLaw(AbstractBulkEvolutionLaw):
     law_id: str = eqx.field(static=True)
     exact_identity: bool = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.law_id = "phase-field-bulk-law/discrete-gradient"
         self.exact_identity = True
 
@@ -78,7 +78,7 @@ class ConvexSplitDoubleWellLaw(AbstractBulkEvolutionLaw):
     law_id: str = eqx.field(static=True)
     exact_identity: bool = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.law_id = "phase-field-bulk-law/double-well-convex-split"
         self.exact_identity = False
 
@@ -153,7 +153,7 @@ class PhaseFieldEnergyLedger(StrictModule):
         transfer_defect: ArrayLike = 0.0,
         tolerance: ArrayLike,
         ledger_id: str,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (

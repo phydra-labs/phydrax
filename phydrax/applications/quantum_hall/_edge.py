@@ -62,7 +62,7 @@ class HallRibbonPlan(StrictModule, NonTrainableState):
         open_axis: int = 0,
         twist_count: int = 81,
         residual_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(pencil, PreparedPeriodicOrbitalPencil):
             raise TypeError("pencil must be PreparedPeriodicOrbitalPencil.")
         width_ = int(width)

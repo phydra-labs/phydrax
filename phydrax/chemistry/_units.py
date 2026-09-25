@@ -38,7 +38,7 @@ class ChemistryPhysicalConstants(StrictModule, NonTrainableState):
     planck_constant: float = eqx.field(static=True)
     constants_id: str = eqx.field(static=True)
 
-    def __init__(self, units: AtomisticUnitSystem, /):
+    def __init__(self, units: AtomisticUnitSystem, /) -> None:
         if not isinstance(units, AtomisticUnitSystem):
             raise TypeError("units must be AtomisticUnitSystem.")
         if (

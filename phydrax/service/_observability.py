@@ -130,7 +130,7 @@ class HostTelemetryCollector:
         *,
         clock: Clock | None = None,
         policy: HostTelemetryPolicy | None = None,
-    ):
+    ) -> None:
         self._clock = SystemClock() if clock is None else clock
         self._policy = HostTelemetryPolicy() if policy is None else policy
         if not isinstance(self._policy, HostTelemetryPolicy):

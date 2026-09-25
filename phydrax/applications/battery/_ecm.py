@@ -91,7 +91,7 @@ class ThermalEquivalentCircuitPlan(StrictModule, NonTrainableState):
     branch_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, branch_count: int, /):
+    def __init__(self, branch_count: int, /) -> None:
         if isinstance(branch_count, bool) or not isinstance(branch_count, int):
             raise TypeError("Thermal ECM branch_count must be an integer.")
         if branch_count < 1:
@@ -144,7 +144,7 @@ class ThermalEquivalentCircuitParameters(StrictModule):
         open_circuit_voltage: _PropertyLaw,
         entropic_coefficient: _PropertyLaw,
         /,
-    ):
+    ) -> None:
         series = _positive_scalar(series_resistance_ohm, "series_resistance_ohm")
         resistances = _positive_vector(branch_resistances_ohm, "branch_resistances_ohm")
         capacitances = _positive_vector(branch_capacitances_f, "branch_capacitances_f")
@@ -207,7 +207,7 @@ class ThermalEquivalentCircuitInitialCondition(StrictModule):
         /,
         *,
         relaxed: bool = False,
-    ):
+    ) -> None:
         if not isinstance(relaxed, bool):
             raise TypeError("relaxed must be boolean.")
         if relaxed == (polarization_voltages_v is not None):
@@ -256,7 +256,7 @@ class ThermalEquivalentCircuitState(StrictModule):
         polarization_voltages_v: ArrayLike,
         temperature_k: ArrayLike,
         /,
-    ):
+    ) -> None:
         charge = _real_array(charge_c, "charge_c")
         polarization = _real_array(polarization_voltages_v, "polarization_voltages_v")
         temperature = _real_array(temperature_k, "temperature_k")
@@ -281,7 +281,7 @@ class PreparedThermalEquivalentCircuit(StrictModule, NonTrainableState):
     plan: ThermalEquivalentCircuitPlan
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ThermalEquivalentCircuitPlan, /):
+    def __init__(self, plan: ThermalEquivalentCircuitPlan, /) -> None:
         if not isinstance(plan, ThermalEquivalentCircuitPlan):
             raise TypeError("plan must be ThermalEquivalentCircuitPlan.")
         self.plan = plan
@@ -322,7 +322,7 @@ class ThermalEquivalentCircuitLedger(StrictModule):
         thermal_defect_j: ArrayLike,
         successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         names = (
             "charge_change_c",
             "terminal_charge_c",
@@ -555,7 +555,7 @@ class ThermalEquivalentCircuitAdapter(StrictModule, NonTrainableState):
     observable_names: tuple[str, ...] = eqx.field(static=True)
     observable_units: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, plan: ThermalEquivalentCircuitPlan, /):
+    def __init__(self, plan: ThermalEquivalentCircuitPlan, /) -> None:
         if not isinstance(plan, ThermalEquivalentCircuitPlan):
             raise TypeError("plan must be ThermalEquivalentCircuitPlan.")
         self.plan = plan

@@ -39,7 +39,7 @@ class ManufacturedPDECase(StrictModule):
         /,
         *,
         case_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(exact_solution) or not callable(exact_spatial_action):
             raise TypeError(
                 "Manufactured exact solution and spatial action must be callable."
@@ -127,7 +127,7 @@ class ManufacturedSpatialOperator(StrictModule):
         *,
         boundary_mask: ArrayLike | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid) or not isinstance(
             operator, AbstractLinearOperator
         ):
@@ -216,7 +216,7 @@ class ManufacturedConvergenceResult(StrictModule, NonTrainableState):
         expected_boundary_order: float | None,
         rate_tolerance: float,
         plan_id: str,
-    ):
+    ) -> None:
         spacing_ = jnp.asarray(spacings)
         total_ = jnp.asarray(total_errors)
         interior_ = jnp.asarray(interior_errors)
@@ -280,7 +280,7 @@ class ManufacturedConvergencePlan(StrictModule):
         expected_boundary_order: float | None = None,
         rate_tolerance: float = 0.25,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         values = tuple(resolutions)
         if len(values) < 2 or any(value <= 0 for value in values):
             raise ValueError(

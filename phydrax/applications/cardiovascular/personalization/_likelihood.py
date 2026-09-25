@@ -82,7 +82,7 @@ class ModalityObservation(StrictModule, NonTrainableState):
         frame_id: str | None = None,
         timebase_id: str | None = None,
         asset_id: str | None = None,
-    ):
+    ) -> None:
         record = _text(record_id, "record_id")
         modality_ = _text(modality, "modality")
         quantity_ = _text(quantity, "quantity")
@@ -160,7 +160,7 @@ class ReferenceGauge(StrictModule, NonTrainableState):
     reference_index: int = eqx.field(static=True)
     gauge_id: str = eqx.field(static=True)
 
-    def __init__(self, reference_index: int, /):
+    def __init__(self, reference_index: int, /) -> None:
         index = int(reference_index)
         if index < 0:
             raise ValueError("reference_index must be non-negative.")
@@ -178,7 +178,7 @@ class LinearNuisanceModel(StrictModule, NonTrainableState):
     nuisance_count: int = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, basis: ArrayLike, prior: AbstractProbabilityLaw, /):
+    def __init__(self, basis: ArrayLike, prior: AbstractProbabilityLaw, /) -> None:
         matrix = jax.lax.stop_gradient(jnp.asarray(basis, dtype=jnp.float64))
         if matrix.ndim != 2 or matrix.shape[0] == 0 or matrix.shape[1] == 0:
             raise ValueError("Nuisance basis must be a non-empty matrix.")
@@ -230,7 +230,7 @@ class GaussianModelDiscrepancy(StrictModule, NonTrainableState):
         mean: ArrayLike,
         covariance_factor: ArrayLike | None = None,
         /,
-    ):
+    ) -> None:
         mean_ = jax.lax.stop_gradient(jnp.asarray(mean, dtype=jnp.float64).reshape(-1))
         factor = (
             jnp.zeros((mean_.size, 0), dtype=mean_.dtype)
@@ -336,7 +336,7 @@ class ModalityLikelihoodChannel(StrictModule, NonTrainableState):
         nuisance: LinearNuisanceModel | None = None,
         discrepancy: GaussianModelDiscrepancy | None = None,
         covariance_includes_discrepancy: bool = False,
-    ):
+    ) -> None:
         if not isinstance(observation, ModalityObservation):
             raise TypeError("observation must be a ModalityObservation.")
         if (likelihood is None) == (covariance is None):
@@ -590,7 +590,7 @@ class MultimodalLikelihoodPlan(StrictModule, NonTrainableState):
     channels: tuple[ModalityLikelihoodChannel, ...]
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, channels: Sequence[ModalityLikelihoodChannel], /):
+    def __init__(self, channels: Sequence[ModalityLikelihoodChannel], /) -> None:
         resolved = tuple(channels)
         if not resolved:
             raise ValueError("MultimodalLikelihoodPlan requires at least one channel.")
@@ -639,7 +639,7 @@ class PreparedMultimodalLikelihood(StrictModule, NonTrainableState):
     plan: MultimodalLikelihoodPlan
     runtime_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MultimodalLikelihoodPlan, /):
+    def __init__(self, plan: MultimodalLikelihoodPlan, /) -> None:
         if not isinstance(plan, MultimodalLikelihoodPlan):
             raise TypeError("plan must be a MultimodalLikelihoodPlan.")
         self.plan = plan

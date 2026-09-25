@@ -39,7 +39,7 @@ class SmoothingStabilizationPolicy(StrictModule, NonTrainableState):
         parameter: float = 0.0,
         preserves_rigid_modes: bool = True,
         preserves_affine_fields: bool = True,
-    ):
+    ) -> None:
         if kind not in (
             "none",
             "compatible-blend",

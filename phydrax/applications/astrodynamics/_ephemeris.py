@@ -52,7 +52,7 @@ class TabulatedEphemeris(StrictModule, NonTrainableState):
         /,
         *,
         bounds_policy: EphemerisBoundsPolicy = "error",
-    ):
+    ) -> None:
         if not isinstance(catalog, CelestialBodyCatalog):
             raise TypeError("catalog must be a CelestialBodyCatalog.")
         if not isinstance(provenance, AstrodynamicsDataProvenance):

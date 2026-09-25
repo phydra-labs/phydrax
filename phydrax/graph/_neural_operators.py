@@ -360,7 +360,7 @@ class GraphKernelIntegral(StrictModule):
         source_measure: Any | None = None,
         reduction: RouteReduction = "sum",
         normalize: bool = False,
-    ):
+    ) -> None:
         self.kernel_fn = kernel_fn
         self.source_fn = source_fn
         self.update_node_fn = update_node_fn
@@ -434,7 +434,7 @@ class GraphDiffusion(StrictModule):
         *,
         update_node_fn: Callable | None = None,
         sign: str = "in_minus_out",
-    ):
+    ) -> None:
         if sign not in ("in_minus_out", "out_minus_in"):
             raise ValueError(
                 "GraphDiffusion sign must be 'in_minus_out' or 'out_minus_in'."
@@ -515,7 +515,7 @@ class GraphNeuralOperator(StrictModule):
         normalize: bool = True,
         node_type_key: str = "type",
         target_node_type: int | None = None,
-    ):
+    ) -> None:
         self.kernel_fn = kernel_fn
         self.source_fn = source_fn
         self.update_node_fn = update_node_fn
@@ -638,7 +638,7 @@ class GraphAttentionOperator(StrictModule):
         head_reduction: str = "concat",
         node_type_key: str = "type",
         target_node_type: int | None = None,
-    ):
+    ) -> None:
         if flow not in ("source_to_target", "target_to_source"):
             raise ValueError("flow must be 'source_to_target' or 'target_to_source'.")
         if head_reduction not in ("concat", "mean"):
@@ -798,7 +798,7 @@ class GraphFiniteVolumeDivergence(StrictModule):
         volume: Any | None = None,
         normalize_by_volume: bool = True,
         sign: FiniteVolumeSign = "in_minus_out",
-    ):
+    ) -> None:
         if sign not in ("in_minus_out", "out_minus_in"):
             raise ValueError("sign must be 'in_minus_out' or 'out_minus_in'.")
         self.flux_key = flux_key
@@ -853,7 +853,7 @@ class GraphFiniteVolumeDiffusion(StrictModule):
         normalize_by_volume: bool = True,
         sign: FiniteVolumeSign = "in_minus_out",
         eps: float = 1e-12,
-    ):
+    ) -> None:
         if sign not in ("in_minus_out", "out_minus_in"):
             raise ValueError("sign must be 'in_minus_out' or 'out_minus_in'.")
         self.input_key = input_key
@@ -920,7 +920,7 @@ class GraphProcessor(StrictModule):
 
     blocks: tuple[Callable[[GraphIR], GraphIR], ...]
 
-    def __init__(self, blocks: Sequence[Callable[[GraphIR], GraphIR]], /):
+    def __init__(self, blocks: Sequence[Callable[[GraphIR], GraphIR]], /) -> None:
         if len(blocks) == 0:
             raise ValueError("GraphProcessor requires at least one block.")
         self.blocks = tuple(blocks)
@@ -940,7 +940,7 @@ class RepeatedGraphProcessor(StrictModule):
     block: Callable[[GraphIR], GraphIR]
     steps: int = eqx.field(static=True)
 
-    def __init__(self, block: Callable[[GraphIR], GraphIR], /, *, steps: int):
+    def __init__(self, block: Callable[[GraphIR], GraphIR], /, *, steps: int) -> None:
         self.block = block
         self.steps = int(steps)
         if self.steps < 0:

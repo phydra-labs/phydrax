@@ -53,7 +53,7 @@ class FactorSamplingState(StrictModule):
         batch_index: int = 0,
         probability_epoch: int = 0,
         geometry_epoch: int = 0,
-    ):
+    ) -> None:
         values = tuple((epoch, batch_index, probability_epoch, geometry_epoch))
         if any(value < 0 for value in values):
             raise ValueError("Factor sampling state indices must be nonnegative.")
@@ -83,7 +83,7 @@ class LikelihoodBatch(StrictModule):
         factor_ids: ArrayLike,
         sampling_probabilities: ArrayLike,
         estimator_weights: ArrayLike,
-    ):
+    ) -> None:
         mask = jnp.asarray(factor_mask)
         if mask.ndim != 1:
             raise ValueError("factor_mask must be one-dimensional.")
@@ -174,7 +174,7 @@ class ArrayMinibatchSource(StrictModule):
         *,
         batch_size: int,
         seed: int = 0,
-    ):
+    ) -> None:
         leaves = jax.tree_util.tree_leaves(data)
         if not leaves:
             raise ValueError("ArrayMinibatchSource data must contain array leaves.")
@@ -325,7 +325,7 @@ class ImportanceMinibatchSource(StrictModule):
         seed: int = 0,
         probability_epoch: int = 0,
         epoch_span: int = 1,
-    ):
+    ) -> None:
         arrays = jax.tree_util.tree_map(jnp.asarray, data)
         leaves = jax.tree_util.tree_leaves(arrays)
         if not leaves:
@@ -479,7 +479,7 @@ class MinibatchPosteriorProblem(StrictModule):
         predict: Callable[..., Any] | None = None,
         observation_variance: Callable[..., Any] | None = None,
         sample_observation: Callable[..., Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(parameter_space, ParameterSpace):
             raise TypeError("parameter_space must be a ParameterSpace.")
         if not isinstance(

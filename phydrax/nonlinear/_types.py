@@ -109,7 +109,7 @@ class NonlinearTermination(StrictModule):
         maximum_evaluations: int | None = None,
         maximum_linear_iterations: int | None = None,
         divergence_factor: float = 1e8,
-    ):
+    ) -> None:
         tolerances = tuple(
             float(value)
             for value in (
@@ -183,7 +183,7 @@ class NonlinearCapabilities(StrictModule):
         implicit_differentiation: bool,
         fixed_point: bool = False,
         nonlinear_preconditioning: bool = False,
-    ):
+    ) -> None:
         self.matrix_free = bool(matrix_free)
         self.prepared_refresh = bool(prepared_refresh)
         self.jit = bool(jit)
@@ -255,7 +255,7 @@ class NonlinearSystemProblem(StrictModule):
         adjoint_linear_setup: Callable[[PyTree[Any], Any], AbstractLinearOperator]
         | None = None,
         problem_id: str = "nonlinear-system",
-    ):
+    ) -> None:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         if state_space is not None and not isinstance(state_space, AbstractVectorSpace):
@@ -484,7 +484,7 @@ class FixedPointProblem(StrictModule):
         /,
         *,
         problem_id: str = "fixed-point",
-    ):
+    ) -> None:
         if not callable(mapping):
             raise TypeError("mapping must be callable.")
         identifier = str(problem_id)
@@ -579,7 +579,7 @@ class NonlinearDiagnostics(StrictModule):
         final_linear_residual_norm: Any = jnp.nan,
         final_linear_converged: Any = False,
         counts_complete: bool = True,
-    ):
+    ) -> None:
         self.initial_residual_norm = jnp.asarray(initial_residual_norm)
         self.final_residual_norm = jnp.asarray(final_residual_norm)
         self.final_step_norm = jnp.asarray(final_step_norm)
@@ -651,7 +651,7 @@ class NonlinearProvenance(StrictModule):
         linear_plan_id: str = "",
         precision_policy_id: str | None = None,
         notes: str = "",
-    ):
+    ) -> None:
         identifiers = tuple(
             str(value)
             for value in (problem_id, method_id, derivative_id, globalization_id)
@@ -684,7 +684,7 @@ class NonlinearTransformationEvidence(StrictModule):
         state: PyTree[Any],
         residual: PyTree[Any],
         auxiliary: Any,
-    ):
+    ) -> None:
         self.state = validate_inexact_tree(state, name="transformed nonlinear state")
         self.residual = validate_inexact_tree(
             residual, name="transformed nonlinear residual"
@@ -727,7 +727,7 @@ class NonlinearResult(StrictModule):
         attempts: tuple[Any, ...] = (),
         iteration_evidence: IterationEvidence | None = None,
         component_evidence: tuple[str, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(diagnostics, NonlinearDiagnostics):
             raise TypeError("diagnostics must be NonlinearDiagnostics.")
         if not isinstance(provenance, NonlinearProvenance):

@@ -208,7 +208,9 @@ class LinearSpringDashpotNormalPlan(AbstractDEMNormalContactPlan):
     stiffness: Array
     normal_law_id: str = eqx.field(static=True)
 
-    def __init__(self, stiffness: ArrayLike, /, *, normal_law_id: str | None = None):
+    def __init__(
+        self, stiffness: ArrayLike, /, *, normal_law_id: str | None = None
+    ) -> None:
         values = np.asarray(stiffness)
         if values.ndim not in (0, 2):
             raise ValueError("Linear normal stiffness must be scalar or a square table.")
@@ -292,7 +294,7 @@ class LinearSpringDashpotNormalPlan(AbstractDEMNormalContactPlan):
 class HertzNormalContactPlan(AbstractDEMNormalContactPlan):
     normal_law_id: str = eqx.field(static=True)
 
-    def __init__(self, *, normal_law_id: str | None = None):
+    def __init__(self, *, normal_law_id: str | None = None) -> None:
         generated = canonical_fingerprint({"kind": "hertz-normal-tsuji-damping"})
         identifier = generated if normal_law_id is None else str(normal_law_id)
         if not identifier:
@@ -393,7 +395,7 @@ class ThorntonLinearPlasticNormalPlan(AbstractDEMNormalContactPlan):
         /,
         *,
         normal_law_id: str | None = None,
-    ):
+    ) -> None:
         arrays = tuple(
             np.asarray(value)
             for value in (
@@ -607,7 +609,9 @@ class CundallStrackTangentialPlan(AbstractDEMTangentialContactPlan):
     stiffness: Array
     tangential_law_id: str = eqx.field(static=True)
 
-    def __init__(self, stiffness: ArrayLike, /, *, tangential_law_id: str | None = None):
+    def __init__(
+        self, stiffness: ArrayLike, /, *, tangential_law_id: str | None = None
+    ) -> None:
         values = np.asarray(stiffness)
         if values.ndim not in (0, 2):
             raise ValueError("Tangential stiffness must be scalar or a square table.")
@@ -668,7 +672,7 @@ class CundallStrackTangentialPlan(AbstractDEMTangentialContactPlan):
 class MindlinTangentialContactPlan(AbstractDEMTangentialContactPlan):
     tangential_law_id: str = eqx.field(static=True)
 
-    def __init__(self, *, tangential_law_id: str | None = None):
+    def __init__(self, *, tangential_law_id: str | None = None) -> None:
         generated = canonical_fingerprint({"kind": "mindlin-tangential-tsuji-damping"})
         identifier = generated if tangential_law_id is None else str(tangential_law_id)
         if not identifier:
@@ -735,7 +739,7 @@ class AbstractDEMRotationalContactPlan(StrictModule, NonTrainableState):
 class ConstantRollingResistancePlan(AbstractDEMRotationalContactPlan):
     rotational_law_id: str = eqx.field(static=True)
 
-    def __init__(self, *, rotational_law_id: str | None = None):
+    def __init__(self, *, rotational_law_id: str | None = None) -> None:
         generated = canonical_fingerprint({"kind": "constant-rolling-resistance"})
         identifier = generated if rotational_law_id is None else str(rotational_law_id)
         if not identifier:
@@ -828,7 +832,7 @@ class DEMContactModelPlan(StrictModule, NonTrainableState):
         tangential: AbstractDEMTangentialContactPlan | None = None,
         rotational: AbstractDEMRotationalContactPlan | None = None,
         contact_model_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(normal, AbstractDEMNormalContactPlan):
             raise TypeError("normal must be an AbstractDEMNormalContactPlan.")
         if cohesion is not None and not isinstance(cohesion, AbstractDEMCohesionPlan):
@@ -953,7 +957,7 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: DEMContactModelPlan, materials: Any, ambient_dimension: int, /
-    ):
+    ) -> None:
         if not isinstance(plan, DEMContactModelPlan):
             raise TypeError("plan must be a DEMContactModelPlan.")
         dimension = int(ambient_dimension)

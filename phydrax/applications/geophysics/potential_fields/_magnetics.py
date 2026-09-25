@@ -31,7 +31,7 @@ class MagneticMaterial(StrictModule):
         remanent_magnetization_A_m: ArrayLike,
         cell_count: int,
         /,
-    ):
+    ) -> None:
         raw = jnp.asarray(susceptibility)
         count = int(cell_count)
         if raw.shape in ((), (count,)):
@@ -96,7 +96,7 @@ class FreeSpaceMagneticPlan(StrictModule, NonTrainableState):
         /,
         *,
         minimum_separation_m: float,
-    ):
+    ) -> None:
         if not isinstance(source, GravityQuadratureSource):
             raise TypeError(
                 "Magnetic plan requires gravity-compatible volume quadrature."

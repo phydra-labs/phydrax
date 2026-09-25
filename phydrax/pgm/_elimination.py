@@ -89,7 +89,7 @@ class VariableEliminationMethod(StrictModule):
         *,
         ordering: Literal["min-fill", "min-degree", "given"] = "min-fill",
         order: Sequence[int] | None = None,
-    ):
+    ) -> None:
         if ordering not in ("min-fill", "min-degree", "given"):
             raise ValueError("Unknown elimination ordering policy.")
         resolved = None if order is None else tuple(order)
@@ -522,7 +522,7 @@ class NormalizedFactorGraphLaw(AbstractProbabilityLaw):
         /,
         *,
         evidence: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, VariableEliminationPlan):
             raise TypeError("plan must be VariableEliminationPlan.")
         if result is not None and not isinstance(result, VariableEliminationResult):

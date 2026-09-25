@@ -32,7 +32,9 @@ class CurrentDiffusionState(StrictModule):
     poloidal_flux_wb_per_rad: Array
     time_s: Array
 
-    def __init__(self, poloidal_flux_wb_per_rad: ArrayLike, time_s: ArrayLike = 0.0, /):
+    def __init__(
+        self, poloidal_flux_wb_per_rad: ArrayLike, time_s: ArrayLike = 0.0, /
+    ) -> None:
         flux = jnp.asarray(poloidal_flux_wb_per_rad)
         time = jnp.asarray(time_s, dtype=flux.dtype)
         if flux.ndim != 1 or time.shape != ():
@@ -215,7 +217,7 @@ class PreparedTokamakTransportCurrentCoupling(StrictModule, NonTrainableState):
         core: PreparedTokamakCoreTransport,
         current: PreparedCurrentDiffusion,
         /,
-    ):
+    ) -> None:
         if not isinstance(core, PreparedTokamakCoreTransport) or not isinstance(
             current, PreparedCurrentDiffusion
         ):

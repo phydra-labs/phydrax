@@ -52,7 +52,7 @@ class HermitianEigenspaceTrackingPolicy(StrictModule):
         minimum_assignment_margin: float = 1e-6,
         orthogonality_tolerance: float = 1e-8,
         maximum_dimension: int = 4096,
-    ):
+    ) -> None:
         values = {
             "degeneracy_absolute": degeneracy_absolute,
             "degeneracy_relative": degeneracy_relative,

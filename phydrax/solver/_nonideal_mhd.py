@@ -35,7 +35,7 @@ class AnisotropicThermalTransportPlan(StrictModule, NonTrainableState):
         *,
         perpendicular_conductivity: float = 0.0,
         cfl: float = 0.25,
-    ):
+    ) -> None:
         parallel = float(parallel_conductivity)
         perpendicular = float(perpendicular_conductivity)
         cfl_ = float(cfl)
@@ -155,7 +155,7 @@ class NonIdealMHDPlan(StrictModule, NonTrainableState):
         hall_coefficient: float = 0.0,
         ambipolar_coefficient: float = 0.0,
         cfl: float = 0.25,
-    ):
+    ) -> None:
         from ..discretization.finite_volume import UpwindConstrainedTransportPlan
 
         if not isinstance(spatial, UpwindConstrainedTransportPlan):

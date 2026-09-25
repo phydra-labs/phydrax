@@ -23,7 +23,7 @@ class ElasticStiffness(StrictModule):
     dimension: int = eqx.field(static=True)
     voigt_pairs: tuple[tuple[int, int], ...] = eqx.field(static=True)
 
-    def __init__(self, matrix_Pa: ArrayLike, dimension: int, /):
+    def __init__(self, matrix_Pa: ArrayLike, dimension: int, /) -> None:
         dimension_ = int(dimension)
         pairs = _voigt_pairs(dimension_)
         matrix = jnp.asarray(matrix_Pa)
@@ -97,7 +97,9 @@ class StandardLinearSolidSpectrum(StrictModule):
     relaxation_times_s: Array
     modulus_fractions: Array
 
-    def __init__(self, relaxation_times_s: ArrayLike, modulus_fractions: ArrayLike, /):
+    def __init__(
+        self, relaxation_times_s: ArrayLike, modulus_fractions: ArrayLike, /
+    ) -> None:
         times, fractions = jnp.broadcast_arrays(
             jnp.asarray(relaxation_times_s), jnp.asarray(modulus_fractions)
         )
@@ -147,7 +149,7 @@ class PeriodicAnisotropicViscoelasticPlan(StrictModule, NonTrainableState):
         step_count: int,
         spectrum: StandardLinearSolidSpectrum,
         /,
-    ):
+    ) -> None:
         dt, steps = float(time_step_s), int(step_count)
         if not isinstance(grid, AcousticGrid) or not isinstance(
             spectrum, StandardLinearSolidSpectrum

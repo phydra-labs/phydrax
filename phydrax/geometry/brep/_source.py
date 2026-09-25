@@ -80,7 +80,7 @@ class BRepSource(GeometrySource):
 
     model: BRepModel
 
-    def __init__(self, model: BRepModel):
+    def __init__(self, model: BRepModel) -> None:
         if not isinstance(model, BRepModel):
             raise TypeError("model must be a BRepModel.")
         _require_watertight_query_mesh(model)
@@ -104,7 +104,7 @@ class _BRepKernel(GeometryKernel):
     mesh: TriangleMesh
     query_index: TriangleMeshQueryIndex
 
-    def __init__(self, model: BRepModel):
+    def __init__(self, model: BRepModel) -> None:
         self.model = model
         self.mesh = TriangleMesh(
             model.mesh_vertices,

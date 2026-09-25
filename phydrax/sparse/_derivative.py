@@ -66,7 +66,7 @@ class SparseDerivativePrecisionPolicy(StrictModule):
         coefficient: Any | None = None,
         accumulation: Any | None = None,
         output: Any | None = None,
-    ):
+    ) -> None:
         values = {
             "source_seed": None
             if source_seed is None
@@ -112,7 +112,7 @@ class SparseHessianContract(StrictModule):
         *,
         target: AbstractVectorSpace | None = None,
         cotangent: Any = None,
-    ):
+    ) -> None:
         if kind not in ("bilinear", "riesz", "cotangent"):
             raise ValueError("Unknown sparse Hessian contract.")
         if kind == "cotangent":
@@ -176,7 +176,7 @@ class SparseDerivativePlan(StrictModule):
         precision: SparseDerivativePrecisionPolicy,
         coefficient_scale: Array | None,
         plan_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         if not isinstance(source, AbstractVectorSpace) or not isinstance(
@@ -388,7 +388,7 @@ class SparseDerivativeVerification(StrictModule):
         *,
         num_probes: int,
         plan_id: str,
-    ):
+    ) -> None:
         self.passed = jnp.asarray(passed, dtype=jnp.bool_)
         self.maximum_absolute_error = jnp.asarray(maximum_absolute_error)
         self.maximum_relative_error = jnp.asarray(maximum_relative_error)

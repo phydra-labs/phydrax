@@ -55,7 +55,7 @@ class ResidualRelaxationMap(StrictModule, NonTrainableState):
         blocks: ResidualBlockLayout | None = None,
         operator_semantic_id: str | None = None,
         operator_numeric_id: str | None = None,
-    ):
+    ) -> None:
         fields_ = (str(fields),) if isinstance(fields, str) else tuple(map(str, fields))
         if not fields_ or any(not field for field in fields_):
             raise ValueError("Relaxation fields must be non-empty names.")
@@ -116,7 +116,7 @@ class PseudoTransientAdaptation(StrictModule, NonTrainableState):
         maximum_inverse_step: float = 1e2,
         minimum_state_displacement: float = 1e-12,
         minimum_residual_displacement: float = 1e-12,
-    ):
+    ) -> None:
         start_ = int(start)
         every_ = int(every)
         scalars = tuple(
@@ -173,7 +173,7 @@ class PseudoTransientPolicy(StrictModule, NonTrainableState):
         inverse_step: ArrayLike = 1.0,
         adaptation: PseudoTransientAdaptation | None = None,
         freshness: PseudoTimeFreshness = "every_update",
-    ):
+    ) -> None:
         index = int(term_index)
         if index < 0:
             raise ValueError("term_index must be non-negative.")
@@ -242,7 +242,7 @@ class CausalResidualPolicy(StrictModule, NonTrainableState):
         *,
         gate_signal: CausalGateSignal = "physical",
         per_block: bool = True,
-    ):
+    ) -> None:
         index = int(term_index)
         label = str(time_label)
         if index < 0 or not label:
@@ -299,7 +299,7 @@ class FunctionalTermBalancePolicy(StrictModule, NonTrainableState):
         maximum: float = 1e3,
         ntk_probes: int = 16,
         maximum_relative_standard_error: float = 0.25,
-    ):
+    ) -> None:
         blocks_ = tuple(blocks)
         if not blocks_ or any(
             not isinstance(block, ResidualBlockRef) for block in blocks_
@@ -378,7 +378,7 @@ class FunctionalDiagnosticsPolicy(StrictModule, NonTrainableState):
         ntk: bool = False,
         ntk_probes: int = 16,
         ntk_eigenvalues: int = 8,
-    ):
+    ) -> None:
         values = tuple((every, ntk_probes, ntk_eigenvalues))
         if any(value < 1 for value in values):
             raise ValueError("Diagnostic cadence and capacities must be positive.")
@@ -405,7 +405,7 @@ class FunctionalSelectionPolicy(StrictModule, NonTrainableState):
         mode: Literal["min", "max"] = "min",
         min_delta: float = 0.0,
         patience: int | None = None,
-    ):
+    ) -> None:
         every_ = int(every)
         delta = float(min_delta)
         patience_ = None if patience is None else int(patience)
@@ -438,7 +438,7 @@ class FunctionalCheckpointPolicy(StrictModule, NonTrainableState):
         *,
         every: int = 1000,
         save_final: bool = True,
-    ):
+    ) -> None:
         path_ = str(Path(path))
         every_ = int(every)
         if not path_ or every_ < 1:
@@ -477,7 +477,7 @@ class FunctionalTrainingPlan(StrictModule, NonTrainableState):
         selection: FunctionalSelectionPolicy | None = None,
         checkpoint: FunctionalCheckpointPolicy | None = None,
         sharding: Any = None,
-    ):
+    ) -> None:
         pseudo = tuple(pseudo_transient)
         causal_ = tuple(causal)
         if any(not isinstance(value, PseudoTransientPolicy) for value in pseudo):
@@ -625,7 +625,7 @@ class FunctionalTrainingState(StrictModule):
         previous_gradient: PyTree[Any] | None = None,
         training_seconds: float = 0.0,
         resumed_from_step: int = 0,
-    ):
+    ) -> None:
         if not isinstance(progress, TrainingProgress):
             raise TypeError("progress must be a TrainingProgress.")
         if not isinstance(kernel_state, TrainingKernelState):

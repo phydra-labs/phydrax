@@ -33,7 +33,7 @@ class BatteryTerminalConvention(StrictModule, NonTrainableState):
     interfacial_flux_definition: str = eqx.field(static=True)
     convention_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.voltage_definition = (
             "positive-terminal potential minus negative-terminal potential"
         )
@@ -114,7 +114,7 @@ class VoltageStopGuard(StrictModule, NonTrainableState):
     direction: StopDirection = eqx.field(static=True)
     guard_id: str = eqx.field(static=True)
 
-    def __init__(self, direction: StopDirection, /):
+    def __init__(self, direction: StopDirection, /) -> None:
         direction_ = _direction(direction)
         self.direction = direction_
         self.guard_id = canonical_fingerprint(
@@ -140,7 +140,7 @@ class CurrentStopGuard(StrictModule, NonTrainableState):
     direction: StopDirection = eqx.field(static=True)
     guard_id: str = eqx.field(static=True)
 
-    def __init__(self, direction: StopDirection, /):
+    def __init__(self, direction: StopDirection, /) -> None:
         direction_ = _direction(direction)
         self.direction = direction_
         self.guard_id = canonical_fingerprint(
@@ -166,7 +166,7 @@ class TemperatureStopGuard(StrictModule, NonTrainableState):
     direction: StopDirection = eqx.field(static=True)
     guard_id: str = eqx.field(static=True)
 
-    def __init__(self, direction: StopDirection, /):
+    def __init__(self, direction: StopDirection, /) -> None:
         direction_ = _direction(direction)
         self.direction = direction_
         self.guard_id = canonical_fingerprint(
@@ -193,7 +193,7 @@ class StoichiometryStopGuard(StrictModule, NonTrainableState):
     direction: StopDirection = eqx.field(static=True)
     guard_id: str = eqx.field(static=True)
 
-    def __init__(self, component: str, direction: StopDirection, /):
+    def __init__(self, component: str, direction: StopDirection, /) -> None:
         component_ = _identifier(component, "Stoichiometry component")
         direction_ = _direction(direction)
         self.component = component_
@@ -248,7 +248,7 @@ class CurrentStepPlan(StrictModule, NonTrainableState):
         *,
         stop_guards: Sequence[BatteryStopGuard] = (),
         label: str = "current",
-    ):
+    ) -> None:
         duration = _duration(duration_s)
         guards = _guards(stop_guards)
         label_ = _identifier(label, "Battery step label")
@@ -280,7 +280,7 @@ class RestStepPlan(StrictModule, NonTrainableState):
         *,
         stop_guards: Sequence[BatteryStopGuard] = (),
         label: str = "rest",
-    ):
+    ) -> None:
         duration = _duration(duration_s)
         guards = _guards(stop_guards)
         label_ = _identifier(label, "Battery step label")
@@ -321,7 +321,7 @@ class BatteryProtocolPlan(StrictModule, NonTrainableState):
         *,
         t0_s: float = 0.0,
         node_side: Literal["left", "right"] = "left",
-    ):
+    ) -> None:
         resolved = tuple(steps)
         if not resolved or any(not isinstance(step, _STEP_TYPES) for step in resolved):
             raise TypeError("BatteryProtocolPlan requires typed current/rest steps.")
@@ -440,7 +440,7 @@ class BatteryProtocolValues(StrictModule):
         current_amplitudes_a: ArrayLike,
         stop_thresholds: ArrayLike = (),
         /,
-    ):
+    ) -> None:
         if not isinstance(protocol, BatteryProtocolPlan):
             raise TypeError("protocol must be a BatteryProtocolPlan.")
         current_input = jnp.asarray(current_amplitudes_a)

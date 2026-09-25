@@ -30,7 +30,7 @@ class ComplexProjectiveManifold(AbstractGeodesicManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, ambient_dimension: int, /, *, tolerance: float = 1e-7):
+    def __init__(self, ambient_dimension: int, /, *, tolerance: float = 1e-7) -> None:
         dimension = int(ambient_dimension)
         if dimension < 2:
             raise ValueError("Complex projective ambient dimension must be at least two.")

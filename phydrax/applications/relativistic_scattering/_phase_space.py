@@ -120,7 +120,7 @@ class TwoBodyPhaseSpaceMap(AbstractPhaseSpaceMap, NonTrainableState):
     masses: Array
     _map_id: str = eqx.field(static=True)
 
-    def __init__(self, first_mass: float, second_mass: float, /):
+    def __init__(self, first_mass: float, second_mass: float, /) -> None:
         masses = np.asarray([first_mass, second_mass], dtype=np.float64)
         if np.any(~np.isfinite(masses)) or np.any(masses < 0.0):
             raise ValueError("Two-body masses must be finite and nonnegative.")
@@ -206,7 +206,7 @@ class RecursivePhaseSpaceMap(AbstractPhaseSpaceMap, NonTrainableState):
         /,
         *,
         max_multiplicity: int = 16,
-    ):
+    ) -> None:
         masses_ = np.asarray(tuple(masses), dtype=np.float64)
         maximum = int(max_multiplicity)
         if masses_.ndim != 1 or masses_.size < 2:
@@ -356,7 +356,7 @@ class MultiChannelPhaseSpacePlan(StrictModule, NonTrainableState):
         /,
         *,
         max_channels: int = 16,
-    ):
+    ) -> None:
         channels_ = tuple(channels)
         probabilities_ = np.asarray(tuple(probabilities), dtype=np.float64)
         maximum = int(max_channels)

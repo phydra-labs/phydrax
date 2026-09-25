@@ -40,7 +40,7 @@ class ChainCompressionEvidence(StrictModule):
         precision_evidence: PrecisionEvidenceEnvelope,
         precision_policy_id: str,
         real_dtype,
-    ):
+    ) -> None:
         records = tuple(truncations)
         if any(not isinstance(record, TensorTruncationEvidence) for record in records):
             raise TypeError("truncations must contain TensorTruncationEvidence values.")
@@ -347,7 +347,7 @@ class VariationalCompressionPolicy(StrictModule):
         gradient_step: float = 0.05,
         residual_tolerance: float = 1e-8,
         maximum_tensor_elements: int = 10_000_000,
-    ):
+    ) -> None:
         if any(
             not isinstance(value, Integral) or isinstance(value, bool)
             for value in (

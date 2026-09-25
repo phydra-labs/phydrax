@@ -46,7 +46,7 @@ class KeldyshSCBAProblem(StrictModule, NonTrainableState):
         *,
         phonon_bins: int,
         phonon_occupation: float,
-    ):
+    ) -> None:
         energy = np.asarray(energies, dtype=np.float64)
         bare = np.asarray(bare_inverse_retarded, dtype=np.complex128)
         lesser = np.asarray(contact_lesser, dtype=np.complex128)
@@ -107,7 +107,7 @@ class KeldyshSCBAPolicy(StrictModule, NonTrainableState):
 
     def __init__(
         self, *, tolerance: float = 1.0e-8, maximum_steps: int = 100, damping: float = 0.5
-    ):
+    ) -> None:
         tolerance_ = float(tolerance)
         steps = int(maximum_steps)
         damping_ = float(damping)

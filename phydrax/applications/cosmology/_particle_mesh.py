@@ -120,7 +120,7 @@ class CosmologicalParticleMeshPlan(StrictModule):
         gravity: ParticleMeshGravityPlan,
         scale_factors: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(kinematics, CosmologicalKDKPlan):
             raise TypeError("kinematics must be CosmologicalKDKPlan.")
         if not isinstance(gravity, ParticleMeshGravityPlan):

@@ -32,7 +32,7 @@ class ChemicalJumpRuntime(StrictModule):
         /,
         *,
         rate_runtime: ChemicalRateRuntime | None = None,
-    ):
+    ) -> None:
         temperature_value = jnp.asarray(temperature)
         pressure_value = jnp.asarray(pressure, dtype=temperature_value.dtype)
         if temperature_value.shape != () or pressure_value.shape != ():
@@ -68,7 +68,7 @@ class ChemicalJumpProcess(AbstractJumpProcess):
         mechanism: PreparedChemicalMechanism,
         system_measure: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         measure = jnp.asarray(system_measure)

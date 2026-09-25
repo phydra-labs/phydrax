@@ -236,7 +236,7 @@ class FiniteBulkCardiacMaterial(HyperelasticLaw, NonTrainableState):
         volumetric_constraint: VolumetricConstraint | None = None,
         minimum_jacobian: float = 1.0e-8,
         material_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(isochoric_energy):
             raise TypeError("isochoric_energy must be callable.")
         bulk = jnp.asarray(bulk_modulus)
@@ -370,7 +370,7 @@ class ExactIncompressibleCardiacMaterial(StrictModule, NonTrainableState):
         volumetric_constraint: VolumetricConstraint | None = None,
         minimum_jacobian: float = 1.0e-8,
         material_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(isochoric_energy):
             raise TypeError("isochoric_energy must be callable.")
         constraint = (

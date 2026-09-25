@@ -62,7 +62,7 @@ class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
         maximum_iterations=12,
         tolerance=1.0e-10,
         model_id="batch-od",
-    ):
+    ) -> None:
         if not callable(observation_model):
             raise TypeError("observation_model must be callable.")
         observed_host = np.asarray(observed, dtype=np.float64)
@@ -201,7 +201,7 @@ class SequentialOrbitDeterminationPlan(StrictModule, NonTrainableState):
         model_id="sequential-od",
         transition_id,
         observation_id,
-    ):
+    ) -> None:
         if not callable(transition) or not callable(observation):
             raise TypeError("Sequential OD models must be callable.")
         process = jnp.asarray(process_covariance)

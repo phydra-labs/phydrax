@@ -111,7 +111,7 @@ class MeanFieldGaussianFamily(AbstractVariationalFamily):
         /,
         *,
         scale_floor: float = 1e-6,
-    ):
+    ) -> None:
         location_tree = jax.tree.map(jnp.asarray, location)
         raw_scale_tree = jax.tree.map(jnp.asarray, raw_scale)
         if jax.tree.structure(location_tree) != jax.tree.structure(raw_scale_tree):
@@ -250,7 +250,7 @@ class VariationalConfig(StrictModule):
         learning_rate: float = 1e-3,
         gradient_clip: float = 100.0,
         record_every: int = 10,
-    ):
+    ) -> None:
         steps = int(num_steps)
         samples = int(samples_per_step)
         interval = int(record_every)

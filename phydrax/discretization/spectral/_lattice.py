@@ -113,7 +113,7 @@ class LatticeHarmonicLayout(StrictModule, NonTrainableState):
         /,
         *,
         truncation: HarmonicTruncationKind = "custom",
-    ):
+    ) -> None:
         coefficients_host = _canonical_coefficients(coefficients)
         conjugates_host = _conjugate_indices(coefficients_host)
         differences_host = coefficients_host[:, None, :] - coefficients_host[None, :, :]
@@ -164,7 +164,7 @@ class LatticeHarmonicPlan(StrictModule, NonTrainableState):
         precision: SpectralPrecisionPolicy | None = None,
         max_harmonics: int = 4096,
         max_convolution_bytes: int = 2**31,
-    ):
+    ) -> None:
         layout = LatticeHarmonicLayout(coefficients, truncation=truncation)
         shape = tuple(sample_shape)
         if len(shape) != layout.periodic_dimension or any(value < 1 for value in shape):
@@ -320,7 +320,7 @@ class LatticeHarmonicDiscretization(StrictModule, NonTrainableState):
         /,
         *,
         numeric_version: str = "0",
-    ):
+    ) -> None:
         vectors = jnp.asarray(
             primitive_vectors,
             dtype=jnp.dtype(plan.precision.physical_dtype),
@@ -543,7 +543,7 @@ class BrillouinZonePlan(StrictModule, NonTrainableState):
     grid_shape: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, grid_shape: tuple[int, ...], /):
+    def __init__(self, grid_shape: tuple[int, ...], /) -> None:
         shape = tuple(grid_shape)
         if len(shape) not in (1, 2) or any(value < 1 for value in shape):
             raise ValueError("grid_shape must contain one or two positive sizes.")
@@ -574,7 +574,7 @@ class PreparedBrillouinZone(StrictModule, NonTrainableState):
         plan: BrillouinZonePlan,
         lattice: LatticeHarmonicDiscretization,
         /,
-    ):
+    ) -> None:
         if len(plan.grid_shape) != lattice.periodic_dimension:
             raise ValueError("The Brillouin rule and lattice dimensions must match.")
         axes = tuple(

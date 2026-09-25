@@ -67,7 +67,7 @@ class StochasticDriverSegmentReference:
     source_time: float
     target_time: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.trajectory_id or not self.physical_case_id:
             raise ValueError("Trajectory and physical-case IDs must be non-empty.")
         if int(self.source_index) < 0 or int(self.target_index) <= int(self.source_index):
@@ -101,7 +101,7 @@ class _TrajectoryRecord:
     uncertainty_source: str | None = None
     metadata: Mapping[str, Any] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         cases = tuple(self.case_shape)
         realizations = tuple(self.realization_shape)
         state = tuple(self.state_shape)
@@ -273,7 +273,7 @@ class StochasticTrajectory(StrictModule):
         basis_id: str | None = None,
         approximation_id: str | None = None,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         cases = tuple(case_shape)
         if any(size <= 0 for size in cases):
             raise ValueError("case_shape dimensions must be positive.")
@@ -689,7 +689,7 @@ class StochasticTransitionView(StrictModule):
         source_indices: ArrayLike,
         target_indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(trajectory, StochasticTrajectory):
             raise TypeError("trajectory must be a StochasticTrajectory.")
         sources = jnp.asarray(source_indices, dtype=jnp.int32).reshape((-1,))

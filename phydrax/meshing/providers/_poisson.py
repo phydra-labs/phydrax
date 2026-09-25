@@ -75,7 +75,7 @@ class OrientedPointCloud(StrictModule, NonTrainableState):
         *,
         source_id: str,
         source_revision: str,
-    ):
+    ) -> None:
         if not isinstance(coordinate_contract, SpatialCoordinateContract):
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if (
@@ -136,7 +136,9 @@ class PoissonReconstructionSpec(StrictModule, NonTrainableState):
     linear_fit: bool = eqx.field(static=True)
     specification_id: str = eqx.field(static=True)
 
-    def __init__(self, *, depth: int = 8, scale: float = 1.1, linear_fit: bool = False):
+    def __init__(
+        self, *, depth: int = 8, scale: float = 1.1, linear_fit: bool = False
+    ) -> None:
         depth_ = operator.index(depth)
         scale_ = float(scale)
         if isinstance(depth, bool) or not 2 <= depth_ <= 30:

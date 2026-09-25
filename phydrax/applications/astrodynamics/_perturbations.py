@@ -28,7 +28,7 @@ class ThirdBodyGravity(AbstractAstrodynamicsForce):
     context: AstrodynamicsContext
     force_id: str = eqx.field(static=True)
 
-    def __init__(self, ephemeris: TabulatedEphemeris, body_index: int, /):
+    def __init__(self, ephemeris: TabulatedEphemeris, body_index: int, /) -> None:
         if not isinstance(ephemeris, TabulatedEphemeris):
             raise TypeError("ephemeris must be a TabulatedEphemeris.")
         if isinstance(body_index, bool) or not isinstance(body_index, int):
@@ -121,7 +121,7 @@ class ZonalHarmonicGravity(AbstractAstrodynamicsForce):
         j2: ArrayLike = 0.0,
         j3: ArrayLike = 0.0,
         j4: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         self.mu = jnp.asarray(mu).reshape(())

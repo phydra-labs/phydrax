@@ -72,7 +72,7 @@ class AvellanedaStoikovPlan(StrictModule):
         arrival_decay: float,
         inventory_bound: float,
         plan_id: str,
-    ):
+    ) -> None:
         self.risk_aversion = _nonnegative(risk_aversion, "risk_aversion")
         self.volatility = _nonnegative(volatility, "volatility")
         self.arrival_scale = _positive(arrival_scale, "arrival_scale")
@@ -102,7 +102,7 @@ class GLFTPlan(StrictModule):
         inventory_bound: float,
         benchmark_tolerance: float,
         plan_id: str,
-    ):
+    ) -> None:
         self.risk_aversion = _positive(risk_aversion, "risk_aversion")
         self.volatility = _nonnegative(volatility, "volatility")
         self.arrival_scale = _positive(arrival_scale, "arrival_scale")

@@ -41,7 +41,7 @@ class LinearSolveTemplate(StrictModule):
         target_space_id: str,
         batch_shape: tuple[int, ...],
         rejection_reason: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, LinearSolvePlan):
             raise TypeError("plan must be a LinearSolvePlan.")
         reason = None if rejection_reason is None else str(rejection_reason)

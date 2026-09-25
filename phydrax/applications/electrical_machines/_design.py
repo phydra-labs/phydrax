@@ -56,7 +56,7 @@ class MachineAngleStudy(StrictModule):
         currents: ArrayLike,
         *,
         weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         models = tuple(machines)
         if not models or any(not isinstance(model, PlanarMachine) for model in models):
             raise ValueError("An angle study requires at least one prepared machine.")

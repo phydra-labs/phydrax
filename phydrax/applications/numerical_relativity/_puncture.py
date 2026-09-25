@@ -49,7 +49,7 @@ class Puncture(StrictModule, NonTrainableState):
         linear_momentum: ArrayLike = (0.0, 0.0, 0.0),
         spin: ArrayLike = (0.0, 0.0, 0.0),
         puncture_id: str | None = None,
-    ):
+    ) -> None:
         mass = float(np.asarray(bare_mass))
         location = np.asarray(position, dtype=np.float64)
         momentum = np.asarray(linear_momentum, dtype=np.float64)
@@ -91,7 +91,7 @@ class BrillLindquistInitialData(StrictModule, NonTrainableState):
     punctures: tuple[Puncture, ...]
     data_id: str = eqx.field(static=True)
 
-    def __init__(self, punctures: tuple[Puncture, ...], /):
+    def __init__(self, punctures: tuple[Puncture, ...], /) -> None:
         self.punctures = _puncture_tuple(punctures, minimum=1)
         self.data_id = canonical_fingerprint(
             {
@@ -118,7 +118,7 @@ class BowenYorkInitialData(StrictModule, NonTrainableState):
     punctures: tuple[Puncture, ...]
     data_id: str = eqx.field(static=True)
 
-    def __init__(self, punctures: tuple[Puncture, ...], /):
+    def __init__(self, punctures: tuple[Puncture, ...], /) -> None:
         self.punctures = _puncture_tuple(punctures, minimum=1)
         self.data_id = canonical_fingerprint(
             {
@@ -170,7 +170,7 @@ class TwoPunctureRestart(StrictModule, NonTrainableState):
     source_content_id: str = eqx.field(static=True)
     restart_id: str = eqx.field(static=True)
 
-    def __init__(self, correction, /, *, plan_id: str, source_content_id: str):
+    def __init__(self, correction, /, *, plan_id: str, source_content_id: str) -> None:
         value = jnp.asarray(correction)
         plan = str(plan_id)
         source = str(source_content_id)
@@ -259,7 +259,7 @@ class TwoPunctureHamiltonianPlan(StrictModule, NonTrainableState):
         target_angular_momentum: ArrayLike | None = None,
         mass_tolerance: float = 5.0e-2,
         charge_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         pair = _puncture_tuple(punctures, minimum=2)
         if len(pair) != 2:
             raise ValueError("TwoPunctureHamiltonianPlan requires exactly two punctures.")

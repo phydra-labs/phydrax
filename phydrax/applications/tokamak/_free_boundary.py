@@ -247,7 +247,9 @@ class FreeBoundaryTokamakState(StrictModule):
     time_s: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, winding_current_a: ArrayLike, time_s: ArrayLike, plan_id: str, /):
+    def __init__(
+        self, winding_current_a: ArrayLike, time_s: ArrayLike, plan_id: str, /
+    ) -> None:
         current = jnp.asarray(winding_current_a)
         time = jnp.asarray(time_s, dtype=current.dtype)
         if current.ndim != 1 or time.shape != ():

@@ -83,7 +83,7 @@ class KoopmanTemporalOperator(AbstractOperatorModel):
         min_decay: float = 1e-4,
         skew_scale: float = 0.05,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
         self.spatial_ndim = int(spatial_ndim)

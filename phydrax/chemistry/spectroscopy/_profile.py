@@ -85,7 +85,7 @@ class SpectralProfileResult(StrictModule, NonTrainableState):
         successful: ArrayLike,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         grid_ = jnp.asarray(grid)
         intensity = jnp.asarray(intensity_density, dtype=grid_.dtype)
         if grid_.ndim != 1 or intensity.shape != grid_.shape:
@@ -140,7 +140,7 @@ class SpectralProfilePlan(StrictModule, NonTrainableState):
         fwhm: float,
         lorentzian_fwhm: float | None = None,
         area_tolerance: float = 5.0e-3,
-    ):
+    ) -> None:
         if not isinstance(line_shape, SpectralLineShape):
             raise TypeError("line_shape must be SpectralLineShape.")
         lower = float(minimum)

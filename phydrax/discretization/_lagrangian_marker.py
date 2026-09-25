@@ -70,7 +70,7 @@ class LagrangianMarkerSetPlan(AbstractDiscretizationPlan):
         name: str = "lagrangian-markers",
         coordinate_dtype: Any = "float64",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         ids = np.asarray(marker_ids)
         if ids.ndim != 1 or ids.size == 0:
             raise ValueError("marker_ids must be a nonempty rank-1 integer array.")
@@ -192,7 +192,9 @@ class LagrangianMarkerDiscretization(AbstractPreparedDiscretization):
     numeric_version: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: LagrangianMarkerSetPlan, /, *, numeric_version: str = "0"):
+    def __init__(
+        self, plan: LagrangianMarkerSetPlan, /, *, numeric_version: str = "0"
+    ) -> None:
         if not isinstance(plan, LagrangianMarkerSetPlan):
             raise TypeError("plan must be a LagrangianMarkerSetPlan.")
         version = str(numeric_version)

@@ -84,7 +84,7 @@ class VisibilitySampling(StrictModule, NonTrainableState):
         *,
         frequency_unit: UnitDefinition = HERTZ,
         uv_unit: str = "wavelength",
-    ):
+    ) -> None:
         if not isinstance(frequency_unit, UnitDefinition):
             raise TypeError("frequency_unit must be UnitDefinition.")
         conversion_factor(frequency_unit, HERTZ)
@@ -153,7 +153,7 @@ class StokesVisibilityData(StrictModule, NonTrainableState):
         /,
         *,
         parent_product_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(sampling, VisibilitySampling):
             raise TypeError("sampling must be VisibilitySampling.")
         if not isinstance(visibility_unit, UnitDefinition):
@@ -368,7 +368,7 @@ class ClosureTopology(StrictModule, NonTrainableState):
         /,
         *,
         phase_conjugated: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(sampling, VisibilitySampling):
             raise TypeError("sampling must be VisibilitySampling.")
         phase = _integer_matrix(

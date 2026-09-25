@@ -40,7 +40,7 @@ class HolomorphicBundleFrame(StrictModule):
         /,
         *,
         frame_id: str,
-    ):
+    ) -> None:
         if not isinstance(convention, ComplexCoordinateConvention):
             raise TypeError("convention must be a ComplexCoordinateConvention.")
         if not callable(hermitian_metric):
@@ -81,7 +81,7 @@ class ChernConnection(StrictModule):
 
     frame: HolomorphicBundleFrame
 
-    def __init__(self, frame: HolomorphicBundleFrame, /):
+    def __init__(self, frame: HolomorphicBundleFrame, /) -> None:
         if not isinstance(frame, HolomorphicBundleFrame):
             raise TypeError("frame must be a HolomorphicBundleFrame.")
         self.frame = frame
@@ -160,7 +160,7 @@ class HolomorphicBundleTransition(StrictModule):
         target: HolomorphicBundleFrame,
         gauge: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         if not isinstance(source, HolomorphicBundleFrame) or not isinstance(
             target, HolomorphicBundleFrame
         ):

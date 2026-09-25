@@ -56,7 +56,7 @@ class _NeuralWindowSource:
         step_size: float,
         step_rtol: float,
         step_atol: float,
-    ):
+    ) -> None:
         if not isinstance(trajectory, TrajectoryData):
             raise TypeError("trajectory must be a TrajectoryData.")
         horizon = int(max_horizon)

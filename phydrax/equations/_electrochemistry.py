@@ -38,7 +38,7 @@ class ElectrolyteTransportParameters(StrictModule, NonTrainableState):
         temperature: ArrayLike,
         permittivity: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(schema, ChemicalSpeciesSchema):
             raise TypeError("schema must be ChemicalSpeciesSchema.")
         diffusivity = jnp.asarray(diffusivities)
@@ -111,7 +111,7 @@ class IdealDiluteElectrochemicalClosure(AbstractElectrochemicalClosure):
         /,
         *,
         standard_concentrations: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(schema, ChemicalSpeciesSchema):
             raise TypeError("schema must be ChemicalSpeciesSchema.")
         if standard_concentrations is None:

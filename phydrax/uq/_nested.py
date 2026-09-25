@@ -127,7 +127,7 @@ class NestedSamplingResult(StrictModule):
         num_delete: int,
         method: str,
         duration_seconds: float,
-    ):
+    ) -> None:
         self.problem = problem
         self.samples = samples
         self.unconstrained_samples = unconstrained_samples

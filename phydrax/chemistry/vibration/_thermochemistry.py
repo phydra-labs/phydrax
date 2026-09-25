@@ -64,7 +64,7 @@ class MolecularThermochemistryResult(StrictModule, NonTrainableState):
         units: AtomisticUnitSystem,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         energies = jnp.asarray(component_internal_energies)
         entropies = jnp.asarray(component_entropies, dtype=energies.dtype)
         if energies.shape != (4,) or entropies.shape != (4,):
@@ -136,7 +136,7 @@ class MolarThermochemistryResult(StrictModule, NonTrainableState):
         source: MolecularThermochemistryResult,
         energy_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, MolecularThermochemistryResult):
             raise TypeError("source must be MolecularThermochemistryResult.")
         if (
@@ -194,7 +194,7 @@ class HarmonicThermochemistryPlan(StrictModule, NonTrainableState):
         *,
         symmetry_number: int,
         electronic_degeneracy: int,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         temperature_ = float(temperature)

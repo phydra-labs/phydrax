@@ -48,7 +48,7 @@ class RiemannianContinuousFlowLaw(AbstractProbabilityLaw):
         chart_plan: Any = None,
         max_exact_dimension: int = 32,
         flow_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(manifold.local_geometry):
             raise TypeError("manifold must expose local_geometry(point) evidence.")
         coordinate_law = ContinuousFlowLaw(

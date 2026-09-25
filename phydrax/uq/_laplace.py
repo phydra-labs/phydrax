@@ -70,7 +70,7 @@ class LaplaceResult(StrictModule):
         damping: Array,
         unravel: Any,
         backend: str = "dense",
-    ):
+    ) -> None:
         self.problem = problem
         self.map_position = map_position
         self.map_parameters = problem.parameter_space.constrain(map_position)

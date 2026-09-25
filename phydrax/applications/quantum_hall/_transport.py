@@ -43,7 +43,7 @@ class HallBarPlan(StrictModule, NonTrainableState):
         /,
         *,
         current_floor_ampere: float = 1.0e-18,
-    ):
+    ) -> None:
         if not isinstance(problem, MultiTerminalCoherentProblem):
             raise TypeError("problem must be MultiTerminalCoherentProblem.")
         source = int(source_contact)

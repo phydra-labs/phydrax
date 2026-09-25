@@ -47,7 +47,7 @@ class ActiveSpaceSolverResult(StrictModule, NonTrainableState):
         plan_id: str,
         store_id: str,
         /,
-    ):
+    ) -> None:
         energy = jnp.asarray(energies)
         one = jnp.asarray(one_particle_density, dtype=energy.dtype)
         two = jnp.asarray(two_particle_density, dtype=energy.dtype)
@@ -135,7 +135,7 @@ class CallableActiveSpaceSolver(AbstractActiveSpaceSolver):
         provider_id: str,
         solver_kind: str,
         /,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()

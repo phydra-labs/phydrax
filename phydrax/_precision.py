@@ -116,7 +116,7 @@ class MicroscalingFormat:
         scale_format: str = "float8_e8m0fnu",
         axis: int = -1,
         packing: Literal["packed", "byte"] | None = None,
-    ):
+    ) -> None:
         element = _MX_ALIASES.get(str(element_format), str(element_format))
         if element not in _MX_BITS:
             raise ValueError(f"Unsupported microscaling element format {element!r}.")
@@ -317,7 +317,7 @@ class PrecisionRequest:
         domain: str,
         requested: Mapping[str, Any] | Sequence[tuple[str, Any]],
         /,
-    ):
+    ) -> None:
         domain_ = _identifier("domain", domain)
         requested_ = _canonical_entries(requested)
         for role, format_ in requested_:
@@ -378,7 +378,7 @@ class PrecisionResolution:
         provider: str,
         effective: Mapping[str, Any] | Sequence[tuple[str, Any]],
         /,
-    ):
+    ) -> None:
         if not isinstance(request, PrecisionRequest):
             raise TypeError("request must be a PrecisionRequest.")
         provider_ = _identifier("provider", provider)
@@ -465,7 +465,7 @@ class PrecisionEvidenceEnvelope:
         *,
         children: Mapping[str, PrecisionEvidenceEnvelope]
         | Sequence[tuple[str, PrecisionEvidenceEnvelope]] = (),
-    ):
+    ) -> None:
         if not isinstance(resolution, PrecisionResolution):
             raise TypeError("resolution must be a PrecisionResolution.")
         observed_ = _canonical_entries(observed)
@@ -573,7 +573,7 @@ class PrecisionResourceAssumptions:
         domain: str,
         dtypes: Mapping[str, Any] | Sequence[tuple[str, Any]],
         /,
-    ):
+    ) -> None:
         domain_ = _identifier("domain", domain)
         dtypes_ = _canonical_entries(dtypes)
         item_sizes = tuple(
@@ -696,7 +696,7 @@ class MicroscaledArray(StrictModule):
         finite: Any,
         saturation_count: Any,
         /,
-    ):
+    ) -> None:
         if not isinstance(format, MicroscalingFormat):
             raise TypeError("format must be a MicroscalingFormat.")
         packed = jnp.asarray(packed_values, dtype=jnp.uint8)

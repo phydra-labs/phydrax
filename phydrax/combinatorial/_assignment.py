@@ -58,7 +58,7 @@ class BipartiteAssignmentSpace(AbstractBoundableCombinatorialSpace):
         /,
         *,
         valid: Any | None = None,
-    ):
+    ) -> None:
         if isinstance(num_rows, bool) or not isinstance(num_rows, Integral):
             raise TypeError("num_rows must be a positive integer.")
         if isinstance(num_columns, bool) or not isinstance(num_columns, Integral):
@@ -164,7 +164,7 @@ class HungarianAssignment(AbstractBoundableLinearCombinatorialMethod):
 
     maximum_dimension: int = eqx.field(static=True)
 
-    def __init__(self, *, maximum_dimension: int = 4096):
+    def __init__(self, *, maximum_dimension: int = 4096) -> None:
         if isinstance(maximum_dimension, bool) or not isinstance(
             maximum_dimension, Integral
         ):

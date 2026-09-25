@@ -92,7 +92,7 @@ class SOSFilterPlan:
     sections: Array
     plan_id: str
 
-    def __init__(self, sections: ArrayLike, /):
+    def __init__(self, sections: ArrayLike, /) -> None:
         sections_ = np.asarray(sections, dtype=np.float64)
         if sections_.ndim != 2 or sections_.shape[1] != 6 or sections_.shape[0] == 0:
             raise ValueError("sections must have shape (section, 6).")
@@ -224,7 +224,7 @@ class STFTPlan:
 
     def __init__(
         self, window: ArrayLike, hop_size: int, /, *, fft_size: int | None = None
-    ):
+    ) -> None:
         window_ = np.asarray(window, dtype=np.float64)
         hop = _positive_static_int(hop_size, "hop_size")
         fft = (
@@ -295,7 +295,7 @@ class StreamingFFTConvolutionPlan:
     fft_size: int
     plan_id: str
 
-    def __init__(self, kernel: ArrayLike, block_size: int, /):
+    def __init__(self, kernel: ArrayLike, block_size: int, /) -> None:
         raw_kernel = np.asarray(kernel)
         if np.iscomplexobj(raw_kernel):
             raise TypeError("Streaming convolution kernel must be real-valued.")

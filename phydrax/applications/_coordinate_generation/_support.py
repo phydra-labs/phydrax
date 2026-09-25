@@ -28,7 +28,7 @@ class CoordinateResourcePolicy:
     max_solver_steps: int = 4096
     max_condition_features: int = 64
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for value in (
             self.max_atoms,
             self.max_records,
@@ -61,7 +61,7 @@ class CoordinateGeometryPolicy:
     policy_id: str
     achiral: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if any(
             not isinstance(column, tuple)
             for column in (

@@ -45,7 +45,7 @@ class MonotoneLearnedConductanceLaw(AbstractImplicitCircuitLaw):
         minimum_conductance: ArrayLike = 0.0,
         probe_voltages: ArrayLike = (-1.0, 0.0, 1.0),
         law_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
         minimum = jnp.asarray(minimum_conductance, dtype=jnp.float64)

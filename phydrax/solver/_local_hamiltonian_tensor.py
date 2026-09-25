@@ -35,7 +35,7 @@ class LocalHamiltonianMPOPolicy(StrictModule):
         *,
         maximum_bond_dimension: int = 1024,
         hermiticity_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if isinstance(maximum_bond_dimension, bool) or not isinstance(
             maximum_bond_dimension, Integral
         ):

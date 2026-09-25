@@ -64,7 +64,7 @@ class DLRBasisPolicy(StrictModule):
         candidate_count: int = 192,
         maximum_bytes: int = 256 * 1024**2,
         condition_limit: float = 1e14,
-    ):
+    ) -> None:
         tolerance_ = float(tolerance)
         condition_ = float(condition_limit)
         if not isfinite(tolerance_) or tolerance_ <= 0.0 or tolerance_ >= 1.0:

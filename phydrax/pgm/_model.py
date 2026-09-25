@@ -94,7 +94,7 @@ class DiscreteVariableGroup(StrictModule, NonTrainableState):
         *,
         num_states: int | ArrayLike,
         shape: tuple[int, ...] | None = None,
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name:
             raise ValueError("Variable group name must be a non-empty string.")
         raw = jnp.asarray(num_states)
@@ -148,7 +148,7 @@ class VariableSelection(StrictModule, NonTrainableState):
         group: DiscreteVariableGroup | str,
         indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         if isinstance(group, DiscreteVariableGroup):
             name = group.name
         elif isinstance(group, str) and group:
@@ -181,7 +181,7 @@ class DenseTableFactorGroup(StrictModule, ParameterOwner):
         selections: Sequence[VariableSelection],
         log_potentials: ArrayLike,
         /,
-    ):
+    ) -> None:
         scope = _selection_tuple(selections)
         values = _real_array("log_potentials", log_potentials)
         if values.ndim != len(scope) + 1:
@@ -215,7 +215,7 @@ class EnumeratedFactorGroup(StrictModule, ParameterOwner):
         configurations: ArrayLike,
         log_potentials: ArrayLike,
         /,
-    ):
+    ) -> None:
         scope = _selection_tuple(selections)
         configs = _integer_array("configurations", configurations)
         if configs.ndim != 2 or configs.shape[1] != len(scope):
@@ -250,7 +250,9 @@ class IsingFactorGroup(StrictModule, ParameterOwner):
     weights: Array
     factor_id: str = eqx.field(static=True)
 
-    def __init__(self, selections: Sequence[VariableSelection], weights: ArrayLike, /):
+    def __init__(
+        self, selections: Sequence[VariableSelection], weights: ArrayLike, /
+    ) -> None:
         scope = _selection_tuple(selections)
         values = _real_array("weights", weights).reshape((-1,))
         if not bool(np.all(np.isfinite(np.asarray(values)))):
@@ -278,7 +280,7 @@ class PottsFactorGroup(StrictModule, ParameterOwner):
         selections: Sequence[VariableSelection],
         log_potentials: ArrayLike,
         /,
-    ):
+    ) -> None:
         scope = _selection_tuple(selections)
         if len(scope) not in (1, 2):
             raise ValueError("Potts factors must be unary or pairwise.")
@@ -310,7 +312,7 @@ class LogicalFactorGroup(StrictModule, NonTrainableState):
         /,
         *,
         kind: Literal["or", "and"],
-    ):
+    ) -> None:
         parent_scope = tuple(parents)
         if not parent_scope:
             raise ValueError("Logical factors require at least one parent.")
@@ -334,7 +336,7 @@ class BinaryCardinalityFactorGroup(StrictModule, ParameterOwner):
         selections: Sequence[VariableSelection],
         log_count_potentials: ArrayLike,
         /,
-    ):
+    ) -> None:
         scope = _selection_tuple(selections)
         values = _real_array("log_count_potentials", log_count_potentials)
         expected = (scope[0].size, len(scope) + 1)
@@ -365,7 +367,7 @@ class KernelFactorGroup(StrictModule, ParameterOwner):
         kernel: AbstractDiscreteFactorKernel,
         parameters: Any,
         /,
-    ):
+    ) -> None:
         scope = _selection_tuple(selections)
         if not isinstance(kernel, AbstractDiscreteFactorKernel):
             raise TypeError("kernel must implement AbstractDiscreteFactorKernel.")
@@ -513,7 +515,7 @@ class VariableStateValues(StrictModule):
     values: Array
     structure_id: str = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, /, *, structure_id: str):
+    def __init__(self, values: ArrayLike, /, *, structure_id: str) -> None:
         array = jnp.asarray(values)
         if jnp.iscomplexobj(array):
             raise TypeError("variable-state values must be real-valued.")
@@ -544,7 +546,7 @@ class DiscreteFactorGraph(StrictModule):
         variable_groups: Sequence[DiscreteVariableGroup],
         factor_groups: Sequence[FactorGroup] = (),
         /,
-    ):
+    ) -> None:
         variables = tuple(variable_groups)
         factors = tuple(factor_groups)
         if any(not isinstance(group, DiscreteVariableGroup) for group in variables):

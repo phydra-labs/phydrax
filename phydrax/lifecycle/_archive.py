@@ -1034,9 +1034,7 @@ def _verified_archive_snapshot(
     return payload
 
 
-def _lineage_revision(
-    semantic_id: str, arrays: Mapping[str, Any], /
-) -> NumericRevision:
+def _lineage_revision(semantic_id: str, arrays: Mapping[str, Any], /) -> NumericRevision:
     """Recompute the canonical numeric revision realized by lineage payloads."""
     if not arrays:
         raise ValueError("Revision lineage archives require materialized payloads.")
@@ -1116,11 +1114,7 @@ def _encode_record(record: LifecycleRecord, /) -> dict[str, Any]:
             "payloads": [list(item) for item in record.payloads],
             "unit_contract_id": record.unit_contract_id,
             "association_ids": list(record.association_ids),
-            **(
-                {}
-                if record.binding is None
-                else {"binding": record.binding.to_record()}
-            ),
+            **({} if record.binding is None else {"binding": record.binding.to_record()}),
             "manifest_id": record.manifest_id,
         }
     if isinstance(record, ResultManifest):

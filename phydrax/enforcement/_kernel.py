@@ -198,7 +198,7 @@ class PointKernelRepresenter(StrictModule):
         /,
         *,
         functional_id: str = "point",
-    ):
+    ) -> None:
         self.field_name = _identifier(field_name, "field_name")
         self.functional_id = _identifier(functional_id, "functional_id")
         self.points = jnp.asarray(points)
@@ -234,7 +234,7 @@ class JetKernelRepresenter(StrictModule):
         /,
         *,
         functional_id: str = "jet",
-    ):
+    ) -> None:
         self.field_name = _identifier(field_name, "field_name")
         self.functional_id = _identifier(functional_id, "functional_id")
         self.points = jnp.asarray(points)
@@ -277,7 +277,7 @@ class IntegralKernelRepresenter(StrictModule):
         /,
         *,
         functional_id: str = "integral",
-    ):
+    ) -> None:
         if not isinstance(reduction, PreparedLinearReduction):
             raise TypeError("reduction must be a PreparedLinearReduction.")
         if len(reduction.coefficient_fields) != 1 or reduction.schema.retained_axes:
@@ -385,7 +385,7 @@ class KernelCorrectionEvidence(StrictModule):
         functional_id: str,
         metric_id: str,
         realization_id: str | None,
-    ):
+    ) -> None:
         if representation not in (
             "canonical",
             "finite-feature",
@@ -540,7 +540,7 @@ class _BaseKernelCorrectionPlan(StrictModule):
         /,
         *,
         representation: KernelCorrectionRepresentation,
-    ):
+    ) -> None:
         if not isinstance(metric, ProductFieldKernelMetric):
             raise TypeError("metric must be a ProductFieldKernelMetric.")
         resolved = _resolve_functional(
@@ -729,7 +729,7 @@ class _BaseKernelCorrectionPlan(StrictModule):
 class CanonicalKernelCorrectionPlan(_BaseKernelCorrectionPlan):
     """Exact canonical minimum-RKHS-norm correction with a dense Gram factor."""
 
-    def __init__(self, metric, functional, /):
+    def __init__(self, metric, functional, /) -> None:
         super().__init__(metric, functional, representation="canonical")
 
     def prepare(
@@ -769,7 +769,7 @@ class CanonicalKernelCorrectionPlan(_BaseKernelCorrectionPlan):
 class FiniteFeatureKernelCorrectionPlan(_BaseKernelCorrectionPlan):
     """Exact weight-space correction for a certified finite-feature metric."""
 
-    def __init__(self, metric, functional, /):
+    def __init__(self, metric, functional, /) -> None:
         super().__init__(metric, functional, representation="finite-feature")
         if metric.feature_rank() is None:
             raise TypeError("Finite-feature correction requires an exact feature map.")
@@ -816,7 +816,9 @@ class SectionKernelCorrectionPlan(_BaseKernelCorrectionPlan):
     sections: KernelFunctional
     require_exact: bool = eqx.field(static=True)
 
-    def __init__(self, metric, functional, sections, /, *, require_exact: bool = False):
+    def __init__(
+        self, metric, functional, sections, /, *, require_exact: bool = False
+    ) -> None:
         super().__init__(metric, functional, representation="selected-section")
         self.sections = _resolve_functional(
             metric,
@@ -885,7 +887,7 @@ class MatrixFreeKernelCorrectionPlan(_BaseKernelCorrectionPlan):
 
     def __init__(
         self, metric, functional, /, *, solve_policy: LinearSolvePolicy | None = None
-    ):
+    ) -> None:
         super().__init__(metric, functional, representation="matrix-free")
         policy = LinearSolvePolicy(GMRES()) if solve_policy is None else solve_policy
         if not isinstance(policy, LinearSolvePolicy):
@@ -1033,21 +1035,23 @@ class _KernelCorrectionProvider(AbstractLinearCorrectionProvider):
 class CanonicalKernelCorrectionProvider(_KernelCorrectionProvider):
     plan: CanonicalKernelCorrectionPlan
 
-    def __init__(self, metric, functional, /):
+    def __init__(self, metric, functional, /) -> None:
         self.plan = CanonicalKernelCorrectionPlan(metric, functional)
 
 
 class FiniteFeatureKernelCorrectionProvider(_KernelCorrectionProvider):
     plan: FiniteFeatureKernelCorrectionPlan
 
-    def __init__(self, metric, functional, /):
+    def __init__(self, metric, functional, /) -> None:
         self.plan = FiniteFeatureKernelCorrectionPlan(metric, functional)
 
 
 class SectionKernelCorrectionProvider(_KernelCorrectionProvider):
     plan: SectionKernelCorrectionPlan
 
-    def __init__(self, metric, functional, sections, /, *, require_exact: bool = False):
+    def __init__(
+        self, metric, functional, sections, /, *, require_exact: bool = False
+    ) -> None:
         self.plan = SectionKernelCorrectionPlan(
             metric,
             functional,
@@ -1059,7 +1063,7 @@ class SectionKernelCorrectionProvider(_KernelCorrectionProvider):
 class MatrixFreeKernelCorrectionProvider(_KernelCorrectionProvider):
     plan: MatrixFreeKernelCorrectionPlan
 
-    def __init__(self, metric, functional, /, *, solve_policy=None):
+    def __init__(self, metric, functional, /, *, solve_policy=None) -> None:
         self.plan = MatrixFreeKernelCorrectionPlan(
             metric,
             functional,

@@ -47,7 +47,7 @@ class CompatibleElasticityDynamics(StrictModule, NonTrainableState):
         *,
         wave_speed: float = 1.0,
         components: int = 1,
-    ):
+    ) -> None:
         speed = float(wave_speed)
         components_ = int(components)
         if (
@@ -135,7 +135,9 @@ class CompatibleIncompressibleProjection(StrictModule, NonTrainableState):
     poisson_pseudoinverse: Array
     projection_id: str = eqx.field(static=True)
 
-    def __init__(self, bridge: StructuredCochainBridge, /, *, size_budget: int = 4096):
+    def __init__(
+        self, bridge: StructuredCochainBridge, /, *, size_budget: int = 4096
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge) or bridge.dimension < 2:
             raise ValueError(
                 "Incompressible projection requires a multidimensional bridge."
@@ -200,7 +202,9 @@ class CompatibleIdealMHDInductionDynamics(StrictModule):
     electromotive_circulation: Any
     dynamics_id: str = eqx.field(static=True)
 
-    def __init__(self, bridge: StructuredCochainBridge, electromotive_circulation, /):
+    def __init__(
+        self, bridge: StructuredCochainBridge, electromotive_circulation, /
+    ) -> None:
         if (
             not isinstance(bridge, StructuredCochainBridge)
             or bridge.dimension != 3
@@ -259,7 +263,9 @@ class CompatibleVariableDensityProjection(StrictModule, NonTrainableState):
     size_budget: int = eqx.field(static=True)
     projection_id: str = eqx.field(static=True)
 
-    def __init__(self, bridge: StructuredCochainBridge, /, *, size_budget: int = 2048):
+    def __init__(
+        self, bridge: StructuredCochainBridge, /, *, size_budget: int = 2048
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge) or bridge.dimension < 2:
             raise ValueError(
                 "Variable-density projection requires multidimensional bridge."
@@ -367,7 +373,7 @@ class CompatiblePoroelasticDynamics(StrictModule, NonTrainableState):
         wave_speed: float = 1.0,
         hydraulic_diffusivity: float = 0.1,
         coupling: float = 0.2,
-    ):
+    ) -> None:
         if (
             not isinstance(bridge, StructuredCochainBridge)
             or not np.isfinite(wave_speed)
@@ -415,7 +421,7 @@ class CompatibleThermoelasticDynamics(StrictModule, NonTrainableState):
         wave_speed: float = 1.0,
         thermal_diffusivity: float = 0.1,
         expansion: float = 0.2,
-    ):
+    ) -> None:
         if (
             not isinstance(bridge, StructuredCochainBridge)
             or not np.isfinite(wave_speed)

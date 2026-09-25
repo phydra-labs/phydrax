@@ -88,7 +88,7 @@ class CandidateSpec(StrictModule):
         /,
         *,
         candidate_id: int,
-    ):
+    ) -> None:
         if len(names) != len(values):
             raise ValueError(
                 "Candidate parameter names and values must have equal length."
@@ -108,7 +108,7 @@ class ParameterGrid(StrictModule):
     names: tuple[str, ...] = eqx.field(static=True)
     size: int = eqx.field(static=True)
 
-    def __init__(self, parameters: Mapping[str, Sequence[Any]], /):
+    def __init__(self, parameters: Mapping[str, Sequence[Any]], /) -> None:
         if not isinstance(parameters, Mapping) or not parameters:
             raise TypeError("parameters must be a non-empty mapping of finite sequences.")
         if any(not isinstance(name, str) for name in parameters):
@@ -158,7 +158,7 @@ class CandidateEvaluation(StrictModule):
         utility: Any,
         valid: Any,
         status: Any,
-    ):
+    ) -> None:
         self.candidate = candidate
         self.recipe = recipe
         self.cross_validation = cross_validation
@@ -181,7 +181,7 @@ class HalvingRung(StrictModule):
         *,
         surviving_candidate_ids: tuple[int, ...],
         num_folds: int,
-    ):
+    ) -> None:
         self.evaluations = tuple(evaluations)
         self.surviving_candidate_ids = tuple(surviving_candidate_ids)
         self.num_folds = int(num_folds)
@@ -216,7 +216,7 @@ class SearchResult(StrictModule):
         key: Any,
         refit_key: Any,
         method: str,
-    ):
+    ) -> None:
         refit_valid = jnp.all(jnp.asarray(best_fit.valid))
         self.evaluations = tuple(evaluations)
         self.best_candidate = best_evaluation.candidate
@@ -389,7 +389,7 @@ class GridSearch(AbstractSearchPlan):
         *,
         maximize: bool | None = None,
         primary_metric: MetricPath = None,
-    ):
+    ) -> None:
         self.parameter_grid = ParameterGrid(parameters)
         self.maximize = None if maximize is None else bool(maximize)
         self.primary_metric = primary_metric
@@ -451,7 +451,7 @@ class RandomSearch(AbstractSearchPlan):
         *,
         maximize: bool | None = None,
         primary_metric: MetricPath = None,
-    ):
+    ) -> None:
         grid = ParameterGrid(parameters)
         if int(num_candidates) < 1 or int(num_candidates) > grid.size:
             raise ValueError("num_candidates must lie between one and the grid size.")
@@ -524,7 +524,7 @@ class SuccessiveHalvingSearch(AbstractSearchPlan):
         min_folds: int = 1,
         maximize: bool | None = None,
         primary_metric: MetricPath = None,
-    ):
+    ) -> None:
         if int(factor) < 2:
             raise ValueError("factor must be at least 2.")
         if int(min_folds) < 1:
@@ -635,7 +635,7 @@ class _DifferentiableCVObjective(StrictModule):
         key: Any,
         primary_metric: MetricPath,
         maximize: bool,
-    ):
+    ) -> None:
         self.batch = batch
         self.splits = splits
         self.recipe_factory = recipe_factory
@@ -686,7 +686,7 @@ class DifferentiableSearchResult(StrictModule):
         key: Any,
         refit_key: Any,
         objective_derivative_contract: DerivativeContract,
-    ):
+    ) -> None:
         finite = jnp.isfinite(optimizer_result.raw_objective)
         self.best_vector = optimizer_result.best_vector
         self.best_objective = optimizer_result.raw_objective
@@ -745,7 +745,7 @@ class DifferentiableSearchAdapter(AbstractSearchPlan):
         scorer_differentiable: bool,
         maximize: bool | None = None,
         primary_metric: MetricPath = None,
-    ):
+    ) -> None:
         if not isinstance(search, DifferentialEvolutionSearch):
             raise TypeError("search must be a DifferentialEvolutionSearch.")
         initial = jnp.asarray(initial_vector)
@@ -873,7 +873,7 @@ class NestedFoldEvaluation(StrictModule):
 
     def __init__(
         self, split: Any, search_result: Any, outer_evaluation: FoldEvaluation, /
-    ):
+    ) -> None:
         self.split = split
         self.search_result = search_result
         self.outer_evaluation = outer_evaluation
@@ -899,7 +899,7 @@ class NestedCrossValidationResult(StrictModule):
         /,
         *,
         key: Any,
-    ):
+    ) -> None:
         self.folds = tuple(folds)
         self.outer_cross_validation = outer_cross_validation
         self.split_result = split_result

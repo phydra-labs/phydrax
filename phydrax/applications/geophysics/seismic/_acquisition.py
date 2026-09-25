@@ -50,7 +50,7 @@ class AcousticGrid(StrictModule, NonTrainableState):
         *,
         length_unit: UnitDefinition = METER,
         coordinate_metadata: GeospatialContract | None = None,
-    ):
+    ) -> None:
         shape_ = tuple(shape)
         if len(shape_) not in (2, 3) or any(size < 2 for size in shape_):
             raise ValueError(
@@ -130,7 +130,7 @@ class PreparedAcousticSampling(StrictModule, NonTrainableState):
         /,
         *,
         length_unit: UnitDefinition = METER,
-    ):
+    ) -> None:
         points = np.asarray(positions, dtype=np.float64) * float(
             conversion_factor(length_unit, METER)
         )
@@ -193,7 +193,7 @@ class SeismicAcquisition(StrictModule, NonTrainableState):
         /,
         *,
         length_unit: UnitDefinition = METER,
-    ):
+    ) -> None:
         self.sources = PreparedAcousticSampling(
             grid, source_positions, length_unit=length_unit
         )

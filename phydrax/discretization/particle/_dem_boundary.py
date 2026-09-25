@@ -87,7 +87,7 @@ class PrescribedDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
         /,
         *,
         motion_id: str,
-    ):
+    ) -> None:
         if not callable(motion_function):
             raise TypeError("motion_function must be callable.")
         identifier = str(motion_id)
@@ -152,7 +152,7 @@ class ServoDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
         gain_schedule_ratio: float = 1.0,
         minimum_gain_fraction: float = 0.1,
         neighbor_skin: float | None = None,
-    ):
+    ) -> None:
         axis_host = np.asarray(axis)
         if axis_host.ndim != 1 or axis_host.size not in (2, 3):
             raise ValueError("Servo axis must be a 2-D or 3-D vector.")
@@ -364,7 +364,7 @@ class ImplicitDEMBarrier(StrictModule):
         *,
         barrier_id: str,
         motion: AbstractDEMBarrierMotionPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(side, DEMBarrierSide):
             raise TypeError("side must be a DEMBarrierSide.")
         capabilities = {value.value for value in geometry.capabilities}

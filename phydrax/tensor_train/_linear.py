@@ -31,7 +31,7 @@ class TensorTrainLinearCompressionEvidence(StrictModule):
         rounding: TTRoundingEvidence,
         measured_frobenius_error: ArrayLike,
         /,
-    ):
+    ) -> None:
         measured = jnp.asarray(measured_frobenius_error)
         if measured.shape != ():
             raise ValueError("Linear compression error must be scalar.")
@@ -63,7 +63,7 @@ class TensorTrainLinear(StrictModule):
         bias: ArrayLike | None,
         compression_evidence: TensorTrainLinearCompressionEvidence,
         /,
-    ):
+    ) -> None:
         output_size = prod(operator.output_mode_sizes)
         if bias is None:
             bias_array = jnp.zeros((output_size,), dtype=operator.dtype)

@@ -38,7 +38,7 @@ class CochainHodgeSpectralKernel(AbstractFiniteFeatureKernel):
         exact_amplitude: ArrayLike = 1.0,
         coexact_amplitude: ArrayLike = 1.0,
         normalize_sectors: bool = True,
-    ):
+    ) -> None:
         from ..graph._cochain_spectrum import CochainHodgeSectorSpectra
 
         if not isinstance(spectra, CochainHodgeSectorSpectra):

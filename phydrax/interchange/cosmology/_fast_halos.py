@@ -44,7 +44,7 @@ class PinocchioCatalogSidecar(StrictModule, NonTrainableState):
         particle_count_known: Array,
         active_mask: Array,
         /,
-    ):
+    ) -> None:
         initial = jax.lax.stop_gradient(jnp.asarray(initial_positions))
         counts = jax.lax.stop_gradient(jnp.asarray(particle_counts, dtype=jnp.int64))
         known = jax.lax.stop_gradient(jnp.asarray(particle_count_known, dtype=jnp.bool_))
@@ -100,7 +100,7 @@ class PinocchioLightConeProduct(StrictModule, NonTrainableState):
         phase_space_known: Array,
         active_mask: Array,
         /,
-    ):
+    ) -> None:
         ids = jax.lax.stop_gradient(jnp.asarray(halo_ids, dtype=jnp.int64))
         redshift = jax.lax.stop_gradient(jnp.asarray(true_redshifts))
         positions = jax.lax.stop_gradient(jnp.asarray(comoving_positions))
@@ -187,7 +187,7 @@ class PinocchioCatalogImport(StrictModule, NonTrainableState):
         source_position_unit: str,
         source_mass_unit: str,
         source_velocity_unit: str,
-    ):
+    ) -> None:
         if (catalog is None) == (light_cone is None):
             raise ValueError(
                 "Exactly one PINOCCHIO native catalog projection is required."
@@ -258,7 +258,7 @@ class PinocchioMergerHistory(StrictModule, NonTrainableState):
         minimum_mass_redshifts: Array,
         active_mask: Array,
         /,
-    ):
+    ) -> None:
         arrays = tuple(
             jax.lax.stop_gradient(jnp.asarray(value))
             for value in (
@@ -321,7 +321,7 @@ class PinocchioLineageImport(StrictModule, NonTrainableState):
         declared_tree_count: int,
         declared_branch_count: int,
         /,
-    ):
+    ) -> None:
         self.history = history
         self.source = source
         self.report = report

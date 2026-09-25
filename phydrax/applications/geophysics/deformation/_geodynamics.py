@@ -27,7 +27,7 @@ class SphericalShellGeometry(StrictModule, NonTrainableState):
 
     def __init__(
         self, inner_radius_m: float, outer_radius_m: float, reference_body_id: str, /
-    ):
+    ) -> None:
         inner, outer = float(inner_radius_m), float(outer_radius_m)
         body = str(reference_body_id).strip()
         if (
@@ -65,7 +65,7 @@ class ArrheniusViscoplasticRheology(StrictModule):
         maximum_viscosity_Pa_s: ArrayLike,
         yield_stress_Pa: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = jnp.broadcast_arrays(
             *(
                 jnp.asarray(value)
@@ -185,7 +185,7 @@ class SphericalThermomechanicalPlan(StrictModule, NonTrainableState):
         *,
         momentum_factory_id: str,
         thermal_rate_id: str,
-    ):
+    ) -> None:
         if not isinstance(geometry, SphericalShellGeometry):
             raise TypeError("Geodynamics requires spherical shell geometry.")
         if not isinstance(velocity_space, la.ArraySpace) or not isinstance(

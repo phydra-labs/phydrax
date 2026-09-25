@@ -97,7 +97,7 @@ class SphericalMosaicSeam(StrictModule, NonTrainableState):
         right_side: str,
         /,
         flip: bool = False,
-    ):
+    ) -> None:
         axes = (str(left_axis), str(right_axis))
         sides = (str(left_side), str(right_side))
         if any(axis not in ("xi", "eta") for axis in axes) or any(
@@ -303,7 +303,7 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
         grid: PreparedHydrostaticMosaicGrid,
         plan_kwargs: Mapping[str, Any],
         /,
-    ):
+    ) -> None:
         from ._hydrostatic_step import HydrostaticIMEXMidpointMethod
 
         if not isinstance(grid, PreparedHydrostaticMosaicGrid):
@@ -1367,7 +1367,7 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
         rotation_rate: float = 7.292115e-5,
         cap_latitude: float = np.deg2rad(60.0),
         hemisphere: Literal["north", "south"] = "north",
-    ):
+    ) -> None:
         if kind not in ("polar-cap", "tripolar", "cubed-sphere"):
             raise ValueError("Unknown spherical hydrostatic mosaic kind.")
         shape = tuple(resolution)

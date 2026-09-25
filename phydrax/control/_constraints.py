@@ -69,7 +69,7 @@ class SampledControlFeasibility(StrictModule):
         num_terminal_constraints: int,
         tolerance: float,
         method_id: str,
-    ):
+    ) -> None:
         path = jnp.asarray(path_residuals)
         terminal = jnp.asarray(terminal_residuals)
         maximum = jnp.asarray(maximum_violation)

@@ -34,7 +34,7 @@ class _BinaryMatrixCallable(StrictModule):
         left_positions: tuple[int, ...],
         right_positions: tuple[int, ...],
         operation: Literal["commutator", "anticommutator"],
-    ):
+    ) -> None:
         self.left = left
         self.right = right
         self.left_positions = left_positions
@@ -68,7 +68,7 @@ class _BinaryMatrixCallable(StrictModule):
 class _UnitTraceCallable(StrictModule):
     density: DomainFunction
 
-    def __init__(self, density: DomainFunction):
+    def __init__(self, density: DomainFunction) -> None:
         self.density = density
 
     def __call__(self, *args, key=None, **kwargs):

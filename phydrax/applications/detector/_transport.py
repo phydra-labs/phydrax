@@ -37,7 +37,7 @@ class ChargedPropagationPlan(StrictModule, NonTrainableState):
         step_count: int,
         speed_of_light: float = 1.0,
         mean_energy_loss_per_length: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(conditions, DetectorConditions):
             raise TypeError("conditions must be DetectorConditions.")
         step = float(step_size)

@@ -86,7 +86,7 @@ class StateSpaceGaussianProcessDesign(StrictModule):
         train_time_derivative_order: ArrayLike | None = None,
         query_time_derivative_order: ArrayLike | None = None,
         train_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         train = _as_time_vector(train_times, name="train_times")
         query = _as_time_vector(query_times, name="query_times")
         if train.size + query.size == 0:

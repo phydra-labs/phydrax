@@ -83,7 +83,7 @@ class WaveletFilterBank(StrictModule, NonTrainableState):
         reconstruction_low: ArrayLike,
         reconstruction_high: ArrayLike,
         /,
-    ):
+    ) -> None:
         identity = str(name).strip()
         taps = tuple(
             jnp.asarray(values)
@@ -150,7 +150,7 @@ class DiscreteWaveletTransform(StrictModule, NonTrainableState):
         levels: int,
         wavelet: str | Sequence[str] = "haar",
         boundary: WaveletBoundary | Sequence[WaveletBoundary] = "periodization",
-    ):
+    ) -> None:
         axes_value = tuple(axes)
         level_count = int(levels)
         if not axes_value:

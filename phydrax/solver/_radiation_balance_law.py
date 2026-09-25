@@ -56,7 +56,7 @@ class MultigroupRadiationMatterProcessPlan(StrictModule, NonTrainableState):
         transport_light_speed: float = 299792458.0,
         matter_light_speed: float = 299792458.0,
         subcycles: int = 4,
-    ):
+    ) -> None:
         transport_speed = float(transport_light_speed)
         matter_speed = float(matter_light_speed)
         count = int(subcycles)

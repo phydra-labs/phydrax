@@ -48,7 +48,7 @@ class RealTimePathIntegralPlan(StrictModule):
         num_paths: int,
         chunk_size: int | None = None,
         minimum_mean_phase: float = 1e-3,
-    ):
+    ) -> None:
         if not isinstance(slicing, TemporalMesh) or slicing.role != "path":
             raise TypeError("slicing must be a uniform path TemporalMesh.")
         mass_, hbar_, regulator_ = float(mass), float(hbar), float(regulator)
@@ -77,7 +77,7 @@ class RealTimeRegulatorContinuation(StrictModule):
 
     regulators: tuple[float, ...] = eqx.field(static=True)
 
-    def __init__(self, regulators: Sequence[float], /):
+    def __init__(self, regulators: Sequence[float], /) -> None:
         values = tuple(float(value) for value in regulators)
         if not values or any(not np.isfinite(value) or value <= 0.0 for value in values):
             raise ValueError("regulators must be a nonempty finite positive sequence.")

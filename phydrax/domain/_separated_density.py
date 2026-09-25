@@ -49,7 +49,7 @@ class SeparatedLogDensityField(StrictModule):
         *,
         rank_weights: Array | None = None,
         field_id: str | None = None,
-    ):
+    ) -> None:
         selected = tuple(factors)
         labels = tuple(state_labels)
         fixed_rank = int(rank)

@@ -60,7 +60,7 @@ class DensityTransform(StrictModule, NonTrainableState):
         /,
         *,
         beta: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedDensityTransform):
             raise TypeError("prepared must be a PreparedDensityTransform.")
         beta_ = np.asarray(beta)
@@ -132,7 +132,7 @@ class MaterialInterpolation(StrictModule, NonTrainableState):
         *,
         minimum: ArrayLike = 1.0e-9,
         penalty: ArrayLike = 3.0,
-    ):
+    ) -> None:
         solid_ = np.asarray(solid)
         minimum_ = np.asarray(minimum)
         penalty_ = np.asarray(penalty)
@@ -221,7 +221,7 @@ class LoadCase(StrictModule, NonTrainableState):
         context: Any = None,
         weight: float = 1.0,
         case_id: str,
-    ):
+    ) -> None:
         if objective is not None and not callable(objective):
             raise TypeError("objective must be callable or None.")
         leaves = jax.tree.leaves(load)
@@ -262,7 +262,7 @@ class Aggregation(StrictModule, NonTrainableState):
         /,
         *,
         parameter: float = 8.0,
-    ):
+    ) -> None:
         kind_ = str(kind)
         parameter_ = float(parameter)
         if kind_ not in ("weighted_sum", "maximum", "p_norm", "ks_max"):
@@ -331,7 +331,7 @@ class PeriodicHomogenizationCase(StrictModule, NonTrainableState):
     macroscopic_strain: Array
     case_id: str = eqx.field(static=True)
 
-    def __init__(self, macroscopic_strain: ArrayLike, /, *, case_id: str):
+    def __init__(self, macroscopic_strain: ArrayLike, /, *, case_id: str) -> None:
         strain = _real_array("macroscopic_strain", macroscopic_strain)
         identifier = str(case_id)
         if strain.ndim not in (1, 2) or not identifier:

@@ -31,7 +31,7 @@ class VortexPrecisionPolicy(StrictModule, NonTrainableState):
         compute_dtype: Any | None = None,
         accumulation_dtype: Any | None = None,
         output_dtype: Any | None = None,
-    ):
+    ) -> None:
         coordinate = (
             None
             if coordinate_dtype is None

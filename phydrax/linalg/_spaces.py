@@ -138,7 +138,7 @@ class ArraySpace(AbstractVectorSpace):
         dtype: Any = np.float64,
         pairing: AbstractPairing | None = None,
         space_id: str | None = None,
-    ):
+    ) -> None:
         shape_ = _shape(shape, "shape")
         dtype_ = _dtype(dtype)
         pairing_ = EuclideanPairing() if pairing is None else pairing
@@ -209,7 +209,7 @@ class PyTreeSpace(AbstractVectorSpace):
         pairing: AbstractPairing | None = None,
         space_id: str | None = None,
         _allow_mixed_dtypes: bool = False,
-    ):
+    ) -> None:
         leaves, treedef = jax.tree.flatten(structure)
         if not leaves:
             raise ValueError("A PyTreeSpace requires at least one array leaf.")
@@ -307,7 +307,7 @@ class BlockSpace(AbstractVectorSpace):
         *,
         names: Sequence[str] | None = None,
         space_id: str | None = None,
-    ):
+    ) -> None:
         spaces_ = tuple(spaces)
         if not spaces_ or not all(
             isinstance(space, AbstractVectorSpace) for space in spaces_
@@ -408,7 +408,9 @@ class DualSpace(AbstractVectorSpace):
 
     primal: AbstractVectorSpace
 
-    def __init__(self, primal: AbstractVectorSpace, /, *, space_id: str | None = None):
+    def __init__(
+        self, primal: AbstractVectorSpace, /, *, space_id: str | None = None
+    ) -> None:
         if not isinstance(primal, AbstractVectorSpace):
             raise TypeError("primal must be an AbstractVectorSpace.")
         self.primal = primal
@@ -534,7 +536,7 @@ class RHSLayout(StrictModule):
         /,
         *,
         names: Sequence[str | None] | None = None,
-    ):
+    ) -> None:
         shape_ = _shape(shape, "RHS shape")
         if not shape_:
             raise ValueError("RHSLayout requires at least one trailing RHS axis.")

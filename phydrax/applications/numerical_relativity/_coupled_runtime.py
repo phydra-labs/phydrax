@@ -140,7 +140,7 @@ class CoupledEvolutionState(StrictModule, NonTrainableState):
         *,
         topology_id: str,
         runtime_id: str,
-    ):
+    ) -> None:
         if not isinstance(budget, CoupledBudget):
             raise TypeError("budget must be CoupledBudget.")
         if not isinstance(topology_id, str) or not topology_id:
@@ -254,7 +254,7 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
         matter_kind: RelativisticMatterKind,
         z4c_runtime_id: str,
         matter_runtime_id: str,
-    ):
+    ) -> None:
         callbacks = (
             geometry_at_stage,
             stress_energy_at_stage,

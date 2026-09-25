@@ -32,7 +32,7 @@ class _CliffordDiracCallable(StrictModule):
         products: tuple[CliffordProductPlan, ...],
         reciprocal_vectors: tuple[jnp.ndarray, ...],
         /,
-    ):
+    ) -> None:
         self.derivatives = derivatives
         self.products = products
         self.reciprocal_vectors = reciprocal_vectors

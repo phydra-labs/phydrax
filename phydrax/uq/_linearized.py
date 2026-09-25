@@ -49,7 +49,7 @@ class LinearizedVarianceEstimate(StrictModule):
         *,
         num_probes: int,
         probe_distribution: str,
-    ):
+    ) -> None:
         self.variance = variance
         self.standard_error = standard_error
         self.num_probes = int(num_probes)
@@ -76,7 +76,7 @@ class LinearizedDenseCovariance(StrictModule):
         *,
         output_template: PyTree[Array],
         unravel: Any,
-    ):
+    ) -> None:
         path_leaves = jax.tree_util.tree_flatten_with_path(output_template)[0]
         self.matrix = jnp.asarray(matrix)
         self.hermitian_defect = jnp.asarray(hermitian_defect)
@@ -129,7 +129,7 @@ class LinearizedPropagationResult(StrictModule):
         pullback: Callable[[PyTree[Array]], PyTree[Array]],
         source: UncertaintySource,
         coordinate_covariance: bool = True,
-    ):
+    ) -> None:
         _validate_array_tree(input_template, owner="Linearized input", finite=True)
         _validate_array_tree(mean, owner="Linearized output", finite=True)
         input_dimension, input_unravel = _validate_covariance_template(

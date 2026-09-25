@@ -24,7 +24,7 @@ class CellPartition(StrictModule, NonTrainableState):
     part_count: int = eqx.field(static=True)
     partition_id: str = eqx.field(static=True)
 
-    def __init__(self, cell_owner: ArrayLike, part_count: int, /):
+    def __init__(self, cell_owner: ArrayLike, part_count: int, /) -> None:
         owner = np.asarray(cell_owner)
         count = operator.index(part_count)
         if owner.ndim != 1 or not np.issubdtype(owner.dtype, np.integer):

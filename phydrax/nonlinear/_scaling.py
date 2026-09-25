@@ -48,7 +48,7 @@ class NonlinearScaling(StrictModule):
         /,
         *,
         scaling_id: str | None = None,
-    ):
+    ) -> None:
         state_scale_ = validate_inexact_tree(
             state_scale,
             name="state_scale",
@@ -191,7 +191,7 @@ class NonlinearScalingPolicy(StrictModule):
         state_floor: float = 1.0,
         residual_floor: float = 1.0,
         explicit: NonlinearScaling | None = None,
-    ):
+    ) -> None:
         if mode not in ("none", "automatic", "explicit"):
             raise ValueError("Unknown nonlinear scaling mode.")
         values = (float(state_floor), float(residual_floor))
@@ -259,7 +259,7 @@ class ScaledRootSystem(AbstractNonlinearSystemTransformation):
         problem: NonlinearSystemProblem,
         scaling: NonlinearScaling,
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be a NonlinearSystemProblem.")
         if not isinstance(scaling, NonlinearScaling):

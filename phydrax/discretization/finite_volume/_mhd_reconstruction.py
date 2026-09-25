@@ -56,7 +56,7 @@ class MHDPrimitiveReconstructionPlan(StrictModule, NonTrainableState):
         order: int = 5,
         characteristic_eigensystem: Callable | None = None,
         characteristic_id: str | None = None,
-    ):
+    ) -> None:
         if method not in ("piecewise_constant", "plm", "weno_z", "teno", "mp5"):
             raise ValueError("Unknown MHD reconstruction method.")
         theta = float(plm_theta)

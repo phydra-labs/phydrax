@@ -29,7 +29,7 @@ class NambuConvention(StrictModule):
     particle_hole_matrix: Array
     convention_id: str = eqx.field(static=True)
 
-    def __init__(self, mode_order: FermionModeOrder, /):
+    def __init__(self, mode_order: FermionModeOrder, /) -> None:
         if not isinstance(mode_order, FermionModeOrder):
             raise TypeError("mode_order must be FermionModeOrder.")
         count = mode_order.mode_count
@@ -71,7 +71,7 @@ class FermionicPairingPlan(StrictModule):
         mesh_id: str,
         energy_unit: str,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(mode_order, FermionModeOrder):
             raise TypeError("mode_order must be FermionModeOrder.")
         minus = np.asarray(minus_k_indices)
@@ -140,7 +140,7 @@ class FermionicBdGPlan(StrictModule):
         /,
         *,
         maximum_mode_count: int,
-    ):
+    ) -> None:
         if not isinstance(convention, NambuConvention) or not isinstance(
             pairing, FermionicPairingPlan
         ):

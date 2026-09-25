@@ -352,7 +352,7 @@ class ScalarConservationSystem(
         *,
         system_id: str,
         component_name: str = "value",
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         identifier = str(system_id)
         component = str(component_name)
@@ -445,7 +445,7 @@ class EulerSystem(
         /,
         *,
         material: IdealGasMaterial | None = None,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         material_ = IdealGasMaterial() if material is None else material
         if dimension_ not in (1, 2, 3):
@@ -818,7 +818,7 @@ class CompressibleNavierStokesSystem(
         /,
         *,
         material: IdealGasMaterial | None = None,
-    ):
+    ) -> None:
         if not isinstance(transport, AbstractTransportClosure):
             raise TypeError("transport must be an AbstractTransportClosure.")
         inviscid = EulerSystem(dimension, material=material)
@@ -1139,7 +1139,7 @@ class IdealMHDSystem(
         /,
         *,
         material: IdealGasMaterial | None = None,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         material_ = IdealGasMaterial() if material is None else material
         if dimension_ not in (1, 2, 3):
@@ -1362,7 +1362,7 @@ class ShallowWaterSystem(AbstractAdmissibleSystem, NonTrainableState):
         /,
         *,
         gravity: float = 9.81,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         gravity_ = float(gravity)
         if dimension_ not in (1, 2):

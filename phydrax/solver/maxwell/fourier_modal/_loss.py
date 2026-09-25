@@ -59,7 +59,7 @@ class FourierModalLossPolicy(StrictModule, NonTrainableState):
         relative_tolerance: float = 1.0e-6,
         absolute_tolerance: float = 1.0e-9,
         passive_psd_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         order = int(z_quadrature_order)
         if order < 2:
             raise ValueError("z_quadrature_order must be at least two.")

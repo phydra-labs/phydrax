@@ -43,7 +43,7 @@ class AlgebraClaimEvidence(StrictModule, NonTrainableState):
         *,
         witness: Sequence[str] = (),
         work: int = 0,
-    ):
+    ) -> None:
         name = str(property_name)
         if not name:
             raise ValueError("Algebra property name must be non-empty.")
@@ -83,7 +83,7 @@ class AlgebraPropertyEvidence(StrictModule, NonTrainableState):
     claims: tuple[AlgebraClaimEvidence, ...]
     evidence_id: str = eqx.field(static=True)
 
-    def __init__(self, claims: Sequence[AlgebraClaimEvidence], /):
+    def __init__(self, claims: Sequence[AlgebraClaimEvidence], /) -> None:
         values = tuple(claims)
         if not values or any(
             not isinstance(value, AlgebraClaimEvidence) for value in values

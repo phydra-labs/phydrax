@@ -67,7 +67,7 @@ class BarotropicSPHMethodPlan(StrictModule, NonTrainableState):
         force_cfl: float = 0.25,
         name: str = "barotropic-sph",
         method_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractSPHSmoothingKernel):
             raise TypeError("kernel must be an AbstractSPHSmoothingKernel.")
         smoothing = float(smoothing_length)
@@ -174,7 +174,7 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
         precision: ParticlePrecisionPolicy | None = None,
         external_potential: ExternalParticlePotential | None = None,
         external_potential_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):

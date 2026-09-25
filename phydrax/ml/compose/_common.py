@@ -64,7 +64,7 @@ class CompositionProvenance(StrictModule, NonTrainableState):
     names: tuple[str, ...] = eqx.field(static=True)
     results: tuple[FitResult, ...]
 
-    def __init__(self, names: Sequence[str], results: Sequence[FitResult], /):
+    def __init__(self, names: Sequence[str], results: Sequence[FitResult], /) -> None:
         names_ = tuple(str(name) for name in names)
         results_ = tuple(results)
         if len(names_) != len(results_):
@@ -93,7 +93,7 @@ class CompositionDiagnostics(StrictModule):
         *,
         valid: Any,
         status: Any,
-    ):
+    ) -> None:
         names_ = tuple(str(name) for name in names)
         results_ = tuple(results)
         if len(names_) != len(results_):

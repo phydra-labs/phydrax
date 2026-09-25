@@ -27,7 +27,7 @@ class HomogenizedRoughContactPlan(StrictModule, NonTrainableState):
         pressure_scale: float,
         separation_scale: float,
         rms_roughness: float,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -98,7 +98,7 @@ class PeriodicRoughContactPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 1000,
         tolerance: float = 1.0e-10,
         relaxation: float = 0.9,
-    ):
+    ) -> None:
         spectrum = np.asarray(compliance_spectrum, dtype=np.float64)
         if spectrum.ndim != 2 or np.any(~np.isfinite(spectrum)) or np.any(spectrum < 0.0):
             raise ValueError(

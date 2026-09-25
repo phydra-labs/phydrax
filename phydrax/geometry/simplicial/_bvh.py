@@ -27,7 +27,7 @@ class TriangleBVH(StrictModule):
     leaf_items: Array
     num_nodes: int = eqx.field(static=True)
 
-    def __init__(self, mesh: TriangleMesh, *, leaf_size: int = 8):
+    def __init__(self, mesh: TriangleMesh, *, leaf_size: int = 8) -> None:
         if not isinstance(mesh, TriangleMesh):
             raise TypeError("TriangleBVH requires a TriangleMesh.")
         triangles = np.asarray(mesh.triangles)

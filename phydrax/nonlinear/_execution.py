@@ -65,7 +65,7 @@ class ShardedNonlinearPolicy(StrictModule):
         axis_name: str | None = None,
         norm_reduction: NormReduction = "global-l2",
         replicated_status: bool = True,
-    ):
+    ) -> None:
         if not isinstance(state_sharding, jax.sharding.Sharding):
             raise TypeError("state_sharding must implement jax.sharding.Sharding.")
         if not isinstance(residual_sharding, jax.sharding.Sharding):
@@ -106,7 +106,7 @@ class MixedPrecisionRootExecution(StrictModule):
 
     precision: NonlinearPrecisionPolicy
 
-    def __init__(self, precision: NonlinearPrecisionPolicy | None = None, /):
+    def __init__(self, precision: NonlinearPrecisionPolicy | None = None, /) -> None:
         policy = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(policy, NonlinearPrecisionPolicy):
             raise TypeError("precision must be NonlinearPrecisionPolicy or None.")

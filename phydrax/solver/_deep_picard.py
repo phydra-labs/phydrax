@@ -130,7 +130,7 @@ class StructuredPicardSource(StrictModule):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         if not isinstance(source_id, str) or not source_id:

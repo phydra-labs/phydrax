@@ -30,7 +30,7 @@ class _DesignObjective(StrictModule):
         system: DesignConstraintSystem,
         base_state: DesignState,
         /,
-    ):
+    ) -> None:
         self.system = system
         self.base_state = base_state
 
@@ -90,7 +90,7 @@ class DesignSearchResult(StrictModule):
         objective_evaluations: int,
         invalid_evaluations: int,
         design_signature: str,
-    ):
+    ) -> None:
         residual_ = jnp.asarray(residual, dtype=jnp.float64).reshape((-1,))
         self.state = state
         self.residual = residual_

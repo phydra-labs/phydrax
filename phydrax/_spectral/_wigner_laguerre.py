@@ -29,7 +29,7 @@ class WignerLaguerrePlan(StrictModule, NonTrainableState):
         radial: RadialLaguerrePlan,
         wigner: WignerTransformPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(radial, RadialLaguerrePlan):
             raise TypeError("radial must be a RadialLaguerrePlan.")
         if not isinstance(wigner, WignerTransformPlan):

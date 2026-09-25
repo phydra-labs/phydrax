@@ -57,7 +57,7 @@ class SparseColoring(StrictModule, NonTrainableState):
         symmetric: bool = False,
         compiler: SparseColoringCompiler = "native",
         num_colors: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(pattern, SparsePattern):
             raise TypeError("pattern must be a SparsePattern.")
         if mode not in (*_JACOBIAN_MODES, *_HESSIAN_MODES):

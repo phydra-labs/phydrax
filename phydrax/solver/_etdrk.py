@@ -94,7 +94,7 @@ class ETDRKMethod(StrictModule, NonTrainableState):
     capabilities: TemporalMethodCapabilities
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, order: Literal[2, 4] = 4):
+    def __init__(self, order: Literal[2, 4] = 4) -> None:
         order_ = int(order)
         if order_ not in (2, 4):
             raise ValueError("ETDRK order must be two or four.")
@@ -189,7 +189,7 @@ class PreparedETDRKMethod(AbstractFixedStepMethod, NonTrainableState):
         diagonal: Array,
         coordinates: HermitianSpectralCoordinates | None,
         /,
-    ):
+    ) -> None:
         self.drift = drift
         self.diagonal = jnp.asarray(diagonal)
         self.coordinates = coordinates
@@ -321,7 +321,7 @@ class LESStabilityGuardedETDRKMethod(StrictModule, NonTrainableState):
         /,
         *,
         safety_factor: float,
-    ):
+    ) -> None:
         if not isinstance(base_method, ETDRKMethod):
             raise TypeError("base_method must be an ETDRKMethod.")
         safety = float(safety_factor)
@@ -415,7 +415,7 @@ class PreparedLESStabilityGuardedETDRKMethod(
         base_method: PreparedETDRKMethod,
         dynamics: Any,
         /,
-    ):
+    ) -> None:
         from ..equations._incompressible import (
             CompiledIncompressibleSpectralDynamics,
         )

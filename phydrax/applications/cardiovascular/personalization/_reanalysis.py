@@ -355,7 +355,7 @@ class NativeDomainSolveReceipt:
         execution_manifest: CardiovascularExecutionManifest,
         domain_result: object,
         /,
-    ):
+    ) -> None:
         if not isinstance(domain, NativeDomain):
             raise TypeError("domain must be a NativeDomain.")
         route = _identifier(reanalysis_route_id, "reanalysis_route_id")
@@ -507,7 +507,7 @@ class NativeReanalysisCandidate:
         *,
         topology_id: str,
         initialization_proposal_id: str,
-    ):
+    ) -> None:
         arrays = frozendict(
             {str(name): jnp.asarray(value) for name, value in fields.items()}
         )

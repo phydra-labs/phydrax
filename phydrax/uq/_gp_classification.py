@@ -43,7 +43,7 @@ class CategoricalGaussianProcessLikelihood(StrictModule):
 
     class_count: int = eqx.field(static=True)
 
-    def __init__(self, class_count: int):
+    def __init__(self, class_count: int) -> None:
         if isinstance(class_count, bool):
             raise TypeError("class_count must be an integer.")
         count = index(class_count)
@@ -111,7 +111,7 @@ class CategoricalGaussianProcessPosterior(StrictModule):
     factors: tuple[BernoulliGaussianProcessPosterior, ...]
     likelihood: CategoricalGaussianProcessLikelihood
 
-    def __init__(self, factors: tuple[BernoulliGaussianProcessPosterior, ...]):
+    def __init__(self, factors: tuple[BernoulliGaussianProcessPosterior, ...]) -> None:
         if len(factors) < 2:
             raise ValueError(
                 "Categorical GP posterior requires at least two latent factors."

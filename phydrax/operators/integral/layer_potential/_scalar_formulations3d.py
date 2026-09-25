@@ -108,7 +108,7 @@ class _ComponentMeanProjector3D(_AbstractCostedLinearOperator):
         /,
         *,
         operator_id: str,
-    ):
+    ) -> None:
         areas_ = jnp.asarray(areas, dtype=space.dtype)
         components = jnp.asarray(component_ids, dtype=jnp.int32)
         count = int(component_count)

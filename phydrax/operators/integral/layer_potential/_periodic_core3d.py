@@ -128,7 +128,7 @@ class PeriodicEwaldPolicy3D(StrictModule, NonTrainableState):
         max_preparation_workspace_bytes: int = 256 * 1024 * 1024,
         max_resident_bytes: int = 256 * 1024 * 1024,
         precision: IntegrationPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         eta = float(splitting_parameter)
         real = int(real_cutoff)
         reciprocal = int(reciprocal_cutoff)
@@ -334,7 +334,9 @@ class PeriodicScalarDP0Operator3D(StrictModule, NonTrainableState):
 
 
 class _EwaldEvaluation:
-    def __init__(self, value: np.ndarray, real_shell: float, reciprocal_shell: float):
+    def __init__(
+        self, value: np.ndarray, real_shell: float, reciprocal_shell: float
+    ) -> None:
         self.value = value
         self.real_shell = float(real_shell)
         self.reciprocal_shell = float(reciprocal_shell)

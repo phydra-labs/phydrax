@@ -30,7 +30,7 @@ class PrecedenceOperation(StrictModule, NonTrainableState):
         simultaneous_group: str | None = None,
         resource_demand: Mapping[str, int] | None = None,
         mandatory: bool = True,
-    ):
+    ) -> None:
         identifier = str(operation_id)
         if not identifier:
             raise ValueError("operation_id must be nonempty.")
@@ -70,7 +70,7 @@ class PrecedenceSpace(StrictModule, NonTrainableState):
         /,
         *,
         resource_limits: Mapping[str, int] | None = None,
-    ):
+    ) -> None:
         operations_ = tuple(operations)
         identifiers = {value.operation_id for value in operations_}
         if not operations_ or len(identifiers) != len(operations_):

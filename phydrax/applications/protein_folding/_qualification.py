@@ -26,7 +26,7 @@ class ProteinTorsionCriterion:
     upper: float
     criterion_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not isinstance(self.atom_keys, tuple)
             or len(self.atom_keys) != 4
@@ -94,7 +94,7 @@ class PreparedProteinQualification(StrictModule):
         peptide_tolerance=0.35,
         maximum_clash_pairs=100_000,
         torsion_criteria=(),
-    ):
+    ) -> None:
         """Prepare explicit per-native-bond bounds and conservative clash screening.
 
         ``bond_bounds`` is (native bond count, 2), in ``bounds_unit``. The

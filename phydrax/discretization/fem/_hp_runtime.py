@@ -120,7 +120,7 @@ class FiniteElementHPGeometry(StrictModule, NonTrainableState):
         reference_lower: ArrayLike,
         reference_upper: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(topology, FiniteElementHPTopology):
             raise TypeError("topology must be FiniteElementHPTopology.")
         vertices = np.asarray(cell_vertices)
@@ -182,7 +182,7 @@ class FiniteElementHPGeometryEvidence(StrictModule, NonTrainableState):
         minimum_measure: ArrayLike,
         tolerance: float,
         /,
-    ):
+    ) -> None:
         coverage = np.asarray(child_coverage_error)
         interface = np.asarray(interface_coordinate_error)
         measure = np.asarray(minimum_measure)
@@ -254,7 +254,7 @@ class FiniteElementHPInterfacePlan(StrictModule, NonTrainableState):
         owner_orientations: ArrayLike | None = None,
         neighbor_orientations: ArrayLike | None = None,
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         owners = np.asarray(owner_slots, dtype=np.int32)
         neighbors = np.asarray(neighbor_slots, dtype=np.int32)
         owner_facets = np.asarray(owner_local_facets, dtype=np.int32)
@@ -421,7 +421,7 @@ class FiniteElementHPEpoch(StrictModule, NonTrainableState):
         worksets: FiniteElementHPWorksetPlan | None = None,
         discretization: FiniteElementDiscretization | None = None,
         constraints: Sequence[tuple[str, object]] = (),
-    ):
+    ) -> None:
         if (
             not isinstance(mesh, CellMesh)
             or not isinstance(topology, FiniteElementHPTopology)
@@ -519,7 +519,7 @@ class FiniteElementHPTransaction(StrictModule, NonTrainableState):
         admissible: ArrayLike = True,
         geometry_valid: ArrayLike = True,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if (
             not isinstance(accepted, FiniteElementHPEpoch)
             or not isinstance(candidate, FiniteElementHPEpoch)
@@ -635,7 +635,7 @@ class FiniteElementHPRefinementResult(StrictModule, NonTrainableState):
         requested_slots: ArrayLike,
         closure_slots: ArrayLike,
         /,
-    ):
+    ) -> None:
         requested = jnp.asarray(requested_slots, dtype=jnp.int32)
         closure = jnp.asarray(closure_slots, dtype=jnp.int32)
         self.topology = topology
@@ -1390,7 +1390,7 @@ class FiniteElementHPTraceConstraintPlan(StrictModule, NonTrainableState):
     reduced_dof_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, prolongation: ArrayLike, /):
+    def __init__(self, prolongation: ArrayLike, /) -> None:
         matrix = np.asarray(prolongation)
         if (
             matrix.ndim != 2
@@ -1710,7 +1710,7 @@ class FiniteElementHPStateTransferPolicy(StrictModule, NonTrainableState):
     role: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, role: str, /):
+    def __init__(self, name: str, role: str, /) -> None:
         name_ = str(name)
         role_ = str(role)
         if not name_ or role_ not in (
@@ -1768,7 +1768,7 @@ class FiniteElementHPResidualJumpLedger(StrictModule):
         facet_jump: ArrayLike,
         facet_measure: ArrayLike,
         /,
-    ):
+    ) -> None:
         residual = jnp.asarray(cell_residual)
         cells = jnp.asarray(cell_measure)
         jumps = jnp.asarray(facet_jump)
@@ -1821,7 +1821,7 @@ class FiniteElementHPErrorEstimate(StrictModule):
         *,
         smoothness: ArrayLike | None = None,
         estimator_id: str = "hp-error-estimate",
-    ):
+    ) -> None:
         indicators = jnp.asarray(cell_indicators)
         smooth = (
             jnp.zeros((topology.capacity, topology.dimension), dtype=indicators.dtype)
@@ -1909,7 +1909,7 @@ class FiniteElementHPDecision(StrictModule, NonTrainableState):
         requested_refine: ArrayLike | None = None,
         balance_added: ArrayLike | None = None,
         coarsen_history: ArrayLike | None = None,
-    ):
+    ) -> None:
         degrees = np.asarray(target_degrees, dtype=np.int32)
         refine_ = np.asarray(refine, dtype=np.bool_)
         coarsen_ = np.asarray(coarsen, dtype=np.bool_)

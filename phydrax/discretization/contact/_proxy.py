@@ -60,7 +60,7 @@ class ContactProxyPlan(StrictModule, NonTrainableState):
         /,
         *,
         certified: bool,
-    ):
+    ) -> None:
         if not isinstance(topology, CollisionSurfacePlan):
             raise TypeError("topology must be CollisionSurfacePlan.")
         error = np.asarray(approximation_error, dtype=np.float64)
@@ -167,7 +167,7 @@ class ContactProxyTransfer(StrictModule, NonTrainableState):
         new_parent_vertices: ArrayLike,
         parent_weights: ArrayLike,
         /,
-    ):
+    ) -> None:
         old_ids = np.asarray(old_vertex_ids)
         new_ids = np.asarray(new_vertex_ids)
         parents = np.asarray(new_parent_vertices)

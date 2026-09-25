@@ -76,7 +76,7 @@ class GaussianProcessClassifierModel(AbstractFittedModel):
         feature_count: int,
         class_count: int,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.posteriors = tuple(posteriors)
         self.feature_count = int(feature_count)
         self.class_count = int(class_count)
@@ -151,7 +151,7 @@ class GaussianProcessClassifierRecipe(AbstractRecipe):
         iterations: int = 12,
         curvature_floor: ArrayLike = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if not isinstance(state, GaussianProcessLikelihoodState):
             raise TypeError("state must be a GaussianProcessLikelihoodState.")
         if int(class_count) < 2 or int(iterations) <= 0:
@@ -307,7 +307,7 @@ class BernoulliGaussianProcessClassifierRecipe(AbstractRecipe):
         iterations: int = 12,
         curvature_floor: ArrayLike = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.recipe = GaussianProcessClassifierRecipe(
             state,
             class_count=2,
@@ -332,7 +332,7 @@ class CategoricalGaussianProcessClassifierRecipe(AbstractRecipe):
         iterations: int = 12,
         curvature_floor: ArrayLike = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(class_count) <= 2:
             raise ValueError(
                 "Categorical GP classification requires class_count greater than two."

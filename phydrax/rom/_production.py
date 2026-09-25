@@ -70,7 +70,7 @@ class ROMResourcePolicy(StrictModule, NonTrainableState):
         maximum_batch_size: int = 65_536,
         maximum_workspace_bytes: int = 8 * 1024**3,
         maximum_archive_bytes: int = 16 * 1024**3,
-    ):
+    ) -> None:
         values = {
             "maximum_full_dimension": int(maximum_full_dimension),
             "maximum_reduced_dimension": int(maximum_reduced_dimension),
@@ -134,7 +134,7 @@ class ROMCostEstimate(StrictModule, NonTrainableState):
         reconstruction_operations: int = 0,
         local_memory_bytes: int = 0,
         communication_bytes: int = 0,
-    ):
+    ) -> None:
         values = tuple(
             (
                 truth_operations,
@@ -187,7 +187,7 @@ class ROMAdmissionEvidence(StrictModule, NonTrainableState):
         *,
         support_id: str,
         evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         support = str(support_id)
         evidence = tuple(str(value) for value in evidence_ids)
         if not support or any(not value for value in evidence):
@@ -254,7 +254,7 @@ class ROMPromotionEvidence:
         exact_resume_passed: bool,
         evidence_ids: Sequence[str],
         thresholds: ROMPromotionThresholds | None = None,
-    ):
+    ) -> None:
         capability_ = str(capability)
         support_ = str(support_id)
         identifiers = tuple(sorted(str(value) for value in evidence_ids))
@@ -332,7 +332,7 @@ class ROMCapabilityDeclaration(StrictModule, NonTrainableState):
         /,
         *,
         required_gates: Sequence[str],
-    ):
+    ) -> None:
         capability_ = str(capability)
         gates = tuple(str(value) for value in required_gates)
         values = tuple(sorted((str(name), value) for name, value in attributes.items()))

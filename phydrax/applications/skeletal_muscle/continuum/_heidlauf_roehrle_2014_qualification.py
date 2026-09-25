@@ -36,7 +36,7 @@ class HeidlaufRoehrle2014QualificationPlan(StrictModule, NonTrainableState):
     difference_step: float = eqx.field(static=True)
     qualification_id: str = eqx.field(static=True)
 
-    def __init__(self, *, relative_tolerance=5.0e-3, difference_step=2.0e-3):
+    def __init__(self, *, relative_tolerance=5.0e-3, difference_step=2.0e-3) -> None:
         tolerance = float(relative_tolerance)
         step = float(difference_step)
         if (

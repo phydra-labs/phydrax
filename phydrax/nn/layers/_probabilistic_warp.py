@@ -51,7 +51,7 @@ class ProbabilisticMultiheadWarp(StrictModule, ParameterOwner):
         minimum_scale: float = 1e-6,
         scale_factor: float = 1e-3,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if float(minimum_scale) <= 0.0 or float(scale_factor) <= 0.0:
             raise ValueError("Probabilistic warp scales must be positive.")
         base_key, scale_key = jr.split(key)

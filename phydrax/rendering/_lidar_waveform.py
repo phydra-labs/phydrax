@@ -132,7 +132,7 @@ class HardSurfaceLidarWaveformPlan(StrictModule, NonTrainableState):
         wave_speed_unit: UnitDefinition,
         backscatter: float = 1.0,
         receiver_gains: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(surface, PreparedLidarSurface) or not isinstance(
             support, WaveformSupport
         ):
@@ -353,7 +353,7 @@ class AtmosphericLidarPlan(StrictModule, NonTrainableState):
         range_unit: UnitDefinition,
         wave_speed_unit: UnitDefinition,
         overlap: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(support, WaveformSupport):
             raise TypeError("support must be WaveformSupport.")
         if not isinstance(range_unit, UnitDefinition) or range_unit.dimension != LENGTH:
@@ -480,7 +480,7 @@ class SpecularLidarMultipathPlan(StrictModule, NonTrainableState):
         path_length_unit: UnitDefinition,
         wave_speed_unit: UnitDefinition,
         path_capacity: int,
-    ):
+    ) -> None:
         if not isinstance(support, WaveformSupport):
             raise TypeError("support must be WaveformSupport.")
         if (
@@ -600,7 +600,7 @@ class TimeResolvedMultipleScatteringPlan(StrictModule, NonTrainableState):
         wave_speed: float,
         distance_unit: UnitDefinition,
         wave_speed_unit: UnitDefinition,
-    ):
+    ) -> None:
         if not isinstance(support, WaveformSupport):
             raise TypeError("support must be WaveformSupport.")
         if (

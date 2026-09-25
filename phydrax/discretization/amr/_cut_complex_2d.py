@@ -68,7 +68,7 @@ class _Fragment2D:
 
 
 class _UnionFind:
-    def __init__(self, size: int):
+    def __init__(self, size: int) -> None:
         self.parent = list(range(size))
 
     def root(self, value: int) -> int:
@@ -363,7 +363,7 @@ class MultivaluedCutCell2DPlan(StrictModule, NonTrainableState):
         *,
         subdivision: int = 1,
         predicate_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         hierarchy = canonicalize_patch_hierarchy(topology)
         if hierarchy.dimension != 2:
             raise ValueError("MultivaluedCutCell2DPlan requires a 2-D hierarchy.")

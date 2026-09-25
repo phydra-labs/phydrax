@@ -42,7 +42,7 @@ class OrbitOperatorResourcePolicy(StrictModule):
         maximum_workspace_bytes: int,
         invariance_tolerance: float = 1e-10,
         route_tolerance: float = 1e-14,
-    ):
+    ) -> None:
         routes = int(maximum_routes)
         workspace = int(maximum_workspace_bytes)
         invariance = float(invariance_tolerance)
@@ -107,7 +107,7 @@ class QuantumOrbitSectorOperator(AbstractLinearOperator):
         /,
         *,
         action_workspace_bytes: int,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedQuantumLattice):
             raise TypeError("prepared must be PreparedQuantumLattice.")
         if not isinstance(basis, PreparedOrbitSectorBasis):

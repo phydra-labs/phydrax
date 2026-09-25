@@ -307,7 +307,7 @@ class EventPackingReport(StrictModule, NonTrainableState):
         attribute_loss_count: int,
         semantic_loss_fields: tuple[str, ...],
         plan_id: str,
-    ):
+    ) -> None:
         statuses_ = tuple(statuses)
         if any(not isinstance(value, EventPackingStatus) for value in statuses_):
             raise TypeError("statuses must contain EventPackingStatus values.")

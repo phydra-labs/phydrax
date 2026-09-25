@@ -42,7 +42,7 @@ class _ControlCandidateEvaluator(StrictModule):
         parameterization: AbstractControlParameterization,
         solver_options: dict[str, Any],
         /,
-    ):
+    ) -> None:
         self.problem = problem
         self.parameterization = parameterization
         self.solver_options = solver_options
@@ -118,7 +118,7 @@ class ControlCandidateSearchResult(StrictModule):
         winner_evaluations: int,
         effective_batch_size: int,
         candidate_signature: str,
-    ):
+    ) -> None:
         valid_ = bool(valid)
         complete_winner = evaluation is not None and coefficients is not None
         if valid_ != complete_winner:

@@ -81,7 +81,7 @@ class CompositeMACMarkerTransferPlan(StrictModule, NonTrainableState):
         *,
         accumulation: MACMarkerAccumulation = "deterministic",
         condition_limit: float = 1.0e10,
-    ):
+    ) -> None:
         if not isinstance(markers, LagrangianMarkerDiscretization):
             raise TypeError("markers must be LagrangianMarkerDiscretization.")
         measures = tuple(

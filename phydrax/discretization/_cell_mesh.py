@@ -78,7 +78,7 @@ class CellBlock(StrictModule, NonTrainableState):
         *,
         vertex_valid: ArrayLike | None = None,
         global_ids: ArrayLike | None = None,
-    ):
+    ) -> None:
         block_name = str(name)
         kind = str(cell_kind)
         if not block_name:
@@ -185,7 +185,7 @@ class PolyhedralBlock(StrictModule, NonTrainableState):
         /,
         *,
         global_ids: ArrayLike | None = None,
-    ):
+    ) -> None:
         block_name = str(name)
         cells = np.asarray(vertices, dtype=np.int32)
         if not block_name:
@@ -275,7 +275,7 @@ class CellMesh(StrictModule, NonTrainableState):
         entity_global_ids: Mapping[int, ArrayLike] | None = None,
         polyhedral_connectivity: PolyhedralConnectivity | None = None,
         numeric_version: str = "0",
-    ):
+    ) -> None:
         points = np.asarray(coordinates, dtype=np.float64)
         if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] == 0:
             raise ValueError("Cell mesh coordinates must have shape (n > 0, d > 0).")

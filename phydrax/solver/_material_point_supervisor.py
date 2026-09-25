@@ -32,7 +32,7 @@ class MPMOperationalResult:
         generation,
         output_complete,
         elapsed_seconds,
-    ):
+    ) -> None:
         self.state = state
         self.numerical_result = numerical_result
         self.status = MPMOperationalStatus(status)
@@ -56,7 +56,7 @@ class MPMRunSupervisor:
         checkpoint_directory: str | Path | None = None,
         checkpoint_interval: int = 1,
         output_plan: MPMOutputPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedMPMDynamics):
             raise TypeError("dynamics must be PreparedMPMDynamics.")
         if not isinstance(initial_state, MPMRuntimeState):
@@ -95,7 +95,7 @@ class MPMRunSupervisor:
             "maximum_apic_condition": 0.0,
         }
 
-    def _event(self, kind, **payload):
+    def _event(self, kind, **payload) -> None:
         self.events.append(
             {
                 "sequence": len(self.events),
@@ -209,7 +209,7 @@ class MPMRunSupervisor:
         self._event("recovered", generation=self.generation)
         return state
 
-    def complete(self):
+    def complete(self) -> None:
         if self.status not in (
             MPMOperationalStatus.PREPARED,
             MPMOperationalStatus.RUNNING,
@@ -218,14 +218,14 @@ class MPMRunSupervisor:
         self.status = MPMOperationalStatus.COMPLETED
         self._event("completed")
 
-    def quarantine(self, reason: str):
+    def quarantine(self, reason: str) -> None:
         reason_ = str(reason)
         if not reason_:
             raise ValueError("Quarantine reason must be non-empty.")
         self.status = MPMOperationalStatus.QUARANTINED
         self._event("quarantined", reason=reason_)
 
-    def release(self, release_bundle_id: str):
+    def release(self, release_bundle_id: str) -> None:
         identifier = str(release_bundle_id)
         if self.status != MPMOperationalStatus.COMPLETED or not identifier:
             raise RuntimeError("Only completed runs with release evidence may release.")

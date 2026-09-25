@@ -43,7 +43,7 @@ class PseudospectralMethodPlan(StrictModule, NonTrainableState):
         ),
         diagnostics: bool = False,
         real_projection_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if dealiasing is not None and not isinstance(dealiasing, AbstractDealiasingPlan):
             raise TypeError("dealiasing must be an AbstractDealiasingPlan or None.")
         if not isinstance(differentiability, BranchDifferentiationPolicy):
@@ -126,7 +126,7 @@ class PreparedPseudospectralMethod(StrictModule, NonTrainableState):
         /,
         *,
         nonlinear: bool,
-    ):
+    ) -> None:
         if not isinstance(plan, PseudospectralMethodPlan):
             raise TypeError("plan must be a PseudospectralMethodPlan.")
         if not isinstance(
@@ -198,7 +198,7 @@ class SpectralResidualDiagnostics(StrictModule):
         semidiscrete_entropy_rate: ArrayLike | None,
         precision_evidence: PrecisionEvidenceEnvelope,
         method_id: str,
-    ):
+    ) -> None:
         if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
             raise TypeError("precision_evidence must be a PrecisionEvidenceEnvelope.")
         identifier = str(method_id)

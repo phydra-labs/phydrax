@@ -39,7 +39,7 @@ class LeakyIntegrateAndFire(StrictModule, NonTrainableState):
         threshold_mV: float,
         reset_mV: float,
         refractory_ms: float = 0.0,
-    ):
+    ) -> None:
         capacitance, leak, resting, threshold, reset, refractory = _base_parameters(
             capacitance_nF,
             leak_conductance_uS,
@@ -91,7 +91,7 @@ class AdaptiveExponentialIntegrateAndFire(StrictModule, NonTrainableState):
         refractory_ms: float = 0.0,
         *,
         exponential_threshold_mV: float = -50.0,
-    ):
+    ) -> None:
         capacitance, leak, resting, threshold, reset, refractory = _base_parameters(
             capacitance_nF,
             leak_conductance_uS,
@@ -344,7 +344,7 @@ class ThresholdDetector(StrictModule, NonTrainableState):
     threshold_mV: Array
     rearm_mV: Array
 
-    def __init__(self, threshold_mV: float, rearm_mV: float | None = None):
+    def __init__(self, threshold_mV: float, rearm_mV: float | None = None) -> None:
         threshold = _finite(threshold_mV, "threshold_mV")
         rearm = threshold if rearm_mV is None else _finite(rearm_mV, "rearm_mV")
         if rearm > threshold:

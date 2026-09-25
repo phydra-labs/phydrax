@@ -35,7 +35,7 @@ class RadiativeBasis(StrictModule):
         weights: ArrayLike,
         measure_unit: UnitDefinition = ONE,
         channels: Sequence[str] = ("red", "green", "blue"),
-    ):
+    ) -> None:
         labels_, channels_ = tuple(labels), tuple(channels)
         if (
             not labels_
@@ -83,7 +83,7 @@ class RadiativeOperator(StrictModule):
         input_unit: UnitDefinition,
         output_unit: UnitDefinition,
         provenance: Sequence[str] = (),
-    ):
+    ) -> None:
         x = jnp.asarray(values)
         shape = (len(target.labels), len(source.labels), len(source.channels))
         if source.channels != target.channels or x.shape != shape:
@@ -120,7 +120,7 @@ class RadiativeComposition(StrictModule):
 
     factors: tuple[RadiativeOperator, ...]
 
-    def __init__(self, factors: Sequence[RadiativeOperator]):
+    def __init__(self, factors: Sequence[RadiativeOperator]) -> None:
         factors_ = tuple(factors)
         if not factors_:
             raise ValueError("Radiative composition needs at least one factor.")

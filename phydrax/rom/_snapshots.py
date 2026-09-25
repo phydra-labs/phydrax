@@ -61,7 +61,7 @@ class SnapshotManifest(StrictModule, NonTrainableState):
         quadrature_id: str,
         truth_revision_id: str,
         source_artifact_ids: Sequence[str],
-    ):
+    ) -> None:
         roles = (
             "state",
             "nonlinear-term",

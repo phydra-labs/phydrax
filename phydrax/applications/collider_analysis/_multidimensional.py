@@ -31,7 +31,7 @@ class MultiHistogramPlan(StrictModule, NonTrainableState):
         *,
         axis_names: Sequence[str],
         unit_ids: Sequence[str],
-    ):
+    ) -> None:
         edges_ = tuple(np.asarray(value, dtype=np.float64) for value in edges)
         names = tuple(str(value).strip() for value in axis_names)
         units = tuple(str(value).strip() for value in unit_ids)

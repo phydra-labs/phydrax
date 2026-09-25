@@ -72,7 +72,7 @@ class GlobalCoefficientId(StrictModule, NonTrainableState):
         /,
         *,
         coefficient_id: str | None = None,
-    ):
+    ) -> None:
         space = nonempty_identifier("field_space_id", field_space_id)
         ordinal_ = int(ordinal)
         component_ = tuple(component)
@@ -121,7 +121,7 @@ class TensorDofLayout(AbstractDofLayout):
         component_shape: Sequence[int] = (),
         location_id: str | None = None,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         names = tuple(str(name) for name in axis_names)
         shape = tuple(axis_shape)
         components = _component_shape(component_shape)
@@ -182,7 +182,7 @@ class EntityDofLayout(AbstractDofLayout):
         local_to_global: RowRelation | None = None,
         orientation: ArrayLike | None = None,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         entity_set_id_ = nonempty_identifier("entity_set_id", entity_set_id)
         entity_count_ = int(entity_count)
         global_count = int(global_dof_count)
@@ -270,7 +270,7 @@ class ModalDofLayout(AbstractDofLayout):
         group_ids: Sequence[int] | None = None,
         component_shape: Sequence[int] = (),
         layout_id: str | None = None,
-    ):
+    ) -> None:
         modes = tuple(str(value) for value in mode_ids)
         if not modes or any(not value for value in modes):
             raise ValueError("Modal DOF layouts require non-empty mode IDs.")
@@ -312,7 +312,7 @@ class BlockDofLayout(AbstractDofLayout):
         /,
         *,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         names_ = tuple(str(name) for name in names)
         layouts_ = tuple(layouts)
         if not names_ or any(not name for name in names_):
@@ -373,7 +373,7 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
         reconstruction_id: str | None = None,
         trace_space_id: str | None = None,
         field_space_id: str | None = None,
-    ):
+    ) -> None:
         name_ = nonempty_identifier("name", name)
         support_id_ = nonempty_identifier("support_id", support_id)
         if not isinstance(

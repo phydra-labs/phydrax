@@ -48,7 +48,7 @@ class DiscretePathThermodynamicsPlan(StrictModule, NonTrainableState):
         first_law_tolerance: float = 1.0e-10,
         detailed_balance_tolerance: float = 1.0e-10,
         reversal_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         beta = float(inverse_temperature)
         path_capacity = int(maximum_paths)
         step_capacity = int(maximum_steps)

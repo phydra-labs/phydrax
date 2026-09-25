@@ -53,7 +53,7 @@ class WignerGradientPlan(StrictModule, NonTrainableState):
         /,
         *,
         boundary: str = "periodic",
-    ):
+    ) -> None:
         shape = tuple(phase_space_shape)
         x_steps = tuple(float(value) for value in spacetime_spacings)
         p_steps = tuple(float(value) for value in momentum_spacings)
@@ -125,7 +125,7 @@ class KadanoffBaymProfile(StrictModule, NonTrainableState):
     production_ready: bool = eqx.field(static=True)
     profile_id: str = eqx.field(static=True)
 
-    def __init__(self, production_evidence_ids: Sequence[str] = (), /):
+    def __init__(self, production_evidence_ids: Sequence[str] = (), /) -> None:
         evidence = tuple(
             _identifier(value, "production_evidence_id")
             for value in production_evidence_ids
@@ -193,7 +193,7 @@ class KadanoffBaymTransportPlan(StrictModule, NonTrainableState):
         memory_depth: int,
         maximum_memory_bytes: int = 512_000_000,
         production_evidence_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(off_shell, OffShellTransportPlan):
             raise TypeError("off_shell must be an OffShellTransportPlan.")
         if not isinstance(gradient, WignerGradientPlan):

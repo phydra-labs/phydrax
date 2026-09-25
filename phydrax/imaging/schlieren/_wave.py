@@ -139,7 +139,7 @@ class WaveSchlierenPlan(StrictModule, NonTrainableState):
         detector_distance: float,
         padding: int,
         maximum_leakage_fraction: float = 1.0e-5,
-    ):
+    ) -> None:
         if object_screen.space.space_id != filter_transmission.space.space_id:
             raise ValueError(
                 "Object and filter must use the same prepared plane support."
@@ -253,7 +253,7 @@ class MultisliceRefractivePlan(StrictModule, NonTrainableState):
         padding: int,
         maximum_phase_per_slice: float = np.pi / 2.0,
         maximum_leakage_fraction: float = 1.0e-5,
-    ):
+    ) -> None:
         thicknesses = np.asarray(slice_thicknesses, dtype=np.float64)
         if (
             thicknesses.ndim != 1
@@ -380,7 +380,7 @@ class ScalarHelmholtzContinuationPlan(StrictModule, NonTrainableState):
         damping: float,
         iteration_count: int,
         relative_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         if space.topology != "periodic-cell":
             raise ValueError(
                 "The initial Helmholtz continuation route requires periodic-cell support."

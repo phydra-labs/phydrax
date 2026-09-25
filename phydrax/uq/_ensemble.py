@@ -49,7 +49,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         *,
         source_dim: str = "__phydra_uq_epistemic",
         layout: LaneLayout | None = None,
-    ):
+    ) -> None:
         count = int(num_members)
         if count <= 0:
             raise ValueError("num_members must be positive.")
@@ -226,7 +226,7 @@ class HeterogeneousFunctionEnsemble(StrictModule):
         /,
         *,
         source_dim: str = "__phydra_uq_epistemic",
-    ):
+    ) -> None:
         values = tuple(members)
         if not values:
             raise ValueError("members must be non-empty.")
@@ -386,7 +386,7 @@ class RandomizedPriorModel(_AbstractBaseModel):
         /,
         *,
         beta: float = 1.0,
-    ):
+    ) -> None:
         if learned.in_size != prior.in_size or learned.out_size != prior.out_size:
             raise ValueError(
                 "Learned and prior models must have matching input/output sizes."
@@ -445,7 +445,7 @@ class EnsembleMemberDiagnostics(StrictModule):
         seed: int,
         duration_seconds: float,
         training_diagnostics: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         self.member_index = int(member_index)
         self.seed = int(seed)
         self.duration_seconds = float(duration_seconds)
@@ -463,7 +463,7 @@ class EnsembleFitResult(StrictModule):
         ensemble: HomogeneousFunctionEnsemble | HeterogeneousFunctionEnsemble,
         members: Sequence[EnsembleMemberDiagnostics],
         /,
-    ):
+    ) -> None:
         diagnostics = tuple(members)
         if len(diagnostics) != ensemble.num_members:
             raise ValueError("Member diagnostics must align with the fitted ensemble.")
@@ -485,7 +485,7 @@ class EnsembleFitError(RuntimeError):
         seed: int,
         duration_seconds: float,
         completed: Sequence[EnsembleMemberDiagnostics],
-    ):
+    ) -> None:
         super().__init__(
             f"Ensemble member {member_index} failed during fitting with seed {seed}."
         )

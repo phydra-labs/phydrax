@@ -217,7 +217,7 @@ class FieldVectorBasis:
         field: PrimeField,
         policy: TopologyResourcePolicy,
         stats: ReductionStats,
-    ):
+    ) -> None:
         self.field = field
         self.policy = policy
         self.stats = stats

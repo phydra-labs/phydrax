@@ -46,7 +46,7 @@ class EvolutionSensitivityPolicy(StrictModule, NonTrainableState):
         *,
         relative_tolerance: float = 2.0e-4,
         absolute_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         steps = tuple(float(value) for value in perturbations)
         relative = float(relative_tolerance)
         absolute = float(absolute_tolerance)

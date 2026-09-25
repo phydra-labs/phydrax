@@ -36,7 +36,7 @@ class ElectrophysiologyInverseRoute(StrictModule, NonTrainableState):
 
     route_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.route_id = "electrophysiology-inverse"
 
     @property
@@ -49,7 +49,7 @@ class MechanicsInverseRoute(StrictModule, NonTrainableState):
 
     route_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.route_id = "mechanics-inverse"
 
     @property
@@ -64,7 +64,7 @@ class LoadingInverseRoute(StrictModule, NonTrainableState):
 
     route_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.route_id = "loading-inverse"
 
     @property
@@ -77,7 +77,7 @@ class UnloadedGeometryInverseRoute(StrictModule, NonTrainableState):
 
     route_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.route_id = "unloaded-geometry-inverse"
 
     @property
@@ -179,7 +179,7 @@ class CardiovascularInverseProblem(StrictModule, NonTrainableState):
         state_admissibility: Callable[[PyTree[Any], tuple[Array, ...], Any], ArrayLike]
         | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(schema, CardiacParameterSchema):
             raise TypeError("schema must be a CardiacParameterSchema.")
         if not isinstance(likelihood, PreparedMultimodalLikelihood):

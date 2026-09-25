@@ -57,7 +57,7 @@ class UnstructuredLowMachLESStepInputs(StrictModule):
         molecular_thermal_conductivity: ArrayLike,
         molecular_scalar_diffusivities: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.temperature = _real_inexact(temperature, "temperature")
         self.specific_heat_capacity_pressure = _real_inexact(
             specific_heat_capacity_pressure, "specific_heat_capacity_pressure"
@@ -97,7 +97,7 @@ class UnstructuredLowMachLESRestartState(StrictModule):
         pressure_increment: ArrayLike,
         accepted_steps: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(conservative, UnstructuredLowMachLESState):
             raise TypeError("conservative must be UnstructuredLowMachLESState.")
         enthalpy = _real_inexact(enthalpy_density, "enthalpy_density")
@@ -215,7 +215,7 @@ class UnstructuredLowMachLESFixedStepMethod(AbstractFixedStepMethod, NonTrainabl
         pressure_tolerance: float = 1.0e-9,
         pressure_iterations: int = 200,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedUnstructuredLowMachLES):
             raise TypeError("dynamics must be PreparedUnstructuredLowMachLES.")
         raw_step = np.asarray(step_size)

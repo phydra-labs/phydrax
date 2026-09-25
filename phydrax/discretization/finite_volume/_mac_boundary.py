@@ -108,7 +108,7 @@ class MACBoundaryProvider(StrictModule, NonTrainableState):
         rate: ArrayLike | None = None,
         function: MACBoundaryProviderFunction | None = None,
         provider_id: str | None = None,
-    ):
+    ) -> None:
         value_ = jnp.asarray(value)
         if not jnp.issubdtype(value_.dtype, jnp.inexact):
             value_ = value_.astype("float64")
@@ -167,7 +167,7 @@ class MACBoundarySide(StrictModule, NonTrainableState):
         *,
         provider: MACBoundaryProvider | None = None,
         backflow_coefficient: float = 0.0,
-    ):
+    ) -> None:
         axis_ = str(axis)
         if not axis_:
             raise ValueError("MAC boundary axis must be non-empty.")
@@ -232,7 +232,7 @@ class MACBoundaryPlan(StrictModule, NonTrainableState):
         operators: PreparedMACOperators,
         sides: Sequence[MACBoundarySide] | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         grid = operators.discretization.grid
@@ -302,7 +302,7 @@ class PreparedMACBoundaryPlan(StrictModule, NonTrainableState):
     closure_kind: MACPressureClosureKind = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MACBoundaryPlan, /):
+    def __init__(self, plan: MACBoundaryPlan, /) -> None:
         if not isinstance(plan, MACBoundaryPlan):
             raise TypeError("plan must be MACBoundaryPlan.")
         grid = plan.operators.discretization.grid
@@ -643,7 +643,7 @@ class MACBoundaryCorrectionDescriptor(StrictModule, NonTrainableState):
         boundaries: PreparedMACBoundaryPlan,
         stage: MACBoundaryStageData,
         /,
-    ):
+    ) -> None:
         self.boundaries = boundaries
         self.stage = boundaries.validate_stage(stage)
         self.descriptor_id = canonical_fingerprint(

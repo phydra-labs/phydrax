@@ -73,7 +73,7 @@ class QueueReactiveModel(StrictModule):
         /,
         *,
         model_id: str,
-    ):
+    ) -> None:
         baseline = _finite_vector(baseline_intensity, "baseline_intensity")
         queue_coefficients = _finite_matrix(queue_loading, "queue_loading")
         action_coefficients = _finite_matrix(action_loading, "action_loading")
@@ -229,7 +229,7 @@ class HawkesOrderFlowModel(StrictModule):
         /,
         *,
         model_id: str,
-    ):
+    ) -> None:
         baseline = _finite_vector(baseline_intensity, "baseline_intensity")
         excitation_matrix = _finite_matrix(excitation, "excitation")
         decay = _finite_vector(decay_rates, "decay_rates")

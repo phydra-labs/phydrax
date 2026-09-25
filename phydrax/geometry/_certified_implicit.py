@@ -34,7 +34,7 @@ class CertifiedImplicitCover(StrictModule, NonTrainableState):
         value_upper: ArrayLike,
         gradient_norm_lower: ArrayLike,
         /,
-    ):
+    ) -> None:
         boxes_ = jnp.asarray(boxes)
         lower = jnp.asarray(value_lower)
         upper = jnp.asarray(value_upper)
@@ -93,7 +93,7 @@ class CertifiedImplicitTopology(StrictModule, NonTrainableState):
         /,
         *,
         theorem: str,
-    ):
+    ) -> None:
         theorem_ = str(theorem)
         if not theorem_:
             raise ValueError("Implicit topology requires an explicit theorem identifier.")

@@ -11,6 +11,7 @@ import math
 from enum import Enum
 from numbers import Integral
 from pathlib import Path
+from typing import NoReturn
 
 import equinox as eqx
 
@@ -65,7 +66,7 @@ def _decode_json_object(data: bytes, owner: str, /) -> dict:
             record[key] = value
         return record
 
-    def reject_constant(value: str):
+    def reject_constant(value: str) -> NoReturn:
         raise ValueError(f"{owner} contains non-finite constant {value!r}.")
 
     value = json.loads(
@@ -98,7 +99,7 @@ class HomotopyContinuationEnvironment(StrictModule):
         homotopy_continuation_version: str,
         *,
         depot_path: str | Path = "",
-    ):
+    ) -> None:
         root = Path(project_path).expanduser().resolve(strict=True)
         if not root.is_dir():
             raise ValueError("project_path must be an existing Julia project directory.")
@@ -179,7 +180,7 @@ class HomotopyContinuationPolicy(StrictModule):
         maximum_term_count: int = 1_000_000,
         maximum_exponent_entries: int = 10_000_000,
         maximum_storage_bytes: int = 256 * 1024 * 1024,
-    ):
+    ) -> None:
         start = str(start_system).replace("_", "-")
         if start not in ("total-degree", "polyhedral"):
             raise ValueError("start_system must be 'total-degree' or 'polyhedral'.")
@@ -259,7 +260,7 @@ class HomotopyContinuationProvider(StrictModule):
         self,
         executable: PinnedExecutable,
         environment: HomotopyContinuationEnvironment,
-    ):
+    ) -> None:
         if not isinstance(executable, PinnedExecutable):
             raise TypeError("executable must be a PinnedExecutable.")
         if not isinstance(environment, HomotopyContinuationEnvironment):
@@ -324,7 +325,7 @@ class HomotopyContinuationRequest(StrictModule):
         equation_indices,
         exponents,
         coefficients,
-    ):
+    ) -> None:
         request = str(request_id).strip()
         support = str(support_id).strip()
         system = str(system_id).strip()

@@ -62,7 +62,7 @@ class ScaleBVPPlan(StrictModule):
         maximum_backtracks: int = 12,
         residual_tolerance: float = 1e-10,
         source_ids: Sequence[str],
-    ):
+    ) -> None:
         labels = tuple(str(value).strip() for value in parameter_labels)
         sources = tuple(sorted(str(value).strip() for value in source_ids))
         low_count = int(low_residual_count)

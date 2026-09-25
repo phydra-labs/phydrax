@@ -89,7 +89,7 @@ class GlobalAtmosphereProcesses(StrictModule):
         sensible_heat_flux=0.0,
         evaporation_flux=0.0,
         cadence=1,
-    ):
+    ) -> None:
         if thermodynamics is not None and not isinstance(
             thermodynamics, MoistThermodynamicPlan
         ):

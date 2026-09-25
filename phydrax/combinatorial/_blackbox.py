@@ -33,7 +33,7 @@ class BlackboxInterpolation(StrictModule):
         /,
         *,
         certification: CombinatorialCertification | None = None,
-    ):
+    ) -> None:
         scale = jnp.asarray(lambda_, dtype=jnp.float64)
         if scale.ndim != 0:
             raise ValueError("blackbox interpolation lambda_ must be scalar.")

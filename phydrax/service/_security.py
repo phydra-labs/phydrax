@@ -77,7 +77,7 @@ class LocalSecretHandleBroker:
         *,
         clock: Clock | None = None,
         maximum_lifetime_seconds: int = 900,
-    ):
+    ) -> None:
         if maximum_lifetime_seconds <= 0:
             raise ValueError("Maximum secret-handle lifetime must be positive.")
         self._clock = SystemClock() if clock is None else clock
@@ -226,7 +226,7 @@ class Ed25519Signer:
 
     algorithm = "Ed25519"
 
-    def __init__(self, key_id: str, private_key: bytes, /):
+    def __init__(self, key_id: str, private_key: bytes, /) -> None:
         if not key_id:
             raise ValueError("Ed25519 key_id must be nonempty.")
         try:
@@ -277,7 +277,7 @@ class Ed25519Signer:
 class Ed25519Verifier:
     algorithm = "Ed25519"
 
-    def __init__(self, key_id: str, public_key: bytes, /):
+    def __init__(self, key_id: str, public_key: bytes, /) -> None:
         if not key_id:
             raise ValueError("Ed25519 key_id must be nonempty.")
         try:
@@ -332,7 +332,9 @@ class KMSVerificationProvider(Protocol):
 
 
 class KMSSigner:
-    def __init__(self, key_id: str, algorithm: str, provider: KMSSigningProvider, /):
+    def __init__(
+        self, key_id: str, algorithm: str, provider: KMSSigningProvider, /
+    ) -> None:
         if not key_id or not algorithm:
             raise ValueError("KMS key and algorithm must be nonempty.")
         self._key_id = key_id
@@ -363,7 +365,9 @@ class KMSSigner:
 
 
 class KMSVerifier:
-    def __init__(self, key_id: str, algorithm: str, provider: KMSVerificationProvider, /):
+    def __init__(
+        self, key_id: str, algorithm: str, provider: KMSVerificationProvider, /
+    ) -> None:
         if not key_id or not algorithm:
             raise ValueError("KMS key and algorithm must be nonempty.")
         self._key_id = key_id
@@ -427,7 +431,7 @@ class SigningKeyTrustRecord:
 class SigningTrustStore:
     """Explicit key rotation/revocation registry with fail-closed verification."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._records: dict[str, SigningKeyTrustRecord] = {}
         self._verifiers: dict[str, AsymmetricVerifier] = {}
         self._lock = threading.RLock()

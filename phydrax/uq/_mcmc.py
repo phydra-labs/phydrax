@@ -87,7 +87,7 @@ class MCMCChainWarmup(StrictModule):
         inverse_mass_matrix: Array,
         num_integration_steps: int | None,
         duration_seconds: float,
-    ):
+    ) -> None:
         self.state = state
         self.step_size = jnp.asarray(step_size)
         self.inverse_mass_matrix = jnp.asarray(inverse_mass_matrix)
@@ -150,7 +150,7 @@ class MCMCResult(AbstractChainSampleResult):
         trajectory_method: Literal["sequential", "causal"] = "sequential",
         causal_diagnostics: CausalHMCDiagnostics | None = None,
         causal_config: CausalHMCConfig | CausalNUTSConfig | None = None,
-    ):
+    ) -> None:
         self.problem = problem
         self.samples = samples
         self.unconstrained_samples = unconstrained_samples
@@ -1828,7 +1828,7 @@ def _write_mcmc_checkpoint(
     adaptation_duration,
     sampling_duration,
     duration_seconds,
-):
+) -> None:
     arrays = {
         "step_sizes": step_sizes,
         "inverse_mass_matrices": inverse_mass_matrices,

@@ -62,7 +62,7 @@ class FinanceRecordBatch(StrictModule, NonTrainableState):
         primary_key: Sequence[str],
         context: Mapping[str, Any] | None = None,
         columns: Sequence[str] | None = None,
-    ):
+    ) -> None:
         kind = _text(record_kind, "record_kind")
         if not isinstance(records, Sequence) or isinstance(records, (str, bytes)):
             raise TypeError("records must be a sequence of mappings.")

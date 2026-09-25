@@ -30,7 +30,7 @@ class ShellSubmodelTransfer(StrictModule, NonTrainableState):
         /,
         *,
         transfer_id: str = "shell-submodel-transfer",
-    ):
+    ) -> None:
         nodes = jnp.asarray(boundary_node_indices, dtype=jnp.int32)
         displacement = jnp.asarray(displacement_map)
         resultant = jnp.asarray(resultant_map, dtype=displacement.dtype)

@@ -58,7 +58,7 @@ class MmgOptions:
     hausdorff_distance: float = 0.01
     executable: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not np.isfinite(self.hausdorff_distance) or self.hausdorff_distance <= 0:
             raise ValueError("hausdorff_distance must be positive and finite.")
         if self.executable is not None and not str(self.executable).strip():
@@ -75,7 +75,7 @@ class MmgAdaptationPlan:
     audit_policy: CellMeshAuditPolicy
     plan_id: str = field(init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _metric_rows(self.mesh, self.metric)
         if not isinstance(self.coordinate_contract, SpatialCoordinateContract):
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
@@ -281,7 +281,7 @@ def _identity_report(source: CellMesh, mesh: CellMesh, provider: str) -> Adapter
 class MmgProvider:
     """Native Mmg2D/MMGS/MMG3D metric adaptation without invented lineage."""
 
-    def __init__(self, options: MmgOptions | None = None, /):
+    def __init__(self, options: MmgOptions | None = None, /) -> None:
         self.options = MmgOptions() if options is None else options
         if not isinstance(self.options, MmgOptions):
             raise TypeError("options must be MmgOptions or None.")

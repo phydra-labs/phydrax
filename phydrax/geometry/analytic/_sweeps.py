@@ -92,7 +92,7 @@ class Extrusion(GeometrySource):
         height: Any,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(profile, GeometrySource):
             raise TypeError("Extrusion.profile must be a GeometrySource.")
         height_host = np.asarray(height, dtype=np.float64)
@@ -124,7 +124,7 @@ class _ExtrusionKernel(GeometryKernel):
     profile: GeometryKernel
     height: ParameterBinding = eqx.field(static=True)
 
-    def __init__(self, profile: GeometryKernel, height: ParameterBinding):
+    def __init__(self, profile: GeometryKernel, height: ParameterBinding) -> None:
         self.profile = profile
         self.height = height
 
@@ -348,7 +348,7 @@ class Revolution(GeometrySource):
         profile: GeometrySource,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(profile, GeometrySource):
             raise TypeError("Revolution.profile must be a GeometrySource.")
         self.profile = profile
@@ -368,7 +368,7 @@ class Revolution(GeometrySource):
 class _RevolutionKernel(GeometryKernel):
     profile: GeometryKernel
 
-    def __init__(self, profile: GeometryKernel):
+    def __init__(self, profile: GeometryKernel) -> None:
         self.profile = profile
 
     @property

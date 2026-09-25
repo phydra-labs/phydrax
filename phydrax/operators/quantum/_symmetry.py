@@ -36,7 +36,7 @@ class FiniteSignedPermutationSymmetry(StrictModule):
         /,
         *,
         symmetry_id: str | None = None,
-    ):
+    ) -> None:
         permutations_host = np.asarray(permutations)
         signs_host = np.asarray(signs)
         characters_host = np.asarray(characters, dtype=np.complex128)
@@ -135,7 +135,7 @@ class SymmetryProjectedAmplitude(StrictModule):
     model: Any
     symmetry: FiniteSignedPermutationSymmetry
 
-    def __init__(self, model: Any, symmetry: FiniteSignedPermutationSymmetry, /):
+    def __init__(self, model: Any, symmetry: FiniteSignedPermutationSymmetry, /) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
         if not isinstance(symmetry, FiniteSignedPermutationSymmetry):

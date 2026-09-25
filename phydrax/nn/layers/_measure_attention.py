@@ -237,7 +237,7 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
         block_size: int = 256,
         accumulation_dtype: str = "input",
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.num_heads = int(num_heads)
         self.head_dim = int(head_dim)
         self.out_channels = int(out_channels)

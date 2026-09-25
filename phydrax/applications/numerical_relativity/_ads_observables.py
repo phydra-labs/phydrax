@@ -37,7 +37,7 @@ class AdSBoundaryScalarObservablePlan(StrictModule):
         maximum_condition_number: float = 1e12,
         residual_tolerance: float = 1e-4,
         normalization: float = 1.0,
-    ):
+    ) -> None:
         lower = float(delta_minus)
         upper = float(delta_plus)
         count = int(fit_points)
@@ -180,7 +180,7 @@ class HolographicStressTensorPlan(StrictModule):
         /,
         *,
         tolerance: float = 1e-8,
-    ):
+    ) -> None:
         dimension = int(boundary_dimension)
         normalization_value = float(normalization)
         source = str(source_id)

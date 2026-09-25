@@ -105,7 +105,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         /,
         *,
         _prepared: _PreparedSmallCellData | None = None,
-    ):
+    ) -> None:
         if _prepared is not None:
             self.active_cells = _prepared.active_cells
             self.small_cells = _prepared.small_cells

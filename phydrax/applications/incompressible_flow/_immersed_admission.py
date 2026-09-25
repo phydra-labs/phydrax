@@ -88,7 +88,7 @@ class ImmersedRuntimePreflightEvidence(StrictModule, NonTrainableState):
         /,
         *,
         evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         owner = _identifier(owner_plan_id, "owner_plan_id")
         support = _identifier(support_tuple_id, "support_tuple_id")
         rank = jnp.asarray(marker_numerical_rank, dtype=jnp.int32)
@@ -190,7 +190,7 @@ class ImmersedRuntimeEvidence(StrictModule, NonTrainableState):
         gap: ArrayLike | None = None,
         distributed: DistributedMarkerTransferDiagnostics | None = None,
         load_record: HydrodynamicLoadRecord | None = None,
-    ):
+    ) -> None:
         predicates = tuple(
             jnp.asarray(value, dtype=jnp.bool_)
             for value in (
@@ -316,7 +316,7 @@ class ImmersedRuntimeAdmissionPlan(StrictModule, NonTrainableState):
         marker_condition_limit: float | None = None,
         distributed_tolerance: float = 1.0e-9,
         require_load_record: bool = False,
-    ):
+    ) -> None:
         if not isinstance(profile, ImmersedDNSQualificationProfile):
             raise TypeError("profile must be ImmersedDNSQualificationProfile.")
         if not isinstance(regime, ImmersedBodyRegimePlan):

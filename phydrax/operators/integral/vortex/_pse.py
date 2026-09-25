@@ -55,7 +55,7 @@ class GaussianParticleStrengthExchangePlan(AbstractVortexDiffusionPlan):
         cutoff_factor: float = 4.0,
         maximum_interactions: int = 1_000_000,
         box: ParticleBox | None = None,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         epsilon = float(smoothing_scale)
         cutoff = float(cutoff_factor)
@@ -146,7 +146,7 @@ class PreparedGaussianParticleStrengthExchange(AbstractPreparedVortexDiffusion):
 
     def __init__(
         self, plan: GaussianParticleStrengthExchangePlan, left: Array, right: Array, /
-    ):
+    ) -> None:
         capacity = int(
             max(int(jnp.max(left, initial=0)), int(jnp.max(right, initial=0))) + 1
         )

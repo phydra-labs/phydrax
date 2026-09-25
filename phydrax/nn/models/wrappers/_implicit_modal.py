@@ -76,7 +76,7 @@ class _ModalCoordinateGrid(StrictModule, NonTrainableState):
         *,
         mode_scales: ArrayLike | None,
         maximum_query_points: int,
-    ):
+    ) -> None:
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         maximum = index(maximum_query_points)
@@ -131,7 +131,7 @@ class _ModalCoordinateGrid(StrictModule, NonTrainableState):
 class _FixedRates(StrictModule, NonTrainableState):
     values: Array
 
-    def __init__(self, values: ArrayLike, /):
+    def __init__(self, values: ArrayLike, /) -> None:
         self.values = jnp.asarray(values, dtype=jnp.float64)
 
     def __call__(self) -> Array:
@@ -160,7 +160,7 @@ class ExponentialSpectralEnvelope(StrictModule, ParameterOwner):
         trainable: bool = True,
         minimum_rate: float = 0.0,
         aggregation: DecayAggregation = "sum",
-    ):
+    ) -> None:
         rates = np.asarray(initial_rates, dtype=np.float64).reshape((-1,))
         minimum = float(minimum_rate)
         if rates.size == 0 or np.any(~np.isfinite(rates)):
@@ -220,7 +220,7 @@ class _ModalFeatureTable(StrictModule, NonTrainableState):
         /,
         *,
         maximum_feature_bytes: int,
-    ):
+    ) -> None:
         counts = tuple(index(value) for value in coarse_counts)
         if len(counts) != len(discretization.axes):
             raise ValueError("coarse_counts must provide one count per spectral axis.")
@@ -288,7 +288,7 @@ class SpectralBasisModulation(StrictModule, ParameterOwner):
         coarse_counts: Sequence[int],
         component_shape: Sequence[int] = (),
         maximum_feature_bytes: int = 256 * 1024**2,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
         components = _component_shape(component_shape)
@@ -355,7 +355,7 @@ class ImplicitModalField(StrictModule, ParameterOwner):
         real_field: bool = False,
         reality_tolerance: float = 1e-10,
         maximum_query_points: int = 1_000_000,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
         if not isinstance(discretization, TensorSpectralDiscretization):
@@ -552,7 +552,7 @@ class SparseImplicitModalField(StrictModule, ParameterOwner):
         support: PreparedModalSupport,
         modal_shape: Sequence[int],
         /,
-    ):
+    ) -> None:
         if not isinstance(support, PreparedModalSupport):
             raise TypeError("support must be PreparedModalSupport.")
         shape = tuple(modal_shape)

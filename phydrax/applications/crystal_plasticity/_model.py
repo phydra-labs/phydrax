@@ -166,7 +166,7 @@ class CrystalSlipSystem(StrictModule, NonTrainableState):
     schmid: Array
     system_id: str = eqx.field(static=True)
 
-    def __init__(self, direction: ArrayLike, normal: ArrayLike, /):
+    def __init__(self, direction: ArrayLike, normal: ArrayLike, /) -> None:
         direction_raw = np.asarray(direction)
         normal_raw = np.asarray(normal)
         if np.iscomplexobj(direction_raw) or np.iscomplexobj(normal_raw):
@@ -228,7 +228,7 @@ class CrystalPlasticityParameters(StrictModule, NonTrainableState):
         /,
         *,
         maximum_slip_increment: ArrayLike = 0.2,
-    ):
+    ) -> None:
         values = tuple(
             _finite_scalar(value, name)
             for value, name in zip(
@@ -289,7 +289,7 @@ class CrystalPlasticityState(StrictModule):
         strengths: ArrayLike,
         accumulated_slip: ArrayLike,
         /,
-    ):
+    ) -> None:
         plastic = _real_array(plastic_deformation, "plastic_deformation")
         strengths_ = _real_array(strengths, "strengths")
         accumulated = _real_array(accumulated_slip, "accumulated_slip")
@@ -359,7 +359,7 @@ class CrystalPlasticityModel(StrictModule, NonTrainableState):
         slip_systems: Sequence[CrystalSlipSystem],
         parameters: CrystalPlasticityParameters,
         /,
-    ):
+    ) -> None:
         systems = tuple(slip_systems)
         if not systems or not all(
             isinstance(value, CrystalSlipSystem) for value in systems
@@ -740,7 +740,7 @@ class CrystalPlasticityRoute(StrictModule, NonTrainableState):
         field_name: str,
         routes: Sequence[tuple[str, CrystalPlasticityModel, ArrayLike]],
         /,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be FiniteElementDiscretization.")
         field = str(field_name)

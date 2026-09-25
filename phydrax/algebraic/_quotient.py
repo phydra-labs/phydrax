@@ -100,7 +100,7 @@ class QuotientRootResourcePolicy(StrictModule):
         maximum_assembly_entries: int = 1_000_000,
         maximum_dense_entries: int = 4_000_000,
         maximum_quotient_dimension: int = 256,
-    ):
+    ) -> None:
         values = tuple(
             _positive_integer(value, name)
             for value, name in (
@@ -147,7 +147,7 @@ class QuotientRankPolicy(StrictModule):
         ambiguity_factor: float = 8.0,
         maximum_basis_condition: float = 1e10,
         maximum_eigenvalue_condition: float = 1e10,
-    ):
+    ) -> None:
         relative = _nonnegative_finite(relative_tolerance, "relative_tolerance")
         absolute = _nonnegative_finite(absolute_tolerance, "absolute_tolerance")
         ambiguity = float(ambiguity_factor)
@@ -208,7 +208,7 @@ class QuotientRootPolicy(StrictModule):
         residual_relative_tolerance: float = 1e-7,
         simple_root_relative_tolerance: float = 1e-7,
         polish_maximum_steps: int = 12,
-    ):
+    ) -> None:
         resources_ = QuotientRootResourcePolicy() if resources is None else resources
         rank_ = QuotientRankPolicy() if rank is None else rank
         if not isinstance(resources_, QuotientRootResourcePolicy):

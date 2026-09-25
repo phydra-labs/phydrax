@@ -37,7 +37,7 @@ class PeriodicHelmholtzWoodAnomalyError(ValueError):
         minimum_denominator: float,
         denominator_tolerance: float,
         unsearched_mode_lower_wavenumber: float,
-    ):
+    ) -> None:
         super().__init__(message)
         self.closest_mode_index = closest_mode_index
         self.minimum_denominator = float(minimum_denominator)

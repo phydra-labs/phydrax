@@ -71,7 +71,7 @@ class FieldObservationPlan(StrictModule, NonTrainableState):
         /,
         *,
         observation_id: str,
-    ):
+    ) -> None:
         if not callable(operator) or not observation_id:
             raise ValueError("Field observation metadata is invalid.")
         observed_ = jnp.asarray(observed).reshape((-1,))
@@ -119,7 +119,7 @@ class WhitenedFieldInferencePlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str,
-    ):
+    ) -> None:
         transform = jnp.asarray(prior_transform)
         if (
             not callable(simulate)
@@ -164,7 +164,7 @@ class ParticleMarginalLikelihoodPlan(StrictModule, NonTrainableState):
     log_weight: Callable = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, log_weight: Callable, /, *, plan_id: str):
+    def __init__(self, log_weight: Callable, /, *, plan_id: str) -> None:
         if not callable(log_weight) or not plan_id:
             raise ValueError("Particle marginal likelihood plan is invalid.")
         self.log_weight = log_weight

@@ -123,7 +123,7 @@ class MeshDistribution(StrictModule, NonTrainableState):
         halo_global_ids: tuple[ArrayLike, ...] | None = None,
         split_factors: tuple[int, ...] | None = None,
         halo_width: int = 1,
-    ):
+    ) -> None:
         if not isinstance(part, MeshPart) or not isinstance(partition, CellPartition):
             raise TypeError("Mesh distribution requires MeshPart and CellPartition.")
         width = operator.index(halo_width)

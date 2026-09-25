@@ -61,7 +61,7 @@ class DirectionalSphericalWaveletPlan(StrictModule, NonTrainableState):
         scattering_order: int = 1,
         orientation_weights: ArrayLike | None = None,
         maximum_materialization_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         if not isinstance(discretization, SphericalSpectralDiscretization):
             raise TypeError("discretization must be SphericalSpectralDiscretization.")
         angles = jnp.asarray(orientations, dtype=jnp.float64)
@@ -241,7 +241,7 @@ class DirectionalSphericalWaveletLayer(StrictModule):
         plan: DirectionalSphericalWaveletPlan,
         wavelets: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, DirectionalSphericalWaveletPlan):
             raise TypeError("plan must be DirectionalSphericalWaveletPlan.")
         filters = jnp.asarray(wavelets)
@@ -344,7 +344,7 @@ class SphericalWaveletScattering(StrictModule):
 
     layer: DirectionalSphericalWaveletLayer
 
-    def __init__(self, layer: DirectionalSphericalWaveletLayer, /):
+    def __init__(self, layer: DirectionalSphericalWaveletLayer, /) -> None:
         if not isinstance(layer, DirectionalSphericalWaveletLayer):
             raise TypeError("layer must be DirectionalSphericalWaveletLayer.")
         self.layer = layer

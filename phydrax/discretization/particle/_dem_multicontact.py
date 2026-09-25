@@ -61,7 +61,7 @@ class ElasticHalfSpaceMulticontactPlan(AbstractDEMContactGraphCorrectionPlan):
         iterations: int = 2,
         convergence_tolerance: float = 1.0e-6,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         prefactor = float(geometric_prefactor)
         regularization = float(distance_regularization)
         count = int(iterations)

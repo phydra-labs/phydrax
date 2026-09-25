@@ -102,7 +102,7 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
         safeguard_factor: float = 1.0,
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         updates_ = tuple(updates)
         if not updates_ or not all(
             isinstance(update, AbstractNonlinearUpdate) for update in updates_

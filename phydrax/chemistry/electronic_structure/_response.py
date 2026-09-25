@@ -76,7 +76,7 @@ class MeanFieldResponsePlan(StrictModule, NonTrainableState):
         *,
         residual_tolerance: float = 1.0e-8,
         condition_limit: float = 1.0e12,
-    ):
+    ) -> None:
         residual = float(residual_tolerance)
         condition = float(condition_limit)
         if residual <= 0.0 or condition <= 1.0:

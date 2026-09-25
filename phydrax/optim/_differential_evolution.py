@@ -47,7 +47,7 @@ class DifferentialEvolutionContinuous(StrictModule):
     shape: tuple[int, ...] = eqx.field(static=True)
     size: int = eqx.field(static=True)
 
-    def __init__(self, lower: ArrayLike, upper: ArrayLike, /):
+    def __init__(self, lower: ArrayLike, upper: ArrayLike, /) -> None:
         lower_, upper_ = np.broadcast_arrays(np.asarray(lower), np.asarray(upper))
         dtype = np.result_type(lower_.dtype, upper_.dtype, np.float32)
         if not np.issubdtype(dtype, np.floating):
@@ -67,7 +67,7 @@ class DifferentialEvolutionInteger(StrictModule):
     shape: tuple[int, ...] = eqx.field(static=True)
     size: int = eqx.field(static=True)
 
-    def __init__(self, lower: ArrayLike, upper: ArrayLike, /):
+    def __init__(self, lower: ArrayLike, upper: ArrayLike, /) -> None:
         lower_, upper_ = np.broadcast_arrays(np.asarray(lower), np.asarray(upper))
         if not np.issubdtype(lower_.dtype, np.integer) or not np.issubdtype(
             upper_.dtype, np.integer
@@ -82,7 +82,7 @@ class DifferentialEvolutionInteger(StrictModule):
 class DifferentialEvolutionCategorical(StrictModule):
     axis: FiniteAxis
 
-    def __init__(self, axis: FiniteAxis, /):
+    def __init__(self, axis: FiniteAxis, /) -> None:
         if not isinstance(axis, FiniteAxis):
             raise TypeError("axis must be a FiniteAxis.")
         self.axis = axis
@@ -118,7 +118,7 @@ class DifferentialEvolutionSpace(StrictModule):
     categorical_sizes: tuple[int, ...] = eqx.field(static=True)
     space_id: str = eqx.field(static=True)
 
-    def __init__(self, leaves: PyTree[DifferentialEvolutionLeaf], /):
+    def __init__(self, leaves: PyTree[DifferentialEvolutionLeaf], /) -> None:
         flat, definition = jax.tree_util.tree_flatten(leaves, is_leaf=_is_de_leaf)
         if not flat or any(not _is_de_leaf(value) for value in flat):
             raise TypeError("Every DifferentialEvolutionSpace leaf must be a DE leaf.")
@@ -209,7 +209,7 @@ class DifferentialEvolutionSearch(StrictModule):
         relative_tolerance: float = 0.01,
         absolute_tolerance: float = 0.0,
         design: DesignLike = LatinHypercubeDesign(),
-    ):
+    ) -> None:
         population, generations = int(population_size), int(max_generations)
         if population < 4:
             raise ValueError("population_size must be at least 4.")

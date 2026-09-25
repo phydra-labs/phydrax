@@ -48,7 +48,7 @@ class AtomisticMetadata(StrictModule, NonTrainableState):
         chain_ids,
         segment_ids,
         /,
-    ):
+    ) -> None:
         names = tuple(str(value) for value in atom_names)
         count = len(names)
         elements = tuple(str(value) for value in element_labels)
@@ -99,7 +99,7 @@ class AtomisticSelectionPlan(StrictModule, NonTrainableState):
     stable_ids: Array
     selection_id: str = eqx.field(static=True)
 
-    def __init__(self, stable_ids: ArrayLike, mask: ArrayLike, /):
+    def __init__(self, stable_ids: ArrayLike, mask: ArrayLike, /) -> None:
         ids = np.asarray(stable_ids)
         selected = np.asarray(mask, dtype=np.bool_)
         if ids.ndim != 1 or selected.shape != ids.shape:
@@ -177,7 +177,7 @@ class AtomisticFrame(StrictModule):
         topology_id: str,
         units: AtomisticUnitSystem,
         source_id: str,
-    ):
+    ) -> None:
         position = jnp.asarray(positions)
         ids_host = np.asarray(stable_ids)
         if not np.issubdtype(ids_host.dtype, np.integer):
@@ -279,7 +279,7 @@ class AtomisticTrajectoryReader(abc.ABC):
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.close()
 
 
@@ -295,7 +295,7 @@ class AtomisticTrajectoryWriter(abc.ABC):
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.close()
 
 
@@ -303,7 +303,7 @@ class InMemoryTrajectorySourcePlan(AbstractAtomisticTrajectorySourcePlan):
     frames: tuple[AtomisticFrame, ...]
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, frames, /):
+    def __init__(self, frames, /) -> None:
         values = tuple(frames)
         if any(not isinstance(value, AtomisticFrame) for value in values):
             raise TypeError("frames must contain AtomisticFrame values.")
@@ -337,7 +337,7 @@ class InMemoryTrajectorySourcePlan(AbstractAtomisticTrajectorySourcePlan):
 
 
 class _InMemoryReader(AtomisticTrajectoryReader):
-    def __init__(self, frames):
+    def __init__(self, frames) -> None:
         self.frames = frames
 
     def __iter__(self):

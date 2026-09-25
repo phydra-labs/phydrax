@@ -68,7 +68,7 @@ class ReconstructionFailure(ValueError):
 
     report: ReconstructionReport
 
-    def __init__(self, message: str, report: ReconstructionReport):
+    def __init__(self, message: str, report: ReconstructionReport) -> None:
         super().__init__(message)
         self.report = report
 
@@ -79,7 +79,7 @@ class ReconstructedGeometrySource(GeometrySource):
     source: GeometrySource
     report: ReconstructionReport = eqx.field(static=True)
 
-    def __init__(self, source: GeometrySource, report: ReconstructionReport):
+    def __init__(self, source: GeometrySource, report: ReconstructionReport) -> None:
         if not isinstance(source, GeometrySource):
             raise TypeError("source must implement GeometrySource.")
         self.source = source
@@ -93,7 +93,7 @@ class _ReconstructedGeometryKernel(GeometryKernel):
     child: GeometryKernel
     report: ReconstructionReport = eqx.field(static=True)
 
-    def __init__(self, child: GeometryKernel, report: ReconstructionReport):
+    def __init__(self, child: GeometryKernel, report: ReconstructionReport) -> None:
         self.child = child
         self.report = report
 

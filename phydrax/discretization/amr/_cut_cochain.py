@@ -37,7 +37,7 @@ class CutCellCochainPlan(StrictModule, NonTrainableState):
     metric_plan: CochainMetricPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, complex_: MultivaluedCutCellComplex, /):
+    def __init__(self, complex_: MultivaluedCutCellComplex, /) -> None:
         if not isinstance(complex_, MultivaluedCutCellComplex):
             raise TypeError("Cut-cell cochains require MultivaluedCutCellComplex.")
         topology = PreparedCochainTopology(complex_.mesh.topology)

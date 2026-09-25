@@ -46,7 +46,7 @@ class WakeAdaptationPlan(StrictModule, NonTrainableState):
         *,
         coarsen_age: float,
         reconnection_distance: float,
-    ):
+    ) -> None:
         maximum, minimum, age, distance = (
             float(maximum_edge_length),
             float(minimum_edge_length),
@@ -136,7 +136,7 @@ class VortexWakeIntegratorPlan(StrictModule, NonTrainableState):
         *,
         core_diffusivity: float = 0.0,
         adaptation: WakeAdaptationPlan | None = None,
-    ):
+    ) -> None:
         method_, diffusivity = str(method), float(core_diffusivity)
         if method_ not in ("euler", "midpoint", "rk3") or diffusivity < 0.0:
             raise ValueError("Wake integrator method/diffusivity is invalid.")

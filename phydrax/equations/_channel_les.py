@@ -56,7 +56,7 @@ class ChannelLESFilterGeometry(StrictModule, NonTrainableState):
         retained: TensorSpectralDiscretization,
         evaluation: TensorSpectralDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(retained, TensorSpectralDiscretization) or not isinstance(
             evaluation, TensorSpectralDiscretization
         ):
@@ -262,7 +262,7 @@ class CompiledChannelLESDynamics(StrictModule):
         base: CompiledChannelFlowDynamics,
         model: PreparedAlgebraicLESModel,
         /,
-    ):
+    ) -> None:
         if not isinstance(base, CompiledChannelFlowDynamics):
             raise TypeError("base must be CompiledChannelFlowDynamics.")
         if not isinstance(model, PreparedAlgebraicLESModel):

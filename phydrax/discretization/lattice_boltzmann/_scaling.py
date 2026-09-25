@@ -31,7 +31,7 @@ class LatticeBoltzmannScaling(StrictModule, NonTrainableState):
         /,
         *,
         sound_speed_squared: float = 1.0 / 3.0,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

@@ -33,7 +33,7 @@ class TopologyEnsembleSummary(StrictModule, NonTrainableState):
         /,
         *,
         weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         values = tuple(snapshots)
         if not values:
             raise ValueError("Topology ensemble summaries require snapshots.")

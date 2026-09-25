@@ -57,7 +57,7 @@ class ReducedBasisArtifact(StrictModule, NonTrainableState):
         geometry_id: str,
         source_artifact_ids: Sequence[str],
         evidence_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(subspace, LinearSubspace):
             raise TypeError("subspace must be a LinearSubspace.")
         if subspace.batch_shape:

@@ -91,7 +91,7 @@ class StructuredLaplaceResult(StrictModule):
         rank: int | None,
         likelihood_curvature: LikelihoodCurvature,
         approximate_memory_bytes: int,
-    ):
+    ) -> None:
         self.problem = problem
         self.map_position = map_position
         self.map_parameters = problem.parameter_space.constrain(map_position)

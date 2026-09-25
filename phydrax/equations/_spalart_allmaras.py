@@ -36,7 +36,7 @@ class SpalartAllmarasArguments(StrictModule):
     wall_distance: Array
     transport_args: Any
 
-    def __init__(self, wall_distance: ArrayLike, transport_args: Any = None, /):
+    def __init__(self, wall_distance: ArrayLike, transport_args: Any = None, /) -> None:
         self.wall_distance = jnp.asarray(wall_distance)
         self.transport_args = transport_args
 
@@ -90,7 +90,7 @@ class SpalartAllmarasNegativePlan(StrictModule, NonTrainableState):
         cn1: float = 16.0,
         turbulent_prandtl: float = 0.9,
         minimum_working_ratio: float = -0.9,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -285,7 +285,7 @@ class SpalartAllmarasCompressibleSystem(
         base: HomogeneousMixtureCompressibleNavierStokesSystem,
         model: SpalartAllmarasNegativePlan | None = None,
         /,
-    ):
+    ) -> None:
         model_ = SpalartAllmarasNegativePlan() if model is None else model
         if not isinstance(base, HomogeneousMixtureCompressibleNavierStokesSystem):
             raise TypeError("SA-neg requires canonical mixture Navier-Stokes.")

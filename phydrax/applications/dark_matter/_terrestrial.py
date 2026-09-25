@@ -50,7 +50,7 @@ class HazardQuadraturePlan(StrictModule, NonTrainableState):
     order: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, order: int = 32, /):
+    def __init__(self, order: int = 32, /) -> None:
         if not isinstance(order, int) or isinstance(order, bool) or order < 2:
             raise ValueError(
                 "Hazard quadrature order must be an integer of at least two."
@@ -308,7 +308,7 @@ class TerrestrialTransportPlan(StrictModule, NonTrainableState):
         detector_depth_m: float,
         maximum_jump_events: int = 64,
         maximum_guard_events: int = 64,
-    ):
+    ) -> None:
         if not isinstance(profile, LayeredTerrestrialProfile) or not isinstance(
             scattering, ElasticScatteringTable
         ):

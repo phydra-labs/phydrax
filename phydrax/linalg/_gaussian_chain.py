@@ -46,7 +46,7 @@ class GaussianFilterElement(StrictModule):
         /,
         *,
         element_id: str = "gaussian-filter-element",
-    ):
+    ) -> None:
         if not isinstance(element_id, str) or not element_id:
             raise ValueError("element_id must be a non-empty string.")
         self.transition = transition
@@ -428,7 +428,7 @@ class GaussianInformationElement(StrictModule):
         /,
         *,
         element_id: str = "gaussian-information-element",
-    ):
+    ) -> None:
         self.left_precision = left_precision
         self.right_precision = right_precision
         self.transition_precision = transition_precision
@@ -461,7 +461,7 @@ class GaussianMarkovInformation(StrictModule):
         node_valid: ArrayLike | None = None,
         information_id: str = "gaussian-markov-information",
         rank_tolerance: float = 0.0,
-    ):
+    ) -> None:
         diagonal = jnp.asarray(diagonal_precision)
         transition = jnp.asarray(transition_precision)
         vector = jnp.asarray(information_vector)
@@ -566,7 +566,7 @@ class GaussianMarkovMoments(StrictModule):
         information_id: str = "gaussian-markov-information",
         execution_method: str = "provided",
         rank_tolerance: float = 0.0,
-    ):
+    ) -> None:
         means_ = jnp.asarray(means)
         second_ = jnp.asarray(second_moments)
         transition_ = jnp.asarray(transition_second_moments)

@@ -100,7 +100,7 @@ class GaussianDirectVortexPlan2D(AbstractVortexVelocityPlan):
         maximum_workspace_bytes: int = 64 * 1024 * 1024,
         precision: VortexPrecisionPolicy | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         sources = int(maximum_sources)
         targets = sources if maximum_targets is None else int(maximum_targets)
         source_chunk = int(source_chunk_size)
@@ -255,7 +255,7 @@ class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
         resources: DirectVortexResourceEvidence,
         compatibility: VortexVelocityCompatibility,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, GaussianDirectVortexPlan2D):
             raise TypeError("plan must be a GaussianDirectVortexPlan2D.")
         if not isinstance(resources, DirectVortexResourceEvidence):

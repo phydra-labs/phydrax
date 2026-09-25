@@ -68,7 +68,7 @@ class RaggedTimeSeriesBatch(StrictModule):
         case_indices: ArrayLike,
         time_indices: ArrayLike,
         times: ArrayLike,
-    ):
+    ) -> None:
         self.points = points
         self.target = jnp.asarray(target)
         self.case_indices = jnp.asarray(case_indices, dtype=jnp.int32)
@@ -371,7 +371,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         case_indices: ArrayLike | None = None,
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
-    ):
+    ) -> None:
         """Create a supervised ragged time-series data constraint.
 
         Parameters:

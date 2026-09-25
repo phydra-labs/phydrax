@@ -80,7 +80,7 @@ class DensityClusterModel(AbstractFittedModel):
         /,
         *,
         method: str,
-    ):
+    ) -> None:
         self.core_points = jnp.asarray(core_points)
         self.core_labels = jnp.asarray(core_labels, dtype=jnp.int32)
         self.core_active = jnp.asarray(core_active, dtype=jnp.bool_)
@@ -323,7 +323,7 @@ class DBSCAN(AbstractRecipe):
         radius: float = 0.5,
         minimum_samples: float = 5.0,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if (
             cluster_capacity <= 0
             or core_capacity <= 0
@@ -364,7 +364,7 @@ class ConnectivityClustering(AbstractRecipe):
         *,
         radius: float = 1.0,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if cluster_capacity <= 0 or representative_capacity <= 0 or radius <= 0.0:
             raise ValueError("invalid connectivity clustering configuration.")
         self.cluster_capacity = int(cluster_capacity)

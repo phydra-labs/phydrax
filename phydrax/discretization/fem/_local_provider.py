@@ -66,7 +66,7 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         maximum_derivative_order: int,
         kernel_modes: Sequence[str],
         action_id: str | None = None,
-    ):
+    ) -> None:
         values = jnp.asarray(basis_values)
         gradients = jnp.asarray(basis_gradients)
         hessians = (
@@ -214,7 +214,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         /,
         *,
         coordinate_hessians: ArrayLike | None = None,
-    ):
+    ) -> None:
         layout = str(runtime_layout_id)
         kind = str(domain_kind)
         basis = jnp.asarray(coordinate_basis)
@@ -313,7 +313,7 @@ class FiniteElementLocalProvider(StrictModule):
 
     discretization: object
 
-    def __init__(self, discretization: FiniteElementDiscretization, /):
+    def __init__(self, discretization: FiniteElementDiscretization, /) -> None:
         from ._generic import FiniteElementDiscretization
 
         if not isinstance(discretization, FiniteElementDiscretization):

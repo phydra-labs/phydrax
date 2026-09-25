@@ -38,7 +38,7 @@ class CoupledFieldCheckpointPlan(StrictModule, NonTrainableState):
         *,
         geometry_id: str | None = None,
         topology_id: str | None = None,
-    ):
+    ) -> None:
         runtime = str(runtime_id)
         program = str(program_id)
         fields = tuple(str(value) for value in field_names)

@@ -41,7 +41,9 @@ class FixedBayesianQuadratureDesign(StrictModule):
     points: Array
     source_indices: Array
 
-    def __init__(self, points: ArrayLike, /, *, source_indices: ArrayLike | None = None):
+    def __init__(
+        self, points: ArrayLike, /, *, source_indices: ArrayLike | None = None
+    ) -> None:
         values = jnp.asarray(points)
         if values.ndim < 2 or values.shape[0] <= 0:
             raise ValueError("points must have shape (point,) + kernel_input_shape.")
@@ -86,7 +88,7 @@ class SequentialBayesianQuadratureDesign(StrictModule):
         total_count: int,
         block_size: int = 256,
         initial_indices: ArrayLike | None = None,
-    ):
+    ) -> None:
         values = jnp.asarray(candidates)
         if values.ndim < 2 or values.shape[0] <= 0:
             raise ValueError("candidates must have a nonempty candidate axis.")

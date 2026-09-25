@@ -376,7 +376,7 @@ class OperatorPredictionInterval(StrictModule):
         nominal_coverage: float,
         simultaneous: bool = False,
         calibrated: bool = False,
-    ):
+    ) -> None:
         if not isinstance(lower, OperatorPrediction) or not isinstance(
             upper, OperatorPrediction
         ):
@@ -440,7 +440,7 @@ class OperatorPredictiveField(StrictModule):
         field_name: str,
         query_name: str,
         valid_policy: ValidPolicy = "record",
-    ):
+    ) -> None:
         if not isinstance(predictive, PredictiveField):
             raise TypeError("predictive must be a PredictiveField.")
         if not isinstance(query, FunctionSamples):

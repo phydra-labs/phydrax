@@ -35,7 +35,7 @@ class ThroughCellRegionPlan(StrictModule, NonTrainableState):
         *,
         region: RegionName,
         reference_faces: ArrayLike | None = None,
-    ):
+    ) -> None:
         if isinstance(cell_count, bool) or not isinstance(cell_count, int):
             raise TypeError("cell_count must be an integer.")
         if cell_count < 1:
@@ -131,7 +131,7 @@ class PreparedThroughCellMesh(StrictModule, NonTrainableState):
         separator: ThroughCellRegionPlan,
         positive: ThroughCellRegionPlan,
         /,
-    ):
+    ) -> None:
         for supplied, expected in (
             (negative, "negative"),
             (separator, "separator"),

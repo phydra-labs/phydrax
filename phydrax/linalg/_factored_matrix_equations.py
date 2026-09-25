@@ -63,7 +63,7 @@ class FactoredMatrixSolution(StrictModule):
         *,
         rank: ArrayLike | None = None,
         hermitian_positive_semidefinite: bool = False,
-    ):
+    ) -> None:
         left = jnp.asarray(left_factor)
         if left.ndim != 2:
             raise ValueError("left_factor must have shape (m, capacity).")
@@ -147,7 +147,7 @@ class FactoredMatrixEquationProblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         operator_ = (
             operator
             if isinstance(operator, AbstractLinearOperator)
@@ -235,7 +235,7 @@ class FactoredMatrixEquationPolicy(StrictModule):
         relative_residual_tolerance: float = 1e-6,
         absolute_residual_tolerance: float = 1e-10,
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         values = np.asarray(tuple(shifts))
         if values.ndim != 1 or values.size < 1:
             raise ValueError("shifts must be one nonempty rank-one sequence.")

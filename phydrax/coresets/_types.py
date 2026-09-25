@@ -31,7 +31,7 @@ class CoresetSelection(StrictModule):
         /,
         *,
         method: str,
-    ):
+    ) -> None:
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
         log_weights_ = jnp.asarray(log_weights, dtype=jnp.float64)
         mask_ = jnp.asarray(mask, dtype=jnp.bool_)

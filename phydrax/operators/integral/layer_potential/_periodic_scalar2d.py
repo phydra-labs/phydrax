@@ -54,7 +54,7 @@ class PeriodicScalarSpectralKernel2D(StrictModule, NonTrainableState):
         cutoff: int = 16,
         maximum_modes: int = 100_000,
         resonance_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(cell, PeriodicCell):
             raise TypeError("cell must be a PeriodicCell.")
         if cell.rank != 2 or cell.ambient_dimension != 2:
@@ -168,7 +168,7 @@ class PeriodicScalarLayerPotential2D(StrictModule, NonTrainableState):
         /,
         *,
         kind: Literal["single", "double"] = "single",
-    ):
+    ) -> None:
         if not isinstance(panelization, BoundaryPanelization2D):
             raise TypeError("panelization must be BoundaryPanelization2D.")
         if not isinstance(kernel, PeriodicScalarSpectralKernel2D):

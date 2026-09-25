@@ -41,7 +41,7 @@ class PowerAdjointTransferPair(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
         transfer_id: str,
-    ):
+    ) -> None:
         if not isinstance(primal, AbstractLinearOperator) or not isinstance(
             dual, AbstractLinearOperator
         ):

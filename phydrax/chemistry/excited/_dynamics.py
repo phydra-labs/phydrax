@@ -55,7 +55,7 @@ class NonadiabaticSurfaceEvaluation(StrictModule, NonTrainableState):
         *,
         spin_orbit_couplings: ArrayLike | None = None,
         successful: ArrayLike = True,
-    ):
+    ) -> None:
         energy = jnp.asarray(energies)
         gradient = jnp.asarray(gradients, dtype=energy.real.dtype)
         coupling = jnp.asarray(derivative_couplings, dtype=energy.real.dtype)
@@ -135,7 +135,7 @@ class CallableNonadiabaticSurfaceProvider(AbstractNonadiabaticSurfaceProvider):
     evaluator: NonadiabaticEvaluator = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluator: NonadiabaticEvaluator, provider_id: str, /):
+    def __init__(self, evaluator: NonadiabaticEvaluator, provider_id: str, /) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()
@@ -215,7 +215,7 @@ class FewestSwitchesSurfaceHoppingPlan(StrictModule, NonTrainableState):
         decoherence_parameter: float = 0.1,
         frustrated_hop: FrustratedHopPolicy = FrustratedHopPolicy.REJECT,
         rescaling_direction: str = "derivative-coupling",
-    ):
+    ) -> None:
         if not isinstance(provider, AbstractNonadiabaticSurfaceProvider):
             raise TypeError(
                 "provider must implement AbstractNonadiabaticSurfaceProvider."

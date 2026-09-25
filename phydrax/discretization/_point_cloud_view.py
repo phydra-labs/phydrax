@@ -97,7 +97,7 @@ class PointCloudFieldReconstructionKernel(
         minimum_neighbors: int,
         condition_limit: float,
         field_space_id: str,
-    ):
+    ) -> None:
         cloud = np.asarray(points, dtype=np.float64)
         if cloud.ndim != 2 or cloud.shape[0] == 0 or not np.all(np.isfinite(cloud)):
             raise ValueError(

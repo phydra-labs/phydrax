@@ -233,7 +233,7 @@ class ReducedPotentialDataset(StrictModule, NonTrainableState):
         bias_ids: Sequence[str | None] = (),
         unit_system_id: str | None = None,
         unit_id: str,
-    ):
+    ) -> None:
         potential = _floating_array(values, "values")
         if potential.ndim != 2 or potential.shape[0] < 2 or potential.shape[1] < 1:
             raise ValueError(
@@ -436,7 +436,7 @@ class ReducedWorkDataset(StrictModule, NonTrainableState):
         bias_ids: Sequence[str | None] = (),
         unit_system_id: str | None = None,
         unit_id: str,
-    ):
+    ) -> None:
         work = _floating_array(values, "values")
         if work.ndim != 1 or work.size < 1:
             raise ValueError("values must be a non-empty capacity vector.")
@@ -645,7 +645,7 @@ class ThermodynamicDerivativeDataset(StrictModule, NonTrainableState):
         bias_ids: Sequence[str | None] = (),
         unit_system_id: str | None = None,
         unit_id: str,
-    ):
+    ) -> None:
         derivative = _floating_array(values, "values")
         if derivative.ndim != 2 or derivative.shape[0] < 2 or derivative.shape[1] < 1:
             raise ValueError(
@@ -815,7 +815,7 @@ class FreeEnergySelectionPlan(StrictModule, NonTrainableState):
         minimum_overlap: float = 1.0e-3,
         uncertainty_method: UncertaintyMethod = "analytic",
         bootstrap_replicates: int = 0,
-    ):
+    ) -> None:
         burn = int(burn_in)
         stride_ = int(stride)
         block = None if block_length is None else int(block_length)
@@ -912,7 +912,7 @@ class FreeEnergySelectionEvidence(StrictModule, NonTrainableState):
         block_count: int,
         dataset_kind: str,
         dataset_id: str,
-    ):
+    ) -> None:
         if not isinstance(plan, FreeEnergySelectionPlan):
             raise TypeError("plan must be FreeEnergySelectionPlan.")
         kept = jnp.asarray(retained, dtype=jnp.bool_)
@@ -1093,7 +1093,7 @@ class FreeEnergyResult(StrictModule, NonTrainableState):
         method: str,
         dataset_id: str,
         selection_id: str,
-    ):
+    ) -> None:
         free = _floating_array(free_energies, "free_energies").reshape((-1,))
         states = _identifiers(state_ids, "state_id", count=free.size, unique=True)
         if free.size < 2:

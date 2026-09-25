@@ -130,7 +130,7 @@ class LeastSquaresUpdateRule(_AbstractNativeMethodRule):
         termination: OptimizationTermination | None,
         rule_id: str,
         prepared_state: Any = None,
-    ):
+    ) -> None:
         if not isinstance(method, AbstractLeastSquaresMethod):
             raise TypeError("method must be an AbstractLeastSquaresMethod.")
         if not callable(residual):
@@ -191,7 +191,7 @@ class CompositeLeastSquaresUpdateRule(_AbstractNativeMethodRule):
         termination: OptimizationTermination | None,
         rule_id: str,
         prepared_state: Any = None,
-    ):
+    ) -> None:
         if not isinstance(method, AbstractCompositeLeastSquaresMethod):
             raise TypeError("method must be an AbstractCompositeLeastSquaresMethod.")
         if not callable(problem):
@@ -252,7 +252,7 @@ class ScalarIterativeUpdateRule(_AbstractNativeMethodRule):
         termination: OptimizationTermination | None,
         rule_id: str,
         prepared_state: Any = None,
-    ):
+    ) -> None:
         if not isinstance(method, AbstractScalarIterativeMethod):
             raise TypeError("method must be an AbstractScalarIterativeMethod.")
         self.method = method
@@ -294,7 +294,7 @@ class MirrorUpdateRule(AbstractKernelUpdateRule):
     optimizer: AbstractMirrorOptimizer
     rule_id: str = eqx.field(static=True)
 
-    def __init__(self, optimizer: AbstractMirrorOptimizer, /, *, rule_id: str):
+    def __init__(self, optimizer: AbstractMirrorOptimizer, /, *, rule_id: str) -> None:
         if not isinstance(optimizer, AbstractMirrorOptimizer):
             raise TypeError("optimizer must be an AbstractMirrorOptimizer.")
         self.optimizer = optimizer
@@ -334,7 +334,9 @@ class RiemannianUpdateRule(AbstractKernelUpdateRule):
     optimizer: AbstractRiemannianOptimizer
     rule_id: str = eqx.field(static=True)
 
-    def __init__(self, optimizer: AbstractRiemannianOptimizer, /, *, rule_id: str):
+    def __init__(
+        self, optimizer: AbstractRiemannianOptimizer, /, *, rule_id: str
+    ) -> None:
         if not isinstance(optimizer, AbstractRiemannianOptimizer) or isinstance(
             optimizer, AbstractRiemannianLineSearchOptimizer
         ):
@@ -386,7 +388,7 @@ class RiemannianLineSearchUpdateRule(AbstractKernelUpdateRule):
 
     def __init__(
         self, optimizer: AbstractRiemannianLineSearchOptimizer, /, *, rule_id: str
-    ):
+    ) -> None:
         if not isinstance(optimizer, AbstractRiemannianLineSearchOptimizer):
             raise TypeError("optimizer must be a Riemannian line-search optimizer.")
         self.optimizer = optimizer

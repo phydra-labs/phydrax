@@ -74,7 +74,7 @@ class SmolyakInterpolationBlock(StrictModule, NonTrainableState):
         values: Array,
         coefficients: Array,
         signature: tuple[int, ...],
-    ):
+    ) -> None:
         self.axes = jnp.asarray(axes, dtype=jnp.int32)
         self.nodes = tuple(jnp.asarray(value, dtype=jnp.float64) for value in nodes)
         self.barycentric_weights = tuple(
@@ -306,7 +306,7 @@ class SmolyakInterpolant(StrictModule, NonTrainableState):
         num_terms: int,
         num_evaluations: int,
         maximum_active_dimension: int,
-    ):
+    ) -> None:
         self.blocks = blocks
         self.factors = factors
         self.axis_labels = axis_labels

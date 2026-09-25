@@ -95,7 +95,7 @@ class InputConvexCertificate(AbstractConstructionCertificate):
         activation: ConvexActivation,
         depth: int,
         width_size: int,
-    ):
+    ) -> None:
         if construction not in (
             "input-convex-network",
             "partially-input-convex-network",
@@ -176,7 +176,7 @@ class InputConvexNetwork(_AbstractBaseModel):
         activation: ConvexActivation = "softplus",
         use_bias: bool = True,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         in_size_c = _canonical_size(in_size)
         width = int(width_size)
         hidden_depth = int(depth)
@@ -289,7 +289,7 @@ class PartiallyInputConvexNetwork(_AbstractStructuredInputModel):
         activation: ConvexActivation = "softplus",
         use_bias: bool = True,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         context_size_c = _canonical_size(context_size)
         convex_size_c = _canonical_size(convex_size)
         width = int(width_size)

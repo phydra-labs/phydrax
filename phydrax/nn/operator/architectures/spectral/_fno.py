@@ -105,7 +105,7 @@ class SpectralConvolutionResourcePolicy(StrictModule):
         *,
         maximum_signed_blocks: int = 4096,
         maximum_parameter_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         if maximum_signed_blocks <= 0 or maximum_parameter_bytes <= 0:
             raise ValueError("Spectral-convolution resource limits must be positive.")
         self.maximum_signed_blocks = maximum_signed_blocks
@@ -144,7 +144,7 @@ class SpectralConvND(StrictModule):
         rank: int | float = 0.5,
         key: Key[Array, ""] = DOC_KEY0,
         resources: SpectralConvolutionResourcePolicy | None = None,
-    ):
+    ) -> None:
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
         self.n_modes = _mode_tuple(n_modes)
@@ -369,7 +369,7 @@ class MultiScaleSpectralConvND(StrictModule):
         factorization: Factorization = "dense",
         rank: int | float = 0.5,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
         self.n_modes = _mode_tuple(n_modes)
@@ -430,7 +430,7 @@ class _ChannelNorm(StrictModule):
     bias: Array
     eps: float
 
-    def __init__(self, channels: int, *, eps: float = 1e-5):
+    def __init__(self, channels: int, *, eps: float = 1e-5) -> None:
         self.scale = jnp.ones((int(channels),), dtype=jnp.float64)
         self.bias = jnp.zeros((int(channels),), dtype=jnp.float64)
         self.eps = float(eps)
@@ -465,7 +465,7 @@ class _AxialSpectralConvND(StrictModule):
         factorization: Factorization = "dense",
         rank: int | float = 0.5,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
         self.n_modes = _mode_tuple(n_modes)
@@ -550,7 +550,7 @@ class _FNOResidualStep(StrictModule):
         *,
         activation: Activation,
         residual: bool,
-    ):
+    ) -> None:
         self.spectral = spectral
         self.pointwise = pointwise
         self.normalization = normalization
@@ -1030,7 +1030,7 @@ class FNO(_AbstractFNO):
         source_key: str | None = None,
         scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self._init_fno(
             in_channels=in_channels,
             out_channels=out_channels,
@@ -1101,7 +1101,7 @@ class IFNO(_AbstractFNO):
         dropout: float = 0.0,
         source_key: str | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.iterations = int(iterations)
         self.tolerance = float(tolerance)
         if self.iterations <= 0:
@@ -1248,7 +1248,7 @@ class AxialFactorizedFNO(_AbstractFNO):
         source_key: str | None = None,
         scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self._init_fno(
             in_channels=in_channels,
             out_channels=out_channels,

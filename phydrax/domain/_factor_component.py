@@ -26,7 +26,7 @@ class FactorComponent(StrictModule):
         factor: JointFactor,
         selections: Mapping[str, Selection],
         measure: BaseMeasure,
-    ):
+    ) -> None:
         if not isinstance(factor, JointFactor):
             raise TypeError("FactorComponent.factor must be a JointFactor.")
         resolved = dict(selections)

@@ -54,7 +54,7 @@ class ParticleCapacityGrowthPolicy(StrictModule, NonTrainableState):
         minimum_increment: int = 8,
         maximum_capacity: int = 1_000_000,
         free_slot_trigger: int = 0,
-    ):
+    ) -> None:
         factor = float(growth_factor)
         increment = int(minimum_increment)
         maximum = int(maximum_capacity)
@@ -105,7 +105,7 @@ class ParticleCapacityRequest(StrictModule, NonTrainableState):
         required_pair_capacity: int = 0,
         required_internal_cells: int = 0,
         reason: str = "particle_event",
-    ):
+    ) -> None:
         particles = int(required_particle_slots)
         pairs = int(required_pair_capacity)
         cells = int(required_internal_cells)

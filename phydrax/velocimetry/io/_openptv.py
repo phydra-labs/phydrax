@@ -57,7 +57,7 @@ class OpenPTVTargetRecords(StrictModule, NonTrainableState):
         camera_id: str,
         frame_index: int,
         source_id: str,
-    ):
+    ) -> None:
         ids = np.asarray(target_ids, dtype=np.int64).reshape((-1,))
         positions = np.asarray(positions_rc, dtype=np.float64)
         count = np.asarray(pixel_count, dtype=np.int64).reshape((-1,))
@@ -121,7 +121,7 @@ class OpenPTVReconstructionRecords(StrictModule, NonTrainableState):
         frame_index: int,
         frame_id: str,
         source_id: str,
-    ):
+    ) -> None:
         ids = np.asarray(record_ids, dtype=np.int64).reshape((-1,))
         positions = np.asarray(positions_xyz, dtype=np.float64)
         targets = np.asarray(target_indices, dtype=np.int64)
@@ -177,7 +177,7 @@ class OpenPTVTrackRecords(StrictModule, NonTrainableState):
         *,
         frame_id: str,
         source_id: str,
-    ):
+    ) -> None:
         tracks = np.asarray(track_ids, dtype=np.int64).reshape((-1,))
         times_ = np.asarray(times, dtype=np.float64).reshape((-1,))
         positions = np.asarray(positions_xyz, dtype=np.float64)

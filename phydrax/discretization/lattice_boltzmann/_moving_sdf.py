@@ -68,7 +68,7 @@ class MovingSDFGeometryPlan(StrictModule, NonTrainableState):
         *,
         sdf_id: str,
         body_names: Sequence[str] = ("body",),
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("discretization must be LatticeBoltzmannDiscretization.")
         if not callable(signed_distance):

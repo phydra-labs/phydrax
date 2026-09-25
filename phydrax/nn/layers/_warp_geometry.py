@@ -51,7 +51,7 @@ class RectilinearWarpDiagnostics(StrictModule):
         determinant: Array,
         interpolation_support: Array,
         route_scale: Array | None = None,
-    ):
+    ) -> None:
         self.displacement = jnp.asarray(displacement)
         self.coordinates = jnp.asarray(coordinates)
         self.jacobian = jnp.asarray(jacobian)
@@ -74,7 +74,7 @@ class GaussianWarpRoute(StrictModule):
     mean: Array
     scale: Array
 
-    def __init__(self, mean: Array, scale: Array, /):
+    def __init__(self, mean: Array, scale: Array, /) -> None:
         mean_ = jnp.asarray(mean)
         scale_ = jnp.asarray(scale)
         if mean_.shape != scale_.shape:

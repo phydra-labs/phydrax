@@ -85,7 +85,7 @@ class RuntimeCheckpointLeafBinding(StrictModule, NonTrainableState):
         coordinates: HermitianSpectralCoordinates,
         evidence: RealCoordinateEvidence,
         /,
-    ):
+    ) -> None:
         index = int(leaf_index)
         if index < 0:
             raise ValueError("Checkpoint encoding leaf_index must be nonnegative.")
@@ -116,7 +116,7 @@ class RuntimeCheckpointEncodingPlan(StrictModule, NonTrainableState):
     bindings: tuple[RuntimeCheckpointLeafBinding, ...]
     encoding_id: str = eqx.field(static=True)
 
-    def __init__(self, bindings: Sequence[RuntimeCheckpointLeafBinding] = (), /):
+    def __init__(self, bindings: Sequence[RuntimeCheckpointLeafBinding] = (), /) -> None:
         bindings_ = tuple(bindings)
         if any(
             not isinstance(value, RuntimeCheckpointLeafBinding) for value in bindings_
@@ -163,7 +163,7 @@ class RuntimeRestartRelation(StrictModule, NonTrainableState):
         tolerance: float | None = None,
         support_tuple_ids: Sequence[str] = (),
         restorer: Callable | None = None,
-    ):
+    ) -> None:
         source = str(source_topology_id)
         target = str(target_topology_id)
         if not source or not target:
@@ -504,7 +504,7 @@ class RuntimeCheckpointEnvelope(StrictModule):
         partition_id: str | None = None,
         runtime_id: str | None = None,
         encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
-    ):
+    ) -> None:
         time_ = np.asarray(time)
         step = np.asarray(step_index)
         cursor = np.asarray(schedule_cursor)
@@ -893,7 +893,7 @@ class ExactTimeSchedule(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, targets: ArrayLike, /, *, tolerance: float = 1.0e-12):
+    def __init__(self, targets: ArrayLike, /, *, tolerance: float = 1.0e-12) -> None:
         values = np.asarray(targets)
         tolerance_ = float(tolerance)
         if (
@@ -957,7 +957,9 @@ class StreamingObservablePlan(StrictModule, NonTrainableState):
     reduction: ObservableReduction = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, evaluator: Callable, reduction: ObservableReduction, /):
+    def __init__(
+        self, name: str, evaluator: Callable, reduction: ObservableReduction, /
+    ) -> None:
         name_ = str(name)
         reduction_ = str(reduction)
         if (
@@ -1052,7 +1054,7 @@ class AcceptedStepTrigger(StrictModule, NonTrainableState):
         *,
         direction: Literal["above", "below"] = "above",
         hysteresis: float = 0.0,
-    ):
+    ) -> None:
         threshold_ = float(threshold)
         hysteresis_ = float(hysteresis)
         if (
@@ -1141,7 +1143,9 @@ def _array_tree_byte_count(value: Any, maximum_bytes: int, /) -> int:
 class BoundedAsyncPublisher:
     """One-worker immutable snapshot publisher with bounded backpressure."""
 
-    def __init__(self, writer: Callable[[Any], Any], /, *, maximum_pending: int = 2):
+    def __init__(
+        self, writer: Callable[[Any], Any], /, *, maximum_pending: int = 2
+    ) -> None:
         if not callable(writer) or int(maximum_pending) <= 0:
             raise ValueError("Async publisher requires a writer and positive capacity.")
         self._writer = writer
@@ -1224,7 +1228,7 @@ class ByteBoundedAsyncPublisher:
         *,
         maximum_pending: int = 2,
         maximum_pending_bytes: int,
-    ):
+    ) -> None:
         if (
             not callable(writer)
             or int(maximum_pending) <= 0
@@ -1376,7 +1380,7 @@ class StreamingMomentPlan(StrictModule, NonTrainableState):
         batch_duration: float | None = None,
         maximum_batches: int = 0,
         plan_id: str,
-    ):
+    ) -> None:
         edges = np.asarray(histogram_edges)
         shape = tuple(value_shape)
         start = None if window_start is None else float(window_start)
@@ -1607,7 +1611,7 @@ class AcceptedStepTriggerGraph(StrictModule, NonTrainableState):
         *,
         operation: Literal["all", "any"] = "all",
         debounce_steps: int = 0,
-    ):
+    ) -> None:
         if (
             not triggers
             or any(not isinstance(value, AcceptedStepTrigger) for value in triggers)

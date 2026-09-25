@@ -35,7 +35,7 @@ class MeshingExecutionPolicy(StrictModule, NonTrainableState):
         parallelism: int = 1,
         deterministic: bool = True,
         cleanup_workspace: bool = True,
-    ):
+    ) -> None:
         if not isinstance(execution_mode, MeshingExecutionMode):
             raise TypeError("execution_mode must be MeshingExecutionMode.")
         timeout = float(timeout_seconds)

@@ -114,7 +114,7 @@ class GravitationalWaveLikelihoodPlan(AbstractGravitationalWaveLikelihood):
         calibration_id: str | None = None,
         calibration: Callable[[PyTree[Any], Array], Array] | None = None,
         approximation_id: str = "full-frequency",
-    ):
+    ) -> None:
         if not isinstance(network, DetectorNetworkData):
             raise TypeError("network must be DetectorNetworkData.")
         if not isinstance(response, DetectorResponsePlan):
@@ -278,7 +278,7 @@ class GravitationalWavePosteriorTerm(AbstractPosteriorTerm):
         /,
         *,
         label: str = "gravitational_wave_network",
-    ):
+    ) -> None:
         if not isinstance(likelihood, AbstractGravitationalWaveLikelihood):
             raise TypeError(
                 "likelihood must implement AbstractGravitationalWaveLikelihood."

@@ -43,7 +43,7 @@ class UnstructuredLowMachLESState(StrictModule):
         /,
         *,
         ksgs: KSGSState | None = None,
-    ):
+    ) -> None:
         if ksgs is not None and not isinstance(ksgs, KSGSState):
             raise TypeError("ksgs must be KSGSState or None.")
         density_ = _inexact(density)
@@ -157,7 +157,7 @@ class UnstructuredLowMachLESPlan(StrictModule, NonTrainableState):
         *,
         ksgs_plan: StaticKSGSPlan | None = None,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(favre_model, PreparedFavreLESModel):
             raise TypeError("favre_model must be PreparedFavreLESModel.")
         if ksgs_plan is not None and not isinstance(ksgs_plan, StaticKSGSPlan):
@@ -266,7 +266,7 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
         plan: UnstructuredLowMachLESPlan,
         operators: PreparedUnstructuredCollocatedOperators,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, UnstructuredLowMachLESPlan):
             raise TypeError("plan must be UnstructuredLowMachLESPlan.")
         if not isinstance(operators, PreparedUnstructuredCollocatedOperators):

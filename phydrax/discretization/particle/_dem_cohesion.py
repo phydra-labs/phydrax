@@ -101,7 +101,7 @@ class DMTContactCohesionPlan(AbstractDEMCohesionPlan):
         /,
         *,
         cohesion_law_id: str | None = None,
-    ):
+    ) -> None:
         energy = np.asarray(surface_energy)
         cutoff_ = np.asarray(cutoff)
         _validate_pair_parameter("surface_energy", energy, positive=True)
@@ -223,7 +223,7 @@ class LinearCapillaryBridgePlan(AbstractDEMCohesionPlan):
         /,
         *,
         cohesion_law_id: str | None = None,
-    ):
+    ) -> None:
         tension = np.asarray(surface_tension)
         angle = np.asarray(contact_angle)
         volume = np.asarray(bridge_volume)
@@ -382,7 +382,7 @@ class BagheriCapillaryBridgePlan(AbstractDEMCohesionPlan):
         *,
         conserve_liquid: bool = False,
         cohesion_law_id: str | None = None,
-    ):
+    ) -> None:
         tension = np.asarray(surface_tension)
         angle = np.asarray(contact_angle)
         volume = np.asarray(bridge_volume)
@@ -711,7 +711,7 @@ class NearContactLubricationPlan(AbstractDEMCohesionPlan):
         /,
         *,
         cohesion_law_id: str | None = None,
-    ):
+    ) -> None:
         viscosity = np.asarray(dynamic_viscosity)
         cutoff_ = np.asarray(cutoff)
         minimum = np.asarray(minimum_gap)
@@ -827,7 +827,7 @@ class CompositeDEMCohesionPlan(AbstractDEMCohesionPlan):
         /,
         *,
         cohesion_law_id: str | None = None,
-    ):
+    ) -> None:
         values = tuple(components)
         if not values or any(
             not isinstance(value, AbstractDEMCohesionPlan) for value in values
@@ -1153,7 +1153,7 @@ def _validate_pair_parameter(
     *,
     positive: bool = False,
     nonnegative: bool = False,
-):
+) -> None:
     if value.ndim not in (0, 2):
         raise ValueError(f"{name} must be scalar or a square pair table.")
     if value.ndim == 2 and (
@@ -1168,7 +1168,7 @@ def _validate_pair_parameter(
         raise ValueError(f"{name} must be nonnegative.")
 
 
-def _require_matching_schema(*values: np.ndarray):
+def _require_matching_schema(*values: np.ndarray) -> None:
     first = values[0]
     if any(
         value.ndim != first.ndim or value.shape != first.shape for value in values[1:]

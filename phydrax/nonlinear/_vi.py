@@ -77,7 +77,7 @@ class GeneralizedDerivativePolicy(StrictModule):
 
     origin_coefficient: float = eqx.field(static=True)
 
-    def __init__(self, *, origin_coefficient: float = 1.0 / sqrt(2.0)):
+    def __init__(self, *, origin_coefficient: float = 1.0 / sqrt(2.0)) -> None:
         value = float(origin_coefficient)
         if not isfinite(value) or 2.0 * value * value > 1.0:
             raise ValueError(
@@ -151,7 +151,7 @@ class VariationalInequalityProblem(StrictModule):
         /,
         *,
         problem_id: str = "variational-inequality",
-    ):
+    ) -> None:
         if not callable(operator):
             raise TypeError("operator must be callable.")
         if not isinstance(bounds, Bounds):
@@ -268,7 +268,7 @@ class ProjectionDerivativePolicy(StrictModule):
         /,
         *,
         branch_tolerance: float = 1e-7,
-    ):
+    ) -> None:
         tolerance = float(branch_tolerance)
         if mode not in ("reject-ambiguous", "selected-generalized"):
             raise ValueError("mode must be 'reject-ambiguous' or 'selected-generalized'.")
@@ -307,7 +307,7 @@ class ConeVariationalInequalityProblem(StrictModule):
         /,
         *,
         problem_id: str = "cone-variational-inequality",
-    ):
+    ) -> None:
         if not callable(operator):
             raise TypeError("operator must be callable.")
         if not isinstance(cone, AbstractConvexCone):
@@ -418,7 +418,7 @@ class ConeSemismoothNewton(StrictModule):
         feasibility: ConeVariationalInequalityFeasibility = "allow-infeasible",
         derivative_policy: ProjectionDerivativePolicy | None = None,
         certification_tolerance: float = 1e-7,
-    ):
+    ) -> None:
         newton_ = NewtonKrylov() if newton is None else newton
         policy = (
             ProjectionDerivativePolicy("selected-generalized")
@@ -651,7 +651,7 @@ class SemismoothNewton(StrictModule):
         feasibility: VariationalInequalityFeasibility = "allow-infeasible",
         derivative_policy: GeneralizedDerivativePolicy | None = None,
         certification_tolerance: float = 1e-7,
-    ):
+    ) -> None:
         newton_ = NewtonKrylov() if newton is None else newton
         policy_ = (
             GeneralizedDerivativePolicy()
@@ -718,7 +718,7 @@ class PreparedVariationalInequalitySolve(StrictModule):
         *,
         topology_id: str,
         numeric_version: Any,
-    ):
+    ) -> None:
         if not isinstance(problem, VariationalInequalityProblem):
             raise TypeError("problem must be VariationalInequalityProblem.")
         if not isinstance(method, SemismoothNewton):

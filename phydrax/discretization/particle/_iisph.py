@@ -39,7 +39,7 @@ class IISPHStateLayout(StrictModule, NonTrainableState):
     width: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, capacity: int, dimension: int, /):
+    def __init__(self, capacity: int, dimension: int, /) -> None:
         self.capacity = int(capacity)
         self.dimension = int(dimension)
         self.width = 2 * self.dimension + 1
@@ -87,7 +87,7 @@ class IISPHMethodPlan(StrictModule, NonTrainableState):
         tolerance: float = 1e-4,
         relaxation: float = 0.5,
         qualification: ParticleQualificationProfile | None = None,
-    ):
+    ) -> None:
         if reference_density <= 0.0 or maximum_iterations <= 0 or tolerance <= 0.0:
             raise ValueError("IISPH solve parameters are invalid.")
         if not 0.0 < relaxation <= 1.0:
@@ -153,7 +153,7 @@ class PreparedIISPH(StrictModule, NonTrainableState):
         external_acceleration: Callable[[Array, Array, Array, Any], Array] | None = None,
         execution: ParticleExecutionPolicy | None = None,
         precision: ParticlePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         self.particles = particles
         self.neighborhood = neighborhood
         self.kernel = kernel

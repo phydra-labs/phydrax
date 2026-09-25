@@ -125,7 +125,7 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         boundaries_ = (

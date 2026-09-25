@@ -65,7 +65,7 @@ class NucleotideTorsionProgram(StrictModule, NonTrainableState):
         *,
         coordinate_mask=None,
         image_policy="nonperiodic",
-    ):
+    ) -> None:
         if image_policy not in ("nonperiodic", "unwrapped") or (
             system.cell is not None and image_policy != "unwrapped"
         ):

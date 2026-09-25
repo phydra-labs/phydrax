@@ -132,7 +132,7 @@ class PreparedTriangleQuadratic(StrictModule, NonTrainableState):
         /,
         *,
         weight_power: float = 2.0,
-    ):
+    ) -> None:
         if not isinstance(discretization, TriangleFiniteVolumeDiscretization):
             raise TypeError("Quadratic reconstruction requires triangle FV geometry.")
         moments = np.asarray(
@@ -205,7 +205,7 @@ class TriangleKExactReconstructionPlan(StrictModule, NonTrainableState):
     prepared: PreparedTriangleQuadratic
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, prepared: PreparedTriangleQuadratic, /):
+    def __init__(self, prepared: PreparedTriangleQuadratic, /) -> None:
         if not isinstance(prepared, PreparedTriangleQuadratic):
             raise TypeError("prepared must be PreparedTriangleQuadratic.")
         self.prepared = prepared

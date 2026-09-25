@@ -26,7 +26,7 @@ class ECPGaussianTerm(StrictModule, NonTrainableState):
     coefficient: float = eqx.field(static=True)
     term_id: str = eqx.field(static=True)
 
-    def __init__(self, radial_power: int, exponent: float, coefficient: float, /):
+    def __init__(self, radial_power: int, exponent: float, coefficient: float, /) -> None:
         power = int(radial_power)
         exponent_ = float(exponent)
         coefficient_ = float(coefficient)
@@ -63,7 +63,7 @@ class ECPChannelPlan(StrictModule, NonTrainableState):
         /,
         *,
         spin_orbit: bool = False,
-    ):
+    ) -> None:
         angular = int(angular_momentum)
         terms_ = tuple(terms)
         if (
@@ -103,7 +103,7 @@ class EffectiveCorePotentialPlan(StrictModule, NonTrainableState):
         channels: Sequence[ECPChannelPlan],
         source_artifact_id: str,
         /,
-    ):
+    ) -> None:
         center = int(center_particle_id)
         core = int(core_electron_count)
         local = int(local_channel)
@@ -145,7 +145,9 @@ class PreparedECP(StrictModule, NonTrainableState):
     system_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: EffectiveCorePotentialPlan, system: AtomisticSystemPlan, /):
+    def __init__(
+        self, plan: EffectiveCorePotentialPlan, system: AtomisticSystemPlan, /
+    ) -> None:
         ids = np.asarray(system.particle_ids)
         matches = np.flatnonzero(ids == plan.center_particle_id)
         if matches.size != 1 or not bool(np.asarray(system.active_mask)[matches[0]]):
@@ -196,7 +198,7 @@ class CallableECPIntegralProvider(AbstractECPIntegralProvider):
     evaluator: ECPIntegralEvaluator = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluator: ECPIntegralEvaluator, provider_id: str, /):
+    def __init__(self, evaluator: ECPIntegralEvaluator, provider_id: str, /) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()

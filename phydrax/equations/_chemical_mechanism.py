@@ -52,7 +52,7 @@ class ChemicalReactionSpec(StrictModule):
         reverse_rate: AbstractChemicalRatePlan | None = None,
         thermodynamic_reversible: bool = False,
         duplicate_group: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         reactant_values = _normalized_stoichiometry(reactants, "reactants")
         product_values = _normalized_stoichiometry(products, "products")
@@ -99,7 +99,7 @@ class ChemicalMechanismIR(StrictModule):
         thermodynamics: AbstractSpeciesThermodynamicsPlan,
         reactions,
         /,
-    ):
+    ) -> None:
         name_ = str(name)
         reaction_values = tuple(reactions)
         if not name_:
@@ -170,7 +170,7 @@ class PreparedChemicalMechanism(StrictModule):
     mechanism_id: str = eqx.field(static=True)
     preparation_evidence: ChemicalMechanismEvidence
 
-    def __init__(self, mechanism: ChemicalMechanismIR, /):
+    def __init__(self, mechanism: ChemicalMechanismIR, /) -> None:
         if not isinstance(mechanism, ChemicalMechanismIR):
             raise TypeError("mechanism must be ChemicalMechanismIR.")
         species_index = {
@@ -449,7 +449,7 @@ def _mass_action(concentrations, orders):
     return jnp.where(feasible, product, 0.0), feasible
 
 
-def _validate_rate_species_axis(rate, species_count, reaction_name):
+def _validate_rate_species_axis(rate, species_count, reaction_name) -> None:
     if isinstance(rate, (ThirdBodyRatePlan, LindemannRatePlan)) and (
         rate.efficiencies.shape != (species_count,)
     ):

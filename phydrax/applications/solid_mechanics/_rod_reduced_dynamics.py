@@ -80,7 +80,7 @@ class ReducedRodDenseCholeskyPlan(StrictModule, NonTrainableState):
         pivot_tolerance: float = 1.0e-9,
         condition_limit: float = 1.0e8,
         roundtrip_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         symmetry = _positive_finite(symmetry_tolerance, "symmetry_tolerance")
         pivot = _positive_finite(pivot_tolerance, "pivot_tolerance")
         condition = _positive_finite(condition_limit, "condition_limit")
@@ -128,7 +128,7 @@ class ReducedRodMatrixFreeCGPlan(StrictModule, NonTrainableState):
         positivity_tolerance: float = 1.0e-9,
         condition_limit: float = 1.0e8,
         roundtrip_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         relative = _positive_finite(relative_tolerance, "relative_tolerance")
         absolute = _positive_finite(absolute_tolerance, "absolute_tolerance")
         symmetry = _positive_finite(symmetry_tolerance, "symmetry_tolerance")
@@ -191,7 +191,9 @@ class ReducedRodDirectLoad(StrictModule):
     source_id: str = eqx.field(static=True)
     power_channel: str = eqx.field(static=True)
 
-    def __init__(self, effort: ArrayLike, /, *, source_id: str, power_channel: str):
+    def __init__(
+        self, effort: ArrayLike, /, *, source_id: str, power_channel: str
+    ) -> None:
         value = jnp.asarray(effort)
         if (
             value.ndim != 1
@@ -403,7 +405,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         stretch_shear_material: ReducedRodMaterial | None = None,
         bend_twist_material: ReducedRodMaterial | None = None,
         gravity: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(reduction, PreparedReducedRod):
             raise TypeError("reduction must be a PreparedReducedRod.")
         plan_ = ReducedRodDenseCholeskyPlan() if plan is None else plan

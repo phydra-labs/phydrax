@@ -18,7 +18,7 @@ class PerStepIntegration(StrictModule):
     target: Any
     plan: Any
 
-    def __init__(self, target: Any, plan: Any = None, /):
+    def __init__(self, target: Any, plan: Any = None, /) -> None:
         self.target = target
         self.plan = plan
 
@@ -28,7 +28,7 @@ class FixedIntegration(StrictModule):
 
     realization: IntegrationRealization
 
-    def __init__(self, realization: IntegrationRealization, /):
+    def __init__(self, realization: IntegrationRealization, /) -> None:
         if not isinstance(realization, IntegrationRealization):
             raise TypeError("FixedIntegration requires an IntegrationRealization.")
         self.realization = realization
@@ -39,7 +39,7 @@ class CallerIntegration(StrictModule):
 
     target: Any
 
-    def __init__(self, target: Any, /):
+    def __init__(self, target: Any, /) -> None:
         self.target = target
 
 
@@ -50,7 +50,7 @@ class AdaptiveIntegration(StrictModule):
     initial_plan: Any
     policy: Any
 
-    def __init__(self, target: Any, initial_plan: Any, policy: Any, /):
+    def __init__(self, target: Any, initial_plan: Any, policy: Any, /) -> None:
         self.target = target
         self.initial_plan = initial_plan
         self.policy = policy

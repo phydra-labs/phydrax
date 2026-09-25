@@ -69,7 +69,7 @@ class TraceExtensionEvidence(StrictModule, NonTrainableState):
         construction_certificate_id: str,
         preservation_certificate_id: str | None,
         stability_owner_ids: tuple[str, ...],
-    ):
+    ) -> None:
         inverse_error = jnp.asarray(right_inverse_error, dtype=jnp.float64).reshape(())
         invariant_error = jnp.asarray(preservation_error, dtype=jnp.float64).reshape(())
         version_int = int(numeric_version)
@@ -162,7 +162,7 @@ class PreparedTraceExtension(StrictModule, NonTrainableState):
         *,
         preservation_operator: AbstractLinearOperator | None,
         evidence: TraceExtensionEvidence,
-    ):
+    ) -> None:
         if not isinstance(trace_operator, AbstractLinearOperator):
             raise TypeError("trace_operator must be an AbstractLinearOperator.")
         if not isinstance(candidate_operator, AbstractLinearOperator):
@@ -279,7 +279,7 @@ class _TraceCorrectionProvider(StrictModule, NonTrainableState):
         preservation_certificate_id: str | None = None,
         stability_owner_ids: tuple[str, ...] = (),
         provider_kind: str,
-    ):
+    ) -> None:
         if not isinstance(trace_operator, AbstractLinearOperator) or not isinstance(
             candidate_operator, AbstractLinearOperator
         ):
@@ -387,7 +387,7 @@ class TransfiniteCorrectionProvider(_TraceCorrectionProvider):
 
     def __init__(
         self, trace_operator, candidate_operator, cover, /, *, cardinal_certificate_id
-    ):
+    ) -> None:
         super().__init__(
             trace_operator,
             candidate_operator,
@@ -403,7 +403,7 @@ class ClosestPointCorrectionProvider(_TraceCorrectionProvider):
 
     def __init__(
         self, trace_operator, candidate_operator, cover, /, *, collar_certificate_id
-    ):
+    ) -> None:
         if any(
             patch.collar_provider is None or patch.collar_certificate_id is None
             for patch in cover.patches
@@ -437,7 +437,7 @@ class PartitionOfUnityCorrectionProvider(_TraceCorrectionProvider):
         /,
         *,
         partition_certificate_id,
-    ):
+    ) -> None:
         super().__init__(
             trace_operator,
             candidate_operator,
@@ -466,7 +466,7 @@ class EllipticExtensionCorrectionProvider(_TraceCorrectionProvider):
         gauge_certificate_id=None,
         preservation_operator=None,
         preservation_certificate_id=None,
-    ):
+    ) -> None:
         pure = bool(pure_neumann)
         gauge = None if gauge_certificate_id is None else str(gauge_certificate_id)
         if pure and (gauge is None or not gauge):
@@ -504,7 +504,7 @@ class DiscreteTraceCorrectionProvider(_TraceCorrectionProvider):
         preservation_operator=None,
         preservation_certificate_id=None,
         stability_owner_ids=(),
-    ):
+    ) -> None:
         representation = str(representation_id)
         if not representation:
             raise ValueError("representation_id must be non-empty.")

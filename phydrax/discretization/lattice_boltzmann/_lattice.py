@@ -34,7 +34,7 @@ class LatticeBoltzmannCapabilityEvidence(StrictModule, NonTrainableState):
         hydrodynamic_isotropy_order: int,
         tensor_product: bool,
         capabilities: Sequence[str],
-    ):
+    ) -> None:
         capability_tuple = tuple(sorted(str(value) for value in capabilities))
         if len(set(capability_tuple)) != len(capability_tuple):
             raise ValueError("Lattice capabilities must be unique.")
@@ -90,7 +90,7 @@ class LatticeBoltzmannVelocitySet(StrictModule, NonTrainableState):
         /,
         *,
         sound_speed_squared: float = 1.0 / 3.0,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Velocity-set name must be non-empty.")

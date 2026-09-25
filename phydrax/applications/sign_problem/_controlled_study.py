@@ -44,7 +44,7 @@ class ControlledSignStudyPlan(StrictModule, NonTrainableState):
         minimum_average_phase: float = 0.05,
         minimum_effective_sample_size: float = 8.0,
         maximum_lag: int = 64,
-    ):
+    ) -> None:
         chains, draws, lag = int(minimum_chains), int(minimum_draws), int(maximum_lag)
         phase, effective = (
             float(minimum_average_phase),

@@ -100,7 +100,7 @@ class AbstractAxialLaw(StrictModule, NonTrainableState):
 class LinearAxialLaw(AbstractAxialLaw):
     """Engineering-strain elastic axial law carrying tension or compression."""
 
-    def __init__(self, *, law_id: str = "axial-law:linear-elastic"):
+    def __init__(self, *, law_id: str = "axial-law:linear-elastic") -> None:
         self.law_id = str(law_id)
 
     def evaluate(
@@ -158,7 +158,7 @@ class TensionOnlyCableLaw(AbstractAxialLaw):
         activation_tolerance: float = 1.0e-10,
         deactivation_tolerance: float = 1.0e-10,
         law_id: str = "axial-law:tension-only",
-    ):
+    ) -> None:
         values = (float(activation_tolerance), float(deactivation_tolerance))
         if any(not isfinite(value) or value < 0.0 for value in values):
             raise ValueError(
@@ -322,7 +322,7 @@ class AxialMemberBlock(AbstractMemberBlock):
         /,
         *,
         block_id: str | None = None,
-    ):
+    ) -> None:
         indices = jnp.asarray(member_indices, dtype=jnp.int32)
         if indices.ndim != 1:
             raise ValueError("member_indices must be rank one.")
@@ -402,7 +402,7 @@ class CorotationalFrameBlock(AbstractMemberBlock):
         axial_law: AbstractAxialLaw | None = None,
         director_tolerance: float = 1.0e-10,
         block_id: str | None = None,
-    ):
+    ) -> None:
         indices = jnp.asarray(member_indices, dtype=jnp.int32)
         if indices.ndim != 1:
             raise ValueError("member_indices must be rank one.")
@@ -603,7 +603,7 @@ class DiscreteRodBlock(AbstractMemberBlock):
         *,
         axial_law: AbstractAxialLaw | None = None,
         block_id: str | None = None,
-    ):
+    ) -> None:
         nodes = jnp.asarray(node_indices, dtype=jnp.int32)
         members = jnp.asarray(member_indices, dtype=jnp.int32)
         if nodes.ndim != 1 or members.ndim != 1 or nodes.size != members.size + 1:
@@ -747,7 +747,7 @@ class HingeBendingBlock(AbstractMemberBlock):
         /,
         *,
         block_id: str | None = None,
-    ):
+    ) -> None:
         hinges_ = jnp.asarray(hinges, dtype=jnp.int32)
         stiffness_ = jnp.asarray(stiffness)
         rest_ = jnp.asarray(rest_angle, dtype=stiffness_.dtype)
@@ -825,7 +825,7 @@ class MemberNetworkAssembly(StrictModule, NonTrainableState):
     blocks: tuple[AbstractMemberBlock, ...]
     assembly_id: str = eqx.field(static=True)
 
-    def __init__(self, blocks: Sequence[AbstractMemberBlock], /):
+    def __init__(self, blocks: Sequence[AbstractMemberBlock], /) -> None:
         blocks_ = tuple(blocks)
         if not blocks_ or any(
             not isinstance(block, AbstractMemberBlock) for block in blocks_

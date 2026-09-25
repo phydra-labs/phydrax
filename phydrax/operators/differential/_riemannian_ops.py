@@ -66,7 +66,7 @@ class _RiemannianGradCallable(StrictModule):
         differential_positions: tuple[int, ...],
         coordinate_position: int,
         /,
-    ):
+    ) -> None:
         self.differential = differential
         self.metric = metric
         self.differential_positions = differential_positions
@@ -104,7 +104,7 @@ class _CovariantHessianCallable(StrictModule):
         second_positions: tuple[int, ...],
         coordinate_position: int,
         /,
-    ):
+    ) -> None:
         self.differential = differential
         self.second_derivative = second_derivative
         self.metric = metric
@@ -156,7 +156,7 @@ class _RiemannianDivCallable(StrictModule):
         coordinate_position: int,
         dimension: int,
         /,
-    ):
+    ) -> None:
         self.field = field
         self.derivative = derivative
         self.metric = metric
@@ -215,7 +215,7 @@ class _CovariantDerivativeCallable(StrictModule):
         coordinate_position: int,
         dimension: int,
         /,
-    ):
+    ) -> None:
         self.field = field
         self.derivative = derivative
         self.metric = metric
@@ -283,7 +283,7 @@ class _RiemannianDivTensorCallable(StrictModule):
         derivative_positions: tuple[int, ...],
         dimension: int,
         /,
-    ):
+    ) -> None:
         self.derivative = derivative
         self.derivative_positions = derivative_positions
         self.dimension = int(dimension)
@@ -317,7 +317,7 @@ class _LaplaceBeltramiCallable(StrictModule):
         hessian_positions: tuple[int, ...],
         coordinate_position: int,
         /,
-    ):
+    ) -> None:
         self.hessian = hessian
         self.metric = metric
         self.hessian_positions = hessian_positions

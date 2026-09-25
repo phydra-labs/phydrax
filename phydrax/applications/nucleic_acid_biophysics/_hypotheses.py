@@ -40,7 +40,7 @@ class NucleicStructureHypothesis:
         image_policy="nonperiodic",
         requested_use=None,
         parent=None,
-    ):
+    ) -> None:
         conversion_factor(length_unit, ANGSTROM)
         rights = (
             (rights,) if isinstance(rights, ReferenceArtifactManifest) else tuple(rights)

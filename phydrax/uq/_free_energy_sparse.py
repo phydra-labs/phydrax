@@ -91,7 +91,7 @@ class SparseReducedPotentialDataset(StrictModule, NonTrainableState):
         bias_ids: Sequence[str | None] = (),
         unit_system_id: str | None = None,
         unit_id: str,
-    ):
+    ) -> None:
         potential = _floating_array(values, "values")
         if potential.ndim != 2 or potential.shape[0] < 2 or potential.shape[1] < 1:
             raise ValueError(
@@ -250,7 +250,7 @@ class SparsePairwiseFreeEnergyNetworkResult(StrictModule, NonTrainableState):
         *,
         edge_state_ids: Sequence[tuple[str, str]],
         dataset_id: str,
-    ):
+    ) -> None:
         results = tuple(edge_results)
         observations = tuple(edge_observations)
         edges = tuple(

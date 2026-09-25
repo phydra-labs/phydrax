@@ -132,7 +132,7 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
         frame_tolerance: float = 1.0e-10,
         name: str = "soft-sphere-dem",
         method_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(contact, DEMContactModelPlan):
             raise TypeError("contact must be a DEMContactModelPlan.")
         if multicontact is not None and not isinstance(
@@ -392,7 +392,7 @@ class DEMStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
-    def __init__(self, dynamics_id: str, /):
+    def __init__(self, dynamics_id: str, /) -> None:
         identifier = str(dynamics_id)
         if not identifier:
             raise ValueError("dynamics_id must be nonempty.")
@@ -495,7 +495,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         external_load_id: str | None = None,
         execution: ParticleExecutionPolicy | None = None,
         precision: ParticlePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(bodies, PreparedRigidSphereSet):
             raise TypeError("bodies must be a PreparedRigidSphereSet.")
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):

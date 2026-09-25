@@ -50,7 +50,7 @@ class PhaseFieldNoisePlan(StrictModule, NonTrainableState):
         *,
         amplitude: ArrayLike = 1.0,
         conservation_weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         if kind not in ("allen-cahn", "cahn-hilliard"):
             raise ValueError("Unknown phase-field noise kind.")
         if not isinstance(realization, WienerRealization):

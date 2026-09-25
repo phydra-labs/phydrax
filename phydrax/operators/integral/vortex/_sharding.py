@@ -46,7 +46,7 @@ class VortexShardingPolicy(StrictModule, NonTrainableState):
         strategy: str = "target-sharded",
         accumulation: str = "deterministic",
         memory_budget_bytes: int = 2**30,
-    ):
+    ) -> None:
         if (
             not isinstance(mesh, Mesh)
             or strategy

@@ -44,7 +44,7 @@ class AffineSubspaceLayout(StrictModule):
         event_shape,
         quadrature_weights: ArrayLike | None = None,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         events = tuple(event_shape)
         if not events or any(size <= 0 for size in events):
             raise ValueError("event_shape must contain positive dimensions.")
@@ -149,7 +149,7 @@ class SubspaceGaussianLaw(AbstractProbabilityLaw):
     coefficient_law: AbstractProbabilityLaw
     support_tolerance: Array
 
-    def __init__(self, layout, coefficient_law, /, *, support_tolerance=1e-8):
+    def __init__(self, layout, coefficient_law, /, *, support_tolerance=1e-8) -> None:
         from ..uq._factor_law import GaussianFactorLaw
 
         if not isinstance(layout, AffineSubspaceLayout):
@@ -223,7 +223,9 @@ class SubspaceGaussianDiffusion(StrictModule):
     coefficient_process: AbstractGaussianDiffusion
     process_id: str = eqx.field(static=True)
 
-    def __init__(self, layout, coefficient_process, /, *, process_id: str | None = None):
+    def __init__(
+        self, layout, coefficient_process, /, *, process_id: str | None = None
+    ) -> None:
         if not isinstance(layout, AffineSubspaceLayout):
             raise TypeError("layout must be an AffineSubspaceLayout.")
         if not isinstance(coefficient_process, AbstractGaussianDiffusion):

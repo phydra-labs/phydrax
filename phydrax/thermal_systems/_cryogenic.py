@@ -41,7 +41,7 @@ class CryogenicTankModel:
     vapor_gas_constant_j_kg_k: float
     vent_set_pressure_pa: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         values = (
             self.tank_volume_m3,
             self.liquid_density_kg_m3,

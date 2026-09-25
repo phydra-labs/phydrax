@@ -50,7 +50,7 @@ class SpectralPDEResidualLoss(AbstractOperatorLossTerm):
     weight: float = 1.0
     query_name: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("Spectral PDE residual loss names must be non-empty.")
         if not isinstance(self.compiled, CompiledSpectralResidual):

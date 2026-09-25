@@ -321,7 +321,7 @@ class HMACOIDCTokenValidator:
         /,
         *,
         clock: Clock | None = None,
-    ):
+    ) -> None:
         if not keys:
             raise ValueError("At least one OIDC signing key is required.")
         by_id = {key.key_id: key.secret for key in keys}
@@ -410,7 +410,7 @@ class HMACOIDCTokenIssuer:
         /,
         *,
         clock: Clock | None = None,
-    ):
+    ) -> None:
         self._configuration = configuration
         self._signing_key = signing_key
         self._clock = SystemClock() if clock is None else clock

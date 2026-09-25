@@ -56,7 +56,7 @@ class MLBatch(StrictModule):
         groups: ArrayLike | None = None,
         feature_schema: FeatureSchema | None = None,
         target_schema: TargetSchema | None = None,
-    ):
+    ) -> None:
         if isinstance(features, SparseFeatures):
             features_ = features
             case_shape = features.case_shape

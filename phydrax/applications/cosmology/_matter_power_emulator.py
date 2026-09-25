@@ -224,7 +224,7 @@ class MatterPowerEvaluationRequest(StrictModule, NonTrainableState):
         wavenumbers: ArrayLike,
         descriptor: MatterPowerDescriptor,
         /,
-    ):
+    ) -> None:
         if not isinstance(cosmology, CosmologyModelRequest):
             raise TypeError("cosmology must be CosmologyModelRequest.")
         if not isinstance(descriptor, MatterPowerDescriptor):
@@ -291,7 +291,7 @@ class EmulatorSupportEvidence(StrictModule, NonTrainableState):
         /,
         *,
         provider_support_complete: bool,
-    ):
+    ) -> None:
         bounds = tuple(
             self._validated_bounds(value, name)
             for value, name in (
@@ -365,7 +365,7 @@ class MatterPowerProcessEvidence(StrictModule, NonTrainableState):
         result_uncompressed_bytes: int,
         standard_output_bytes: int,
         standard_error_bytes: int,
-    ):
+    ) -> None:
         code = int(return_code)
         elapsed = float(elapsed_seconds)
         counts = tuple(
@@ -433,7 +433,7 @@ class ExternalMatterPowerResult(StrictModule, NonTrainableState):
         support: EmulatorSupportEvidence,
         reference_manifest: ReferenceArtifactManifest,
         /,
-    ):
+    ) -> None:
         if not isinstance(table, MatterPowerTable):
             raise TypeError("table must be MatterPowerTable.")
         if not isinstance(artifact, ScientificArtifactEnvelope):
@@ -480,7 +480,7 @@ class MatterPowerProviderError(RuntimeError):
         *,
         adapter_status: AdapterStatus,
         support: EmulatorSupportEvidence | None = None,
-    ):
+    ) -> None:
         reason_ = str(reason).strip()
         message_ = str(message).strip()
         if not reason_ or not message_:
@@ -531,7 +531,7 @@ class SubprocessMatterPowerBackend(AbstractExternalBackend, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         executable = str(application).strip()
         artifact_path = str(Path(reference_artifact_path).expanduser().resolve())
         arguments_ = tuple(str(argument) for argument in arguments)

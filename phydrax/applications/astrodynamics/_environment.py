@@ -35,7 +35,7 @@ class SpaceWeatherTable(StrictModule, NonTrainableState):
     provenance: AstrodynamicsDataProvenance
     product_id: str = eqx.field(static=True)
 
-    def __init__(self, times, f107, f107_average, ap, provenance, /):
+    def __init__(self, times, f107, f107_average, ap, provenance, /) -> None:
         values = tuple(
             np.asarray(value, dtype=np.float64)
             for value in (times, f107, f107_average, ap)
@@ -80,7 +80,7 @@ class ExponentialAtmosphere(StrictModule, NonTrainableState):
 
     def __init__(
         self, reference_radius, reference_density, reference_altitude, scale_height, /
-    ):
+    ) -> None:
         self.reference_radius = jnp.asarray(reference_radius).reshape(())
         self.reference_density = jnp.asarray(reference_density).reshape(())
         self.reference_altitude = jnp.asarray(reference_altitude).reshape(())
@@ -129,7 +129,7 @@ class AtmosphericDrag(AbstractAstrodynamicsForce):
         drag_coefficient,
         area_to_mass,
         angular_velocity=(0.0, 0.0, 7.292115146706979e-5),
-    ):
+    ) -> None:
         if not isinstance(atmosphere, ExponentialAtmosphere):
             raise TypeError("atmosphere must be an ExponentialAtmosphere.")
         if not isinstance(context, AstrodynamicsContext):
@@ -275,7 +275,7 @@ class SolarRadiationPressure(AbstractAstrodynamicsForce):
         force_id="solar-radiation-pressure",
         source_provider_id,
         occulting_provider_id,
-    ):
+    ) -> None:
         if not callable(source_position) or not callable(occulting_position):
             raise TypeError("Radiation ephemeris providers must be callable.")
         if not isinstance(eclipse, EclipseGeometry):
@@ -385,7 +385,7 @@ class ThermalRadiationPressure(AbstractAstrodynamicsForce):
         /,
         *,
         force_id: str = "thermal-radiation-pressure",
-    ):
+    ) -> None:
         if not isinstance(radiation, SolarRadiationPressure):
             raise TypeError("radiation must be a SolarRadiationPressure.")
         self.radiation = radiation

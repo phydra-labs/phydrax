@@ -90,7 +90,7 @@ class H5MDTrajectoryPlan(
     source_id: str = eqx.field(static=True)
     sink_id: str = eqx.field(static=True)
 
-    def __init__(self, path: str | Path, /):
+    def __init__(self, path: str | Path, /) -> None:
         target = str(Path(path))
         self.path = target
         identifier = canonical_fingerprint({"kind": "atomistic-h5md", "path": target})
@@ -104,7 +104,7 @@ class H5MDTrajectoryPlan(
 
 
 class H5MDTrajectoryWriter(AtomisticTrajectoryWriter):
-    def __init__(self, path: str, sink_id: str, /, *, append: bool):
+    def __init__(self, path: str, sink_id: str, /, *, append: bool) -> None:
         self.h5py = _h5py()
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -161,7 +161,7 @@ class H5MDTrajectoryWriter(AtomisticTrajectoryWriter):
     def _frame_datasets(self):
         result = []
 
-        def collect(name, value):
+        def collect(name, value) -> None:
             if isinstance(value, self.h5py.Dataset) and name != "id":
                 result.append((name, value))
 
@@ -262,7 +262,7 @@ class H5MDTrajectoryWriter(AtomisticTrajectoryWriter):
 
 
 class H5MDTrajectoryReader(AtomisticTrajectoryReader):
-    def __init__(self, path: str, source_id: str, /):
+    def __init__(self, path: str, source_id: str, /) -> None:
         self.handle = _h5py().File(path, "r")
         if not np.array_equal(
             np.asarray(self.handle["h5md"].attrs["version"]), np.asarray((1, 1))
@@ -354,7 +354,7 @@ class ExtendedXYZTrajectoryPlan(
     source_id: str = eqx.field(static=True)
     sink_id: str = eqx.field(static=True)
 
-    def __init__(self, path: str | Path, /):
+    def __init__(self, path: str | Path, /) -> None:
         target = str(Path(path))
         self.path = target
         identifier = canonical_fingerprint(
@@ -370,7 +370,7 @@ class ExtendedXYZTrajectoryPlan(
 
 
 class ExtendedXYZTrajectoryWriter(AtomisticTrajectoryWriter):
-    def __init__(self, path: str, sink_id: str, /, *, append: bool):
+    def __init__(self, path: str, sink_id: str, /, *, append: bool) -> None:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         self.units = None
@@ -445,7 +445,7 @@ class ExtendedXYZTrajectoryWriter(AtomisticTrajectoryWriter):
 
 
 class ExtendedXYZTrajectoryReader(AtomisticTrajectoryReader):
-    def __init__(self, path: str, source_id: str, /):
+    def __init__(self, path: str, source_id: str, /) -> None:
         self.handle = open(path, encoding="utf-8")
         self.source_id = source_id
         self.units = None

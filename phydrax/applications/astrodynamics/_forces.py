@@ -62,7 +62,7 @@ class PointMassGravity(AbstractAstrodynamicsForce):
         /,
         *,
         force_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         coupling_host = jnp.asarray(mu).reshape(())
@@ -129,7 +129,7 @@ class ConstantAcceleration(AbstractAstrodynamicsForce):
         /,
         *,
         force_id: str,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         value = jnp.asarray(acceleration)
@@ -173,7 +173,7 @@ class CompositeAstrodynamicsForce(AbstractAstrodynamicsForce):
         terms: tuple[AbstractAstrodynamicsForce, ...],
         context: AstrodynamicsContext,
         /,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         terms_ = tuple(terms)

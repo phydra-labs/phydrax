@@ -18,7 +18,7 @@ class StrongToIntegralRewriteSpec:
     test_space_id: str | None = None
     boundary_evidence_id: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.equation or not self.coordinate or not self.trace_ids:
             raise ValueError(
                 "Integral rewrite requires equation, coordinate, and traces."

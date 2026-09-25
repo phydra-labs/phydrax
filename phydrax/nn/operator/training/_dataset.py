@@ -38,7 +38,7 @@ class OperatorSplitPolicy:
     order_by: str | None = None
     seed: int = 0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.group_by != "all":
             keys = tuple(str(key) for key in self.group_by)
             if len(set(keys)) != len(keys) or any(not key for key in keys):
@@ -62,7 +62,7 @@ class OperatorDataset:
     case_log_weights: Array | None = None
     case_mask: Array | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if len(self.batch.case_shape) != 1:
             raise ValueError("OperatorDataset requires exactly one case axis.")
         if not isinstance(self.targets, OperatorTargetBatch):

@@ -50,7 +50,7 @@ class ShellMaterialParameters(StrictModule, NonTrainableState):
         /,
         *,
         parameter_id: str | None = None,
-    ):
+    ) -> None:
         raw_matrix = np.asarray(membrane_matrix)
         if raw_matrix.shape != (3, 3):
             raise ValueError("membrane_matrix must have shape (3, 3).")
@@ -289,7 +289,7 @@ class TriangularShellPlan(StrictModule, NonTrainableState):
         minimum_orientation_ratio: float = 1.0e-8,
         contact_distance_tolerance: float = 1.0e-10,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         raw_triangles = np.asarray(triangles)
         if raw_triangles.ndim != 2 or raw_triangles.shape[1:] != (3,):
             raise ValueError("triangles must have shape (triangle_count, 3).")
@@ -481,7 +481,9 @@ class PreparedTriangularShell(StrictModule, NonTrainableState):
     node_count: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: TriangularShellPlan, reference_positions: ArrayLike, /):
+    def __init__(
+        self, plan: TriangularShellPlan, reference_positions: ArrayLike, /
+    ) -> None:
         raw_reference = np.asarray(reference_positions)
         if raw_reference.ndim != 2 or raw_reference.shape[1:] != (3,):
             raise ValueError("reference_positions must have shape (node_count, 3).")
@@ -1194,7 +1196,7 @@ class ShellDynamicsPlan(StrictModule, NonTrainableState):
         maximum_displacement_ratio: float = 0.25,
         fixed_tolerance: float = 1.0e-10,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(shell, TriangularShellPlan):
             raise TypeError("shell must be a TriangularShellPlan.")
         damping_ = float(damping)
@@ -1244,7 +1246,9 @@ class PreparedShellDynamics(StrictModule, NonTrainableState):
     stable_step_size: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ShellDynamicsPlan, shell: PreparedTriangularShell, /):
+    def __init__(
+        self, plan: ShellDynamicsPlan, shell: PreparedTriangularShell, /
+    ) -> None:
         masses = np.asarray(shell.nodal_mass)
         stiffness = np.asarray(shell.nodal_stiffness)
         mobile = ~np.asarray(shell.fixed_mask)

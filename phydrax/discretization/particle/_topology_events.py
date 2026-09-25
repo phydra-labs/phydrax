@@ -31,7 +31,7 @@ class TopologyEventPlan(StrictModule, NonTrainableState):
         event_capacity: int,
         dimension: int,
         /,
-    ):
+    ) -> None:
         owner = int(owner_capacity)
         children = int(maximum_children)
         events = int(event_capacity)

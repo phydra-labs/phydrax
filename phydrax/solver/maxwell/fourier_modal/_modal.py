@@ -31,7 +31,7 @@ class ModalPropagationPolicy(StrictModule, NonTrainableState):
     maximum_growth_exponent: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, *, maximum_growth_exponent: float = 60.0):
+    def __init__(self, *, maximum_growth_exponent: float = 60.0) -> None:
         maximum = float(maximum_growth_exponent)
         if maximum <= 0.0:
             raise ValueError("maximum_growth_exponent must be positive.")

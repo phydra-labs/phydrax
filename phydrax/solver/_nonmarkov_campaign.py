@@ -39,7 +39,7 @@ class NonMarkovianComparisonResult(StrictModule):
         pseudomode_times: ArrayLike,
         heom_times: ArrayLike,
         memory_times: ArrayLike,
-    ):
+    ) -> None:
         pseudomode = jnp.asarray(pseudomode_states)
         heom = jnp.asarray(heom_states)
         memory = jnp.asarray(memory_states)
@@ -94,7 +94,7 @@ class SpinBosonComparisonResult(StrictModule):
         *,
         heom_times: ArrayLike,
         memory_times: ArrayLike,
-    ):
+    ) -> None:
         heom = jnp.asarray(heom_states)
         memory = jnp.asarray(memory_states)
         heom_grid = jnp.asarray(heom_times)

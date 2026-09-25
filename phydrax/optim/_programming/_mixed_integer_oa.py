@@ -72,7 +72,7 @@ class ConicOuterApproximation(AbstractMixedIntegerMethod):
         duplicate_tolerance: float = 1e-9,
         absolute_gap: float = 1e-7,
         relative_gap: float = 1e-7,
-    ):
+    ) -> None:
         master_ = NativeMixedIntegerBranchAndBound() if master is None else master
         conic_ = ConvexSolvePolicy(NativeHomogeneousConic()) if conic is None else conic
         if not isinstance(master_, AbstractMixedIntegerMethod):

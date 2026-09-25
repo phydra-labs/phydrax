@@ -53,7 +53,7 @@ class FreeEnergyLatticeBoltzmannProblem(StrictModule, NonTrainableState):
         *,
         reference_density: float = 1.0,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Free-energy problem name must be non-empty.")

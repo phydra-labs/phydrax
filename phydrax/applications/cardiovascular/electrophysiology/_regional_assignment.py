@@ -62,7 +62,7 @@ class RegionalPhenotype(StrictModule, NonTrainableState):
     phenotype_id: str = eqx.field(static=True)
     reaction_index: int = eqx.field(static=True)
 
-    def __init__(self, phenotype_id: str, reaction_index: int, /):
+    def __init__(self, phenotype_id: str, reaction_index: int, /) -> None:
         self.phenotype_id = _identifier(phenotype_id, "phenotype_id")
         if not isinstance(reaction_index, int) or isinstance(reaction_index, bool):
             raise TypeError("reaction_index must be an integer.")
@@ -84,7 +84,7 @@ class AnatomicalRegionSelector(StrictModule, NonTrainableState):
         /,
         *,
         stable_node_ids: tuple[int, ...] = (),
-    ):
+    ) -> None:
         codes = tuple(region_codes)
         node_ids = tuple(stable_node_ids)
         if not codes:
@@ -123,7 +123,7 @@ class RegionalHeterogeneity(StrictModule, NonTrainableState):
         capacitance_scale: float = 1.0,
         ionic_current_scale: float = 1.0,
         state_update_scale: float = 1.0,
-    ):
+    ) -> None:
         self.phenotype_index = _phenotype_index(phenotype_index)
         self.conductivity_scale = _nonnegative_scale(
             conductivity_scale, "conductivity_scale"
@@ -157,7 +157,7 @@ class ScarCore(StrictModule, NonTrainableState):
         capacitance_scale: float = 1.0,
         ionic_current_scale: float = 0.0,
         state_update_scale: float = 0.0,
-    ):
+    ) -> None:
         self.phenotype_index = _phenotype_index(phenotype_index)
         self.conductivity_scale = _nonnegative_scale(
             conductivity_scale, "conductivity_scale"
@@ -191,7 +191,7 @@ class ScarBorderZone(StrictModule, NonTrainableState):
         capacitance_scale: float = 1.0,
         ionic_current_scale: float = 0.5,
         state_update_scale: float = 1.0,
-    ):
+    ) -> None:
         self.phenotype_index = _phenotype_index(phenotype_index)
         self.conductivity_scale = _nonnegative_scale(
             conductivity_scale, "conductivity_scale"
@@ -225,7 +225,7 @@ class DiffuseFibrosis(StrictModule, NonTrainableState):
         capacitance_scale: float = 1.0,
         ionic_current_scale: float = 0.8,
         state_update_scale: float = 1.0,
-    ):
+    ) -> None:
         self.phenotype_index = _phenotype_index(phenotype_index)
         self.conductivity_scale = _nonnegative_scale(
             conductivity_scale, "conductivity_scale"
@@ -259,7 +259,7 @@ class AblationLesion(StrictModule, NonTrainableState):
         capacitance_scale: float = 1.0,
         ionic_current_scale: float = 0.0,
         state_update_scale: float = 0.0,
-    ):
+    ) -> None:
         self.phenotype_index = _phenotype_index(phenotype_index)
         self.conductivity_scale = _nonnegative_scale(
             conductivity_scale, "conductivity_scale"
@@ -318,7 +318,7 @@ class RegionalAssignmentRule(StrictModule, NonTrainableState):
         /,
         *,
         rule_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(selector, AnatomicalRegionSelector):
             raise TypeError("selector must be an AnatomicalRegionSelector.")
         if not isinstance(
@@ -416,7 +416,7 @@ class RegionalElectrophysiologyPlan(StrictModule, NonTrainableState):
         *,
         default_phenotype_index: int = 0,
         rules: tuple[RegionalAssignmentRule, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(node_count, int) or isinstance(node_count, bool):
             raise TypeError("node_count must be an integer.")
         if node_count <= 0:

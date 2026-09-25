@@ -45,7 +45,7 @@ class LocalizedHallNetworkPlan(StrictModule, NonTrainableState):
         /,
         *,
         residual_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         rates = np.array(transition_rates, dtype=np.float64, copy=True)
         injection = np.asarray(contact_injection, dtype=np.float64)
         extraction = np.asarray(contact_extraction, dtype=np.float64)

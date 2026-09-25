@@ -38,7 +38,9 @@ class ConstantMobility(StrictModule):
 
     value: Array
 
-    def __init__(self, value: ArrayLike, /, *, unit: UnitDefinition = MOBILITY_UNIT):
+    def __init__(
+        self, value: ArrayLike, /, *, unit: UnitDefinition = MOBILITY_UNIT
+    ) -> None:
         self.value = _positive_scalar(value, unit, MOBILITY_UNIT, "mobility")
 
     def __call__(self, total_ionized_density: ArrayLike, /) -> Array:
@@ -70,7 +72,7 @@ class DopingDependentMobility(StrictModule):
         mobility_unit: UnitDefinition = MOBILITY_UNIT,
         density_unit: UnitDefinition = PER_CUBIC_METER,
         provenance: str,
-    ):
+    ) -> None:
         self.minimum = _positive_scalar(
             minimum, mobility_unit, MOBILITY_UNIT, "minimum mobility"
         )
@@ -157,7 +159,7 @@ class SemiconductorMaterial(StrictModule):
         energy_unit: UnitDefinition = ELECTRONVOLT,
         temperature_unit: UnitDefinition = KELVIN,
         thermal_conductivity_unit: UnitDefinition = THERMAL_CONDUCTIVITY_UNIT,
-    ):
+    ) -> None:
         self.name = _text(name, "material name")
         self.provenance = _text(provenance, "material provenance")
         self.permittivity = _positive_scalar(
@@ -359,7 +361,7 @@ class DielectricMaterial(StrictModule):
         lattice_thermal_conductivity=0.0,
         permittivity_unit: UnitDefinition = PERMITTIVITY_UNIT,
         thermal_conductivity_unit: UnitDefinition = THERMAL_CONDUCTIVITY_UNIT,
-    ):
+    ) -> None:
         self.name = _text(name, "material name")
         self.provenance = _text(provenance, "material provenance")
         self.permittivity = _positive_scalar(

@@ -68,7 +68,7 @@ class MappedMACMarkerTransferPlan(StrictModule, NonTrainableState):
         route_width: int | None = None,
         condition_limit: float = 1.0e10,
         accumulation: MACMarkerAccumulation = "deterministic",
-    ):
+    ) -> None:
         if not isinstance(geometry, PreparedMappedMACGeometry):
             raise TypeError("geometry must be PreparedMappedMACGeometry.")
         if not isinstance(markers, LagrangianMarkerDiscretization):
@@ -122,7 +122,7 @@ class PreparedMappedMACMarkerTransfer(StrictModule, NonTrainableState):
     accumulation: MACMarkerAccumulation = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MappedMACMarkerTransferPlan, /):
+    def __init__(self, plan: MappedMACMarkerTransferPlan, /) -> None:
         centers = tuple(
             value.reshape((-1, value.shape[-1])) for value in plan.geometry.face_centers
         )

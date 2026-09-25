@@ -108,7 +108,7 @@ class SciPyMinimize(AbstractMinimizationMethod):
 
     def __init__(
         self, method: str = "L-BFGS-B", /, *, options: dict[str, Any] | None = None
-    ):
+    ) -> None:
         identifier = str(method)
         if not identifier:
             raise ValueError("SciPy method must be non-empty.")
@@ -226,7 +226,7 @@ class NLoptMinimize(AbstractMinimizationMethod):
 
     algorithm: int = eqx.field(static=True)
 
-    def __init__(self, algorithm: int, /):
+    def __init__(self, algorithm: int, /) -> None:
         self.algorithm = int(algorithm)
 
     @property

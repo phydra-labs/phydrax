@@ -98,7 +98,7 @@ class MichelBondiAccretionPlan(StrictModule, NonTrainableState):
         bracket_samples: int = 96,
         absolute_tolerance: float = 1.0e-11,
         relative_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(eos, GammaLawEOS):
             raise TypeError("Michel--Bondi initial data require GammaLawEOS.")
         if float(eos.scale.speed_of_light) != 1.0:
@@ -533,7 +533,7 @@ class FishboneMoncriefTorusPlan(StrictModule, NonTrainableState):
         magnetic_seed_amplitude: float = 0.0,
         magnetic_seed_cutoff: float = 0.2,
         residual_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(eos, GammaLawEOS):
             raise TypeError("Fishbone--Moncrief data require GammaLawEOS.")
         if float(eos.scale.speed_of_light) != 1.0:

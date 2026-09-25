@@ -26,7 +26,7 @@ class PhasePermittivityLaw(StrictModule, NonTrainableState):
     phase_permittivities: Array
     law_id: str = eqx.field(static=True)
 
-    def __init__(self, phase_permittivities: ArrayLike, /, *, law_id: str):
+    def __init__(self, phase_permittivities: ArrayLike, /, *, law_id: str) -> None:
         values = np.asarray(phase_permittivities)
         identifier = str(law_id)
         if (
@@ -83,7 +83,7 @@ class PhaseElectrostaticCouplingPlan(StrictModule, NonTrainableState):
         *,
         ensemble: ElectrostaticEnsemble,
         gauss_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(permittivity, PhasePermittivityLaw):
             raise TypeError("permittivity must be PhasePermittivityLaw.")
         if ensemble not in ("fixed-charge", "fixed-voltage"):
@@ -194,7 +194,7 @@ class ElectrochemicalCouplingPlan(StrictModule, NonTrainableState):
         /,
         *,
         faraday_constant: ArrayLike,
-    ):
+    ) -> None:
         charges = np.asarray(valences)
         mobility = np.asarray(mobilities)
         faraday = np.asarray(faraday_constant)

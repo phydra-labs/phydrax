@@ -43,7 +43,7 @@ class FraunhoferImagingPlan(StrictModule, NonTrainableState):
         medium_wavenumber: ArrayLike,
         pupil_diameter: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(input_space, PlaneFieldSpace) or not isinstance(
             output_space, PlaneFieldSpace
         ):

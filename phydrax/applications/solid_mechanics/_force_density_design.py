@@ -65,7 +65,7 @@ class ForceDensityDesignConstraint(StrictModule, NonTrainableState):
         upper: Any = jnp.inf,
         constraint_id: str,
         depends_on_state: bool = True,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         identifier = str(constraint_id)
@@ -93,7 +93,7 @@ class ForceDensityStateSolver(AbstractStateSolver):
     plan: ForceDensityPlan
     decode_inputs: Callable = eqx.field(static=True)
 
-    def __init__(self, plan: ForceDensityPlan, decode_inputs: Callable, /):
+    def __init__(self, plan: ForceDensityPlan, decode_inputs: Callable, /) -> None:
         if not isinstance(plan, ForceDensityPlan):
             raise TypeError("plan must be a ForceDensityPlan.")
         if not callable(decode_inputs):
@@ -233,7 +233,7 @@ class ForceDensityDesignProblem(StrictModule, NonTrainableState):
         constraints: Sequence[ForceDensityDesignConstraint] = (),
         has_aux: bool = False,
         problem_id: str = "force-density-design",
-    ):
+    ) -> None:
         if not isinstance(plan, ForceDensityPlan):
             raise TypeError("plan must be a ForceDensityPlan.")
         if not callable(decode_inputs) or not callable(objective):

@@ -66,7 +66,7 @@ class LatentExecutionPolicy(StrictModule):
             "auto", "dense_points", "coord_separable", "hybrid", "full_tensor"
         ] = "auto",
         fallback: Literal["warn", "error", "silent"] = "warn",
-    ):
+    ) -> None:
         self.topology = topology
         self.layout = layout
         self.fallback = fallback
@@ -83,7 +83,7 @@ class _LatentTopologyPlan(StrictModule):
         requested: Literal["grouped", "flat", "best_effort_flat", "strict_flat"],
         effective: Literal["grouped", "flat"],
         fallback_message: str | None = None,
-    ):
+    ) -> None:
         self.requested = requested
         self.effective = effective
         self.fallback_message = fallback_message
@@ -157,7 +157,7 @@ class LatentContractionModel(
         scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
         **factor_models: _AbstractBaseModel,
-    ):
+    ) -> None:
         r"""Create a latent contraction model.
 
         **Keyword arguments:**
@@ -954,7 +954,7 @@ class Separable(_AbstractStructuredInputModel):
         split_input: int | None = None,
         scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         r"""Create a separable wrapper.
 
         **Keyword arguments:**

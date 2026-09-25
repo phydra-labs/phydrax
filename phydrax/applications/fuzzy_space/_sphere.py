@@ -46,7 +46,7 @@ class FuzzySphereTwoParticlePlan(StrictModule):
         pseudopotentials: Mapping[int, float],
         resources: SU2SectorResourcePolicy,
         /,
-    ):
+    ) -> None:
         flux = int(twice_monopole_flux)
         statistics_value = str(statistics)
         values = tuple(

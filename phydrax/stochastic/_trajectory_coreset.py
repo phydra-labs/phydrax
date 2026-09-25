@@ -50,7 +50,7 @@ class StochasticTrajectoryBlockView(StrictModule):
         *,
         block_length: int,
         stride: int = 1,
-    ):
+    ) -> None:
         if not isinstance(trajectory, StochasticTrajectory):
             raise TypeError("trajectory must be a StochasticTrajectory.")
         length = _positive_integer(block_length, name="block_length")

@@ -155,7 +155,7 @@ class _MixedIntegerBranchProblem(AbstractBranchAndBoundProblem):
         policy: MixedIntegerSolvePolicy,
         state: _NativeTemplateState,
         /,
-    ):
+    ) -> None:
         method = policy.method
         if not isinstance(method, NativeMixedIntegerBranchAndBound):
             raise TypeError("Native mixed-integer execution requires its native method.")
@@ -492,7 +492,7 @@ def _linear_bound_certificate(
     lower_proof, upper_proof = [None] * n, [None] * n
     supports = tuple(np.flatnonzero(row) for row in matrix)
 
-    def add(target, proof, scale):
+    def add(target, proof, scale) -> None:
         for index, value in proof.items():
             target[index] = target.get(index, 0.0) + scale * value
 

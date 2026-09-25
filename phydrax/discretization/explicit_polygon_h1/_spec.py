@@ -21,7 +21,7 @@ class ExplicitPolygonH1FieldSpec(StrictModule, NonTrainableState):
     component_shape: tuple[int, ...] = eqx.field(static=True)
     field_spec_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, /, *, component_shape: Sequence[int] = ()):
+    def __init__(self, name: str, /, *, component_shape: Sequence[int] = ()) -> None:
         name_ = str(name)
         shape = tuple(component_shape)
         if not name_:
@@ -46,7 +46,7 @@ class ExplicitPolygonH1QuadraturePolicy(StrictModule, NonTrainableState):
     facet_order: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, *, cell_order: int = 3, facet_order: int = 3):
+    def __init__(self, *, cell_order: int = 3, facet_order: int = 3) -> None:
         cell = int(cell_order)
         facet = int(facet_order)
         if cell <= 0 or facet <= 0:
@@ -74,7 +74,7 @@ class ExplicitPolygonH1QualificationPolicy(StrictModule, NonTrainableState):
         *,
         tolerance_multiplier: float = 4096.0,
         maximum_condition_number: float = 1.0e12,
-    ):
+    ) -> None:
         multiplier = float(tolerance_multiplier)
         condition = float(maximum_condition_number)
         if (
@@ -113,7 +113,7 @@ class ExplicitPolygonH1ResourceBudget(StrictModule, NonTrainableState):
         maximum_arity: int = 256,
         maximum_retained_bytes: int = 1 << 30,
         maximum_workspace_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_cells,

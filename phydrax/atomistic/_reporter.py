@@ -36,7 +36,7 @@ class AtomisticReporterPlan(StrictModule, NonTrainableState):
         | AtomisticFrameFields.CELL
         | AtomisticFrameFields.ENERGY,
         coordinate_domain: AtomisticSiteDomain = AtomisticSiteDomain.DOF_ATOMS,
-    ):
+    ) -> None:
         if not isinstance(sink, AbstractAtomisticTrajectorySinkPlan):
             raise TypeError("sink must be an atomistic trajectory sink plan.")
         stride_ = int(stride)

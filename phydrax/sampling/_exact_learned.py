@@ -101,7 +101,7 @@ class LearnedSupportTuple(StrictModule, NonTrainableState):
         parameter_names: Sequence[str] = (),
         parameter_lower: ArrayLike = (),
         parameter_upper: ArrayLike = (),
-    ):
+    ) -> None:
         target = _identifier(target_id, "target_id")
         geometry = _identifier(geometry_id, "geometry_id")
         shape = _positive_shape(configuration_shape, "configuration_shape")
@@ -470,7 +470,7 @@ class DelayedAcceptanceHMCPlan(StrictModule, NonTrainableState):
         leapfrog_steps: int,
         divergence_threshold: float = 1000.0,
         maximum_dimension: int = 4096,
-    ):
+    ) -> None:
         if not isinstance(support, LearnedSupportTuple):
             raise TypeError("support must be LearnedSupportTuple.")
         size = float(step_size)
@@ -961,7 +961,7 @@ class ScalarGaugeEquivariantFlow(AbstractGaugeEquivariantFlow):
         /,
         *,
         scale: float,
-    ):
+    ) -> None:
         if not isinstance(support, LearnedSupportTuple):
             raise TypeError("support must be LearnedSupportTuple.")
         scale_ = float(scale)
@@ -1021,7 +1021,7 @@ class GaugeFlowProposalPlan(StrictModule, NonTrainableState):
         *,
         maximum_dimension: int = 4096,
         equivariance_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         if not isinstance(support, LearnedSupportTuple):
             raise TypeError("support must be LearnedSupportTuple.")
         maximum = int(maximum_dimension)

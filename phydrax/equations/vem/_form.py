@@ -45,7 +45,7 @@ class VirtualElementRobinAction(StrictModule, NonTrainableState):
         /,
         *,
         action_id: str = "robin",
-    ):
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         if not field or not identifier:
@@ -90,7 +90,7 @@ class VirtualElementForm(StrictModule, NonTrainableState):
         /,
         *,
         properties: OperatorProperties | None = None,
-    ):
+    ) -> None:
         identifier = str(form_id)
         field = str(field_name)
         actions_ = tuple(actions)
@@ -154,7 +154,7 @@ class VirtualElementExecutionPolicy(StrictModule, NonTrainableState):
         quadrature_degree_offset: int = 2,
         stiffness_stabilization: VirtualElementStabilizationPolicy | None = None,
         mass_stabilization: VirtualElementStabilizationPolicy | None = None,
-    ):
+    ) -> None:
         realization_ = str(realization)
         accumulation_ = str(accumulation)
         offset = int(quadrature_degree_offset)
@@ -207,7 +207,7 @@ class VirtualElementExecutionContext(StrictModule):
         lift: object = None,
         lift_rate: object = None,
         user_args: object = None,
-    ):
+    ) -> None:
         if not isinstance(runtime, VirtualElementRuntimeData):
             raise TypeError("runtime must be VirtualElementRuntimeData.")
         self.runtime = runtime

@@ -99,7 +99,7 @@ class MPMRuntimeState(StrictModule):
         storage_state: object = None,
         lifecycle_state: object = None,
         /,
-    ):
+    ) -> None:
         self.particles = particles
         self.time = jnp.asarray(time)
         self.accepted_step = jnp.asarray(accepted_step, dtype=jnp.int32)

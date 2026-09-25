@@ -45,7 +45,7 @@ class MPMOutputPlan(StrictModule):
         compiled: CompiledMaterialPointProblem,
         target: str | Path,
         /,
-    ):
+    ) -> None:
         if not isinstance(compiled, CompiledMaterialPointProblem):
             raise TypeError("compiled must be CompiledMaterialPointProblem.")
         path = Path(target)
@@ -61,7 +61,7 @@ class MPMOutputPlan(StrictModule):
             }
         )
 
-    def initialize(self):
+    def initialize(self) -> None:
         h5py = _h5py()
         path = Path(self.hdf5_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -72,7 +72,7 @@ class MPMOutputPlan(StrictModule):
             handle.create_group("steps")
         self._write_xdmf()
 
-    def _validate(self, handle):
+    def _validate(self, handle) -> None:
         if (
             handle.attrs.get("output_id") != self.output_id
             or handle.attrs.get("compilation_id") != self.compiled.compilation_id
@@ -167,7 +167,7 @@ class MPMOutputPlan(StrictModule):
             identifier,
         )
 
-    def _write_xdmf(self):
+    def _write_xdmf(self) -> None:
         hdf5 = Path(self.hdf5_path)
         if not hdf5.exists():
             return
@@ -267,7 +267,7 @@ class MPMOutputPlan(StrictModule):
 class MPMBoundedOutputBuffer:
     """Host-side accepted-output buffer with explicit backpressure."""
 
-    def __init__(self, maximum_items: int):
+    def __init__(self, maximum_items: int) -> None:
         maximum = int(maximum_items)
         if maximum <= 0:
             raise ValueError("maximum_items must be positive.")
@@ -278,7 +278,7 @@ class MPMBoundedOutputBuffer:
     def size(self):
         return len(self._queue)
 
-    def push(self, state: MPMRuntimeState):
+    def push(self, state: MPMRuntimeState) -> None:
         if len(self._queue) >= self.maximum_items:
             raise BufferError("MPM output backpressure capacity reached.")
         self._queue.append(state)

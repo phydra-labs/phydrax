@@ -60,7 +60,7 @@ class WeightSpaceRecurrence(StrictModule, ParameterOwner):
         input_scale: float = 1e-2,
         dtype: Any = jnp.float32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.input_size = int(input_size)
         self.parameter_size = int(parameter_size)
         self.maximum_retention = float(maximum_retention)

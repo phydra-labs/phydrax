@@ -133,7 +133,7 @@ class HDivNormalBoundaryCondition(StrictModule):
         *,
         resistance: ArrayLike = 0.0,
         prescribed_flux: ArrayLike | None = None,
-    ):
+    ) -> None:
         identifiers = np.asarray(face_global_ids)
         if identifiers.ndim != 1 or not np.issubdtype(identifiers.dtype, np.integer):
             raise TypeError("face_global_ids must be one rank-1 integer array.")
@@ -615,7 +615,7 @@ class HDivStokesPlan(StrictModule):
         *,
         penalty: float = 20.0,
         normal_boundaries: Sequence[HDivNormalBoundaryCondition] = (),
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh) or any(
             block.cell_kind != "tetrahedron" for block in mesh.blocks
         ):

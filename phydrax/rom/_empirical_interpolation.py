@@ -161,7 +161,7 @@ class PreparedEmpiricalInterpolation(StrictModule, NonTrainableState):
     condition_number: float = eqx.field(static=True)
     maximum_reproduction_error: float = eqx.field(static=True)
 
-    def __init__(self, artifact: EmpiricalInterpolationArtifact, /):
+    def __init__(self, artifact: EmpiricalInterpolationArtifact, /) -> None:
         if not isinstance(artifact, EmpiricalInterpolationArtifact):
             raise TypeError("artifact must be EmpiricalInterpolationArtifact.")
         self.node_indices = jnp.asarray(artifact.node_indices, dtype=jnp.int32)

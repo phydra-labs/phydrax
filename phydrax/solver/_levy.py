@@ -72,7 +72,7 @@ class LevySDEProblem(StrictModule):
         dispersion: LevySDEVectorField | None = None,
         args: Any = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(drift):
             raise TypeError("drift must be callable.")
         if not isinstance(driver, AbstractLevyProcess):
@@ -147,7 +147,7 @@ class LevySDESolverDiagnostics(StrictModule):
         num_steps: int,
         scheme: LevySDEScheme,
         small_jump_approximation: LevySmallJumpApproximation,
-    ):
+    ) -> None:
         complete = jnp.asarray(complete_above_cutoff, dtype=jnp.bool_)
         counts = jnp.asarray(num_large_jumps, dtype=jnp.int32)
         radii = jnp.asarray(smallest_radius, dtype=jnp.float64)
@@ -208,7 +208,7 @@ class LevySDESolution(StrictModule):
         solver_name: str,
         approximation_id: str,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(realization, LevyProcessRealization):
             raise TypeError("realization must be a LevyProcessRealization.")
         if not isinstance(series, LevyJumpSeries):

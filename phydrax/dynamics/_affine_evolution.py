@@ -26,7 +26,7 @@ class PreparedAffineLinearEvolution(StrictModule, NonTrainableState):
     source: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, matrix: ArrayLike, source: ArrayLike, /):
+    def __init__(self, matrix: ArrayLike, source: ArrayLike, /) -> None:
         matrix_ = jnp.asarray(matrix)
         source_ = jnp.asarray(source, dtype=matrix_.dtype)
         if matrix_.ndim != 2 or matrix_.shape[0] != matrix_.shape[1]:

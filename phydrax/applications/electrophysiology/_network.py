@@ -133,7 +133,7 @@ class NeuralCellPlan(StrictModule):
         detector_compartment=0,
         threshold_mV=None,
         rearm_mV=None,
-    ):
+    ) -> None:
         if not isinstance(cell_id, str) or not cell_id:
             raise ValueError("cell_id must be a nonempty string.")
         if isinstance(model, PreparedCableSolver):
@@ -183,7 +183,7 @@ class NeuralIonCoupling(StrictModule, NonTrainableState):
     current: Callable = eqx.field(static=True)
     coupling_id: str = eqx.field(static=True)
 
-    def __init__(self, cell_id, runtime, current, /, *, coupling_id):
+    def __init__(self, cell_id, runtime, current, /, *, coupling_id) -> None:
         if not isinstance(cell_id, str) or not cell_id:
             raise ValueError("cell_id must be a nonempty string.")
         if not isinstance(runtime, PreparedIonDynamics):
@@ -210,7 +210,7 @@ class NeuralChannelCoupling(StrictModule):
 
     def __init__(
         self, cell_id, runtime, open_state, single_channel_conductance_uS, reversal_mV, /
-    ):
+    ) -> None:
         if not isinstance(cell_id, str) or not cell_id:
             raise ValueError("cell_id must be a nonempty string.")
         if not isinstance(runtime, PreparedMarkovChannel):
@@ -285,7 +285,7 @@ class NeuralNetworkPlan(StrictModule):
         external_spikes=(),
         ion_couplings=(),
         channel_couplings=(),
-    ):
+    ) -> None:
         cells = tuple(cells)
         if not cells or any(not isinstance(cell, NeuralCellPlan) for cell in cells):
             raise ValueError("cells must contain native NeuralCellPlan values.")

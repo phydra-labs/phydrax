@@ -58,7 +58,7 @@ class LatticeBoltzmannMethodPlan(StrictModule, NonTrainableState):
         /,
         *,
         forcing: GuoForcingPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(collision, _COLLISION_TYPES):
             raise TypeError("collision must be a supported LBM collision plan.")
         if forcing is not None and not isinstance(forcing, GuoForcingPlan):
@@ -139,7 +139,7 @@ class PreparedLatticeBoltzmannMethodPlan(StrictModule, NonTrainableState):
         forcing: GuoForcingPlan | None,
         method_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(collision, PreparedLatticeBoltzmannCollision):
             raise TypeError("collision must be PreparedLatticeBoltzmannCollision.")
         if forcing is not None and not isinstance(forcing, GuoForcingPlan):

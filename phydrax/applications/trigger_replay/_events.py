@@ -92,7 +92,7 @@ class EventBuildingPlan:
     maximum_timestamp_spread: int
     plan_id: str
 
-    def __init__(self, required_source_ids, /, *, maximum_timestamp_spread: int):
+    def __init__(self, required_source_ids, /, *, maximum_timestamp_spread: int) -> None:
         sources = tuple(sorted(str(value).strip() for value in required_source_ids))
         spread = int(maximum_timestamp_spread)
         if (

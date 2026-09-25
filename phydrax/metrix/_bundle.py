@@ -33,7 +33,7 @@ class VectorBundleConnection(StrictModule):
         *,
         chart: CoordinateChart,
         fiber_dimension: int,
-    ):
+    ) -> None:
         if not callable(coefficients):
             raise TypeError("Bundle-connection coefficients must be callable.")
         if not isinstance(chart, CoordinateChart):
@@ -82,7 +82,7 @@ class _GaugeTransformedCoefficients(StrictModule):
         connection: VectorBundleConnection,
         gauge: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         self.connection = connection
         self.gauge = gauge
 

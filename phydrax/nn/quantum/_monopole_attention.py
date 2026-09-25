@@ -57,7 +57,7 @@ class MonopoleAttentionAmplitude(StrictModule, ParameterOwner):
         determinant_count: int = 4,
         component_indices: Sequence[int] | None = None,
         maximum_parameter_elements: int = 20_000_000,
-    ):
+    ) -> None:
         particles = int(particle_count)
         flux = int(twice_monopole_flux)
         hidden = int(hidden_dimension)

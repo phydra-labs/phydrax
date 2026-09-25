@@ -82,7 +82,7 @@ class _DepthwiseSpectralConvND(StrictModule):
         channels: int,
         n_modes: int | Sequence[int],
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.channels = int(channels)
         self.n_modes = _mode_tuple(n_modes)
         self.active_modes = self.n_modes
@@ -178,7 +178,7 @@ class _ProjectedProductFourierMixer(StrictModule):
         spectral_channel_mixing: SpectralChannelMixing,
         aliasing: AliasingPolicy,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.channels = int(channels)
         self.n_modes = _mode_tuple(n_modes)
         self.interaction_order = int(interaction_order)
@@ -282,7 +282,7 @@ class _RMSNorm(StrictModule):
     scale: Array
     eps: float
 
-    def __init__(self, channels: int, /, *, eps: float):
+    def __init__(self, channels: int, /, *, eps: float) -> None:
         self.scale = jnp.ones((int(channels),), dtype=jnp.float64)
         self.eps = float(eps)
         if self.eps <= 0.0:
@@ -315,7 +315,7 @@ class _HigherOrderFeedForward(StrictModule):
         activation: Activation,
         dropout: float,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         hidden_channels = int(channels) * int(expansion)
         if hidden_channels <= 0:
             raise ValueError("ffn_expansion must be positive.")
@@ -377,7 +377,7 @@ class _HigherOrderFNOBlock(StrictModule):
         dropout: float,
         residual: bool,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         mixer_key, feedforward_key = jr.split(key)
         self.spectral = _ProjectedProductFourierMixer(
             channels=channels,
@@ -503,7 +503,7 @@ class HOFNO(AbstractOperatorModel):
         source_key: str | None = None,
         scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
         self.n_modes = _mode_tuple(n_modes)

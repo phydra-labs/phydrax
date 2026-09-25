@@ -67,7 +67,7 @@ class ControlTrajectory(StrictModule):
         method_id: str,
         discretization_id: str,
         approximation_id: str,
-    ):
+    ) -> None:
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("ControlTrajectory time_grid must be a TimeGrid.")
         cases = tuple(case_shape)
@@ -176,7 +176,7 @@ class ControlResult(StrictModule):
         feasibility: SampledControlFeasibility,
         result_namespace: str,
         method_id: str,
-    ):
+    ) -> None:
         if not isinstance(trajectory, ControlTrajectory):
             raise TypeError("ControlResult trajectory must be a ControlTrajectory.")
         if not isinstance(sampled_loss, SampledControlLoss):

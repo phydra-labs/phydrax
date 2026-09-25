@@ -45,7 +45,7 @@ class LatticeDynamicsProviderCapabilities(StrictModule, NonTrainableState):
         born_effective_charges: bool = False,
         dielectric_tensor: bool = False,
         scalar_relativistic: bool = True,
-    ):
+    ) -> None:
         self.second_order_force_constants = bool(second_order_force_constants)
         self.third_order_force_constants = bool(third_order_force_constants)
         self.born_effective_charges = bool(born_effective_charges)
@@ -101,7 +101,7 @@ class LatticeDynamicsRequest(StrictModule, NonTrainableState):
         spin_id: str,
         relativity_id: str,
         input_artifact_ids: tuple[str, ...],
-    ):
+    ) -> None:
         orders = tuple(requested_orders)
         if (
             not orders
@@ -187,7 +187,7 @@ class LatticeDynamicsArtifactSet(StrictModule, NonTrainableState):
         input_digest: str,
         rights_id: str,
         first_principles_artifact_id: str | None = None,
-    ):
+    ) -> None:
         if second_order is not None and not isinstance(
             second_order, SecondOrderForceConstants
         ):
@@ -328,7 +328,7 @@ class CallableLatticeDynamicsProvider(AbstractLatticeDynamicsProvider):
         capabilities: LatticeDynamicsProviderCapabilities,
         evaluator: Callable[[LatticeDynamicsRequest], LatticeDynamicsArtifactSet],
         /,
-    ):
+    ) -> None:
         if not isinstance(capabilities, LatticeDynamicsProviderCapabilities):
             raise TypeError("capabilities must be LatticeDynamicsProviderCapabilities.")
         if not callable(evaluator):

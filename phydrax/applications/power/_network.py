@@ -21,7 +21,7 @@ class PowerBase(StrictModule):
 
     base_mva: float = 100.0
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         if not isfinite(self.base_mva) or self.base_mva <= 0:
             raise ValueError("base_mva must be finite and positive.")
 
@@ -189,7 +189,7 @@ class CompiledNetwork(StrictModule):
         )
 
 
-def _unique_ids(values, owner):
+def _unique_ids(values, owner) -> None:
     ids = tuple(value.id for value in values)
     if any(not isinstance(value, str) or not value for value in ids) or len(
         set(ids)
@@ -197,7 +197,7 @@ def _unique_ids(values, owner):
         raise ValueError(f"{owner} IDs must be unique nonempty strings.")
 
 
-def _finite(values, owner):
+def _finite(values, owner) -> None:
     if any(not isfinite(value) for value in values):
         raise ValueError(f"{owner} must be finite.")
 

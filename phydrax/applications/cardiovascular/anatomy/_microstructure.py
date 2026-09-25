@@ -57,7 +57,7 @@ class VentricularLineField(StrictModule):
         /,
         *,
         line_id: str,
-    ):
+    ) -> None:
         direction_ = jnp.asarray(direction)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if direction_.ndim != 2 or direction_.shape[-1] != 3:
@@ -88,7 +88,7 @@ class CardiacMaterialFrame(StrictModule):
         /,
         *,
         frame_id: str,
-    ):
+    ) -> None:
         fiber_ = jnp.asarray(fiber)
         sheet_ = jnp.asarray(sheet, dtype=fiber_.dtype)
         normal_ = jnp.asarray(sheet_normal, dtype=fiber_.dtype)
@@ -124,7 +124,7 @@ class VentricularMicrostructureEvidence(StrictModule, NonTrainableState):
     nondegenerate: Array
     successful: Array
 
-    def __init__(self, **values):
+    def __init__(self, **values) -> None:
         self.transmural_gradient_norm = jnp.asarray(values["transmural_gradient_norm"])
         self.projected_longitudinal_gradient_norm = jnp.asarray(
             values["projected_longitudinal_gradient_norm"]
@@ -263,7 +263,7 @@ class VentricularMicrostructurePlan(StrictModule, NonTrainableState):
         helix_epicardium_degrees: float = -60.0,
         gradient_tolerance: float = 0.0,
         orthonormality_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         transmural = _nonempty(transmural_coordinate, "Transmural coordinate")
         longitudinal = _nonempty(longitudinal_coordinate, "Longitudinal coordinate")
         if transmural == longitudinal:
@@ -331,7 +331,7 @@ class PreparedVentricularMicrostructure(StrictModule, NonTrainableState):
         plan: VentricularMicrostructurePlan,
         fields: HarmonicCoordinateFields,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, VentricularMicrostructurePlan):
             raise TypeError("plan must be VentricularMicrostructurePlan.")
         if not isinstance(fields, HarmonicCoordinateFields):

@@ -62,7 +62,7 @@ class WeightedSquaredEuclideanCost(AbstractGroundCost):
 
     scales: Array
 
-    def __init__(self, scales: ArrayLike, /):
+    def __init__(self, scales: ArrayLike, /) -> None:
         values = jnp.asarray(scales, dtype=jnp.float64)
         if values.ndim != 1 or values.shape[0] == 0:
             raise ValueError("scales must be a nonempty rank-one array.")
@@ -91,7 +91,7 @@ class PeriodicSquaredEuclideanCost(AbstractGroundCost):
 
     periods: Array
 
-    def __init__(self, periods: ArrayLike, /):
+    def __init__(self, periods: ArrayLike, /) -> None:
         values = jnp.asarray(periods, dtype=jnp.float64)
         if values.ndim != 1 or values.shape[0] == 0:
             raise ValueError("periods must be a nonempty rank-one array.")
@@ -121,7 +121,7 @@ class IntrinsicSquaredDistanceCost(AbstractGroundCost):
 
     geometry: AbstractGeodesicManifold
 
-    def __init__(self, geometry: AbstractGeodesicManifold, /):
+    def __init__(self, geometry: AbstractGeodesicManifold, /) -> None:
         if not isinstance(geometry, AbstractGeodesicManifold):
             raise TypeError("geometry must be an AbstractGeodesicManifold.")
         self.geometry = geometry
@@ -148,7 +148,7 @@ class PrecomputedCost(StrictModule):
     values: Array
     cost_id: str = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, /, *, cost_id: str = "precomputed"):
+    def __init__(self, values: ArrayLike, /, *, cost_id: str = "precomputed") -> None:
         matrix = jnp.asarray(values, dtype=jnp.float64)
         if matrix.ndim != 2 or matrix.shape[0] == 0 or matrix.shape[1] == 0:
             raise ValueError("Precomputed costs must be a nonempty rank-two matrix.")

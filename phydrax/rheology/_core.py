@@ -43,7 +43,7 @@ class GeneralizedNewtonianLaw:
     yield_stress_pa: float = 0.0
     regularization_s: float = 1.0e3
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         values = (
             self.zero_shear_viscosity_pa_s,
             self.infinite_shear_viscosity_pa_s,
@@ -105,7 +105,7 @@ class ViscoelasticLaw:
     mobility_factor: float = 0.0
     ptt_epsilon: float = 0.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             self.kind
             not in (
@@ -236,7 +236,7 @@ class ThixotropicLaw:
     breakdown_coefficient: float
     exponent: float = 1.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not isfinite(self.build_rate_s_inv)
             or self.build_rate_s_inv < 0

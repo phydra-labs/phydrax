@@ -82,7 +82,7 @@ class BreakableRigidJointLawPlan(StrictModule, NonTrainableState):
         minimum_loading_rate: ArrayLike = 1.0e-12,
         initial_active_mask: ArrayLike | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers = np.asarray(joint_ids)
         if identifiers.ndim != 1 or not np.issubdtype(identifiers.dtype, np.integer):
             raise TypeError("joint_ids must be a rank-1 integer array.")
@@ -432,7 +432,7 @@ class RigidTopologyPlan(StrictModule, NonTrainableState):
         initial_contact_cache_epoch: int = 0,
         initial_replay_digest: int = 0,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(breakable_joints, BreakableRigidJointLawPlan):
             raise TypeError("breakable_joints must be a BreakableRigidJointLawPlan.")
         transactions = np.asarray(transaction_ids)
@@ -613,7 +613,7 @@ class PreparedRigidTopology(StrictModule, NonTrainableState):
         bodies: PreparedRigidBodySet,
         joints: PreparedRigidJointGraph,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, RigidTopologyPlan):
             raise TypeError("plan must be a RigidTopologyPlan.")
         if not isinstance(bodies, PreparedRigidBodySet):

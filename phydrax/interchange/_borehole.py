@@ -41,7 +41,7 @@ class BoreholeInterval(StrictModule, NonTrainableState):
         length_unit: UnitDefinition = METER,
         inner_diameter: float | None = None,
         outer_diameter: float | None = None,
-    ):
+    ) -> None:
         factor = float(conversion_factor(length_unit, METER))
         start = float(start_measured_depth) * factor
         end = float(end_measured_depth) * factor
@@ -139,7 +139,7 @@ class BoreholeTrajectory(StrictModule, NonTrainableState):
         intervals: Sequence[BoreholeInterval] = (),
         resources: Sequence[ResourceManifest] = (),
         geometry_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         name_ = str(name).strip()
         if not name_:
             raise ValueError("Borehole name is required.")

@@ -47,7 +47,7 @@ class UQResultContext(StrictModule, NonTrainableState):
         provider_ids: tuple[str, ...],
         approximation_id: str,
         normalization: ResultNormalization,
-    ):
+    ) -> None:
         if normalization not in ("absolute", "noise-relative", "unnormalized"):
             raise ValueError("Unknown result normalization semantics.")
         identifiers = tuple(

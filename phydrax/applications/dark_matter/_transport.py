@@ -79,7 +79,7 @@ class BodyFrameTransportState(StrictModule, NonTrainableState):
         /,
         *,
         frame_id: str,
-    ):
+    ) -> None:
         position = jnp.asarray(position_m, dtype=jnp.float64)
         velocity = jnp.asarray(velocity_m_s, dtype=position.dtype)
         frame = str(frame_id)
@@ -115,7 +115,7 @@ class RadialSignedDistanceGuard(StrictModule, NonTrainableState):
     geometry: CompiledGeometry
     frame_id: str = eqx.field(static=True)
 
-    def __init__(self, geometry: CompiledGeometry, /, *, frame_id: str):
+    def __init__(self, geometry: CompiledGeometry, /, *, frame_id: str) -> None:
         if not isinstance(geometry, CompiledGeometry):
             raise TypeError("Radial guard geometry must be a CompiledGeometry.")
         if (
@@ -141,7 +141,7 @@ class RadialGravityDrift(StrictModule):
 
     profile: RadialBodyProfile
 
-    def __init__(self, profile: RadialBodyProfile, /):
+    def __init__(self, profile: RadialBodyProfile, /) -> None:
         if not isinstance(
             profile, (LayeredTerrestrialProfile, SmoothStellarRadialProfile)
         ):
@@ -187,7 +187,7 @@ class ProfiledElasticJumpProcess(AbstractJumpProcess):
         scattering: ElasticScatteringTable,
         projectile_mass_kg: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             profile, (LayeredTerrestrialProfile, SmoothStellarRadialProfile)
         ):

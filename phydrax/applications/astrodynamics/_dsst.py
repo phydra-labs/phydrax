@@ -45,7 +45,7 @@ class DsstPlan(StrictModule, NonTrainableState):
         /,
         *,
         model_ids: tuple[str, ...],
-    ):
+    ) -> None:
         rates = tuple(averaged_rates)
         short = tuple(short_period_terms)
         if not rates or any(not callable(value) for value in (*rates, *short)):

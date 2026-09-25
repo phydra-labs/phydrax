@@ -98,7 +98,7 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
         initializer: str = "glorot_normal",
         scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         r"""Construct an MLP.
 
         You may specify the hidden layout either with (`width_size`, `depth`) or with

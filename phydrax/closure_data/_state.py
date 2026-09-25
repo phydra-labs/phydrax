@@ -59,7 +59,7 @@ class FlowStateSchema(StrictModule, NonTrainableState):
         total_energy_name: str | None = None,
         enthalpy_name: str | None = None,
         component_axis: int = -1,
-    ):
+    ) -> None:
         names = tuple(str(value).strip() for value in component_names)
         units = tuple(str(value).strip() for value in component_units)
         scales = tuple(float(value) for value in reference_scales)
@@ -228,7 +228,7 @@ class ClosureSnapshot(StrictModule, NonTrainableState):
         mesh_id: str,
         representation: StateRepresentation = "nondimensional",
         parent_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(schema, FlowStateSchema):
             raise TypeError("schema must be a FlowStateSchema.")
         array = schema.validate(values, owner="Closure snapshot")
@@ -320,7 +320,7 @@ class ClosureSeries(StrictModule, NonTrainableState):
     mesh_id: str = eqx.field(static=True)
     series_id: str = eqx.field(static=True)
 
-    def __init__(self, snapshots: tuple[ClosureSnapshot, ...], /):
+    def __init__(self, snapshots: tuple[ClosureSnapshot, ...], /) -> None:
         values = tuple(snapshots)
         if not values or any(not isinstance(item, ClosureSnapshot) for item in values):
             raise ValueError("ClosureSeries requires at least one closure snapshot.")

@@ -81,7 +81,7 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-9,
         maximum_path_segments: int = 16,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid) or len(grid.shape) not in (1, 2):
             raise TypeError("ReducedPICTransferPlan requires a prepared 1-D or 2-D grid.")
         segments = int(maximum_path_segments)

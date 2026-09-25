@@ -90,7 +90,7 @@ class StencilCoefficientPlan(StrictModule, NonTrainableState):
         residual_tolerance: float = 1e-9,
         plan_id: str | None = None,
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, FDExecutionPrecisionPolicy):
             raise TypeError("precision must be an FDExecutionPrecisionPolicy.")

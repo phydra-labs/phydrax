@@ -85,7 +85,7 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
         pusher: RelativisticBorisPlan | None = None,
         background_charge: ArrayLike | None = None,
         maximum_displacement_fraction: float = 0.5,
-    ):
+    ) -> None:
         if not isinstance(field, CochainElectrostaticPlan):
             raise TypeError("field must be CochainElectrostaticPlan.")
         values = tuple(transfers)
@@ -456,7 +456,7 @@ class ElectrostaticPICFixedStepMethod(AbstractFixedStepMethod, NonTrainableState
     plan: ElectrostaticPICPlan
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ElectrostaticPICPlan, /):
+    def __init__(self, plan: ElectrostaticPICPlan, /) -> None:
         if not isinstance(plan, ElectrostaticPICPlan):
             raise TypeError("plan must be ElectrostaticPICPlan.")
         self.plan = plan

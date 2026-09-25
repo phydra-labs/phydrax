@@ -182,7 +182,7 @@ class PhysicalPIVResult2D(StrictModule, NonTrainableState):
         time_unit: UnitDefinition,
         frame_id: str,
         /,
-    ):
+    ) -> None:
         positions = jnp.asarray(positions_xy)
         displacement = jnp.asarray(displacement_xy)
         velocity = jnp.asarray(velocity_xy)

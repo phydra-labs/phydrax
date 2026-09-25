@@ -83,7 +83,9 @@ class HarmonicPotential2D(_AbstractTrialSpaceField):
     out_size: Literal["scalar"] = eqx.field(static=True)
     _certificate: TrialSpaceCertificate
 
-    def __init__(self, potential: HolomorphicPotentialProvider, /, *, branch: int = 0):
+    def __init__(
+        self, potential: HolomorphicPotentialProvider, /, *, branch: int = 0
+    ) -> None:
         if not isinstance(potential, HolomorphicPotentialProvider):
             raise TypeError("potential must implement HolomorphicPotentialProvider.")
         certificate = potential.holomorphic_certificate()
@@ -142,7 +144,7 @@ class BiharmonicPotential2D(_AbstractTrialSpaceField):
         *,
         phi_branch: int = 0,
         psi_branch: int = 1,
-    ):
+    ) -> None:
         if not isinstance(potential, HolomorphicPotentialProvider):
             raise TypeError("potential must implement HolomorphicPotentialProvider.")
         holomorphic = potential.holomorphic_certificate()
@@ -212,7 +214,7 @@ class PlaneIsotropicMaterial(StrictModule, NonTrainableState):
         /,
         *,
         hypothesis: Literal["plane_strain", "plane_stress"] = "plane_strain",
-    ):
+    ) -> None:
         lambda_value = float(lambda_)
         mu_value = float(mu)
         if hypothesis not in ("plane_strain", "plane_stress"):
@@ -269,7 +271,7 @@ class PlaneElasticityPotential2D(_AbstractTrialSpaceField):
         phi_branch: int = 0,
         psi_branch: int = 1,
         output: Literal["mixed", "stress"] = "mixed",
-    ):
+    ) -> None:
         if not isinstance(potential, HolomorphicPotentialProvider):
             raise TypeError("potential must implement HolomorphicPotentialProvider.")
         if not isinstance(material, PlaneIsotropicMaterial):

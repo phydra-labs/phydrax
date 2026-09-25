@@ -40,7 +40,7 @@ class GaussianCoreSpreadingPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     capabilities: VortexDiffusionCapabilities
 
-    def __init__(self, dimension: int, /, *, overlap_limit: float = 2.0):
+    def __init__(self, dimension: int, /, *, overlap_limit: float = 2.0) -> None:
         dimension_ = int(dimension)
         overlap = float(overlap_limit)
         if dimension_ not in (2, 3) or not math.isfinite(overlap) or overlap <= 0.0:
@@ -129,7 +129,7 @@ class GaussianPSENeighborhoodPlan(StrictModule, NonTrainableState):
         *,
         cutoff_factor: float = 4.0,
         box: ParticleBox | None = None,
-    ):
+    ) -> None:
         if not isinstance(relation, ParticlePairRelation):
             raise TypeError("relation must be ParticlePairRelation.")
         dimension_, epsilon, cutoff = (
@@ -270,7 +270,7 @@ class GaussianRBFReinitializationPlan(StrictModule, NonTrainableState):
         *,
         regularization: float = 1.0e-10,
         policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         regularization_ = float(regularization)
         if not math.isfinite(regularization_) or regularization_ < 0.0:
             raise ValueError("RBF regularization must be finite and nonnegative.")
@@ -347,7 +347,9 @@ class VortexRedistributionPlan(StrictModule, NonTrainableState):
     policy: LinearSolvePolicy
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, policy: LinearSolvePolicy | None = None):
+    def __init__(
+        self, dimension: int, /, *, policy: LinearSolvePolicy | None = None
+    ) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (2, 3):
             raise ValueError("VRM dimension must be 2 or 3.")

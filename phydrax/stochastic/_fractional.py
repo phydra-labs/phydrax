@@ -61,7 +61,7 @@ class _DenseFractionalGaussianSampler(StrictModule):
     covariance_factor: Array
     num_times: int = eqx.field(static=True)
 
-    def __init__(self, covariance_factor: Array, num_times: int, /):
+    def __init__(self, covariance_factor: Array, num_times: int, /) -> None:
         self.covariance_factor = covariance_factor
         self.num_times = int(num_times)
 
@@ -91,7 +91,7 @@ class _DaviesHarteFractionalGaussianSampler(StrictModule):
     num_increments: int = eqx.field(static=True)
     embedding_size: int = eqx.field(static=True)
 
-    def __init__(self, spectrum_factor: Array, num_times: int, /):
+    def __init__(self, spectrum_factor: Array, num_times: int, /) -> None:
         self.spectrum_factor = spectrum_factor
         self.num_times = int(num_times)
         self.num_increments = self.num_times - 1
@@ -290,7 +290,7 @@ class FractionalGaussianProcess(StrictModule):
         drift: ArrayLike = 0.0,
         reference_time: float = 0.0,
         process_id: str | None = None,
-    ):
+    ) -> None:
         exponent = float(hurst)
         if not isfinite(exponent) or not 0.0 < exponent < 1.0:
             raise ValueError("hurst must be finite and lie strictly between 0 and 1.")
@@ -406,7 +406,7 @@ class FractionalGaussianRealization(StrictModule):
         label: str | None = None,
         coupling_id: str | None = None,
         _path_indices: Array | None = None,
-    ):
+    ) -> None:
         if not isinstance(process, FractionalGaussianProcess):
             raise TypeError("process must be a FractionalGaussianProcess.")
         key = _scalar_key(root_key)

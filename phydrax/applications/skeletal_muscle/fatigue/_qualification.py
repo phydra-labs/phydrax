@@ -46,7 +46,7 @@ class LiuBrownYue2002QualificationPlan(StrictModule, NonTrainableState):
         *,
         conservation_tolerance: float = 2.0e-6,
         monotonic_tolerance: float = 2.0e-7,
-    ):
+    ) -> None:
         conservation = float(conservation_tolerance)
         monotonic = float(monotonic_tolerance)
         if not isfinite(conservation) or conservation <= 0.0:

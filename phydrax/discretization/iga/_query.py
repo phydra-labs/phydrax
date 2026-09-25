@@ -55,7 +55,7 @@ class FixedParametricRoute:
         /,
         *,
         route_id: str | None = None,
-    ):
+    ) -> None:
         patch = _identifier("patch_id", patch_id)
         cell = _identifier("cell_id", cell_id)
         coordinate_values = tuple(float(value) for value in coordinates)
@@ -278,7 +278,9 @@ class ParametricQueryPlan:
     provider: BasisQueryProvider
     plan_id: str
 
-    def __init__(self, realization: BasisRealization, provider: BasisQueryProvider, /):
+    def __init__(
+        self, realization: BasisRealization, provider: BasisQueryProvider, /
+    ) -> None:
         if not isinstance(realization, BasisRealization):
             raise TypeError("realization must be a BasisRealization.")
         if not isinstance(provider, BasisQueryProvider):

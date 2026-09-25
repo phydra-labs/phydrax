@@ -54,7 +54,7 @@ class ChemicalChargeConvention(StrictModule, NonTrainableState):
         chemical_potential_kind: str = "baryon-electric-strangeness",
         pressure_normalization: str = "p-over-T4",
         cp_symmetric: bool = True,
-    ):
+    ) -> None:
         if not isinstance(energy_unit, UnitDefinition) or energy_unit.dimension != ENERGY:
             raise ValueError("energy_unit must have energy dimension.")
         kind = str(chemical_potential_kind).strip()
@@ -86,7 +86,9 @@ class GeneralizedSusceptibilityIndex(StrictModule, NonTrainableState):
     label: str = eqx.field(static=True)
     index_id: str = eqx.field(static=True)
 
-    def __init__(self, baryon_order: int, charge_order: int, strangeness_order: int, /):
+    def __init__(
+        self, baryon_order: int, charge_order: int, strangeness_order: int, /
+    ) -> None:
         orders = tuple(map(int, (baryon_order, charge_order, strangeness_order)))
         if any(value < 0 for value in orders):
             raise ValueError("Susceptibility derivative orders must be nonnegative.")
@@ -115,7 +117,7 @@ class FiniteDensityDomain(StrictModule, NonTrainableState):
         /,
         *,
         maximum_total_order: int,
-    ):
+    ) -> None:
         temperatures = tuple(map(float, temperature_bounds))
         bounds = tuple(
             tuple(map(float, item)) for item in chemical_potential_over_temperature_bounds
@@ -196,7 +198,7 @@ class SusceptibilityEstimate(StrictModule, NonTrainableState):
         domain: FiniteDensityDomain,
         source_kind: FiniteDensitySourceKind,
         provenance_ids: Sequence[str],
-    ):
+    ) -> None:
         temperatures_ = np.asarray(temperatures, dtype=np.float64)
         values_ = np.asarray(values, dtype=np.float64)
         covariance_ = np.asarray(covariance, dtype=np.float64)

@@ -56,7 +56,7 @@ class MACEnthalpyPorosityProblem(StrictModule, NonTrainableState):
         *,
         source: Any = None,
         source_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(material, SolidLiquidEnthalpyPlan):
             raise TypeError("material must be SolidLiquidEnthalpyPlan.")
         gravity_ = jnp.asarray(gravity, dtype=jnp.float64)
@@ -165,7 +165,7 @@ class CompiledMACEnthalpyPorosityDynamics(StrictModule):
         /,
         *,
         compilation_id: str,
-    ):
+    ) -> None:
         self.flow_problem = flow_problem
         self.problem = problem
         self.momentum = momentum

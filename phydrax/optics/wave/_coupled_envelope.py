@@ -80,7 +80,7 @@ class CoupledEnvelopePlan(StrictModule):
         minimum_step_size: float = 1e-8,
         maximum_steps: int = 100_000,
         maximum_workspace_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         time = np.asarray(time_points, dtype=np.float64)
         x = np.asarray(x_points, dtype=np.float64)
         y = np.asarray(y_points, dtype=np.float64)

@@ -44,7 +44,7 @@ class SVDProblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
@@ -80,7 +80,7 @@ class SVDProblem(StrictModule):
 class DenseSVD(StrictModule):
     """Pure-JAX dense singular value decomposition."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -94,7 +94,7 @@ class SVDTolerancePolicy(StrictModule):
     residual: float = eqx.field(static=True)
     orthogonality: float = eqx.field(static=True)
 
-    def __init__(self, *, residual: float = 1e-7, orthogonality: float = 1e-7):
+    def __init__(self, *, residual: float = 1e-7, orthogonality: float = 1e-7) -> None:
         values = float(residual), float(orthogonality)
         if any(not math.isfinite(value) or value < 0.0 for value in values):
             raise ValueError("SVD tolerances must be finite and non-negative.")
@@ -112,7 +112,7 @@ class SVDResourcePolicy(StrictModule):
         preparation_bytes: int = 512 * 1024 * 1024,
         workspace_bytes: int = 512 * 1024 * 1024,
         operator_matvecs: int = 1_000_000,
-    ):
+    ) -> None:
         values = (
             int(preparation_bytes),
             int(workspace_bytes),
@@ -147,7 +147,7 @@ class SVDSolvePolicy(StrictModule):
         resources: SVDResourcePolicy | None = None,
         differentiation: SVDDifferentiationMode = "none",
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         method_ = DenseSVD() if method is None else method
         if not isinstance(method_, DenseSVD):
             raise TypeError("method must be DenseSVD.")
@@ -203,7 +203,7 @@ class SVDCostEstimate(StrictModule):
         accepted: bool,
         reason: str,
         /,
-    ):
+    ) -> None:
         values = tuple(
             (
                 storage_bytes,
@@ -239,7 +239,7 @@ class SVDSolvePlan(StrictModule):
         policy: SVDSolvePolicy,
         cost: SVDCostEstimate,
         /,
-    ):
+    ) -> None:
         if policy.count > problem.maximum_rank:
             raise ValueError("Requested SVD count exceeds min(target size, source size).")
         if not cost.accepted:
@@ -296,7 +296,7 @@ class DenseSVDState(StrictModule):
         source_factor: Array,
         target_factor: Array,
         /,
-    ):
+    ) -> None:
         reduced = jnp.asarray(reduced_operator)
         source = jnp.asarray(source_factor)
         target = jnp.asarray(target_factor)
@@ -327,7 +327,7 @@ class PreparedSVDSolve(StrictModule):
         /,
         *,
         numeric_version: Any = 0,
-    ):
+    ) -> None:
         if not isinstance(problem, SVDProblem):
             raise TypeError("problem must be an SVDProblem.")
         if not isinstance(plan, SVDSolvePlan):

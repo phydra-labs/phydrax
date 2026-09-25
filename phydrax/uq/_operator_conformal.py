@@ -39,7 +39,7 @@ class OperatorFunctionalConformal(StrictModule):
         *,
         case_axis: str,
         field_name: str,
-    ):
+    ) -> None:
         if not isinstance(calibrator, FunctionalConformal):
             raise TypeError("calibrator must be a FunctionalConformal.")
         axis = str(case_axis)

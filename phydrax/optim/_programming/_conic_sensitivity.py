@@ -55,7 +55,7 @@ class ConicProgramData(StrictModule):
         lower_bounds: ArrayLike,
         upper_bounds: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.quadratic = (
             quadratic
             if isinstance(quadratic, AbstractSparseLinearOperator)

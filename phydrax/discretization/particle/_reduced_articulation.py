@@ -129,7 +129,7 @@ class _ReducedArticulationStateGeometry(AbstractStateGeometry):
         hinge_dof_indices: tuple[int, ...],
         geometry_id: str,
         /,
-    ):
+    ) -> None:
         state_size_ = int(state_size)
         nq_ = int(nq)
         hinge_indices = tuple(hinge_dof_indices)
@@ -292,7 +292,7 @@ class ReducedArticulationPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if isinstance(root_body_id, bool) or not isinstance(root_body_id, Integral):
             raise TypeError("root_body_id must be an integer body ID.")
         joints = _integer_vector(joint_ids, "joint_ids")
@@ -388,7 +388,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         graph: PreparedRigidJointGraph,
         reference: RigidBodyKinematics,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ReducedArticulationPlan):
             raise TypeError("plan must be a ReducedArticulationPlan.")
         if not isinstance(graph, PreparedRigidJointGraph):

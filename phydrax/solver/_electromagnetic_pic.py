@@ -84,7 +84,7 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         *,
         pusher: RelativisticBorisPlan | None = None,
         maximum_displacement_fraction: float = 0.5,
-    ):
+    ) -> None:
         if not isinstance(maxwell, PreparedCompatibleMaxwell):
             raise TypeError("maxwell must be PreparedCompatibleMaxwell.")
         if not isinstance(electrostatic, CochainElectrostaticPlan):
@@ -475,7 +475,7 @@ class ElectromagneticPICFixedStepMethod(AbstractFixedStepMethod, NonTrainableSta
     plan: ElectromagneticPICPlan
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ElectromagneticPICPlan, /):
+    def __init__(self, plan: ElectromagneticPICPlan, /) -> None:
         self.plan = plan
         self.method_id = canonical_fingerprint(
             {"kind": "electromagnetic-pic-fixed-step", "plan": plan.plan_id}

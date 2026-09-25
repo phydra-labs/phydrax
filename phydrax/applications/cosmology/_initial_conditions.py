@@ -139,7 +139,7 @@ class LagrangianPerturbationInitialConditionPlan(StrictModule, NonTrainableState
         order: int = 1,
         dealiasing: LagrangianDealiasing = "none",
         scale: CosmologyScaleContract = CODE_COSMOLOGY_SCALE,
-    ):
+    ) -> None:
         shape_ = tuple(shape)
         box = tuple(float(value) for value in box_size)
         order_ = int(order)

@@ -44,7 +44,7 @@ class HEOMHierarchy(StrictModule):
         /,
         *,
         maximum_auxiliaries: int = 1_000_000,
-    ):
+    ) -> None:
         if any(
             isinstance(value, bool) for value in (term_count, depth, maximum_auxiliaries)
         ):
@@ -114,7 +114,7 @@ class HEOMProblem(StrictModule):
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
         problem_id: str = "heom",
-    ):
+    ) -> None:
         geometry_ = (
             GeometryPrecisionPolicy()
             if geometry_precision is None
@@ -230,7 +230,7 @@ class HEOMSolution(StrictModule):
         geometry_precision: GeometryPrecisionPolicy,
         hermitian_precision: HermitianPrecisionPolicy,
         maximum_time_step: float = 0.1,
-    ):
+    ) -> None:
         roots = jnp.asarray(root_states)
         auxiliaries = jnp.asarray(final_auxiliaries)
         times_ = jnp.asarray(times)

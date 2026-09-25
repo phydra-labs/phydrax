@@ -60,7 +60,7 @@ class SystematicSource(StrictModule, NonTrainableState):
         correlation_scopes: Sequence[str],
         provider_id: str,
         mutually_exclusive_group: str = "none",
-    ):
+    ) -> None:
         name_ = str(name).strip()
         provider = str(provider_id).strip()
         exclusive = str(mutually_exclusive_group).strip()
@@ -101,7 +101,7 @@ class SystematicConfiguration(StrictModule, NonTrainableState):
     sources: tuple[SystematicSource, ...]
     configuration_id: str = eqx.field(static=True)
 
-    def __init__(self, sources: Sequence[SystematicSource], /):
+    def __init__(self, sources: Sequence[SystematicSource], /) -> None:
         sources_ = tuple(sources)
         if not sources_ or any(
             not isinstance(value, SystematicSource) for value in sources_

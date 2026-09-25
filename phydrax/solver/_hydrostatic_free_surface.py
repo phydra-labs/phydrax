@@ -60,7 +60,7 @@ class LinearImplicitFreeSurfacePlan(StrictModule, NonTrainableState):
         gravity: float = 9.81,
         tolerance: float = 1.0e-10,
         maximum_iterations: int = 500,
-    ):
+    ) -> None:
         if not isinstance(geometry, PreparedHydrostaticGrid):
             raise TypeError("geometry must be PreparedHydrostaticGrid.")
         gravity_ = float(gravity)

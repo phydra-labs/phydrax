@@ -200,7 +200,7 @@ class GraphClusterPool(StrictModule):
         reduce_nodes: GraphPoolReduce = "mean",
         reduce_edges: GraphPoolReduce = "mean",
         drop_self_edges: bool = True,
-    ):
+    ) -> None:
         self.cluster_ids = jnp.asarray(cluster_ids, dtype=jnp.int32)
         self.reduce_nodes = reduce_nodes
         self.reduce_edges = reduce_edges
@@ -238,7 +238,7 @@ class GraphMultiscaleBlock(StrictModule):
         reduce_nodes: GraphPoolReduce = "mean",
         reduce_edges: GraphPoolReduce = "mean",
         residual: bool = True,
-    ):
+    ) -> None:
         self.cluster_ids = jnp.asarray(cluster_ids, dtype=jnp.int32)
         self.coarse_block = coarse_block
         self.fine_block = fine_block

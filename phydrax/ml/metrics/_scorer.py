@@ -86,7 +86,7 @@ class FunctionScorer(AbstractScorer):
         greater_is_better: bool,
         response_method: ScorerResponse = "call",
         metric_kwargs: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if not callable(metric):
             raise TypeError("metric must be callable.")
         if response_method not in (

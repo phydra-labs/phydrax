@@ -134,7 +134,7 @@ class RationalSplineJet(StrictModule):
     jets: Array
     denominator_jets: Array
 
-    def __init__(self, plan: TensorBSplineJetPlan, weights: ArrayLike, /):
+    def __init__(self, plan: TensorBSplineJetPlan, weights: ArrayLike, /) -> None:
         if not isinstance(plan, TensorBSplineJetPlan):
             raise TypeError("RationalSplineJet requires a TensorBSplineJetPlan.")
         weights_ = jnp.asarray(weights)

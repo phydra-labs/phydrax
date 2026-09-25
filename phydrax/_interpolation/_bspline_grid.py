@@ -27,7 +27,7 @@ class BSplineGrid(StrictModule, NonTrainableState):
     degree: int = eqx.field(static=True)
     continuity_orders: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, knots: ArrayLike, degree: int, /):
+    def __init__(self, knots: ArrayLike, degree: int, /) -> None:
         if isinstance(degree, bool) or not isinstance(degree, Integral):
             raise TypeError("B-spline grid degree must be an integer.")
         degree_ = int(degree)
@@ -187,7 +187,7 @@ class TrainableBSplineGrid(StrictModule):
         *,
         interval: tuple[float, float] = (-1.0, 1.0),
         minimum_span: float | None = None,
-    ):
+    ) -> None:
         if isinstance(degree, bool) or not isinstance(degree, Integral):
             raise TypeError("Trainable B-spline grid degree must be an integer.")
         degree_ = int(degree)

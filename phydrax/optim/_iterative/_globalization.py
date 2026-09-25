@@ -39,7 +39,7 @@ class ArmijoLineSearch(StrictModule):
         sufficient_decrease: float = 1e-4,
         maximum_steps: int = 20,
         minimum_rate: float = 1e-12,
-    ):
+    ) -> None:
         initial = float(initial_rate)
         reduction = float(contraction)
         decrease = float(sufficient_decrease)
@@ -87,7 +87,7 @@ class ArmijoResult(StrictModule):
         accepted: Array,
         directional_derivative: Array,
         finite_candidate_seen: Array,
-    ):
+    ) -> None:
         self.parameters = parameters
         self.value = jnp.asarray(value)
         self.rate = jnp.asarray(rate)
@@ -231,7 +231,7 @@ class StrongWolfeLineSearch(StrictModule):
         maximum_steps: int = 40,
         minimum_rate: float = 1e-12,
         maximum_rate: float = 1e6,
-    ):
+    ) -> None:
         initial = float(initial_rate)
         expansion_ = float(expansion)
         decrease = float(sufficient_decrease)
@@ -297,7 +297,7 @@ class StrongWolfeResult(StrictModule):
         sufficient_decrease_satisfied: Any,
         curvature_satisfied: Any,
         finite_candidate_seen: Any,
-    ):
+    ) -> None:
         self.parameters = parameters
         self.value = jnp.asarray(value)
         self.gradient = gradient

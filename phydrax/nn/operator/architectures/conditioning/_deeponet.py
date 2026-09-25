@@ -87,7 +87,7 @@ class FixedBranchEncoder(AbstractBranchEncoder):
     model: AbstractArrayModel
     latent_size: int
 
-    def __init__(self, model: AbstractArrayModel, latent_size: int, /):
+    def __init__(self, model: AbstractArrayModel, latent_size: int, /) -> None:
         self.model = model
         self.latent_size = int(latent_size)
         if _get_size(model.out_size) != self.latent_size:
@@ -136,7 +136,7 @@ class IntegralBranchEncoder(AbstractBranchEncoder):
         coord_dim: int,
         mixer: AbstractArrayModel | None = None,
         normalize: bool = False,
-    ):
+    ) -> None:
         self.feature_model = feature_model
         self.mixer = mixer
         self.latent_size = int(latent_size)
@@ -289,7 +289,7 @@ class PODBasis(AbstractBasisTrunk, NonTrainableState):
         offset: Array | None = None,
         query_layout: FunctionSamples | None = None,
         geometry_fingerprint: str | None = None,
-    ):
+    ) -> None:
         basis = jnp.asarray(values)
         self.latent_size = int(latent_size)
         self.out_size = out_size
@@ -544,7 +544,7 @@ class DeepONet(AbstractOperatorModel):
         source_key: str | None = None,
         query_chunk_size: int | None = None,
         use_bias: bool = True,
-    ):
+    ) -> None:
         self.coord_dim = int(coord_dim)
         self.latent_size = int(latent_size)
         self.out_size = out_size

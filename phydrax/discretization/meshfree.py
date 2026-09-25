@@ -104,7 +104,7 @@ class MeshfreeStencilPlan:
         *,
         stencil_size: int,
         polynomial_degree: int = 2,
-    ):
+    ) -> None:
         points = np.asarray(coordinates, dtype=np.float64)
         if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] == 0:
             raise ValueError("coordinates must have shape (points, dimensions).")

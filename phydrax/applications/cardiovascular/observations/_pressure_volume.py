@@ -137,7 +137,7 @@ class PressureObservationPlan(StrictModule, NonTrainableState):
         *,
         reference_configuration: str,
         observation_id: str,
-    ):
+    ) -> None:
         sources = _labels(source_labels, "source_labels")
         channels = _labels(channel_labels, "channel_labels")
         response = _matrix(
@@ -251,7 +251,7 @@ class VolumeObservationPlan(StrictModule, NonTrainableState):
         /,
         *,
         observation_id: str,
-    ):
+    ) -> None:
         sources = _labels(source_labels, "source_labels")
         channels = _labels(channel_labels, "channel_labels")
         response = _matrix(
@@ -349,7 +349,7 @@ class FlowObservationPlan(StrictModule, NonTrainableState):
         /,
         *,
         observation_id: str,
-    ):
+    ) -> None:
         sources = _labels(source_labels, "source_labels")
         channels = _labels(channel_labels, "channel_labels")
         directions = tuple(
@@ -478,7 +478,7 @@ class PressureVolumeLoopPlan(StrictModule, NonTrainableState):
         pressure_closure_tolerance_kpa: float = 1.0e-6,
         volume_closure_tolerance_mm3: float = 1.0e-3,
         loop_id: str,
-    ):
+    ) -> None:
         if timebase.sample_count < 3:
             raise ValueError("A pressure-volume loop requires at least three samples.")
         reference = float(pressure_reference_kpa)

@@ -28,7 +28,7 @@ class ImagingCalibration(StrictModule, NonTrainableState):
 
     def __init__(
         self, bias, dark_rate, flat, gain, bad_pixel_mask, saturation, provenance, /
-    ):
+    ) -> None:
         arrays = tuple(
             jnp.asarray(value)
             for value in (bias, dark_rate, flat, gain, bad_pixel_mask, saturation)
@@ -63,7 +63,7 @@ class CalibratedImagingPlan(StrictModule, NonTrainableState):
     calibration: ImagingCalibration
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, response, calibration, /):
+    def __init__(self, response, calibration, /) -> None:
         self.response = response
         self.calibration = calibration
         self.plan_id = canonical_fingerprint(

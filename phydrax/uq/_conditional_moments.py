@@ -56,7 +56,7 @@ class ConditionalGaussianMoments(StrictModule):
         *,
         moments_id: str = "conditional-gaussian-moments",
         resolved_method: str = "provided-conditional-moments",
-    ):
+    ) -> None:
         mean_value = jnp.asarray(mean)
         cross_value = jnp.asarray(cross_covariance)
         if not jnp.issubdtype(mean_value.dtype, jnp.inexact):
@@ -133,7 +133,7 @@ class GaussianRegression(StrictModule):
         *,
         regression_id: str = "gaussian-regression",
         resolved_method: str = "provided-affine-regression",
-    ):
+    ) -> None:
         matrix_value = jnp.asarray(matrix)
         offset_value = jnp.asarray(offset)
         if not jnp.issubdtype(matrix_value.dtype, jnp.inexact) or not jnp.issubdtype(

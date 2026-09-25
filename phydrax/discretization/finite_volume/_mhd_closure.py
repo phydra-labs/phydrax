@@ -80,7 +80,7 @@ class StructurePreservingFaceClosurePlan(StrictModule, NonTrainableState):
         *,
         closure_id: str,
         threshold: float = 1.0,
-    ):
+    ) -> None:
         if not callable(dissipation) or not callable(out_of_distribution_score):
             raise TypeError("Closure dissipation and OOD score must be callable.")
         identifier = str(closure_id)
@@ -146,7 +146,7 @@ class ConstrainedMHDClosurePlan(StrictModule, NonTrainableState):
         *,
         closure_id: str,
         consistency_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(
             face_closure, StructurePreservingFaceClosurePlan
         ) or not callable(edge_correction):
@@ -253,7 +253,7 @@ class MultiresolutionMHDClosurePlan(StrictModule, NonTrainableState):
         closures: tuple[ConstrainedMHDClosurePlan, ...],
         physical_scales: tuple[float, ...],
         /,
-    ):
+    ) -> None:
         closures_ = tuple(closures)
         scales = tuple(float(value) for value in physical_scales)
         if (

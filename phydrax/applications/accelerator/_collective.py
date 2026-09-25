@@ -28,7 +28,7 @@ class SpaceChargeKickPlan(StrictModule, NonTrainableState):
         frame_transform_id: str,
         boundary_condition_id: str,
         maximum_residual: float,
-    ):
+    ) -> None:
         source = str(source_plan_id).strip()
         frame = str(frame_transform_id).strip()
         boundary = str(boundary_condition_id).strip()

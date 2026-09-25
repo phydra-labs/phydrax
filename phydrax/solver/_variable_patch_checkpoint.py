@@ -42,7 +42,7 @@ class VariablePatchCheckpointPlan(StrictModule, NonTrainableState):
         *,
         dtype=jnp.float64,
         partition: PreparedVariablePatchPartition | None = None,
-    ):
+    ) -> None:
         names = tuple(str(value) for value in component_names)
         dtype_ = jnp.dtype(dtype)
         if (

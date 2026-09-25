@@ -86,7 +86,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule):
         positivity_iterations: int = 32,
         divergence_tolerance: float = 1e-10,
         ctu_predictor: bool = False,
-    ):
+    ) -> None:
         if not isinstance(spatial, UpwindConstrainedTransportPlan):
             raise TypeError("spatial must be UpwindConstrainedTransportPlan.")
         cfl_ = float(cfl)

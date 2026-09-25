@@ -29,7 +29,7 @@ class GeophysicalClimatology:
     training_case_ids: tuple[str, ...]
     source_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         object.__setattr__(self, "values", jnp.asarray(self.values))
         object.__setattr__(self, "quantity_ids", tuple(self.quantity_ids))
         object.__setattr__(self, "training_case_ids", tuple(self.training_case_ids))

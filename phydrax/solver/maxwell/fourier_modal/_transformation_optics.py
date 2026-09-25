@@ -24,7 +24,7 @@ class LateralTransformationOpticsPMLPlan(StrictModule, NonTrainableState):
     region_mask: Any
     pml_id: str = eqx.field(static=True)
 
-    def __init__(self, stretch_profile: Any, region_mask: Any, /, *, pml_id: str):
+    def __init__(self, stretch_profile: Any, region_mask: Any, /, *, pml_id: str) -> None:
         if not callable(stretch_profile) and not eqx.is_array(stretch_profile):
             raise TypeError("stretch_profile must be callable or an explicit array.")
         if not callable(region_mask) and not eqx.is_array(region_mask):

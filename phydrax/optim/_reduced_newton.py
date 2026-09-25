@@ -75,7 +75,7 @@ class ReducedNewtonKrylov(AbstractStateDesignMethod):
         reduced_linear_policy: LinearSolvePolicy | None = None,
         line_search: ArmijoLineSearch | None = None,
         hessian_regularization: float = 1e-8,
-    ):
+    ) -> None:
         state_policy = (
             _default_adjoint_policy()
             if state_linear_policy is None

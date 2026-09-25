@@ -30,7 +30,7 @@ class LogAmplitude(StrictModule):
         /,
         *,
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         magnitude = jnp.asarray(log_abs)
         if jnp.iscomplexobj(magnitude):
             raise TypeError("log_abs must be real-valued.")

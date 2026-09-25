@@ -68,7 +68,7 @@ class VibrationalAnalysisResult(StrictModule, NonTrainableState):
         source_system_id: str,
         source_geometry_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         values = jnp.asarray(eigenvalues)
         frequencies = jnp.asarray(angular_frequencies, dtype=values.dtype)
         waves = jnp.asarray(wavenumbers, dtype=values.dtype)
@@ -158,7 +158,7 @@ class VibrationalAnalysisPlan(StrictModule, NonTrainableState):
         linearity_tolerance: float = 1.0e-8,
         projection_tolerance: float = 1.0e-8,
         imaginary_wavenumber_threshold: float = 10.0,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         values = tuple(

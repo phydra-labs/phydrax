@@ -138,7 +138,7 @@ class _CompositeAMRFaceRoutes(StrictModule, NonTrainableState):
     boundary_distance: Array
     route_id: str = eqx.field(static=True)
 
-    def __init__(self, layout: CompositeAMRCellLayout, /):
+    def __init__(self, layout: CompositeAMRCellLayout, /) -> None:
         topology = layout.topology
         dimension = len(topology.plan.grid.shape)
         finest_shape = topology.plan.global_cell_shapes[-1]
@@ -443,7 +443,7 @@ class CompositeAMRDiffusionPlan(StrictModule, NonTrainableState):
         *,
         boundaries: CompositeBoundaryInput | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(layout, CompositeAMRCellLayout):
             raise TypeError("Composite AMR diffusion requires CompositeAMRCellLayout.")
         precision_ = (
@@ -515,7 +515,7 @@ class PreparedCompositeAMRDiffusion(AbstractLinearOperator):
         plan: CompositeAMRDiffusionPlan,
         coefficient: ArrayLike | Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, CompositeAMRDiffusionPlan):
             raise TypeError(
                 "Prepared composite diffusion requires CompositeAMRDiffusionPlan."

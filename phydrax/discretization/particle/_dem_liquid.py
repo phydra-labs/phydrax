@@ -44,7 +44,7 @@ class DEMBarrierCapillaryPlan(StrictModule, NonTrainableState):
         particle_liquid_fraction: float,
         initial_barrier_film_volume: float,
         law: DEMBarrierCapillaryLaw = "bagheri",
-    ):
+    ) -> None:
         identifier = str(barrier_id)
         if not identifier:
             raise ValueError("barrier_id must be nonempty.")
@@ -172,7 +172,7 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
         barrier_capillaries: Sequence[DEMBarrierCapillaryPlan] = (),
         evaporation_flux: float = 0.0,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         initial = np.asarray(initial_film_volume)
         flux = float(evaporation_flux)
         if initial.ndim not in (0, 1):

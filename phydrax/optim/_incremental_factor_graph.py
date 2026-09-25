@@ -54,7 +54,7 @@ class IncrementalResidualGraph(StrictModule):
         /,
         *,
         relinearization_threshold: float,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedResidualGraph):
             raise TypeError("prepared must be PreparedResidualGraph.")
         threshold = float(relinearization_threshold)

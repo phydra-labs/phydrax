@@ -90,7 +90,7 @@ class CrystalElasticityResult(StrictModule, NonTrainableState):
         potential_kind_ids,
         system_id,
         /,
-    ):
+    ) -> None:
         self.energy = jnp.asarray(energy).reshape(())
         self.stress = jnp.asarray(stress, dtype=self.energy.dtype).reshape((3, 3))
         self.elastic_tensor = jnp.asarray(
@@ -165,7 +165,7 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
         stability_tolerance: float = 0.0,
         stress_symmetry_tolerance: float = 1.0e-9,
         elastic_symmetry_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(potential, PreparedAtomisticPotentialProgram):
             raise TypeError("potential must be PreparedAtomisticPotentialProgram.")
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
@@ -405,7 +405,7 @@ class CrystalNVEEvidence(StrictModule, NonTrainableState):
         trajectory_id: str,
         maximum_relative_energy_drift: float,
         maximum_momentum_drift: float,
-    ):
+    ) -> None:
         time = np.asarray(times, dtype=np.float64)
         energy = np.asarray(total_energies, dtype=np.float64)
         momentum = np.asarray(linear_momenta, dtype=np.float64)

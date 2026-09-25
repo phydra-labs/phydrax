@@ -19,7 +19,7 @@ class ConnectionSet:
     def create(cls, ids):
         return cls(tuple(sorted(str(x) for x in ids)))
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             len(self.connector_ids) < 2
             or any(
@@ -44,7 +44,7 @@ class AcausalSystem:
         connection_values = tuple(connections)
         return cls(connector_values, connection_values)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if any(not isinstance(item, Connector) for item in self.connectors):
             raise TypeError("Acausal systems require Connector entries.")
         if any(not isinstance(item, ConnectionSet) for item in self.connections):

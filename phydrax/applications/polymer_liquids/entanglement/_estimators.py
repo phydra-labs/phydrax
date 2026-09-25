@@ -40,7 +40,7 @@ class EntanglementEstimatorPlan(StrictModule, NonTrainableState):
         minimum_frames: int = 8,
         maximum_relative_standard_error: float = 0.25,
         plateau_convention: PlateauModulusConvention = "tube-four-fifths",
-    ):
+    ) -> None:
         density = float(monomer_number_density)
         thermal = float(temperature)
         boltzmann = float(boltzmann_constant)

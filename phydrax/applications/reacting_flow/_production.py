@@ -46,7 +46,7 @@ class EnergyDepositionSourcePlan(StrictModule, NonTrainableState):
         start_time: float,
         end_time: float,
         source_id: str,
-    ):
+    ) -> None:
         volumes = np.asarray(cell_volumes, dtype=np.float64)
         weights = np.asarray(spatial_weights, dtype=np.float64)
         energy, start, end = map(float, (total_energy, start_time, end_time))
@@ -142,7 +142,9 @@ class FixedConnectivityReactingALERemapPlan(StrictModule, NonTrainableState):
     new_cell_volumes: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, old_cell_volumes: ArrayLike, new_cell_volumes: ArrayLike, /):
+    def __init__(
+        self, old_cell_volumes: ArrayLike, new_cell_volumes: ArrayLike, /
+    ) -> None:
         old = np.asarray(old_cell_volumes, dtype=np.float64)
         new = np.asarray(new_cell_volumes, dtype=np.float64)
         if (
@@ -245,7 +247,9 @@ class ChemistryWorkSchedulePlan(StrictModule, NonTrainableState):
     smoothing: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, block_count: int, worker_count: int, /, *, smoothing: float = 0.5):
+    def __init__(
+        self, block_count: int, worker_count: int, /, *, smoothing: float = 0.5
+    ) -> None:
         blocks, workers = int(block_count), int(worker_count)
         smoothing_ = float(smoothing)
         if blocks <= 0 or workers <= 0 or not 0.0 < smoothing_ <= 1.0:

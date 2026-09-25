@@ -38,7 +38,7 @@ class SelectedEntitySet(StrictModule, NonTrainableState):
         support_id: str,
         geometry_id: str,
         ownership_id: str,
-    ):
+    ) -> None:
         entities = np.asarray(entity_indices, dtype=np.int64)
         closure = np.asarray(closure_dof_indices, dtype=np.int64)
         identifiers = tuple(
@@ -100,7 +100,7 @@ class SelectedEvaluationPlan(StrictModule, NonTrainableState):
         residual_output_size: int,
         provider_id: str,
         resource_policy: ROMResourcePolicy,
-    ):
+    ) -> None:
         if not isinstance(entities, SelectedEntitySet):
             raise TypeError("entities must be a SelectedEntitySet.")
         if not isinstance(resource_policy, ROMResourcePolicy):

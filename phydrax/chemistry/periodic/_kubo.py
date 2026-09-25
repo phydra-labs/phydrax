@@ -59,7 +59,7 @@ class KuboDiamagneticSumRule(StrictModule, NonTrainableState):
     spectral_weight: Array
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, spectral_weight: ArrayLike, /, *, source_id: str):
+    def __init__(self, spectral_weight: ArrayLike, /, *, source_id: str) -> None:
         weight = np.asarray(spectral_weight)
         source = str(source_id).strip()
         if (
@@ -82,7 +82,7 @@ class KuboLinewidth(StrictModule, NonTrainableState):
     energy_width_joule: float = eqx.field(static=True)
     mechanism_id: str = eqx.field(static=True)
 
-    def __init__(self, energy_width_joule: float, /, *, mechanism_id: str):
+    def __init__(self, energy_width_joule: float, /, *, mechanism_id: str) -> None:
         width = _positive_scalar(energy_width_joule, "energy_width_joule")
         mechanism = str(mechanism_id).strip()
         if not mechanism:
@@ -120,7 +120,7 @@ class PeriodicKuboPlan(StrictModule, NonTrainableState):
         spin_degeneracy: int = 1,
         degeneracy_tolerance_joule: float = 1.0e-12 * _ELECTRON_CHARGE_MAGNITUDE_SI,
         degeneracy_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         energies = np.asarray(energies_joule)
         velocities = np.asarray(velocity_matrices_m_per_s)
         weights = np.asarray(k_weights, dtype=np.float64)

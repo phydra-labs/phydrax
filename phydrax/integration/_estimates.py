@@ -23,7 +23,7 @@ class IntegrationProvenance(StrictModule):
     target: str = eqx.field(static=True)
     realization: str = eqx.field(static=True)
 
-    def __init__(self, method: str, target: str, realization: str = "direct"):
+    def __init__(self, method: str, target: str, realization: str = "direct") -> None:
         self.method = str(method)
         self.target = str(target)
         self.realization = str(realization)
@@ -141,7 +141,7 @@ class AdaptiveQuadratureDiagnostics(StrictModule):
         discovery: DiscoveredBreakpoints | None = None,
         discovery_count: Array | int = 0,
         discovery_overflow: Array | bool = False,
-    ):
+    ) -> None:
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.num_evaluations = jnp.asarray(num_evaluations, dtype=jnp.int32)
         self.estimated_error = jnp.asarray(estimated_error)
@@ -259,7 +259,7 @@ class IntegrationEstimate(StrictModule):
         diagnostics: Any,
         provenance: IntegrationProvenance,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
-    ):
+    ) -> None:
         self.value = value
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.num_evaluations = jnp.asarray(num_evaluations, dtype=jnp.int32)

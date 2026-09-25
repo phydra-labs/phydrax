@@ -142,7 +142,7 @@ class ParticleGenealogicalGradientEstimator(AbstractStochasticGradientEstimator)
         resampling_method: ResamplingMethod = "systematic",
         resampling_policy: ResamplingPolicy = "ess",
         resampling_threshold: float = 0.5,
-    ):
+    ) -> None:
         if not isinstance(parameterized, ParameterizedStateSpaceProblem):
             raise TypeError("parameterized must be ParameterizedStateSpaceProblem.")
         count = int(num_particles)

@@ -40,7 +40,7 @@ class ObservationActionEvidence(StrictModule):
         observation_count: int,
         components: tuple[int, ...] | None,
         exact_scope: str = "finite_restriction",
-    ):
+    ) -> None:
         count = int(observation_count)
         if count <= 0:
             raise ValueError("Observation actions require at least one observation.")
@@ -112,7 +112,7 @@ class PointObservationAction(AbstractConditionOperator):
         /,
         *,
         components: Sequence[int] | None = None,
-    ):
+    ) -> None:
         field_ = str(field)
         if not field_:
             raise ValueError("Point observation field name must be non-empty.")

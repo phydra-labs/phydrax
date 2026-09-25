@@ -29,7 +29,7 @@ class FrameTransformEdge(StrictModule, NonTrainableState):
         precision_class: str,
         required_products: tuple[str, ...] = (),
         cost: int = 1,
-    ):
+    ) -> None:
         if not isinstance(transform, KinematicFrameTransform):
             raise TypeError("transform must be a KinematicFrameTransform.")
         precision = str(precision_class).strip()
@@ -59,7 +59,7 @@ class CompiledFramePath(StrictModule, NonTrainableState):
     edges: tuple[FrameTransformEdge, ...]
     path_id: str = eqx.field(static=True)
 
-    def __init__(self, edges: tuple[FrameTransformEdge, ...], /):
+    def __init__(self, edges: tuple[FrameTransformEdge, ...], /) -> None:
         items = tuple(edges)
         if not items:
             raise ValueError("Compiled frame path requires at least one edge.")
@@ -110,7 +110,7 @@ class FrameTransformGraph(StrictModule, NonTrainableState):
         frames: tuple[FrameDefinition, ...],
         edges: tuple[FrameTransformEdge, ...],
         /,
-    ):
+    ) -> None:
         frame_items = tuple(frames)
         edge_items = tuple(edges)
         ids = tuple(frame.frame_id for frame in frame_items)

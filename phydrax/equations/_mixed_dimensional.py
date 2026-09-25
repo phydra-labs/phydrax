@@ -443,7 +443,7 @@ class PermeabilityExchangePlan(StrictModule):
         transfer: PreparedEmbeddedMeasureTransfer,
         coefficients: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(transfer, PreparedEmbeddedMeasureTransfer):
             raise TypeError("transfer must be PreparedEmbeddedMeasureTransfer.")
         coefficient = jnp.asarray(coefficients)
@@ -497,7 +497,7 @@ class ReservoirCouplingPlan(StrictModule):
         /,
         *,
         network_size: int,
-    ):
+    ) -> None:
         indices = np.asarray(network_indices)
         volume = np.asarray(volumes, dtype=np.float64)
         coefficient = np.asarray(coefficients, dtype=np.float64)

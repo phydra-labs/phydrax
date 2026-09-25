@@ -35,7 +35,7 @@ def tangent_projector_from_normal(normal: ArrayLike, /) -> Array:
 class _InducedMetricMap(StrictModule):
     embedding: Callable[[Array], Array]
 
-    def __init__(self, embedding: Callable[[Array], Array], /):
+    def __init__(self, embedding: Callable[[Array], Array], /) -> None:
         self.embedding = embedding
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -59,7 +59,7 @@ class EmbeddedChart(StrictModule):
         /,
         *,
         retraction: Callable[[Array], Array] | None = None,
-    ):
+    ) -> None:
         ambient_dimension_ = int(ambient_dimension)
         if ambient_dimension_ < chart.dimension:
             raise ValueError(

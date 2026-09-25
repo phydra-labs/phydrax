@@ -54,7 +54,7 @@ class OperatorDistributionNLL(AbstractOperatorLossTerm):
     weight: float = 1.0
     reduction: DistributionReduction = "mean"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("OperatorDistributionNLL name must be non-empty.")
         if not self.target_field:

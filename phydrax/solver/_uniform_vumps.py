@@ -56,7 +56,7 @@ class UniformVUMPSProblem(StrictModule):
 
     def __init__(
         self, initial_state, hamiltonian, /, *, problem_id: str = "uniform-vumps"
-    ):
+    ) -> None:
         abelian_identity = None
         if isinstance(initial_state, UniformAbelianMatrixProductState):
             if not isinstance(hamiltonian, UniformAbelianMatrixProductOperator):
@@ -127,7 +127,7 @@ class UniformVUMPSPolicy(StrictModule):
         injectivity_tolerance: float = 1e-8,
         maximum_transfer_elements: int = 10_000_000,
         maximum_history_elements: int = 1_000_000,
-    ):
+    ) -> None:
         iterations, step = int(maximum_iterations), float(gradient_step)
         tolerances = (
             float(residual_tolerance),
@@ -303,7 +303,7 @@ def plan_uniform_vumps(problem, policy, /):
     )
 
 
-def _validate(problem, plan):
+def _validate(problem, plan) -> None:
     if (
         problem.problem_id != plan.problem_id
         or problem.initial_state.structure_id != plan.state_structure_id
@@ -481,7 +481,7 @@ class UniformTangentPolicy(StrictModule):
         broadening: float = 1e-2,
         metric_tolerance: float = 1e-9,
         maximum_tangent_elements: int = 10_000_000,
-    ):
+    ) -> None:
         modes = int(maximum_modes)
         broadening_ = float(broadening)
         tolerance = float(metric_tolerance)

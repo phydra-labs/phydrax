@@ -125,7 +125,7 @@ class PassiveLeak(StrictModule, NonTrainableState):
         /,
         *,
         mechanism_id: str = "passive-leak",
-    ):
+    ) -> None:
         conductance = _positive(
             conductance_density_mS_cm2,
             "conductance_density_mS_cm2",
@@ -233,7 +233,7 @@ class HodgkinHuxleyNaK(StrictModule, NonTrainableState):
         /,
         *,
         mechanism_id: str = "hodgkin-huxley-na-k",
-    ):
+    ) -> None:
         sodium = _positive(
             sodium_conductance_density_mS_cm2,
             "sodium_conductance_density_mS_cm2",
@@ -338,7 +338,7 @@ class SodiumPotassiumPump(StrictModule, NonTrainableState):
         sodium_species: int = 0,
         potassium_species: int = 1,
         mechanism_id: str = "sodium-potassium-pump",
-    ):
+    ) -> None:
         maximum = _positive(
             maximum_current_density_uA_cm2,
             "maximum_current_density_uA_cm2",
@@ -440,7 +440,7 @@ class MembraneProgram(StrictModule, NonTrainableState):
     program_id: str = eqx.field(static=True)
     has_nonlinear_mechanisms: bool = eqx.field(static=True)
 
-    def __init__(self, mechanisms: Sequence[MembraneMechanism], /):
+    def __init__(self, mechanisms: Sequence[MembraneMechanism], /) -> None:
         values = tuple(mechanisms)
         if not values:
             raise ValueError("A membrane program requires at least one mechanism.")

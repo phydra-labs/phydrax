@@ -125,7 +125,7 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
         nonlinear_method: NewtonKrylov | None = None,
         termination: NonlinearTermination | None = None,
         structural_contact_residual: StructuralContactResidual | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         if dynamics.algebraic_les is not None:

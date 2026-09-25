@@ -36,7 +36,7 @@ class AxisDomain(StrictModule, NonTrainableState):
         lower: ArrayLike | None = None,
         upper: ArrayLike | None = None,
         direction: HalfLineDirection | None = None,
-    ):
+    ) -> None:
         if kind not in ("bounded", "periodic", "half_line", "real_line"):
             raise ValueError("Unknown axis domain kind.")
         lower_ = (

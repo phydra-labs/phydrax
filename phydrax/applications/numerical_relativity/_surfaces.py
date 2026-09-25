@@ -90,7 +90,7 @@ class SphericalSurfacePlan(StrictModule, NonTrainableState):
         sampling: SphericalSampling = "gl",
         execution: SphericalExecution = "recursive",
         max_precompute_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         bandlimit_ = int(bandlimit)
         if bandlimit_ < 2:
             raise ValueError("Surface bandlimit must be at least two.")

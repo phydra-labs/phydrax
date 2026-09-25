@@ -51,7 +51,7 @@ class ExposureBSDERoute(StrictModule):
         control_mode: BSDEControlMode,
         quadrature: BSDEQuadrature,
         route_id: str,
-    ):
+    ) -> None:
         if not isinstance(problem, BSDEProblem):
             raise TypeError("problem must be a BSDEProblem.")
         if not isinstance(pricing_law, PricingLaw):

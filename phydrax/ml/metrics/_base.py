@@ -44,7 +44,7 @@ class MetricResult(StrictModule):
         valid: ArrayLike,
         status: ArrayLike,
         effective_weight: ArrayLike,
-    ):
+    ) -> None:
         self.value = jnp.asarray(value)
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)

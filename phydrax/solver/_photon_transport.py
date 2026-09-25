@@ -147,7 +147,7 @@ class PhotonTransportPlan(StrictModule, NonTrainableState):
         maximum_events: int,
         cutoff_energy: float,
         angular_sampling_attempts: int = 16,
-    ):
+    ) -> None:
         if not isinstance(geometry, VoxelRadiationGeometryPlan):
             raise TypeError("geometry must be VoxelRadiationGeometryPlan.")
         if not isinstance(cross_sections, RadiationCrossSectionLibrary):

@@ -83,7 +83,7 @@ class FeatureSchema(StrictModule, NonTrainableState):
         layout_id: str = "",
         dimensions: Iterable[DimensionSignature] | None = None,
         ports: Iterable[ValuePort] | None = None,
-    ):
+    ) -> None:
         names_ = tuple(str(name) for name in names)
         if not names_ or any(not name for name in names_):
             raise ValueError("Feature names must be non-empty strings.")
@@ -205,7 +205,7 @@ class TargetSchema(StrictModule, NonTrainableState):
         class_labels: Sequence[object] = (),
         dimensions: Iterable[DimensionSignature] | None = None,
         port: ValuePort | None = None,
-    ):
+    ) -> None:
         valid = {
             "continuous",
             "binary",

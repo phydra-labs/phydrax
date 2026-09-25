@@ -67,7 +67,7 @@ class LinearSubspace(StrictModule):
         dimension: int | ArrayLike | None = None,
         orthonormal: bool = False,
         subspace_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(space, AbstractVectorSpace):
             raise TypeError("space must be an AbstractVectorSpace.")
         basis_ = jnp.asarray(basis)
@@ -294,7 +294,7 @@ class NullspacePolicy(StrictModule):
         certificate: KernelCertificate | None = None,
         compatibility: CompatibilityMode = "error",
         gauge: GaugeMode = "minimum-norm",
-    ):
+    ) -> None:
         if certificate is not None and not isinstance(certificate, KernelCertificate):
             raise TypeError("certificate must be a KernelCertificate or None.")
         if certificate is not None:

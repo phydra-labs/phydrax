@@ -43,7 +43,7 @@ class GWQuasiparticleEvidence(StrictModule, NonTrainableState):
         successful_roots: ArrayLike,
         residual_tolerance: float,
         /,
-    ):
+    ) -> None:
         residuals = jnp.asarray(root_residuals)
         roots = jnp.asarray(successful_roots, dtype=jnp.bool_)
         tolerance = float(residual_tolerance)
@@ -102,7 +102,7 @@ class GWQuasiparticleResult(StrictModule, NonTrainableState):
         self_energy_definition_id: str,
         source_manifest_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         mean_field = jnp.asarray(mean_field_energies)
         quasiparticle = jnp.asarray(quasiparticle_energies, dtype=mean_field.dtype)
         factors = jnp.asarray(renormalization_factors, dtype=mean_field.real.dtype)
@@ -196,7 +196,7 @@ class DiagonalGWPlan(StrictModule, NonTrainableState):
         *,
         residual_tolerance: float = 1.0e-9,
         maximum_iterations: int = 200,
-    ):
+    ) -> None:
         energies = jnp.asarray(mean_field_energies)
         xc = jnp.asarray(mean_field_xc_expectations, dtype=energies.dtype)
         brackets_ = jnp.asarray(brackets, dtype=energies.real.dtype)
@@ -337,7 +337,7 @@ class BSEPostprocessEvidence(StrictModule, NonTrainableState):
         provider_id: str,
         residual_tolerance: float,
         /,
-    ):
+    ) -> None:
         residuals = jnp.asarray(eigenpair_residuals).reshape((-1,))
         tolerance = float(residual_tolerance)
         identifiers = tuple(
@@ -397,7 +397,7 @@ class BSEPostprocessResult(StrictModule, NonTrainableState):
         approximation: BSEApproximation,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(manifold, ElectronicManifoldResult):
             raise TypeError("manifold must be ElectronicManifoldResult.")
         if not isinstance(evidence, BSEPostprocessEvidence):
@@ -460,7 +460,7 @@ class BetheSalpeterPlan(StrictModule, NonTrainableState):
         coupling: ArrayLike | None = None,
         maximum_transitions: int = 4096,
         eigenpair_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         identifiers = tuple(str(value).strip() for value in transition_ids)
         transition_input = jnp.asarray(transition_energies)
         transitions = jnp.real(transition_input)

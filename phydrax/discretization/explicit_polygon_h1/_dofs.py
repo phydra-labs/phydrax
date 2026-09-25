@@ -63,7 +63,7 @@ class ExplicitPolygonH1DofMap(StrictModule, NonTrainableState):
     local_width: int = eqx.field(static=True)
     dof_map_id: str = eqx.field(static=True)
 
-    def __init__(self, mesh: CellMesh, /):
+    def __init__(self, mesh: CellMesh, /) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         if not isinstance(mesh.connectivity, PolygonalConnectivity):

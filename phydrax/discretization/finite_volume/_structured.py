@@ -78,7 +78,7 @@ class FiniteVolumePlan(AbstractDiscretizationPlan):
         component_names: Sequence[str] = ("value",),
         key: DiscretizationKey | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("FiniteVolumePlan requires a PreparedTensorGrid.")
         if any(axis.primary_entity != "interval" for axis in grid.structured_axes):
@@ -163,7 +163,7 @@ class FiniteVolumeDiscretization(AbstractPreparedDiscretization):
         /,
         *,
         numeric_version: str = "0",
-    ):
+    ) -> None:
         if not isinstance(plan, FiniteVolumePlan):
             raise TypeError("plan must be a FiniteVolumePlan.")
         grid = plan.grid

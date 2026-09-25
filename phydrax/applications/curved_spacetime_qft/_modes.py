@@ -43,7 +43,7 @@ class FLRWModePlan(StrictModule):
         mass: float,
         curvature_coupling: float = 0.0,
         maximum_mode_steps: int = 1_000_000,
-    ):
+    ) -> None:
         times = np.asarray(conformal_times, dtype=np.float64)
         scale = np.asarray(scale_factors, dtype=np.float64)
         prime = np.asarray(scale_factor_primes, dtype=np.float64)

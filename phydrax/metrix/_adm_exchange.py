@@ -92,7 +92,7 @@ class ADMGridGeometry(StrictModule, NonTrainableState):
         scale_id: str,
         topology_id: str,
         geometry_lineage_id: str,
-    ):
+    ) -> None:
         alpha_array = _real_array(alpha, "alpha")
         beta_array = _real_array(beta_contravariant, "beta_contravariant")
         spatial_array = _real_array(spatial_metric, "spatial_metric")
@@ -317,7 +317,7 @@ class StressEnergyProjection(StrictModule, NonTrainableState):
         scale_id: str,
         topology_id: str,
         projection_id: str,
-    ):
+    ) -> None:
         energy_array = _real_array(energy_density, "energy_density")
         momentum_array = _real_array(momentum_covector, "momentum_covector")
         stress_array = _real_array(stress_covariant, "stress_covariant")

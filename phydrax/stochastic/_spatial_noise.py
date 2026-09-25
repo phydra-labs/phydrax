@@ -151,7 +151,7 @@ class SpatialNoiseApproximation(StrictModule):
         tolerance: float,
         seed: Sequence[int] | None = None,
         sketch_size: int | None = None,
-    ):
+    ) -> None:
         if method not in (
             "dense_eigh",
             "pivoted_cholesky",
@@ -254,7 +254,7 @@ class SpatialNoisePrecisionPolicy(StrictModule):
         basis_storage_dtype: Any | None = None,
         runtime_dtype: Any | None = None,
         certification_dtype: Any | None = None,
-    ):
+    ) -> None:
         construction = real_precision_dtype_name(construction_dtype)
         basis = (
             construction
@@ -354,7 +354,7 @@ class SpatialNoiseBasis(StrictModule):
         orthonormal_rtol: float = 1e-6,
         orthonormal_atol: float = 1e-7,
         precision: SpatialNoisePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = SpatialNoisePrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, SpatialNoisePrecisionPolicy):
             raise TypeError("precision must be a SpatialNoisePrecisionPolicy.")

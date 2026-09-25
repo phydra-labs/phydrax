@@ -43,7 +43,7 @@ class CollectiveVariableMetric(StrictModule, NonTrainableState):
     period: float | None = eqx.field(static=True)
     metric_id: str = eqx.field(static=True)
 
-    def __init__(self, /, *, period: float | None = None):
+    def __init__(self, /, *, period: float | None = None) -> None:
         period_ = None if period is None else float(period)
         if period_ is not None and (not np.isfinite(period_) or period_ <= 0.0):
             raise ValueError("CV period must be finite and positive.")
@@ -105,7 +105,7 @@ class CollectiveVariablePlan(AbstractCollectiveVariablePlan):
         reference: ArrayLike = (),
         domain: AtomisticSiteDomain = AtomisticSiteDomain.DOF_ATOMS,
         metric: CollectiveVariableMetric | None = None,
-    ):
+    ) -> None:
         if not isinstance(kind, CollectiveVariableKind):
             raise TypeError("kind must be CollectiveVariableKind.")
         index = np.asarray(indices)
@@ -228,7 +228,7 @@ class PreparedCollectiveVariable(StrictModule, NonTrainableState):
     system: PreparedAtomisticSystem
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, system, /):
+    def __init__(self, plan, system, /) -> None:
         self.plan = plan
         self.system = system
         self.prepared_id = canonical_fingerprint(
@@ -435,7 +435,7 @@ class CollectiveVariableProgram(AbstractCollectiveVariableProgram, NonTrainableS
     metrics: tuple[CollectiveVariableMetric, ...]
     program_id: str = eqx.field(static=True)
 
-    def __init__(self, variables, /, *, names=None):
+    def __init__(self, variables, /, *, names=None) -> None:
         values = tuple(variables)
         if not values or any(
             not isinstance(value, PreparedCollectiveVariable) for value in values

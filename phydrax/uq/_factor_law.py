@@ -38,7 +38,7 @@ class GaussianFactorLaw(AbstractProbabilityLaw):
         *,
         event_shape,
         support_tolerance: ArrayLike = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(factor, GaussianFactor):
             raise TypeError("factor must be a GaussianFactor.")
         events = tuple(event_shape)

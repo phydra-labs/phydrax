@@ -41,7 +41,7 @@ class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
         accumulation: str = "fast",
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         coefficients = tuple(jnp.asarray(value) for value in coefficient_maps)
         polynomials = tuple(jnp.asarray(value) for value in polynomial_matrices)
         stabilizations = tuple(jnp.asarray(value) for value in stabilization_matrices)

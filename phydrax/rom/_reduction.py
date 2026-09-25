@@ -43,7 +43,7 @@ class TrialTestReduction(StrictModule, NonTrainableState):
         trial_basis: ReducedBasisArtifact,
         test_basis: ReducedBasisArtifact,
         /,
-    ):
+    ) -> None:
         if not isinstance(trial, ConstraintMap) or not isinstance(test, ConstraintMap):
             raise TypeError("trial and test must be ConstraintMap values.")
         if not isinstance(trial_basis, ReducedBasisArtifact) or not isinstance(

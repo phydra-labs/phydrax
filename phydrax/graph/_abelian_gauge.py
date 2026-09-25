@@ -30,7 +30,7 @@ class AbelianGaugeDiagnostics(StrictModule):
         maxwell_residual_norm: ArrayLike,
         current_continuity_residual: ArrayLike,
         action: ArrayLike,
-    ):
+    ) -> None:
         self.gauge_curvature_residual = jnp.asarray(gauge_curvature_residual)
         self.maxwell_residual_norm = jnp.asarray(maxwell_residual_norm)
         self.current_continuity_residual = jnp.asarray(current_continuity_residual)
@@ -67,7 +67,7 @@ class AbelianBridgeReport(StrictModule):
         /,
         *,
         tolerance: float,
-    ):
+    ) -> None:
         self.potential = potential
         self.discrete_curvature = discrete_curvature
         self.projected_curvature = projected_curvature

@@ -40,7 +40,7 @@ class PointIntegrationBatch(StrictModule):
         stratum_indices: Array | None = None,
         num_strata: int | None = None,
         provenance: str = "fixed",
-    ):
+    ) -> None:
         if not isinstance(weights, cx.AxisArray):
             raise TypeError(
                 "PointIntegrationBatch weights must be a phydrax.axes.AxisArray."
@@ -95,7 +95,7 @@ class SeparableIntegrationBatch(StrictModule):
         mask: cx.AxisArray | None = None,
         target_mass: Array | None = None,
         provenance: str = "fixed-separable",
-    ):
+    ) -> None:
         weights = frozendict(weights_by_axis)
         axes_ = tuple(weights) if axes is None else tuple(axes)
         missing = tuple(axis for axis in axes_ if axis not in weights)
@@ -149,7 +149,7 @@ class MappedIntegrationBatch(StrictModule):
         axis: str = "__integration_point__",
         cell: str = "mapped",
         provenance: str = "mapped",
-    ):
+    ) -> None:
         reference = jnp.asarray(reference_points, dtype=jnp.float64)
         weights_ = jnp.asarray(weights, dtype=jnp.float64).reshape((-1,))
         if reference.ndim < 2 or reference.shape[0] != weights_.shape[0]:
@@ -203,7 +203,7 @@ class WeightedSampleBatch(StrictModule):
         sample_axes: int | str | tuple[int, ...] | tuple[str, ...] = 0,
         provenance: str = "external",
         independent: bool = False,
-    ):
+    ) -> None:
         raw_axes = sample_axes if isinstance(sample_axes, tuple) else (sample_axes,)
         if not raw_axes:
             raise ValueError("sample_axes must contain at least one axis.")

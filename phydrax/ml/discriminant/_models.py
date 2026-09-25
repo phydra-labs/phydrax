@@ -90,7 +90,7 @@ class DiscriminantDiagnostics(StrictModule):
         log_determinant: Any,
         raw_singular: Any,
         method: str,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.effective_samples = jnp.asarray(effective_samples)
@@ -251,7 +251,7 @@ class LinearDiscriminantModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.coefficients = jnp.asarray(coefficients)
         self.intercepts = jnp.asarray(intercepts)
         self.labels = jnp.asarray(labels)
@@ -317,7 +317,7 @@ class QuadraticDiscriminantModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.means = jnp.asarray(means)
         self.precisions = jnp.asarray(precisions)
         self.log_priors = jnp.asarray(log_priors)
@@ -508,7 +508,7 @@ class LinearDiscriminantRecipe(AbstractRecipe):
         shrinkage: float = 0.0,
         regularization: float = 0.0,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         (
             self.num_classes,
             self.priors,
@@ -539,7 +539,7 @@ class QuadraticDiscriminantRecipe(AbstractRecipe):
         shrinkage: float = 0.0,
         regularization: float = 0.0,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         (
             self.num_classes,
             self.priors,
@@ -570,7 +570,7 @@ class ShrinkageDiscriminantRecipe(AbstractRecipe):
         priors: tuple[float, ...] = (),
         regularization: float = 0.0,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         (
             self.num_classes,
             self.priors,
@@ -603,7 +603,7 @@ class RegularizedDiscriminantRecipe(AbstractRecipe):
         num_classes: int | None = None,
         priors: tuple[float, ...] = (),
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         (
             self.num_classes,
             self.priors,

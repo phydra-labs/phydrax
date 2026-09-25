@@ -39,7 +39,7 @@ class OptionCallSlice(StrictModule):
         currency_code: str,
         numeraire_id: str,
         market_snapshot_id: str,
-    ):
+    ) -> None:
         strikes_ = jnp.asarray(strikes, dtype=jnp.float64)
         calls = jnp.asarray(call_prices, dtype=jnp.float64)
         forward_ = jnp.asarray(forward, dtype=jnp.float64)

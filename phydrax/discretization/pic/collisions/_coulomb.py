@@ -36,7 +36,7 @@ class CoulombCollisionPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_probability: float = 0.25,
-    ):
+    ) -> None:
         frequency = float(collision_frequency)
         maximum = float(maximum_probability)
         if not np.isfinite(frequency) or frequency < 0.0:

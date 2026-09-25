@@ -79,7 +79,7 @@ class SurfaceRichardsPlan(StrictModule):
         mass_scale_kg_s: float = 1.0,
         head_scale_m: float = 1.0,
         termination: NonlinearTermination | None = None,
-    ):
+    ) -> None:
         if not isinstance(water, RichardsPlan) or not isinstance(
             surface, OrthogonalDiffusiveWaveSurfacePlan
         ):

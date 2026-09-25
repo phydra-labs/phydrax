@@ -395,7 +395,7 @@ class BuildingExperiment(StrictModule):
         observed_temperature: ArrayLike,
         *,
         experiment_id: str,
-    ):
+    ) -> None:
         (
             self.initial_temperature,
             self.time,

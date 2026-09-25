@@ -38,7 +38,7 @@ class GroupAveragedOperator(StrictModule):
         /,
         *,
         spatial_axes: Sequence[int] | None = None,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
         if not isinstance(group, FiniteOrthogonalGroup):

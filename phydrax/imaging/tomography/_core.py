@@ -108,7 +108,7 @@ class VoxelXRayTransformPlan(StrictModule, NonTrainableState):
         spacing: ArrayLike,
         volume_coordinate_contract: SpatialCoordinateContract,
         /,
-    ):
+    ) -> None:
         if not isinstance(volume_coordinate_contract, SpatialCoordinateContract):
             raise TypeError(
                 "volume_coordinate_contract must be SpatialCoordinateContract."
@@ -270,7 +270,7 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_segments_per_ray: int = 64,
-    ):
+    ) -> None:
         if not isinstance(coordinate_contract, SpatialCoordinateContract):
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if coordinate_contract.spatial_id != support.rays.coordinate_contract.spatial_id:
@@ -494,7 +494,7 @@ class FilteredBackprojectionPlan(StrictModule, NonTrainableState):
         output_x: ArrayLike,
         output_y: ArrayLike,
         /,
-    ):
+    ) -> None:
         angles_ = np.asarray(angles)
         detector_ = np.asarray(detector_coordinates)
         output_x_ = np.asarray(output_x)

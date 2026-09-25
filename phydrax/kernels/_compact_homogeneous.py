@@ -45,7 +45,7 @@ class PreparedCompactHomogeneousSpectrum(StrictModule):
         tail_bound: ArrayLike,
         tail_certified: bool,
         spectrum_id: str,
-    ):
+    ) -> None:
         labels_ = jnp.asarray(labels, dtype=jnp.int32)
         eigenvalues = jnp.asarray(casimir_eigenvalues)
         multiplicities_ = jnp.asarray(multiplicities)
@@ -105,7 +105,7 @@ class KernelEvaluationEvidence(StrictModule):
         branch_valid: ArrayLike,
         finite: ArrayLike,
         positive_definite_capability: ArrayLike,
-    ):
+    ) -> None:
         self.truncation_tail_bound = jnp.asarray(truncation_tail_bound)
         self.membership_valid = jnp.asarray(membership_valid, dtype=jnp.bool_)
         self.branch_valid = jnp.asarray(branch_valid, dtype=jnp.bool_)
@@ -131,7 +131,7 @@ class _CompactHomogeneousSpectralKernel(AbstractPositiveDefiniteKernel):
         *,
         normalize: bool,
         family: str,
-    ):
+    ) -> None:
         values = jnp.asarray(weights, dtype=spectrum.casimir_eigenvalues.dtype)
         if (
             values.shape != (spectrum.frontier,)
@@ -213,7 +213,7 @@ class CompactHomogeneousHeatKernel(_CompactHomogeneousSpectralKernel):
         *,
         time: float,
         normalize: bool = True,
-    ):
+    ) -> None:
         if float(time) <= 0.0:
             raise ValueError("Heat-kernel time must be positive.")
         weights = spectrum.multiplicities * jnp.exp(
@@ -239,7 +239,7 @@ class CompactHomogeneousMaternKernel(_CompactHomogeneousSpectralKernel):
         inverse_length_squared: float,
         spectral_dimension: float,
         normalize: bool = True,
-    ):
+    ) -> None:
         if (
             min(
                 float(smoothness),
@@ -280,7 +280,7 @@ class GeodesicDistanceEvidence(StrictModule):
         membership_valid: ArrayLike,
         branch_valid: ArrayLike,
         valid: ArrayLike,
-    ):
+    ) -> None:
         self.distance = jnp.asarray(distance)
         self.branch_margin = jnp.asarray(branch_margin)
         self.log_residual = jnp.asarray(log_residual)
@@ -313,7 +313,7 @@ class GeodesicRadialKernel(StrictModule):
         stiefel_log: Callable[[Array, Array], tuple[Array, Array]] | None = None,
         positive_definite_theorem: bool = False,
         kernel_id: str = "geodesic-radial",
-    ):
+    ) -> None:
         if not callable(radial_function) or space not in (
             "so",
             "su",
@@ -447,7 +447,7 @@ class GeodesicExponentialKernel(GeodesicRadialKernel):
         branch_tolerance: float = 1e-6,
         stiefel_log: Callable[[Array, Array], tuple[Array, Array]] | None = None,
         positive_definite_theorem: bool = False,
-    ):
+    ) -> None:
         if float(length_scale) <= 0.0:
             raise ValueError("Geodesic exponential length_scale must be positive.")
         scale = float(length_scale)

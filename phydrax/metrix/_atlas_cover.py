@@ -29,7 +29,7 @@ class ChartSupport(StrictModule):
         /,
         *,
         support_id: str,
-    ):
+    ) -> None:
         if not isinstance(chart, CoordinateChart):
             raise TypeError("chart must be a CoordinateChart.")
         if not callable(predicate):
@@ -69,7 +69,7 @@ class AtlasOverlap(StrictModule):
         /,
         *,
         overlap_id: str,
-    ):
+    ) -> None:
         if not isinstance(transition, ChartTransition):
             raise TypeError("transition must be a ChartTransition.")
         if not callable(source_support):
@@ -107,7 +107,7 @@ class AtlasCover(StrictModule):
         /,
         *,
         cover_id: str,
-    ):
+    ) -> None:
         if not isinstance(atlas, CoordinateAtlas):
             raise TypeError("atlas must be a CoordinateAtlas.")
         supports_ = tuple(supports)

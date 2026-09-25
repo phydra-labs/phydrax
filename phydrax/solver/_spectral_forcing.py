@@ -62,7 +62,7 @@ class SpectralOUForcingPlan(AbstractBalanceLawProcessPlan):
         correlation_argument: str | None = None,
         rms_argument: str | None = None,
         realization_name: str = "spectral_ou",
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -140,7 +140,7 @@ class PreparedSpectralOUForcing(AbstractPreparedBalanceLawProcess):
         plan: SpectralOUForcingPlan,
         transport: AbstractPreparedBalanceLawTransport,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, SpectralOUForcingPlan):
             raise TypeError("plan must be SpectralOUForcingPlan.")
         if not isinstance(

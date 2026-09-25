@@ -91,7 +91,7 @@ class EinsteinVlasovConstraintSolveEvidence(StrictModule):
         /,
         *,
         solver_id: str,
-    ):
+    ) -> None:
         scalar = tuple(
             jnp.asarray(value) for value in (hamiltonian_before, hamiltonian_after)
         )
@@ -167,7 +167,7 @@ class EinsteinVlasovMatterState(StrictModule):
         /,
         *,
         runtime_id: str,
-    ):
+    ) -> None:
         if not isinstance(z4c, Z4cState):
             raise TypeError("z4c must be a Z4cState.")
         if not isinstance(particles, RelativisticParticleState):
@@ -424,7 +424,7 @@ class EinsteinVlasovMatterPlan(StrictModule, NonTrainableState):
         maximum_extrinsic_curvature: float = 1.0e3,
         maximum_consecutive_failures: int = 1,
         require_derivative_valid: bool = False,
-    ):
+    ) -> None:
         if not isinstance(system, Z4cSystem) or not isinstance(grid, FixedGridGeometry):
             raise TypeError(
                 "Einstein-Vlasov requires canonical Z4c system and grid owners."

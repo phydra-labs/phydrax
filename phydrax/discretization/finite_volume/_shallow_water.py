@@ -38,7 +38,7 @@ class ShallowWaterWetDryPolicy(StrictModule, NonTrainableState):
         *,
         wet_depth: float = 1e-10,
         velocity_depth: float = 1e-10,
-    ):
+    ) -> None:
         wet = float(wet_depth)
         velocity = float(velocity_depth)
         if (
@@ -94,7 +94,7 @@ class ShallowWaterBathymetryPlan(StrictModule, NonTrainableState):
         cell_values: ArrayLike | None = None,
         evaluator: Callable[[Array], ArrayLike] | None = None,
         field_id: str,
-    ):
+    ) -> None:
         if (cell_values is None) == (evaluator is None):
             raise ValueError(
                 "Bathymetry requires exactly one of cell_values or evaluator."
@@ -166,7 +166,7 @@ class PreparedShallowWaterBathymetry(StrictModule, NonTrainableState):
         dtype: Any,
         evaluator: Callable[[Array], ArrayLike] | None = None,
         field_id: str = "bathymetry",
-    ):
+    ) -> None:
         host = np.asarray(values)
         if host.shape != cell_shape:
             raise ValueError("Bathymetry must match the finite-volume cell shape.")
@@ -252,7 +252,7 @@ class ShallowWaterBalancedFaceResult(StrictModule):
         reconstructed_right: ArrayLike,
         dry_face: ArrayLike,
         /,
-    ):
+    ) -> None:
         flux = jnp.asarray(normal_flux)
         left = jnp.asarray(left_correction)
         right = jnp.asarray(right_correction)
@@ -292,7 +292,7 @@ class ShallowWaterHydrostaticHLLPlan(StrictModule, NonTrainableState):
     differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, wet_dry: ShallowWaterWetDryPolicy | None = None, /):
+    def __init__(self, wet_dry: ShallowWaterWetDryPolicy | None = None, /) -> None:
         policy = ShallowWaterWetDryPolicy() if wet_dry is None else wet_dry
         if not isinstance(policy, ShallowWaterWetDryPolicy):
             raise TypeError("wet_dry must be a ShallowWaterWetDryPolicy.")
@@ -557,7 +557,7 @@ class ShallowWaterAcceptedFaceIntegrals(StrictModule):
         axis_names: tuple[str, ...],
         bed_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         if len(contributions) != len(face_measures) or len(contributions) != len(
             axis_names
         ):

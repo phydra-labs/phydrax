@@ -102,7 +102,7 @@ class CubatureRuleData(StrictModule, NonTrainableState):
         source_id: str,
         dtype=jnp.float64,
         maximum_rule_bytes: int = _DEFAULT_RULE_BYTES,
-    ):
+    ) -> None:
         degree = _degree(exact_degree)
         if reference_domain not in _REFERENCE_DIMENSION:
             raise ValueError(f"Unsupported cubature reference: {reference_domain!r}.")

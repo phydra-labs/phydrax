@@ -35,7 +35,7 @@ class ScoreContext(StrictModule):
         /,
         *,
         context_id: str | None = None,
-    ):
+    ) -> None:
         converted = tuple(
             (str(name), jnp.asarray(value)) for name, value in values.items()
         )
@@ -100,7 +100,7 @@ class _AbstractScalarFieldGradientGuidance(AbstractScoreGuidance):
         scale: float,
         exactness: GuidanceExactness,
         guidance_id: str,
-    ):
+    ) -> None:
         if not isinstance(field, DomainFunction):
             raise TypeError("Guidance field must be a DomainFunction.")
         contexts = tuple(str(name) for name in context_labels)
@@ -175,7 +175,7 @@ class TimeConditionedLikelihoodGuidance(_AbstractScalarFieldGradientGuidance):
         time_label: str = "t",
         context_labels: Sequence[str] = (),
         guidance_id: str = "time-conditioned-likelihood",
-    ):
+    ) -> None:
         super().__init__(
             log_likelihood,
             state_label=state_label,
@@ -201,7 +201,7 @@ class PotentialGuidance(_AbstractScalarFieldGradientGuidance):
         time_label: str = "t",
         context_labels: Sequence[str] = (),
         guidance_id: str = "potential-guidance",
-    ):
+    ) -> None:
         super().__init__(
             potential,
             state_label=state_label,
@@ -228,7 +228,7 @@ class ClassifierFreeGuidance(AbstractScoreGuidance):
         *,
         weight: float,
         guidance_id: str = "classifier-free-guidance",
-    ):
+    ) -> None:
         if not isinstance(unconditional, StateTimeScoreField) or not isinstance(
             conditional, StateTimeScoreField
         ):
@@ -297,7 +297,7 @@ class GuidedScoreField(StrictModule):
         /,
         *,
         guided_score_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(base, StateTimeScoreField):
             raise TypeError("base must be a StateTimeScoreField.")
         values = tuple(guidance)

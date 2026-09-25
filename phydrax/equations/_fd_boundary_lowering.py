@@ -128,7 +128,7 @@ class BoundaryTarget(StrictModule, NonTrainableState):
     expression: PDEExpression = eqx.field(static=True)
     target_id: str = eqx.field(static=True)
 
-    def __init__(self, expression: PDEExpression, /):
+    def __init__(self, expression: PDEExpression, /) -> None:
         if not isinstance(expression, PDEExpression):
             raise TypeError("Boundary target must be a PDEExpression.")
         if expression.op == "constant" and expression.value is not None:
@@ -201,7 +201,7 @@ class FDBoundaryBinding(StrictModule, NonTrainableState):
         *,
         alpha: float,
         beta: float,
-    ):
+    ) -> None:
         if side not in ("lower", "upper") or kind not in (
             "periodic",
             "dirichlet",
@@ -319,7 +319,7 @@ class PreparedFDBoundaryPair(StrictModule, NonTrainableState):
         *,
         lower_width: int = 1,
         upper_width: int = 1,
-    ):
+    ) -> None:
         if lower.side != "lower" or upper.side != "upper":
             raise ValueError("Prepared boundary pair requires lower and upper bindings.")
         if lower.field_name != field_name or upper.field_name != field_name:
@@ -467,7 +467,7 @@ class PreparedFDBoundaryProgram(StrictModule, NonTrainableState):
         /,
         *,
         corner_policy: CornerPolicy = "axis_separable",
-    ):
+    ) -> None:
         pairs_ = tuple(pairs)
         if not isinstance(grid, PreparedTensorGrid) or not all(
             isinstance(value, PreparedFDBoundaryPair) for value in pairs_
@@ -772,7 +772,7 @@ class FDInterfaceBinding(StrictModule, NonTrainableState):
         coefficient: float,
         target: BoundaryTarget,
         /,
-    ):
+    ) -> None:
         coefficient_ = float(coefficient)
         if (
             not condition_name
@@ -824,7 +824,7 @@ class PreparedFDInterface(StrictModule, NonTrainableState):
         axis: str,
         bindings: Sequence[FDInterfaceBinding],
         /,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("Prepared interface requires a PreparedTensorGrid.")
         bindings_ = tuple(bindings)

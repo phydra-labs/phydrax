@@ -55,7 +55,7 @@ class ComovingEulerPlan(StrictModule):
         expansion_dimension: int = 3,
         cfl: float = 0.3,
         substeps: int = 4,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedFiniteVolumeDynamics):
             raise TypeError("dynamics must be PreparedFiniteVolumeDynamics.")
         gamma = float(adiabatic_index)
@@ -287,7 +287,7 @@ class CosmologicalGasParticleGravityPlan(StrictModule):
         gravity: ParticleMeshGravityPlan,
         scale_factors: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(gas, ComovingEulerPlan):
             raise TypeError("gas must be ComovingEulerPlan.")
         if not isinstance(particles, CosmologicalKDKPlan):

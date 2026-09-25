@@ -60,7 +60,7 @@ class GaussianMarkovVariationalFamily(AbstractVariationalFamily):
         case_shape: tuple[int, ...],
         state_shape: tuple[int, ...],
         scale_floor: float = 1e-6,
-    ):
+    ) -> None:
         cases = tuple(case_shape)
         state = tuple(state_shape)
         state_size = prod(state) if state else 1
@@ -360,7 +360,7 @@ class StateSpaceVariationalConfig(StrictModule):
         optimization: VariationalConfig | None = None,
         initial_scale: float = 0.5,
         scale_floor: float = 1e-6,
-    ):
+    ) -> None:
         optimization_ = VariationalConfig() if optimization is None else optimization
         if not isinstance(optimization_, VariationalConfig):
             raise TypeError("optimization must be VariationalConfig or None.")

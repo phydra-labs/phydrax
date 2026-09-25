@@ -46,7 +46,7 @@ class ProductSphereStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
-    def __init__(self, site_count: int, /):
+    def __init__(self, site_count: int, /) -> None:
         sites = int(site_count)
         if sites < 1:
             raise ValueError("Product sphere geometry requires at least one site.")
@@ -230,7 +230,7 @@ class LandauLifshitzGilbertPlan(StrictModule):
         step_size: float,
         maximum_steps: int,
         temperature: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(hamiltonian, PreparedClassicalSpinHamiltonian):
             raise TypeError("hamiltonian must be PreparedClassicalSpinHamiltonian.")
         sites = hamiltonian.plan.site_count
@@ -326,7 +326,7 @@ class ClassicalSpinDynamicsState(StrictModule):
         /,
         *,
         wiener_realization_id: str | None = None,
-    ):
+    ) -> None:
         values = jnp.asarray(directions)
         time_ = jnp.asarray(time)
         step_ = jnp.asarray(step_index, dtype=jnp.int64)

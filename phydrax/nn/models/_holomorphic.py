@@ -53,7 +53,7 @@ class HolomorphicMLP(_AbstractBaseModel):
         use_bias: bool = True,
         linear_ranks: Sequence[int | None] | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         input_size = int(in_size)
         output_size = int(out_size)
         hidden = tuple(hidden_sizes)

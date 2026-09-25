@@ -42,7 +42,7 @@ class AnalyticityOperator(StrictModule):
         *,
         tolerance: float = 1e-6,
         operator_id: str,
-    ):
+    ) -> None:
         supported = (
             "complex_holomorphic",
             "slice_regular",
@@ -85,7 +85,7 @@ class AlgebraAnalyticLayer(StrictModule, ParameterOwner):
         /,
         *,
         side: Literal["left", "right"],
-    ):
+    ) -> None:
         weights_ = jnp.asarray(weights)
         bias_ = jnp.asarray(bias, dtype=weights_.dtype)
         dimension = product.algebra.coordinate_dimension
@@ -136,7 +136,7 @@ class AnalyticityEvidence(StrictModule):
         *,
         operator_kind: str,
         side: str,
-    ):
+    ) -> None:
         self.residual = jnp.asarray(residual)
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
@@ -162,7 +162,7 @@ class AlgebraAnalyticNetwork(StrictModule, ParameterOwner):
         /,
         *,
         network_id: str,
-    ):
+    ) -> None:
         layers_ = tuple(layers)
         if (
             not layers_

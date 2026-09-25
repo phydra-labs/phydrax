@@ -44,7 +44,7 @@ class CalorimeterResponsePlan(StrictModule, NonTrainableState):
         adc_lsb: float,
         threshold: float,
         maximum_adc: int,
-    ):
+    ) -> None:
         if not isinstance(geometry, CalorimeterGeometry):
             raise TypeError("geometry must be CalorimeterGeometry.")
         gain_ = np.asarray(gain, dtype=np.float64)

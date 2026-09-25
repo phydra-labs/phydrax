@@ -47,7 +47,7 @@ class AffineEvolutionROMProblem(StrictModule, NonTrainableState):
         lift_terms: Sequence[PyTree[Array]] = (),
         lift_term_ids: Sequence[str] = (),
         source_artifact_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(reduction, TrialTestReduction) or not reduction.square:
             raise ValueError("Affine evolution currently requires a square reduction.")
         masses = tuple(mass_terms)

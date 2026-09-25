@@ -57,7 +57,7 @@ class OrnsteinUhlenbeckRealization(StrictModule):
         coupling_id: str | None = None,
         _path_indices: Array | None = None,
         _path_signs: Array | None = None,
-    ):
+    ) -> None:
         if len(support) != 2:
             raise ValueError(
                 "OrnsteinUhlenbeckRealization support must contain two bounds."

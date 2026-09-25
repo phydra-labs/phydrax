@@ -103,7 +103,7 @@ class StateLayout(StrictModule):
         local_component_names: Sequence[str] | None = None,
         tangent_component_names: Sequence[str] | None = None,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         resolved_shape = _shape(shape, "StateLayout shape")
         resolved_axes = _axes(axes, len(resolved_shape), "state")
         count = prod(resolved_shape) if resolved_shape else 1
@@ -270,7 +270,7 @@ class InputLayout(StrictModule):
         component_names: Sequence[str] | None = None,
         roles: Sequence[InputRole] | InputRole = "control",
         layout_id: str | None = None,
-    ):
+    ) -> None:
         resolved_shape = _shape(shape, "InputLayout shape")
         resolved_axes = _axes(axes, len(resolved_shape), "input")
         count = prod(resolved_shape) if resolved_shape else 1

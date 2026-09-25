@@ -22,7 +22,7 @@ class AxisKey:
     scope: str
     name: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.scope or not self.name:
             raise ValueError("AxisKey scope and name must be non-empty.")
 
@@ -40,7 +40,7 @@ class Axis:
     labels: tuple[str, ...] = ()
     support_id: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.size < 0:
             raise ValueError("Axis size must be non-negative.")
         if self.labels and len(self.labels) != self.size:
@@ -58,7 +58,7 @@ class AxisRef:
     slot: str = "value"
     variance: str = "neutral"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.slot or not self.variance:
             raise ValueError("AxisRef slot and variance must be non-empty.")
 
@@ -69,7 +69,7 @@ class UnboundAxis:
 
     size: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.size < 0:
             raise ValueError("Unbound axis size must be non-negative.")
 
@@ -83,7 +83,7 @@ class AxisLayout:
 
     axes: tuple[AxisEntry, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         references = [axis for axis in self.axes if isinstance(axis, AxisRef)]
         identities = [(axis.axis.key, axis.slot, axis.variance) for axis in references]
         if len(set(identities)) != len(identities):
@@ -147,7 +147,7 @@ class AxisArray:
         *,
         axes: AxisLayout | tuple[str | None | AxisRef, ...] | None = None,
         dims: tuple[str | None | AxisRef, ...] | None = None,
-    ):
+    ) -> None:
         value = jnp.asarray(data)
         if axes is not None and dims is not None:
             raise ValueError("Provide axes or dims, not both.")

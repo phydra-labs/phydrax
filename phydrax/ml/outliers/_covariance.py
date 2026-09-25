@@ -112,7 +112,7 @@ class CovarianceOutlierModel(AbstractFittedModel):
         log_determinant: ArrayLike,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         location_ = jnp.asarray(location)
         self.location = location_
         self.precision = jnp.asarray(precision)
@@ -167,7 +167,7 @@ class CovarianceOutlierRecipe(AbstractRecipe):
         contamination: float = 0.1,
         shrinkage: float = 0.0,
         ridge: float = 1e-6,
-    ):
+    ) -> None:
         if not 0.0 < float(contamination) < 0.5:
             raise ValueError("contamination must lie in (0, 0.5).")
         if not 0.0 <= float(shrinkage) <= 1.0 or float(ridge) <= 0.0:
@@ -282,7 +282,7 @@ class EllipticEnvelopeModel(AbstractFittedModel):
         threshold: ArrayLike,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         location_ = jnp.asarray(location)
         self.location = location_
         self.precision = jnp.asarray(precision)
@@ -383,7 +383,7 @@ class EllipticEnvelopeRecipe(AbstractRecipe):
         shrinkage: float = 0.05,
         ridge: float = 1e-6,
         tolerance: float = 1e-5,
-    ):
+    ) -> None:
         if not 0.0 < float(contamination) < 0.5:
             raise ValueError("contamination must lie in (0, 0.5).")
         if int(iterations) <= 0 or float(tuning) <= 0.0:

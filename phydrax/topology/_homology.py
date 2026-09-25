@@ -71,7 +71,7 @@ class FiniteFieldBasis(StrictModule, NonTrainableState):
         topology: CellComplexTopology,
         field: PrimeField,
         /,
-    ):
+    ) -> None:
         degree_ = int(degree)
         if degree_ < 0 or degree_ > layout.max_degree:
             raise ValueError("Finite-field basis degree is outside the compact layout.")
@@ -153,7 +153,7 @@ class HomologyDegreeResult(StrictModule, NonTrainableState):
         *,
         cycles: FiniteFieldBasis | None = None,
         cocycles: FiniteFieldBasis | None = None,
-    ):
+    ) -> None:
         degree_ = int(degree)
         chain_size = int(chain_dimension)
         outgoing = int(boundary_rank)
@@ -211,7 +211,7 @@ class HomologyResult(StrictModule, NonTrainableState):
         topology_id: str,
         reduced: bool,
         euler_characteristic: int,
-    ):
+    ) -> None:
         values = tuple(degrees)
         indices = tuple(value.degree for value in values)
         if indices != tuple(sorted(set(indices))):
@@ -271,7 +271,7 @@ class BettiDimensionResult(StrictModule, NonTrainableState):
         /,
         *,
         reduced: bool,
-    ):
+    ) -> None:
         degrees_ = tuple(degrees)
         dimensions_ = tuple(dimensions)
         if len(degrees_) != len(dimensions_) or any(value < 0 for value in dimensions_):

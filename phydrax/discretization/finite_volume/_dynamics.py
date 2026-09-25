@@ -75,7 +75,7 @@ class ConvexStateLimiterPlan(StrictModule, NonTrainableState):
     iterations: int = eqx.field(static=True)
     limiter_id: str = eqx.field(static=True)
 
-    def __init__(self, iterations: int = 32, /):
+    def __init__(self, iterations: int = 32, /) -> None:
         iterations_ = int(iterations)
         if iterations_ <= 0:
             raise ValueError("State-limiter iterations must be positive.")
@@ -145,7 +145,7 @@ class FiniteVolumeMethodPlan(StrictModule):
         differentiability: BranchDifferentiationPolicy = (
             BranchDifferentiationPolicy.BRANCHWISE
         ),
-    ):
+    ) -> None:
         if not isinstance(differentiability, BranchDifferentiationPolicy):
             raise TypeError("differentiability must be a BranchDifferentiationPolicy.")
         match differentiability:
@@ -405,7 +405,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         source_id: str | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
         entropy_pair: ConvexEntropyPair | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             discretization,
             (FiniteVolumeDiscretization, MappedFiniteVolumeDiscretization),

@@ -306,7 +306,7 @@ class PeriodicFermiNet(AbstractPeriodicElectronicAmplitude, ParameterOwner):
         twist: ArrayLike,
         pair_jastrow_strength: ArrayLike = 0.0,
         resource_plan: ElectronicVMCResourcePlan,
-    ):
+    ) -> None:
         features = PeriodicCellFeatures(cell, reciprocal_modes, twist=twist)
         coefficients = jnp.asarray(orbital_coefficients)
         mixing = jnp.asarray(determinant_coefficients)

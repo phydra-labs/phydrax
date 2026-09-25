@@ -47,7 +47,7 @@ class ParticleDetectionPlan(StrictModule, NonTrainableState):
         crowding_distance: float = 3.0,
         covariance_floor: float = 1e-4,
         maximum_detections: int = 1024,
-    ):
+    ) -> None:
         scalar_values = (
             small_sigma,
             large_sigma,

@@ -49,7 +49,7 @@ class KANGridAdaptationPlan(StrictModule, NonTrainableState):
         quantile_method: QuantileMethod = "linear",
         degenerate_policy: DegenerateGridPolicy = "retain",
         per_input: bool = False,
-    ):
+    ) -> None:
         blend_ = float(blend)
         minimum_span_ = float(minimum_span)
         if not isfinite(blend_) or not 0.0 <= blend_ <= 1.0:
@@ -94,7 +94,7 @@ class KANGridAdaptationReport(StrictModule, NonTrainableState):
         skipped_paths: tuple[tuple[int, int], ...],
         degenerate_paths: tuple[tuple[int, int], ...],
         degenerate_grid_paths: tuple[tuple[int, int, int], ...],
-    ):
+    ) -> None:
         self.paths = paths
         self.input_indices = input_indices
         self.old_grids = old_grids
@@ -108,7 +108,7 @@ class KANGridAdaptationReport(StrictModule, NonTrainableState):
 
 
 class _AdaptationRecords:
-    def __init__(self):
+    def __init__(self) -> None:
         self.paths: list[tuple[int, int]] = []
         self.input_indices: list[int | None] = []
         self.old_grids: list[BSplineGrid] = []

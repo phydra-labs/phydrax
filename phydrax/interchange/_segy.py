@@ -92,7 +92,7 @@ class SEGYRev1IEEEProfile(StrictModule, NonTrainableState):
         coordinate_mapping: str = "source-group-xyz",
         pressure_calibration: float | None = None,
         pressure_polarity: Literal["positive", "negative"] | None = None,
-    ):
+    ) -> None:
         if byte_order not in ("big", "little") or text_encoding not in ("ascii", "cp500"):
             raise ValueError(
                 "SEG-Y byte order and text encoding must be explicitly supported choices."

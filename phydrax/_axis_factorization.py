@@ -25,7 +25,7 @@ class AxisGather(StrictModule):
         target_axes: Sequence[str],
         indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         axes = tuple(str(axis) for axis in target_axes)
         if not axes:
             raise ValueError("AxisGather target_axes must be non-empty.")
@@ -50,7 +50,7 @@ class AxisFactor(StrictModule):
         /,
         *,
         gathers: Sequence[AxisGather] = (),
-    ):
+    ) -> None:
         axes_ = tuple(str(axis) for axis in axes)
         if len(set(axes_)) != len(axes_):
             raise ValueError(f"AxisFactor {name!r} has duplicate axes {axes_!r}.")
@@ -78,7 +78,7 @@ class AxisProductTerm(StrictModule):
         /,
         *,
         coefficient: ArrayLike = 1.0,
-    ):
+    ) -> None:
         names = tuple(str(name) for name in factor_names)
         if not names:
             raise ValueError("AxisProductTerm requires at least one factor.")
@@ -98,7 +98,7 @@ class AxisContractionPlan(StrictModule):
         /,
         *,
         output_axes: Sequence[str] | None = None,
-    ):
+    ) -> None:
         terms_ = tuple(terms)
         if not terms_:
             raise ValueError("AxisContractionPlan requires at least one term.")
@@ -121,7 +121,7 @@ class AxisFactorizedField(StrictModule):
         factors: Sequence[AxisFactor],
         plan: AxisContractionPlan,
         /,
-    ):
+    ) -> None:
         factors_ = tuple(factors)
         if not factors_:
             raise ValueError("AxisFactorizedField requires at least one factor.")
@@ -162,7 +162,7 @@ class AxisContractionResult(StrictModule):
     data: Array
     axes: tuple[str, ...]
 
-    def __init__(self, data: ArrayLike, axes: Sequence[str], /):
+    def __init__(self, data: ArrayLike, axes: Sequence[str], /) -> None:
         axes_ = tuple(str(axis) for axis in axes)
         arr = jnp.asarray(data)
         if arr.ndim < len(axes_):

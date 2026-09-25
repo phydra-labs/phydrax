@@ -134,7 +134,7 @@ class LGETissueState(StrictModule):
         /,
         *,
         source_asset_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         native_t1 = _floating_array(native_t1_ms)
         concentration = jnp.asarray(
             contrast_concentration_mmol_per_l, dtype=native_t1.dtype
@@ -229,7 +229,7 @@ class CategoricalLesionMap(StrictModule, NonTrainableState):
         /,
         *,
         annotation_id: str,
-    ):
+    ) -> None:
         host = np.asarray(labels)
         classes = tuple(_identifier(value, "class name") for value in class_names)
         if not classes or len(set(classes)) != len(classes):
@@ -374,7 +374,7 @@ class LGEObservationPlan(StrictModule, NonTrainableState):
         receiver_gain: float = 1.0,
         noise_standard_deviation: float = 0.0,
         acquisition_id: str,
-    ):
+    ) -> None:
         shape = _volume_shape(volume_shape)
         psf, psf_error = _normalized_kernel(
             point_spread_function, 3, "point_spread_function"

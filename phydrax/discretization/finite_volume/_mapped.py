@@ -276,7 +276,7 @@ class MappedPeriodicSeamPlan(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         axis_ = int(axis)
         rotation_ = np.asarray(rotation, dtype=np.float64)
         translation_ = np.asarray(translation, dtype=np.float64)
@@ -397,7 +397,7 @@ class MappedFiniteVolumePlan(AbstractDiscretizationPlan):
         *,
         mapping_id: str,
         periodic_seams: tuple[MappedPeriodicSeamPlan, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(reference, FiniteVolumeDiscretization) or not callable(
             coordinate_map
         ):
@@ -474,7 +474,7 @@ class MappedFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         /,
         *,
         numeric_version: str = "0",
-    ):
+    ) -> None:
         if not isinstance(plan, MappedFiniteVolumePlan):
             raise TypeError("plan must be a MappedFiniteVolumePlan.")
         reference = plan.reference

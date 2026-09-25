@@ -60,7 +60,7 @@ class FiniteDifferenceCompilationPolicy(StrictModule):
         accuracy_order: int = 2,
         laplacian: str = "direct_second_derivative",
         corner_policy: CornerPolicy = "axis_separable",
-    ):
+    ) -> None:
         accuracy = int(accuracy_order)
         if accuracy <= 0 or laplacian not in (
             "direct_second_derivative",
@@ -191,7 +191,7 @@ class _GhostDerivativeRule(StrictModule, NonTrainableState):
         accuracy_order: int,
         spacing: float,
         /,
-    ):
+    ) -> None:
         derivative = int(derivative_order)
         accuracy = int(accuracy_order)
         width = derivative + accuracy - 1
@@ -328,7 +328,7 @@ class _FiniteDifferenceExpressionEvaluator(StrictModule):
         coordinate_axes: tuple[tuple[str, tuple[str, ...]], ...],
         policy: FiniteDifferenceCompilationPolicy,
         /,
-    ):
+    ) -> None:
         self.problem = problem
         self.discretization = discretization
         self.layout = layout
@@ -730,7 +730,7 @@ class CompiledFiniteDifferenceDynamics(StrictModule):
         self,
         evaluator: _FiniteDifferenceExpressionEvaluator,
         /,
-    ):
+    ) -> None:
         discretization = evaluator.discretization
         compilation_id = canonical_fingerprint(
             {

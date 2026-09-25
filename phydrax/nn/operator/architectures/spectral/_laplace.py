@@ -54,7 +54,7 @@ class LaplaceTemporalOperator(AbstractOperatorModel):
         max_initial_frequency: float = 8.0,
         source_key: str | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
         self.num_poles = int(num_poles)

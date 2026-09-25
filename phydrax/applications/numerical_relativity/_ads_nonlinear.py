@@ -60,7 +60,7 @@ class SphericalConformalAdSPlan(StrictModule):
         gauge_relaxation: float = 1.0,
         horizon_threshold: float = 0.05,
         maximum_state_elements: int = 10_000_000,
-    ):
+    ) -> None:
         points = np.asarray(radial_points, dtype=np.float64)
         step = float(time_step)
         count = int(steps)
@@ -177,7 +177,7 @@ class SphericalConformalAdSState(StrictModule):
         time: ArrayLike,
         step: ArrayLike,
         /,
-    ):
+    ) -> None:
         count = plan.radial_points.shape[0]
         scalar_ = jnp.asarray(scalar, dtype=plan.radial_points.dtype)
         radial = jnp.asarray(radial_derivative, dtype=scalar_.dtype)
@@ -877,7 +877,7 @@ class FeffermanGrahamExtractionPlan(StrictModule):
         *,
         newton_constant: float,
         counterterm_scheme: str = "minimal-local-ads",
-    ):
+    ) -> None:
         count = int(boundary_points)
         lower = float(delta_minus)
         upper = float(delta_plus)

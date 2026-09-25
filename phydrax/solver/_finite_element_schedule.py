@@ -63,7 +63,7 @@ class FiniteElementAcceptedState(StrictModule, NonTrainableState):
         materials: MaterialTransaction | None = None,
         schedule_cursor: int = 0,
         state_version: int = 0,
-    ):
+    ) -> None:
         fields_ = tuple(jnp.asarray(value) for value in fields)
         time_ = jnp.asarray(time)
         step_ = int(step)
@@ -138,7 +138,7 @@ class FiniteElementAttemptResult(StrictModule):
         retry_requested: ArrayLike = False,
         suggested_step: ArrayLike = 0.0,
         diagnostics: object = None,
-    ):
+    ) -> None:
         fields_ = tuple(jnp.asarray(value) for value in fields)
         accepted_ = jnp.asarray(accepted, dtype=jnp.bool_)
         retry = jnp.asarray(retry_requested, dtype=jnp.bool_)
@@ -170,7 +170,7 @@ class FiniteElementStepPolicy(StrictModule, NonTrainableState):
         minimum_step: float = 1.0e-8,
         reduction: float = 0.5,
         maximum_retries: int = 8,
-    ):
+    ) -> None:
         minimum = float(minimum_step)
         reduction_ = float(reduction)
         retries = int(maximum_retries)
@@ -212,7 +212,7 @@ class FiniteElementAcceptedStepSchedule(StrictModule, NonTrainableState):
         *,
         policy: FiniteElementStepPolicy | None = None,
         schedule_id: str = "finite-element-accepted-step",
-    ):
+    ) -> None:
         if not callable(solve_attempt):
             raise TypeError("solve_attempt must be callable.")
         policy_ = FiniteElementStepPolicy() if policy is None else policy
@@ -324,7 +324,7 @@ class FiniteElementRestartManifest(StrictModule, NonTrainableState):
         *,
         auxiliary_state: Sequence[tuple[str, ArrayLike]] = (),
         integrator_state: Sequence[tuple[str, ArrayLike]] = (),
-    ):
+    ) -> None:
         if not isinstance(state, FiniteElementAcceptedState):
             raise TypeError("state must be FiniteElementAcceptedState.")
 

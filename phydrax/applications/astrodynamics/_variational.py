@@ -45,7 +45,7 @@ class VariationalPropagationPlan(StrictModule, NonTrainableState):
         *,
         parameter_dimension=0,
         dynamics_id="variational-dynamics",
-    ):
+    ) -> None:
         if not callable(dynamics):
             raise TypeError("dynamics must be callable.")
         times_host = np.asarray(times, dtype=np.float64)

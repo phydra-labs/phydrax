@@ -81,7 +81,7 @@ class RecurrentBatch(StrictModule, NonTrainableState):
         reset: ArrayLike | None = None,
         time: ArrayLike | None = None,
         time_direction: RecurrentTimeDirection = "forward",
-    ):
+    ) -> None:
         valid_array = jnp.asarray(valid, dtype=jnp.bool_)
         if valid_array.ndim < 1 or valid_array.shape[-1] <= 0:
             raise ValueError("valid must contain a non-empty trailing sequence axis.")
@@ -177,7 +177,7 @@ class RecurrentTimeContext(StrictModule, NonTrainableState):
         /,
         *,
         direction: RecurrentTimeDirection,
-    ):
+    ) -> None:
         time_array = jnp.asarray(time)
         has_time_array = jnp.asarray(has_time, dtype=jnp.bool_)
         if not jnp.issubdtype(time_array.dtype, jnp.floating):
@@ -718,7 +718,7 @@ class AffineRecurrence(AbstractRecurrentCell):
         /,
         *,
         mode: AffineMode = "elementwise",
-    ):
+    ) -> None:
         initial = jnp.asarray(initial_state)
         if initial.ndim < 1:
             raise ValueError("AffineRecurrence initial_state must have a state axis.")

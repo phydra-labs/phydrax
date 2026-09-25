@@ -28,7 +28,7 @@ class ADMConstraintResiduals(StrictModule):
     hamiltonian: Array
     momentum: Array
 
-    def __init__(self, hamiltonian: ArrayLike, momentum: ArrayLike, /):
+    def __init__(self, hamiltonian: ArrayLike, momentum: ArrayLike, /) -> None:
         self.hamiltonian = jnp.asarray(hamiltonian)
         self.momentum = jnp.asarray(momentum)
 
@@ -50,7 +50,7 @@ class _SpatialSliceMetricMap(StrictModule):
         spacetime_metric: LorentzianMetric,
         time: Array,
         /,
-    ):
+    ) -> None:
         self.spacetime_metric = spacetime_metric
         self.time = jnp.asarray(time)
 

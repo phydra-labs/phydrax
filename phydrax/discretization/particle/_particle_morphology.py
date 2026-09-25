@@ -67,7 +67,7 @@ class DensityPorosityMorphologyPlan(StrictModule, NonTrainableState):
         minimum_scale: float = 1.0e-12,
         maximum_scale: float = 1.0e12,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         densities = tuple(np.asarray(value, dtype=np.float64) for value in solid_density)
         skin = float(neighborhood_skin)
         minimum = float(minimum_scale)
@@ -276,7 +276,7 @@ class ThermochemicalFragmentationPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_children: int, /, *, tolerance: float = 1.0e-10):
+    def __init__(self, maximum_children: int, /, *, tolerance: float = 1.0e-10) -> None:
         children = int(maximum_children)
         tolerance_ = float(tolerance)
         if children < 2 or not np.isfinite(tolerance_) or tolerance_ <= 0.0:

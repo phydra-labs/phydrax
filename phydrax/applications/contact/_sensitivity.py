@@ -38,7 +38,7 @@ class ContactSensitivityArguments(StrictModule):
         /,
         *,
         user_args: Any = None,
-    ):
+    ) -> None:
         rest = jnp.asarray(rest_positions)
         stiffness_ = jnp.asarray(stiffness, dtype=rest.dtype)
         if rest.ndim != 2 or rest.shape[-1] not in (2, 3):
@@ -70,7 +70,7 @@ class ContactDynamicsSensitivityArguments(StrictModule):
         /,
         *,
         user_args: Any = None,
-    ):
+    ) -> None:
         rest = jnp.asarray(rest_positions)
         stiffness_ = jnp.asarray(stiffness, dtype=rest.dtype)
         if rest.ndim != 2 or rest.shape[-1] not in (2, 3):

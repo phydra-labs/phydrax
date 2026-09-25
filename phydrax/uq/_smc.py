@@ -76,7 +76,7 @@ class TemperedSMCResult(StrictModule):
         duration_seconds: float,
         num_unique_initial_particles: int,
         resampling_method: ResamplingMethod,
-    ):
+    ) -> None:
         self.problem = problem
         self.state = state
         self.samples = samples
@@ -441,7 +441,7 @@ def _write_smc_checkpoint(
     divergence_rates,
     log_evidence_terms,
     duration_seconds,
-):
+) -> None:
     arrays = {
         "lineage": lineage,
         "temperatures": temperatures,

@@ -22,7 +22,7 @@ class PhaseFieldDamageMaterial(StrictModule):
         length_scale_m: ArrayLike,
         residual_stiffness: ArrayLike = 1e-8,
         /,
-    ):
+    ) -> None:
         energy, length, residual = jnp.broadcast_arrays(
             jnp.asarray(fracture_energy_J_m2),
             jnp.asarray(length_scale_m),
@@ -116,7 +116,7 @@ class RateStateFaultLaw(StrictModule):
         /,
         *,
         regularization_velocity_m_s: ArrayLike = 1e-12,
-    ):
+    ) -> None:
         values = jnp.broadcast_arrays(
             *(
                 jnp.asarray(value)
@@ -234,7 +234,7 @@ class CoulombContactLaw(StrictModule):
         tangential_penalty_Pa_m: ArrayLike,
         friction_coefficient: ArrayLike,
         /,
-    ):
+    ) -> None:
         normal, tangent, friction = jnp.broadcast_arrays(
             jnp.asarray(normal_penalty_Pa_m),
             jnp.asarray(tangential_penalty_Pa_m),

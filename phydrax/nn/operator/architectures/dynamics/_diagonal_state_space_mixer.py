@@ -121,7 +121,7 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
         max_direct_length: int = 2048,
         dtype: Any = jnp.float32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_size = in_channels
         self.out_size = in_channels if out_channels is None else out_channels
         self.state_size = int(state_size)

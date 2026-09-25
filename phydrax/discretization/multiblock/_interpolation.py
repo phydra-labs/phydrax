@@ -48,7 +48,7 @@ class NormCompatibleInterpolationPlan(StrictModule, NonTrainableState):
         /,
         *,
         interpolation_order: int = 4,
-    ):
+    ) -> None:
         left_x = np.asarray(left_coordinates, dtype=np.float64).reshape((-1,))
         right_x = np.asarray(right_coordinates, dtype=np.float64).reshape((-1,))
         left_h = np.asarray(left_weights, dtype=np.float64).reshape((-1,))

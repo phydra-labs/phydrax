@@ -106,7 +106,7 @@ class XXZQualificationResult(StrictModule):
         magnetization_history,
         diagnostic: PurifiedStationarityDiagnostic,
         /,
-    ):
+    ) -> None:
         self.final_result = final_result
         self.magnetization_history = jnp.asarray(magnetization_history)
         self.diagnostic = diagnostic

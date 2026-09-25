@@ -29,7 +29,7 @@ class SiteMixturePlan(StrictModule, NonTrainableState):
     number_densities: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, site_ids: tuple[str, ...], number_densities: ArrayLike, /):
+    def __init__(self, site_ids: tuple[str, ...], number_densities: ArrayLike, /) -> None:
         identifiers = tuple(str(value).strip() for value in site_ids)
         densities = np.asarray(number_densities, dtype=np.float64)
         if (
@@ -71,7 +71,7 @@ class SequenceFormFactorPlan(StrictModule, NonTrainableState):
         /,
         *,
         site_count: int | None = None,
-    ):
+    ) -> None:
         sequence = np.asarray(sequence_site_types, dtype=np.int32)
         length = float(statistical_segment_length)
         count = (
@@ -143,7 +143,7 @@ class TabulatedFormFactorPlan(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         wave = np.asarray(wave_numbers, dtype=np.float64)
         matrix = np.asarray(values, dtype=np.float64)
         source = str(source_id).strip()
@@ -204,7 +204,7 @@ class SitePairPotentialPlan(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         radial = np.asarray(radii, dtype=np.float64)
         potential = np.asarray(beta_potential, dtype=np.float64)
         source = str(source_id).strip()

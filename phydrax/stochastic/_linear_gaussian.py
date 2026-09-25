@@ -122,7 +122,7 @@ class LinearGaussianParameterization(StrictModule):
         offset: ArrayLike | Callable[[Array, Array, Any], ArrayLike] = 0.0,
         parameterization_id: str = "linear-gaussian-parameters",
         resolved_method: str = "provided",
-    ):
+    ) -> None:
         for owner, value in (
             ("transition", transition),
             ("covariance", covariance),
@@ -197,7 +197,7 @@ class LinearGaussianDynamics(StrictModule):
         dynamics_id: str = "linear-gaussian-lti",
         process_id: str = "linear-gaussian",
         approximation_id: str = "exact-lti",
-    ):
+    ) -> None:
         shape = _shape(state_shape)
         size = prod(shape) if shape else 1
         matrix = jnp.asarray(drift_matrix)

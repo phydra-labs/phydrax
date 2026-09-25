@@ -62,7 +62,7 @@ class ReducedElectromagneticPICPlan(StrictModule, NonTrainableState):
         *,
         pusher: RelativisticBorisPlan | None = None,
         maximum_displacement_fraction: float = 0.5,
-    ):
+    ) -> None:
         if not isinstance(field, (CompatibleMaxwell1DPlan, CompatibleMaxwell2DPlan)):
             raise TypeError("field must be a compatible reduced Maxwell plan.")
         if not isinstance(transfer, ReducedPICTransferPlan):

@@ -45,7 +45,7 @@ class QCDTransportTable(StrictModule, NonTrainableState):
         valid: ArrayLike | None = None,
         source_kind: QCDTransportSourceKind,
         source_id: str,
-    ):
+    ) -> None:
         temperatures_ = np.asarray(temperatures, dtype=np.float64)
         chemical = np.asarray(baryon_chemical_potentials, dtype=np.float64)
         shear = np.asarray(shear_viscosity_over_entropy, dtype=np.float64)

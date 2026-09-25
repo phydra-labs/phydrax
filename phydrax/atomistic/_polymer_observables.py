@@ -36,7 +36,7 @@ class PolymerChainLayoutPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_frames: int,
-    ):
+    ) -> None:
         indices = np.asarray(particle_indices, dtype=np.int32)
         mask = np.asarray(chain_mask, dtype=np.bool_)
         frames = int(maximum_frames)
@@ -155,7 +155,7 @@ class PolymerContourStatisticsPlan(StrictModule, NonTrainableState):
         maximum_separation: int,
         contact_distance: float,
         /,
-    ):
+    ) -> None:
         separation = int(maximum_separation)
         contact = float(contact_distance)
         if (
@@ -271,7 +271,7 @@ class DebyeScatteringPlan(StrictModule, NonTrainableState):
         maximum_frames: int,
         maximum_particles: int,
         block_size: int = 64,
-    ):
+    ) -> None:
         wave = np.asarray(wave_numbers, dtype=np.float64)
         frames = int(maximum_frames)
         particles = int(maximum_particles)
@@ -430,7 +430,7 @@ class PartialStructureFactorPlan(StrictModule, NonTrainableState):
         *,
         maximum_frames: int,
         maximum_particles: int,
-    ):
+    ) -> None:
         vectors = np.asarray(wave_vectors, dtype=np.float64)
         types = int(site_type_count)
         frames = int(maximum_frames)

@@ -143,7 +143,7 @@ class MeshingLimits(StrictModule, NonTrainableState):
         maximum_connectivity_entries: int = 500_000_000,
         maximum_data_bytes: int = 4_000_000_000,
         maximum_wall_seconds: float = 3600.0,
-    ):
+    ) -> None:
         counts = (
             int(maximum_vertices),
             int(maximum_edges),
@@ -189,7 +189,7 @@ class CellFamilyPolicy(StrictModule, NonTrainableState):
         preferred: tuple[str, ...] = (),
         allowed_transitions: tuple[str, ...] = (),
         allow_mixed: bool = False,
-    ):
+    ) -> None:
         supported = {
             "interval",
             "triangle",
@@ -249,7 +249,7 @@ class CellMeshingTarget(StrictModule, NonTrainableState):
         *,
         geometry_order: int = 1,
         require_conforming: bool = True,
-    ):
+    ) -> None:
         topological = int(topological_dimension)
         ambient = int(ambient_dimension)
         order = int(geometry_order)
@@ -417,7 +417,7 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
         size_compliance: SizeCompliancePolicy | None = None,
         limits: MeshingLimits | None = None,
         deterministic: bool = True,
-    ):
+    ) -> None:
         if not isinstance(target, CellMeshingTarget) or target.topological_dimension != 2:
             raise ValueError(
                 "Surface meshing target must have topological dimension two."
@@ -491,7 +491,7 @@ class SurfaceRemeshingSpec(StrictModule, NonTrainableState):
     source_mesh_id: str = eqx.field(static=True)
     specification_id: str = eqx.field(static=True)
 
-    def __init__(self, surface: SurfaceMeshingSpec, source_mesh_id: str, /):
+    def __init__(self, surface: SurfaceMeshingSpec, source_mesh_id: str, /) -> None:
         if not isinstance(surface, SurfaceMeshingSpec):
             raise TypeError("surface must be SurfaceMeshingSpec.")
         mesh_id = str(source_mesh_id).strip()
@@ -545,7 +545,7 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
         size_compliance: SizeCompliancePolicy | None = None,
         limits: MeshingLimits | None = None,
         deterministic: bool = True,
-    ):
+    ) -> None:
         if not isinstance(target, CellMeshingTarget) or target.topological_dimension != 3:
             raise ValueError(
                 "Volume meshing target must have topological dimension three."
@@ -681,7 +681,7 @@ class MeshingProviderInfo(StrictModule, NonTrainableState):
         cell_kinds: tuple[str, ...],
         dimensions: tuple[int, ...],
         execution_modes: tuple[MeshingExecutionMode, ...],
-    ):
+    ) -> None:
         values = tuple(str(value).strip() for value in (name, version, license_spdx))
         if any(not value for value in values):
             raise ValueError("Provider name, version, and license must be non-empty.")
@@ -737,7 +737,7 @@ class MeshingSourceDescriptor(StrictModule, NonTrainableState):
         /,
         *,
         closed: bool,
-    ):
+    ) -> None:
         source = str(source_id).strip()
         revision = str(source_revision).strip()
         topological = int(topological_dimension)
@@ -784,7 +784,7 @@ class ProviderSupportReport(StrictModule, NonTrainableState):
         *,
         unsupported: tuple[str, ...] = (),
         weakened_guarantees: tuple[str, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(provider, MeshingProviderInfo):
             raise TypeError("provider must be MeshingProviderInfo.")
         if not isinstance(source, MeshingSourceDescriptor):
@@ -833,7 +833,7 @@ class MeshingFailure(RuntimeError):
         stage: str = "",
         entity_ids: tuple[int, ...] = (),
         locations: tuple[tuple[float, ...], ...] = (),
-    ):
+    ) -> None:
         if not isinstance(category, MeshingFailureCategory):
             raise TypeError("category must be MeshingFailureCategory.")
         text = str(message).strip()

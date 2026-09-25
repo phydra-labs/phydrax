@@ -84,7 +84,7 @@ class PairingChannelPlan(StrictModule):
         *,
         phase_anchor: int = 0,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(mode_order, FermionModeOrder) or not isinstance(
             mesh, ReciprocalMeshPlan
         ):
@@ -240,7 +240,7 @@ class SuperconductingMeanFieldPlan(StrictModule):
         termination: NonlinearTermination | None = None,
         minimum_gap: float = 1.0e-8,
         maximum_mode_count: int,
-    ):
+    ) -> None:
         if not isinstance(pencil, PreparedPeriodicOrbitalPencil) or not isinstance(
             channels, PairingChannelPlan
         ):
@@ -556,7 +556,7 @@ class BdGChernPlan(StrictModule):
         refinement: PeriodicChernRefinementEvidence | None = None,
         require_refinement: bool = True,
         quantization_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if not isinstance(connectivity, PreparedReciprocalConnectivity):
             raise TypeError("connectivity must be PreparedReciprocalConnectivity.")
         matrices = np.asarray(nambu_connection_matrices, dtype=np.complex128)

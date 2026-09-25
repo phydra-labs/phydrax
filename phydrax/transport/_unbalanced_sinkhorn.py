@@ -48,7 +48,7 @@ class UnbalancedSinkhorn(StrictModule):
         early_stop: bool = False,
         store_history: bool = False,
         mass_collapse_tolerance: ArrayLike = 0.0,
-    ):
+    ) -> None:
         maximum = int(max_iterations)
         minimum = int(min_iterations)
         interval = int(check_every)

@@ -67,7 +67,7 @@ class CallableBSDERegressionBasis(AbstractBSDERegressionBasis):
         state_shape: Sequence[int],
         num_features: int,
         basis_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         shape = _shape(state_shape, owner="state_shape")
@@ -105,7 +105,7 @@ class PolynomialBSDERegressionBasis(AbstractBSDERegressionBasis):
         /,
         *,
         basis_id: str | None = None,
-    ):
+    ) -> None:
         shape = _shape(state_shape, owner="state_shape")
         resolved_degree = int(degree)
         if resolved_degree < 0:

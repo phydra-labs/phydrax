@@ -39,7 +39,7 @@ class FrozenModel(AbstractArrayModel, ExplicitFreeze):
         }
     )
 
-    def __init__(self, model: AbstractArrayModel, /):
+    def __init__(self, model: AbstractArrayModel, /) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("FrozenModel requires an AbstractArrayModel.")
         self.model = model

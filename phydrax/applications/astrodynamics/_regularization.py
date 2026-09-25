@@ -123,7 +123,7 @@ class CloseEncounterRegularizationPlan(StrictModule, NonTrainableState):
         maximum_perturbation_ratio: float = 1.0e-2,
         gravitational_constant: float = 1.0,
         gauge_policy: KSGaugePolicy = "largest-component",
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -206,7 +206,7 @@ class PreparedCloseEncounterSegment(StrictModule, NonTrainableState):
         encounter: EncounterEvaluation,
         context: AstrodynamicsContext,
         /,
-    ):
+    ) -> None:
         if not isinstance(encounter, EncounterEvaluation):
             raise TypeError("encounter must be an EncounterEvaluation.")
         if not isinstance(context, AstrodynamicsContext):

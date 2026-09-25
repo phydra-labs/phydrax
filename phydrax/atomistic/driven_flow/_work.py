@@ -24,7 +24,7 @@ class DrivenWorkLedgerPlan(StrictModule):
         *,
         absolute_tolerance: float = 1.0e-10,
         relative_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
         if (

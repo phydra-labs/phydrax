@@ -86,7 +86,7 @@ class ChemicalConditionalAffineDriverLoss(AbstractOperatorLossTerm):
     driver_source: str = "driver_targets"
     reduction: Reduction = "mean"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name or not self.driver_source:
             raise ValueError("Driver loss names must be non-empty.")
         if not jnp.isfinite(self.weight):
@@ -153,7 +153,7 @@ class ChemicalConditionalAffineTeacherForcedLoss(AbstractOperatorLossTerm):
     driver_source: str = "driver_targets"
     reduction: Reduction = "mean"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name or not self.state_target_field or not self.driver_source:
             raise ValueError("Teacher-forced loss names must be non-empty.")
         if not jnp.isfinite(self.weight):

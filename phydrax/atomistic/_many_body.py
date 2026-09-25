@@ -53,7 +53,7 @@ class ScalarWallPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         inside: bool = True,
         name: str = "wall",
         force_group: int = 0,
-    ):
+    ) -> None:
         if not isinstance(kind, WallKind):
             raise TypeError("kind must be WallKind.")
         parameter = np.asarray(parameters, dtype=np.float64)
@@ -130,7 +130,7 @@ class PreparedScalarWallPotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan, system, /):
+    def __init__(self, plan, system, /) -> None:
         (
             self.plan,
             self.system,
@@ -184,7 +184,7 @@ class ManifoldConstraintPlan(StrictModule, NonTrainableState):
     parameters: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: WallKind, parameters: ArrayLike, /):
+    def __init__(self, kind: WallKind, parameters: ArrayLike, /) -> None:
         if not isinstance(kind, WallKind):
             raise TypeError("kind must be WallKind.")
         parameter = np.asarray(parameters, dtype=np.float64)
@@ -272,7 +272,7 @@ class ActiveForcePlan(StrictModule, NonTrainableState):
     rotational_diffusion: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, magnitude: float, rotational_diffusion: float, /):
+    def __init__(self, magnitude: float, rotational_diffusion: float, /) -> None:
         if (
             not np.isfinite(magnitude)
             or not np.isfinite(rotational_diffusion)
@@ -322,7 +322,7 @@ class DissipativeParticleDynamicsPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, conservative: float, friction: float, temperature: float, cutoff: float, /
-    ):
+    ) -> None:
         parameters = tuple(
             float(value) for value in (conservative, friction, temperature, cutoff)
         )
@@ -407,7 +407,7 @@ class ManyBodyPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         *,
         name: str | None = None,
         force_group: int = 0,
-    ):
+    ) -> None:
         if not isinstance(kind, ManyBodyKind):
             raise TypeError("kind must be ManyBodyKind.")
         parameter = np.asarray(parameters, dtype=np.float64).reshape((-1,))
@@ -554,7 +554,7 @@ class PreparedManyBodyPotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan, system, /):
+    def __init__(self, plan, system, /) -> None:
         (
             self.plan,
             self.system,

@@ -45,7 +45,7 @@ class ScalarTraceConvention3D(StrictModule, NonTrainableState):
     hypersingular_definition: str = eqx.field(static=True)
     convention_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.ambient_dimension = 3
         self.boundary_dimension = 2
         self.interior = "bounded-side"

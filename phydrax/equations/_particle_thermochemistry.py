@@ -83,7 +83,7 @@ class ParticleThermodynamicMaterialPlan(StrictModule, NonTrainableState):
         maximum_temperature: float | None = None,
         inversion_iterations: int = 48,
         material_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(species_thermodynamics, AbstractSpeciesThermodynamicsPlan):
             raise TypeError(
                 "species_thermodynamics must implement AbstractSpeciesThermodynamicsPlan."
@@ -256,7 +256,7 @@ class ParticleTransportMaterialPlan(StrictModule, NonTrainableState):
         *,
         tortuosity_exponent: float = 1.0,
         material_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(schema, ChemicalSpeciesSchema):
             raise TypeError("schema must be a ChemicalSpeciesSchema.")
         conductivity = np.asarray(thermal_conductivity, dtype=np.float64)
@@ -296,7 +296,7 @@ class ParticleThermochemicalMaterialBundle(StrictModule, NonTrainableState):
     transport: ParticleTransportMaterialPlan
     bundle_id: str = eqx.field(static=True)
 
-    def __init__(self, thermodynamics, transport, /):
+    def __init__(self, thermodynamics, transport, /) -> None:
         if not isinstance(thermodynamics, ParticleThermodynamicMaterialPlan):
             raise TypeError("thermodynamics must be a ParticleThermodynamicMaterialPlan.")
         if not isinstance(transport, ParticleTransportMaterialPlan):
@@ -702,7 +702,7 @@ def _evaluate_unstructured_particle_transport(
     )
 
 
-def _validate_boundary(boundary, batch, dtype):
+def _validate_boundary(boundary, batch, dtype) -> None:
     if not isinstance(boundary, ParticleTransportBoundary):
         raise TypeError("boundary must be a ParticleTransportBoundary.")
     particle_shape = (batch.particle_count,)

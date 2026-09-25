@@ -36,7 +36,7 @@ class PeriodicHubbardMeanFieldPlan(StrictModule, NonTrainableState):
         ionic_energy: ArrayLike,
         energy_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         if not isinstance(basis, PeriodicOrbitalBasisPlan):
             raise TypeError("basis must be PeriodicOrbitalBasisPlan.")
         hubbard = np.asarray(onsite_hubbard)

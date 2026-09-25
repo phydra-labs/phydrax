@@ -58,7 +58,7 @@ class SteadyVortexLatticePlan(StrictModule, NonTrainableState):
         core_radius: float,
         density: float = 1.0,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(surface, PreparedLiftingSurface):
             raise TypeError("surface must be PreparedLiftingSurface.")
         direction = jnp.asarray(wake_direction, dtype=surface.bound_start.dtype)

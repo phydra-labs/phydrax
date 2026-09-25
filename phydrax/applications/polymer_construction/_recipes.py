@@ -37,7 +37,7 @@ class PolymerChainSpec(StrictModule, NonTrainableState):
         /,
         *,
         ring: bool = False,
-    ):
+    ) -> None:
         identifier = str(chain_id).strip()
         sequence = np.asarray(bead_type_indices, dtype=np.int32)
         ring_ = bool(ring)
@@ -79,7 +79,7 @@ class PolymerConnectionPortPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_uses: int = 1,
-    ):
+    ) -> None:
         identifier = str(port_id).strip()
         chain = str(chain_id).strip()
         compatibility = str(compatibility_class).strip()
@@ -133,7 +133,7 @@ class PolymerMaterialRecipePlan(StrictModule, NonTrainableState):
         maximum_particles: int | None = None,
         particle_id_start: int = 1,
         bonded_lennard_jones_scale: float = 1.0,
-    ):
+    ) -> None:
         identifier = str(material_id).strip()
         type_ids = tuple(str(value).strip() for value in bead_type_ids)
         masses = np.asarray(bead_masses, dtype=np.float64)
@@ -230,7 +230,7 @@ class RealizedPolymerConnectionPort(StrictModule, NonTrainableState):
         maximum_uses: int,
         uses: int = 0,
         /,
-    ):
+    ) -> None:
         uses_ = int(uses)
         maximum = int(maximum_uses)
         if uses_ < 0 or maximum <= 0 or uses_ > maximum:
@@ -262,7 +262,7 @@ class PolymerLoweringRecord(StrictModule, NonTrainableState):
         chain_ids: tuple[str, ...],
         chain_particle_ids: tuple[tuple[int, ...], ...],
         /,
-    ):
+    ) -> None:
         self.recipe_id = recipe_id
         self.system_id = system_id
         self.topology_id = topology_id

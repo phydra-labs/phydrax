@@ -73,7 +73,7 @@ class CameraCalibrationProblem(StrictModule, NonTrainableState):
         *,
         observation_weights: ArrayLike | None = None,
         holdout: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(initial_rig, CameraRig):
             raise TypeError("initial_rig must be a CameraRig.")
         points_host = np.asarray(world_points, dtype=np.float64)
@@ -162,7 +162,7 @@ class CameraCalibrationPlan(StrictModule, NonTrainableState):
         maximum_steps: int = 64,
         rank_tolerance: float = 1e-8,
         maximum_condition: float = 1e10,
-    ):
+    ) -> None:
         mask_host = np.asarray(free_parameter_mask, dtype=np.bool_)
         if mask_host.ndim != 2 or mask_host.shape[1:] != (CAMERA_PARAMETER_COUNT,):
             raise ValueError("free_parameter_mask must have shape (camera_capacity, 16).")

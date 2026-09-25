@@ -41,7 +41,7 @@ class HypersurfaceKahlerEvaluation(StrictModule):
         valid: ArrayLike,
         chart_index: int,
         pivot_index: int,
-    ):
+    ) -> None:
         self.metric = jnp.asarray(metric)
         self.inverse_metric = jnp.asarray(inverse_metric)
         self.log_determinant = jnp.asarray(log_determinant)
@@ -70,7 +70,7 @@ class HypersurfaceKahlerGeometry(StrictModule):
         *,
         normalization: ArrayLike = 0.0,
         positivity_floor: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(hypersurface, ProjectiveHypersurface):
             raise TypeError("hypersurface must be a ProjectiveHypersurface.")
         if not callable(potential):

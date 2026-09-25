@@ -124,7 +124,7 @@ class _SelfAttention(StrictModule):
         *,
         dropout: float,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         if int(width) % int(heads) != 0:
             raise ValueError("Transformer width must be divisible by heads.")
         keys = jr.split(key, 4)
@@ -224,7 +224,7 @@ class _SwiGLU(StrictModule):
         *,
         dropout: float,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         keys = jr.split(key, 3)
         self.gate = Linear(
             in_size=width,
@@ -273,7 +273,7 @@ class _TransformerBlock(StrictModule):
         skip_connection: bool,
         norm_eps: float,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         attention_key, feed_forward_key, skip_key = jr.split(key, 3)
         self.attention = _SelfAttention(
             width,
@@ -377,7 +377,7 @@ class OperatorTransformerProcessor(StrictModule):
         long_range_skip: bool = True,
         norm_eps: float = 1e-6,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         shape = tuple(latent_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("latent_shape must contain positive dimensions.")

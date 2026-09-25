@@ -32,7 +32,7 @@ class FixedGridGeometry(StrictModule, NonTrainableState):
         /,
         *,
         periodic: bool,
-    ):
+    ) -> None:
         shape_ = tuple(shape)
         lower_ = tuple(float(value) for value in lower)
         spacing_ = tuple(float(value) for value in spacing)

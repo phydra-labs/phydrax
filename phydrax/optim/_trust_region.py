@@ -44,7 +44,7 @@ class TrustRegionQuadraticProblem(StrictModule):
         gradient: PyTree[Any],
         radius: Any,
         /,
-    ):
+    ) -> None:
         if not isinstance(hessian, AbstractLinearOperator):
             raise TypeError("hessian must be AbstractLinearOperator.")
         if hessian.batch_shape:
@@ -84,7 +84,7 @@ class SteihaugToint(StrictModule):
         absolute_tolerance: float = 1e-10,
         maximum_steps: int = 200,
         curvature_tolerance: float = 0.0,
-    ):
+    ) -> None:
         relative = float(relative_tolerance)
         absolute = float(absolute_tolerance)
         steps = int(maximum_steps)

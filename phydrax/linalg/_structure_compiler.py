@@ -86,7 +86,7 @@ class StructureCompilationPolicy(StrictModule):
         max_bandwidth: int = 4,
         fallback: CompilerFallback = "dense",
         materialization: MaterializationPolicy | None = None,
-    ):
+    ) -> None:
         candidates_ = tuple(candidates)
         valid = {
             "diagonal",
@@ -162,7 +162,7 @@ class StructureCompilationResult(StrictModule):
         exact: bool,
         original_operator_id: str,
         compiler_id: str,
-    ):
+    ) -> None:
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
         if version.ndim != 0:
             raise ValueError("numeric_version must be scalar.")

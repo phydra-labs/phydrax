@@ -50,7 +50,7 @@ class BaseMeasure(StrictModule):
         /,
         *,
         normalized: bool = False,
-    ):
+    ) -> None:
         if kind not in (
             "lebesgue",
             "hausdorff",

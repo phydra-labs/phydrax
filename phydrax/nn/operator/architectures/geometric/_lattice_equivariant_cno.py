@@ -106,7 +106,7 @@ class _LatticeEquivariantBlock(StrictModule):
         activation: LatticeActivation,
         use_bias: bool,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         first_key, second_key = jr.split(key)
         self.first = LatticeEquivariantConvND(
             basis,
@@ -187,7 +187,7 @@ class LatticeEquivariantCNO(AbstractOperatorModel):
         squeeze_scalar_output: bool = False,
         max_basis_construction_bytes: int = 256 * 1024**2,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(group, FiniteOrthogonalGroup):
             raise TypeError("group must be a FiniteOrthogonalGroup.")
         if not isinstance(input_layout, TensorFieldLayout) or not isinstance(

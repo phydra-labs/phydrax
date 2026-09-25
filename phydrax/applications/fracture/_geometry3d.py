@@ -37,7 +37,7 @@ class CrackSurfaceGeometry3D(StrictModule, NonTrainableState):
         /,
         *,
         surface_id: str | None = None,
-    ):
+    ) -> None:
         points = np.asarray(vertices, dtype=np.float64)
         cells = np.asarray(triangles, dtype=np.int32)
         if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] < 3:

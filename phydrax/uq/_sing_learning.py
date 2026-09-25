@@ -50,7 +50,7 @@ class SINGLearningPolicy(StrictModule):
         /,
         *,
         factor_source: Any = None,
-    ):
+    ) -> None:
         counts = tuple(
             (
                 posterior_steps,

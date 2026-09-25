@@ -83,7 +83,7 @@ class FiniteElementFieldSpec(StrictModule, NonTrainableState):
         *,
         block_names: Sequence[str] | None = None,
         component_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         field_name = str(name)
         if not field_name:
             raise ValueError("Finite-element field name must be non-empty.")
@@ -1110,7 +1110,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         resolved = tuple(elements)
         if len(resolved) != len(mesh.blocks):
             raise ValueError("One finite element is required per mesh block.")
@@ -1254,7 +1254,7 @@ class FiniteElementRuntimeData(StrictModule, NonTrainableState):
         *,
         numeric_version: str,
         geometry_layout_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         points = jnp.asarray(coordinates)
@@ -1470,7 +1470,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         *,
         precision_policy: FiniteElementPrecisionPolicy | None = None,
         coordinate_spec: CellGeometrySpec | None = None,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         _validate_mesh_geometry(mesh)
@@ -1567,7 +1567,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
 
-    def __init__(self, plan: FiniteElementPlan, /, *, numeric_version: str = "0"):
+    def __init__(self, plan: FiniteElementPlan, /, *, numeric_version: str = "0") -> None:
         if not isinstance(plan, FiniteElementPlan):
             raise TypeError("plan must be a FiniteElementPlan.")
         version = str(numeric_version)

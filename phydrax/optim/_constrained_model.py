@@ -30,7 +30,7 @@ class ConstraintScalingPolicy(StrictModule):
         automatic: bool = True,
         objective_floor: float = 1.0,
         constraint_floor: float = 1.0,
-    ):
+    ) -> None:
         values = (float(objective_floor), float(constraint_floor))
         if any(not isfinite(value) or value <= 0.0 for value in values):
             raise ValueError("Constraint scaling floors must be finite and positive.")

@@ -29,7 +29,7 @@ class ScaledHEOMTopology(StrictModule):
         hierarchy: HEOMHierarchy,
         expansion: BathCorrelationExpansion,
         /,
-    ):
+    ) -> None:
         if hierarchy.term_count != expansion.rank:
             raise ValueError("Hierarchy and bath expansion ranks differ.")
         if jnp.any(jnp.abs(expansion.coefficients) == 0.0):

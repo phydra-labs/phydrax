@@ -44,7 +44,7 @@ class HallDiskPlan(StrictModule, NonTrainableState):
         /,
         *,
         edge_orbitals: int = 2,
-    ):
+    ) -> None:
         particles = int(particle_count)
         projection = int(twice_projection)
         confinement_ = tuple(float(value) for value in confinement)

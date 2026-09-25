@@ -185,7 +185,7 @@ class ZhangSinoatrialParameters(StrictModule, NonTrainableState):
         sr_leak_rate: float = 1.0e-4,
         sr_release_rate: float = 0.08,
         sr_volume_ratio: float = 8.0,
-    ):
+    ) -> None:
         values = {
             "rtf_mV": _positive(rtf_mV, "rtf_mV"),
             "potassium_i_mM": _positive(potassium_i_mM, "potassium_i_mM"),
@@ -257,7 +257,7 @@ class SinoatrialStateLayout(StrictModule, NonTrainableState):
     state_size: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         names = (
             "voltage_mV",
             "y_f",
@@ -358,7 +358,7 @@ class ZhangSinoatrialModel(StrictModule, NonTrainableState):
     layout: SinoatrialStateLayout
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, parameters: ZhangSinoatrialParameters, /):
+    def __init__(self, parameters: ZhangSinoatrialParameters, /) -> None:
         if not isinstance(parameters, ZhangSinoatrialParameters):
             raise TypeError("parameters must be ZhangSinoatrialParameters.")
         layout = SinoatrialStateLayout()
@@ -535,7 +535,7 @@ class InadaAtrioventricularParameters(StrictModule, NonTrainableState):
         ca_current_scale: float = 2.0e-5,
         ca_removal_rate: float = 0.020,
         resting_calcium_mM: float = 1.0e-4,
-    ):
+    ) -> None:
         values = {
             "rtf_mV": _positive(rtf_mV, "rtf_mV"),
             "sodium_i_mM": _positive(sodium_i_mM, "sodium_i_mM"),
@@ -606,7 +606,7 @@ class AtrioventricularStateLayout(StrictModule, NonTrainableState):
     state_size: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         names = (
             "voltage_mV",
             "m",
@@ -705,7 +705,7 @@ class InadaAtrioventricularModel(StrictModule, NonTrainableState):
     layout: AtrioventricularStateLayout
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, parameters: InadaAtrioventricularParameters, /):
+    def __init__(self, parameters: InadaAtrioventricularParameters, /) -> None:
         if not isinstance(parameters, InadaAtrioventricularParameters):
             raise TypeError("parameters must be InadaAtrioventricularParameters.")
         layout = AtrioventricularStateLayout()

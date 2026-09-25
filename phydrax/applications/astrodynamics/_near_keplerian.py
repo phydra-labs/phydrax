@@ -34,7 +34,7 @@ class NearlyKeplerianState(StrictModule):
         velocity: ArrayLike,
         context: AstrodynamicsContext,
         /,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         position_ = jnp.asarray(position)
@@ -83,7 +83,7 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
         gravitational_constant: ArrayLike = 1.0,
         close_approach_distance: ArrayLike = 0.0,
         kepler_policy: UniversalKeplerPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         central = jnp.asarray(central_mass).reshape(())

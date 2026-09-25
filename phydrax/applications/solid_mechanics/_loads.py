@@ -168,7 +168,7 @@ class MechanicalLoadSemantics(StrictModule, NonTrainableState):
         potential_certified: bool,
         closure_id: str | None = None,
         orientation_id: str | None = None,
-    ):
+    ) -> None:
         if support not in ("body", "boundary", "discrete"):
             raise ValueError("Unknown mechanical load support.")
         if configuration not in ("reference", "current"):
@@ -231,7 +231,7 @@ class MechanicalLoadState(StrictModule, NonTrainableState):
         state_id: str | None = None,
         pressure_history_id: str | None = None,
         volume_history_id: str | None = None,
-    ):
+    ) -> None:
         time_ = _real_inexact_array("Mechanical load time", time)
         if time_.shape != () or not bool(jnp.isfinite(time_)):
             raise ValueError("Mechanical load time must be one finite scalar.")
@@ -387,7 +387,7 @@ class ReferenceDeadTraction(AbstractMechanicalLoad):
         /,
         *,
         load_id: str | None = None,
-    ):
+    ) -> None:
         field, identifier = _constant_or_field(
             "reference-dead-traction", traction, load_id
         )
@@ -442,7 +442,7 @@ class ReferenceDeadBodyForce(AbstractMechanicalLoad):
         /,
         *,
         load_id: str | None = None,
-    ):
+    ) -> None:
         field, identifier = _constant_or_field(
             "reference-dead-body-force", body_force, load_id
         )
@@ -497,7 +497,7 @@ class CurrentBodyForce(AbstractMechanicalLoad):
         /,
         *,
         load_id: str | None = None,
-    ):
+    ) -> None:
         field, identifier = _constant_or_field("current-body-force", body_force, load_id)
         self.body_force = field
         self._load_id = identifier
@@ -549,7 +549,7 @@ class CurrentSurfaceTraction(AbstractMechanicalLoad):
         /,
         *,
         load_id: str | None = None,
-    ):
+    ) -> None:
         field, identifier = _constant_or_field(
             "current-surface-traction", traction, load_id
         )
@@ -605,7 +605,7 @@ class ClosedSurfacePressure(AbstractMechanicalLoad):
         closure_id: str,
         orientation_id: str,
         load_id: str | None = None,
-    ):
+    ) -> None:
         value = _real_inexact_array("pressure", pressure)
         if value.shape != () or not bool(jnp.isfinite(value)):
             raise ValueError("Closed-surface pressure must be one finite scalar.")
@@ -691,7 +691,7 @@ class PneumaticPressure(AbstractMechanicalLoad):
         closure_id: str,
         orientation_id: str,
         load_id: str | None = None,
-    ):
+    ) -> None:
         pressure = _real_inexact_array("reference_pressure", reference_pressure)
         volume = float(reference_volume)
         exponent_ = float(exponent)
@@ -825,7 +825,7 @@ class GeneralFollowerLoad(AbstractMechanicalLoad):
         measure_frame: MechanicalLoadFrame,
         load_frame: MechanicalLoadFrame = "current",
         load_id: str,
-    ):
+    ) -> None:
         if not callable(law):
             raise TypeError("Follower load law must be callable.")
         identifier = _required_identifier(load_id, "load_id")
@@ -885,7 +885,7 @@ class CompositeMechanicalLoad(AbstractMechanicalLoad):
         /,
         *,
         load_id: str | None = None,
-    ):
+    ) -> None:
         loads_ = tuple(loads)
         if not loads_ or any(
             not isinstance(load, AbstractMechanicalLoad) for load in loads_

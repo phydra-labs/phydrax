@@ -110,7 +110,7 @@ class SemiconductorCalibrationDomain(StrictModule):
 
     def __init__(
         self, process_revision, population, geometry_ids, controls, lower, upper
-    ):
+    ) -> None:
         self.process_revision = _text(process_revision, "calibration identity")
         self.population = _text(population, "calibration identity")
         self.geometry_ids = _names(geometry_ids)
@@ -198,7 +198,7 @@ class SemiconductorMeasurementCase(StrictModule):
         control_covariance,
         measurement_covariance,
         deembedding_covariance,
-    ):
+    ) -> None:
         self.case_id = _text(case_id, "calibration identity")
         self.observation_ids = _names(observation_ids)
         self.process_revision, self.geometry_id = (
@@ -318,7 +318,7 @@ class SemiconductorCalibrationCriteria(StrictModule):
     identifiability_relative_tolerance: float = eqx.field(static=True)
     minimum_heldout_groups: int = eqx.field(static=True)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         positives = (
             self.maximum_predictive_rms,
             self.coverage_standard_deviations,
@@ -375,7 +375,7 @@ class SemiconductorCalibrationCampaign(StrictModule):
         cases,
         criteria,
         physical_references=(),
-    ):
+    ) -> None:
         self.campaign_name, self.model_id = (
             _text(campaign_name, "calibration identity"),
             _text(model_id, "calibration identity"),
@@ -486,7 +486,9 @@ class SemiconductorParameterBinding(StrictModule):
     admissible: Callable = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
-    def __init__(self, space, quantities, sensitivity_scale, *, prior_record, admissible):
+    def __init__(
+        self, space, quantities, sensitivity_scale, *, prior_record, admissible
+    ) -> None:
         self.space, self.quantities = space, _quantities(quantities)
         self.sensitivity_scale = _array(
             sensitivity_scale, (len(quantities),), positive=True
@@ -556,7 +558,7 @@ class SemiconductorForwardEvaluation(StrictModule):
 class SemiconductorForwardUnresolved(RuntimeError):
     """Host failure retaining the actual physical point and rejected solver evidence."""
 
-    def __init__(self, evaluation):
+    def __init__(self, evaluation) -> None:
         self.evaluation = evaluation
         super().__init__(
             f"Semiconductor forward evaluation is {evaluation.status}; inference must stop."

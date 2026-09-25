@@ -105,7 +105,7 @@ class BoundedImpulseQVIProblem(StrictModule, NonTrainableState):
         allow_negative_intervention_cost: bool = False,
         corner_tolerance: float = 0.0,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(spatial_grid, BoundedUniformGrid1D):
             raise TypeError("spatial_grid must be a BoundedUniformGrid1D.")
         if not isinstance(time_grid, TimeGrid):
@@ -173,7 +173,7 @@ class ImpulseQVIPlan(StrictModule, NonTrainableState):
         refinement_absolute_tolerance: float = 2.0e-2,
         refinement_relative_tolerance: float = 5.0e-2,
         plan_id: str,
-    ):
+    ) -> None:
         self.residual_tolerance = _nonnegative(residual_tolerance, "residual_tolerance")
         self.refinement_absolute_tolerance = _nonnegative(
             refinement_absolute_tolerance, "refinement_absolute_tolerance"

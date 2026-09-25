@@ -35,7 +35,9 @@ class DiffraxComplexStatePolicy(StrictModule, NonTrainableState):
     strategy: DiffraxComplexStateStrategy = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, strategy: DiffraxComplexStateStrategy = "real_coordinates", /):
+    def __init__(
+        self, strategy: DiffraxComplexStateStrategy = "real_coordinates", /
+    ) -> None:
         if strategy not in ("real_coordinates", "native", "reject"):
             raise ValueError(
                 "Diffrax complex-state strategy must be 'real_coordinates', 'native', or 'reject'."
@@ -53,7 +55,7 @@ class _PackedComplexLeaf(StrictModule):
     real: Array
     imag: Array
 
-    def __init__(self, value: ArrayLike, /):
+    def __init__(self, value: ArrayLike, /) -> None:
         array = jnp.asarray(value)
         if not jnp.iscomplexobj(array):
             raise TypeError("Packed argument leaves must be complex-valued.")
@@ -121,7 +123,7 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
         backend_dtype: str,
         evidence: RealCoordinateEvidence | None,
         coordinates: AbstractRealCoordinateMap | None = None,
-    ):
+    ) -> None:
         shape = tuple(state_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("Diffrax state shape must contain positive dimensions.")

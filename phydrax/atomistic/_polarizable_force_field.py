@@ -152,7 +152,7 @@ class Buffered147Potential(StrictModule, NonTrainableState):
         delta: float = 0.07,
         gamma: float = 0.12,
         name: str = "buffered-14-7",
-    ):
+    ) -> None:
         radius = _site_vector(radii, "radii", positive=True)
         depth = _site_vector(epsilon, "epsilon", nonnegative=True)
         if depth.shape != radius.shape:
@@ -210,7 +210,7 @@ class ChargePenetrationPotential(StrictModule, NonTrainableState):
         coulomb_constant: float = 1.0,
         pair_scale: ArrayLike | None = None,
         name: str = "charge-penetration",
-    ):
+    ) -> None:
         core = _site_vector(core_charges, "core_charges")
         valence = _site_vector(valence_charges, "valence_charges")
         exponent = _site_vector(exponents, "exponents", positive=True)
@@ -277,7 +277,7 @@ class ChargeTransferPotential(StrictModule, NonTrainableState):
         *,
         pair_scale: ArrayLike | None = None,
         name: str = "charge-transfer",
-    ):
+    ) -> None:
         amplitude = _site_vector(amplitudes, "amplitudes", nonnegative=True)
         exponent = _site_vector(exponents, "exponents", positive=True)
         if exponent.shape != amplitude.shape:
@@ -354,7 +354,7 @@ class DampedDispersionPotential(StrictModule, NonTrainableState):
         c10: ArrayLike | None = None,
         pair_scale: ArrayLike | None = None,
         name: str = "damped-dispersion",
-    ):
+    ) -> None:
         c6_ = _site_vector(c6, "c6", nonnegative=True)
         c8_ = (
             np.zeros_like(c6_) if c8 is None else _site_vector(c8, "c8", nonnegative=True)
@@ -425,7 +425,7 @@ class PauliRepulsionPotential(StrictModule, NonTrainableState):
         *,
         pair_scale: ArrayLike | None = None,
         name: str = "pauli-repulsion",
-    ):
+    ) -> None:
         amplitude = _site_vector(amplitudes, "amplitudes", nonnegative=True)
         exponent = _site_vector(exponents, "exponents", positive=True)
         if exponent.shape != amplitude.shape:
@@ -486,7 +486,7 @@ class ChargeFluxPotential(StrictModule, NonTrainableState):
         coulomb_constant: float = 1.0,
         pair_scale: ArrayLike | None = None,
         name: str = "charge-flux",
-    ):
+    ) -> None:
         charges = _site_vector(reference_charges, "reference_charges")
         capacity = charges.size
         bonds = _routes(bond_routes, 2, capacity, "bond_routes")
@@ -627,7 +627,7 @@ class StretchBendPotential(StrictModule, NonTrainableState):
         /,
         *,
         name: str = "stretch-bend",
-    ):
+    ) -> None:
         capacity = int(site_capacity)
         if capacity <= 0:
             raise ValueError("site_capacity must be positive.")
@@ -715,7 +715,7 @@ class AngleAnglePotential(StrictModule, NonTrainableState):
         /,
         *,
         name: str = "angle-angle",
-    ):
+    ) -> None:
         capacity = int(site_capacity)
         if capacity <= 0:
             raise ValueError("site_capacity must be positive.")
@@ -788,7 +788,7 @@ class OutOfPlaneBendPotential(StrictModule, NonTrainableState):
         *,
         target_angles: ArrayLike | None = None,
         name: str = "out-of-plane-bend",
-    ):
+    ) -> None:
         capacity = int(site_capacity)
         if capacity <= 0:
             raise ValueError("site_capacity must be positive.")
@@ -916,7 +916,7 @@ class PolarizableForceFieldPlan(StrictModule, NonTrainableState):
         *,
         polarization: PolarizationPlan | None = None,
         force_balance_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         terms_ = tuple(terms)
         if any(not isinstance(term, _POLARIZABLE_TERM_TYPES) for term in terms_):
             raise TypeError("Every term must be an advanced polarizable energy term.")
@@ -972,7 +972,7 @@ class PreparedPolarizableForceField(StrictModule, NonTrainableState):
     site_capacity: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, polarization, site_capacity, /):
+    def __init__(self, plan, polarization, site_capacity, /) -> None:
         capacity = int(site_capacity)
         if capacity <= 0:
             raise ValueError("Prepared force fields require positive site capacity.")

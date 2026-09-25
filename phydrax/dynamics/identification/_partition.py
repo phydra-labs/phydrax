@@ -32,7 +32,7 @@ class TrajectoryDataPartition(StrictModule, NonTrainableState):
         test: TrajectoryData,
         partition: CasePartitionManifest,
         /,
-    ):
+    ) -> None:
         if not isinstance(partition, CasePartitionManifest):
             raise TypeError("partition must be a CasePartitionManifest.")
         expected = tuple(

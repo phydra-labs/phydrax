@@ -98,7 +98,7 @@ class MassiveFieldQuasiBoundPlan(StrictModule, NonTrainableState):
         residual_tolerance=1.0e-7,
         finite_difference_step=2.0e-5,
         spheroidicity_limit=0.25,
-    ):
+    ) -> None:
         mass = float(np.asarray(black_hole_mass))
         spin = float(np.asarray(black_hole_spin))
         charge = float(np.asarray(black_hole_charge))
@@ -509,7 +509,7 @@ class ExcitationResiduePlan(StrictModule, NonTrainableState):
         *,
         derivative_floor=1.0e-12,
         pole_separation_floor=1.0e-10,
-    ):
+    ) -> None:
         poles = np.asarray(pole_frequency, dtype=np.complex128)
         numerators = np.asarray(excitation_numerator, dtype=np.complex128)
         derivatives = np.asarray(wronskian_derivative, dtype=np.complex128)
@@ -707,7 +707,7 @@ class QuadraticRingdownPlan(StrictModule, NonTrainableState):
         /,
         *,
         resonance_tolerance=1.0e-8,
-    ):
+    ) -> None:
         poles = np.asarray(pole_frequency, dtype=np.complex128)
         amplitudes = np.asarray(linear_amplitude, dtype=np.complex128)
         coefficients = np.asarray(coupling, dtype=np.complex128)

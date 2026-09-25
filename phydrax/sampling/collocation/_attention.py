@@ -100,7 +100,7 @@ class ResidualAttentionPopulation(StrictModule):
         anchor_mask: Array | None = None,
         replacement_count: int | Array = 0,
         candidate_evaluations: int | Array = 0,
-    ):
+    ) -> None:
         axis, size = _single_axis_and_size(batch)
         _validate_axis_field(probability, axis=axis, size=size, name="probability")
         _validate_axis_field(weight, axis=axis, size=size, name="weight")
@@ -191,7 +191,7 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
         candidate_sampler: Callable[..., PointBatch] | None = None,
         anchor_fraction: float = 0.0,
         anchor_probability_floor: float = 1.0e-6,
-    ):
+    ) -> None:
         refresh = int(refresh_every)
         decay_ = float(decay)
         exponent = float(score_exponent)

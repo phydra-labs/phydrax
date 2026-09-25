@@ -99,7 +99,7 @@ class LatticeBoltzmannLinkEpoch(StrictModule, NonTrainableState):
         numeric_epoch: int = 0,
         boundary_fraction: ArrayLike | None = None,
         boundary_normals: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("Link epochs require an LBM discretization.")
         if not isinstance(geometry, LatticeBoltzmannGeometrySnapshot):
@@ -207,7 +207,7 @@ class LatticeBoltzmannGeometryEpoch(StrictModule, NonTrainableState):
         /,
         *,
         geometry_kind: LatticeBoltzmannGeometryKind = LatticeBoltzmannGeometryKind.NATIVE,
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("Geometry epochs require an LBM discretization.")
         if not isinstance(snapshot, LatticeBoltzmannGeometrySnapshot) or not isinstance(
@@ -392,7 +392,7 @@ class LatticeBoltzmannTopologyEventRequest(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         if not isinstance(source, LatticeBoltzmannGeometryEpoch):
             raise TypeError("Topology requests require a source geometry epoch.")
         mask = np.asarray(candidate_fluid_mask, dtype=np.bool_)
@@ -476,7 +476,7 @@ class LatticeBoltzmannPopulationTransferPlan(StrictModule, NonTrainableState):
         positivity_floor: float = 0.0,
         absolute_tolerance: float = 1.0e-12,
         relative_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(source, LatticeBoltzmannGeometryEpoch) or not isinstance(
             target, LatticeBoltzmannGeometryEpoch
         ):
@@ -693,7 +693,7 @@ class LatticeBoltzmannGeometryTransaction(StrictModule, NonTrainableState):
         request: LatticeBoltzmannTopologyEventRequest,
         transfer: LatticeBoltzmannPopulationTransferPlan,
         /,
-    ):
+    ) -> None:
         if (
             not isinstance(accepted, LatticeBoltzmannGeometryEpoch)
             or not isinstance(candidate, LatticeBoltzmannGeometryEpoch)

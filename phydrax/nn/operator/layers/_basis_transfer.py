@@ -43,7 +43,7 @@ class InvariantBasisTransferPlan(StrictModule, NonTrainableState):
         *,
         target_axes: Sequence[int] | None = None,
         residual_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         if not isinstance(source_basis, InvariantFilterBasis) or not isinstance(
             target_basis, InvariantFilterBasis
         ):

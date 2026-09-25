@@ -33,7 +33,7 @@ class SurfaceConductionConductivity(StrictModule):
         surface_exponent: ArrayLike,
         discrepancy_standard_deviation_log: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = jnp.broadcast_arrays(
             *(
                 jnp.asarray(value)
@@ -106,7 +106,7 @@ class CRIMPermittivity(StrictModule):
         air_relative_permittivity: ArrayLike = 1.0,
         discrepancy_standard_deviation: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         values = jnp.broadcast_arrays(
             jnp.asarray(solid_relative_permittivity),
             jnp.asarray(water_relative_permittivity),
@@ -165,7 +165,7 @@ class GassmannFluidSubstitution(StrictModule):
         mineral_density_kg_m3: ArrayLike,
         discrepancy_standard_deviation_Pa: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         values = jnp.broadcast_arrays(
             jnp.asarray(mineral_bulk_modulus_Pa),
             jnp.asarray(dry_bulk_modulus_Pa),
@@ -258,7 +258,7 @@ class KozenyCarmanPermeability(StrictModule):
         exponent: ArrayLike = 2.0,
         discrepancy_standard_deviation_log: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         values = jnp.broadcast_arrays(
             jnp.asarray(reference_permeability_m2),
             jnp.asarray(reference_porosity),

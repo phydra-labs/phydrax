@@ -46,7 +46,7 @@ class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
         initial_step_size: float = 0.05,
         minimum_mean_ratio: float = 1.0e-6,
         movement_weight: float = 1.0e-4,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be CellMesh.")
         target = np.asarray(

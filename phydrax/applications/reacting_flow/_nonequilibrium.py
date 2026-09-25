@@ -48,7 +48,7 @@ class LandauTellerRelaxationPlan(StrictModule, NonTrainableState):
     relaxation_times: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, relaxation_times: ArrayLike, /):
+    def __init__(self, relaxation_times: ArrayLike, /) -> None:
         times = jnp.asarray(relaxation_times)
         host = np.asarray(times)
         if (
@@ -140,7 +140,7 @@ class ThermochemicalNonequilibriumProcessPlan(AbstractBalanceLawProcessPlan):
         subcycles: int = 8,
         nonlinear_iterations: int = 8,
         chemistry_temperature: Literal["heavy", "geometric-mean"] = "geometric-mean",
-    ):
+    ) -> None:
         subcycles_ = int(subcycles)
         iterations = int(nonlinear_iterations)
         if (
@@ -188,7 +188,7 @@ class PreparedThermochemicalNonequilibriumProcess(AbstractPreparedBalanceLawProc
         plan: ThermochemicalNonequilibriumProcessPlan,
         transport: AbstractPreparedBalanceLawTransport,
         /,
-    ):
+    ) -> None:
         system = transport.dynamics.system
         if not isinstance(
             system,

@@ -120,7 +120,7 @@ class ResolvedRateSchedule(StrictModule):
         *,
         valuation_date: FinanceDate,
         curve_time_day_count: DayCount,
-    ):
+    ) -> None:
         if not isinstance(schedule, ResolvedSchedule):
             raise TypeError("schedule must be a ResolvedSchedule.")
         if not isinstance(valuation_date, FinanceDate):
@@ -229,7 +229,7 @@ class DeterministicCashflowReplay(StrictModule):
         discount_factors: ArrayLike,
         obligation_ids: tuple[str, ...],
         curve_ids: tuple[str, ...],
-    ):
+    ) -> None:
         payment = jnp.asarray(payment_ordinals, dtype=jnp.int32)
         times = jnp.asarray(payment_times)
         amounts_ = jnp.asarray(amounts)
@@ -515,7 +515,7 @@ class ResolvedFixedLeg(AbstractResolvedContract):
         pay_receive: PayReceive | str,
         exchange_initial: bool,
         exchange_final: bool,
-    ):
+    ) -> None:
         if not isinstance(schedule, ResolvedRateSchedule):
             raise TypeError("schedule must be a ResolvedRateSchedule.")
         if not isinstance(currency, Currency):
@@ -685,7 +685,7 @@ class ResolvedFloatingLeg(AbstractResolvedContract):
         fixing_mask: ArrayLike,
         exchange_initial: bool,
         exchange_final: bool,
-    ):
+    ) -> None:
         if not isinstance(schedule, ResolvedRateSchedule):
             raise TypeError("schedule must be a ResolvedRateSchedule.")
         if not isinstance(currency, Currency):
@@ -904,7 +904,7 @@ class ResolvedDeposit(AbstractResolvedContract):
         discount_curve_id: str,
         notional: float,
         rate: float,
-    ):
+    ) -> None:
         if not isinstance(schedule, ResolvedRateSchedule):
             raise TypeError("schedule must be a ResolvedRateSchedule.")
         _require_single_period(schedule)
@@ -1025,7 +1025,7 @@ class ResolvedForwardRateAgreement(AbstractResolvedContract):
         settlement: FRASettlement | str,
         fixing_value: ArrayLike = 0.0,
         fixing_known: bool,
-    ):
+    ) -> None:
         if not isinstance(schedule, ResolvedRateSchedule):
             raise TypeError("schedule must be a ResolvedRateSchedule.")
         _require_single_period(schedule)
@@ -1182,7 +1182,7 @@ class ResolvedInterestRateFuture(AbstractResolvedContract):
         quote_convention: FuturesQuoteConvention | str,
         fixing_value: ArrayLike = 0.0,
         fixing_known: bool,
-    ):
+    ) -> None:
         if not isinstance(schedule, ResolvedRateSchedule):
             raise TypeError("schedule must be a ResolvedRateSchedule.")
         _require_single_period(schedule)
@@ -1350,7 +1350,7 @@ class ResolvedInflationLeg(AbstractResolvedContract):
         end_index_values: ArrayLike,
         start_fixing_mask: ArrayLike,
         end_fixing_mask: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(schedule, ResolvedRateSchedule):
             raise TypeError("schedule must be a ResolvedRateSchedule.")
         if not isinstance(currency, Currency):
@@ -1584,7 +1584,7 @@ class ResolvedIborSwap(AbstractResolvedContract):
         fixed_leg: ResolvedFixedLeg,
         floating_leg: ResolvedFloatingLeg,
         /,
-    ):
+    ) -> None:
         _validate_fixed_float(fixed_leg, floating_leg)
         contract = _identifier(contract_id, "contract_id")
         self.contract_id = contract
@@ -1629,7 +1629,7 @@ class ResolvedOvernightIndexedSwap(AbstractResolvedContract):
         fixed_leg: ResolvedFixedLeg,
         overnight_leg: ResolvedFloatingLeg,
         /,
-    ):
+    ) -> None:
         _validate_fixed_float(fixed_leg, overnight_leg)
         contract = _identifier(contract_id, "contract_id")
         self.contract_id = contract
@@ -1674,7 +1674,7 @@ class ResolvedBasisSwap(AbstractResolvedContract):
         first_leg: ResolvedFloatingLeg,
         second_leg: ResolvedFloatingLeg,
         /,
-    ):
+    ) -> None:
         if not isinstance(first_leg, ResolvedFloatingLeg) or not isinstance(
             second_leg, ResolvedFloatingLeg
         ):
@@ -1728,7 +1728,7 @@ class ResolvedCrossCurrencySwap(AbstractResolvedContract):
         quote_leg: ResolvedFloatingLeg,
         fx_pair: FXPair,
         /,
-    ):
+    ) -> None:
         if not isinstance(base_leg, ResolvedFloatingLeg) or not isinstance(
             quote_leg, ResolvedFloatingLeg
         ):

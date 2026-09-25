@@ -60,7 +60,7 @@ class PermanentMultipoleSiteData(StrictModule, NonTrainableState):
         polarizabilities: ArrayLike,
         damping: ArrayLike,
         /,
-    ):
+    ) -> None:
         charge = np.asarray(charges, dtype=np.float64)
         dipole = np.asarray(dipoles, dtype=np.float64)
         quadrupole = np.asarray(quadrupoles, dtype=np.float64)
@@ -135,7 +135,7 @@ class PolarizationScaleData(StrictModule, NonTrainableState):
         polarization: ArrayLike,
         mutual: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             np.asarray(value, dtype=np.float64)
             for value in (direct, polarization, mutual)
@@ -207,7 +207,7 @@ class PolarizationOperatorPlan(StrictModule, NonTrainableState):
         *,
         minimum_distance: float = 1.0e-8,
         periodic_plan: MultipolePMEPlan | None = None,
-    ):
+    ) -> None:
         distance = _finite_positive(minimum_distance, "minimum_distance")
         if periodic_plan is not None and not isinstance(periodic_plan, MultipolePMEPlan):
             raise TypeError("periodic_plan must be MultipolePMEPlan or None.")
@@ -258,7 +258,7 @@ class PreparedPolarizationOperator(StrictModule, NonTrainableState):
     site_capacity: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, multipoles, scaling, active_mask, active_id, /):
+    def __init__(self, plan, multipoles, scaling, active_mask, active_id, /) -> None:
         self.plan, self.multipoles, self.scaling, self.active_mask = (
             plan,
             multipoles,
@@ -320,7 +320,7 @@ class PolarizationPreconditionerPlan(StrictModule, NonTrainableState):
         /,
         *,
         diagonal_floor: float = 1.0e-12,
-    ):
+    ) -> None:
         kind_ = _enum_value(kind, PolarizationPreconditionerKind, "kind")
         floor = _finite_positive(diagonal_floor, "diagonal_floor")
         self.kind, self.diagonal_floor = kind_, floor
@@ -347,7 +347,7 @@ class PreparedPolarizationPreconditioner(StrictModule, NonTrainableState):
     operator: PreparedPolarizationOperator
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, operator, /):
+    def __init__(self, plan, operator, /) -> None:
         self.plan, self.operator = plan, operator
         self.prepared_id = canonical_fingerprint(
             {
@@ -389,7 +389,7 @@ class PolarizationPredictorPlan(StrictModule, NonTrainableState):
         *,
         history_coefficient: float = 1.0,
         direct_fallback: bool = True,
-    ):
+    ) -> None:
         coefficient = float(history_coefficient)
         if not np.isfinite(coefficient) or not 0.0 <= coefficient <= 2.0:
             raise ValueError("history_coefficient must be finite and in [0,2].")
@@ -433,7 +433,7 @@ class PolarizationSolverPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-8,
         force_tolerance: float | None = None,
         breakdown_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         kind_ = _enum_value(kind, PolarizationSolverKind, "kind")
         iterations, order = int(maximum_iterations), int(tcg_order)
         tolerance_ = _finite_positive(tolerance, "tolerance")
@@ -519,7 +519,7 @@ class PolarizationPlan(StrictModule, NonTrainableState):
         predictor: PolarizationPredictorPlan | None = None,
         periodic_plan: MultipolePMEPlan | None = None,
         minimum_distance: float = 1.0e-8,
-    ):
+    ) -> None:
         relaxation_ = float(relaxation)
         if not np.isfinite(relaxation_) or not 0.0 < relaxation_ <= 1.0:
             raise ValueError("relaxation must be finite and in (0,1].")
@@ -617,7 +617,7 @@ class PolarizationState(StrictModule):
         force_valid=None,
         finite=None,
         solver_kind="legacy",
-    ):
+    ) -> None:
         residual_ = jnp.asarray(residual)
         finite_ = (
             jnp.all(jnp.isfinite(induced_dipoles)) & jnp.isfinite(residual_)
@@ -661,7 +661,9 @@ class PreparedPolarizationSolver(StrictModule, NonTrainableState):
     result_plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, operator, preconditioner, predictor, result_plan_id, /):
+    def __init__(
+        self, plan, operator, preconditioner, predictor, result_plan_id, /
+    ) -> None:
         self.plan, self.operator, self.preconditioner, self.predictor = (
             plan,
             operator,
@@ -731,7 +733,7 @@ class PolarizationEvaluation(StrictModule):
     successful: Array
     evidence: PolarizationDifferentiationEvidence | None
 
-    def __init__(self, energy, forces, state, successful, *, evidence=None):
+    def __init__(self, energy, forces, state, successful, *, evidence=None) -> None:
         self.energy = jnp.asarray(energy)
         self.forces = jnp.asarray(forces)
         self.state = state
@@ -1556,7 +1558,7 @@ class MultipolePMEPlan(StrictModule, NonTrainableState):
     alpha: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, grid_shape: tuple[int, int, int], alpha: float, /):
+    def __init__(self, grid_shape: tuple[int, int, int], alpha: float, /) -> None:
         shape = tuple(grid_shape)
         alpha_ = float(alpha)
         if (
@@ -1695,7 +1697,7 @@ class ImplicitSolventPlan(StrictModule, NonTrainableState):
         solute_dielectric: float = 1.0,
         surface_tension: float = 0.005,
         kirkwood_factor: float = 2.455,
-    ):
+    ) -> None:
         if (
             model not in ("gb", "gk")
             or min(solvent_dielectric, solute_dielectric, kirkwood_factor) <= 0

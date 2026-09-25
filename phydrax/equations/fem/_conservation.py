@@ -102,7 +102,7 @@ class DGSEMSampledFluxCompatibilityEvidence(StrictModule, NonTrainableState):
         boundary_evidence: str,
         source_evidence: str,
         viscous_evidence: str,
-    ):
+    ) -> None:
         identifiers = tuple(
             str(value)
             for value in (
@@ -346,7 +346,7 @@ class DGSEMMortarCompatibilityCertificate(StrictModule, NonTrainableState):
         entropy_error: ArrayLike,
         tolerance: float,
         /,
-    ):
+    ) -> None:
         if not isinstance(mortar, FiniteElementMortarPlan) or not isinstance(
             metric, FiniteElementMortarMetricData
         ):
@@ -484,7 +484,7 @@ class DGSEMNonconformingMortarPlan(StrictModule, NonTrainableState):
         metrics: Sequence[FiniteElementMortarMetricData],
         certificates: Sequence[DGSEMMortarCompatibilityCertificate],
         /,
-    ):
+    ) -> None:
         mortars_ = tuple(mortars)
         metrics_ = tuple(metrics)
         certificates_ = tuple(certificates)
@@ -566,7 +566,7 @@ class DGSEMConservationMethodPlan(StrictModule):
         differentiability: BranchDifferentiationPolicy = (
             BranchDifferentiationPolicy.BRANCHWISE
         ),
-    ):
+    ) -> None:
         if not isinstance(volume_flux, AbstractSymmetricTwoPointFluxPlan):
             raise TypeError("DGSEM volume_flux must be a symmetric two-point flux plan.")
         if not volume_flux.symmetric or not volume_flux.consistent:
@@ -657,7 +657,7 @@ class DGSEMPreparationReport(StrictModule, NonTrainableState):
         facet_route_count: int,
         minimum_mass: ArrayLike,
         /,
-    ):
+    ) -> None:
         minimum = jnp.asarray(minimum_mass)
         passed = bool(
             sbp.report.passed
@@ -1007,7 +1007,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
         boundaries: FiniteElementBoundarySet | None = None,
         entropy_pair: ConvexEntropyPair | None = None,
         runtime: FiniteElementRuntimeData | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("DGSEM requires FiniteElementDiscretization.")
         if not isinstance(method, DGSEMConservationMethodPlan):

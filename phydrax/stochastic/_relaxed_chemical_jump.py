@@ -29,7 +29,7 @@ class RelaxedChemicalJumpParameters(StrictModule, NonTrainableState):
         maximum_events: int,
         final_time: float,
         /,
-    ):
+    ) -> None:
         selector = float(selector_sharpness)
         jump = float(jump_sharpness)
         capacity = int(maximum_events)
@@ -80,7 +80,7 @@ class RelaxedChemicalJumpPlan(StrictModule, NonTrainableState):
         process: ChemicalJumpProcess,
         parameters: RelaxedChemicalJumpParameters,
         /,
-    ):
+    ) -> None:
         if not isinstance(process, ChemicalJumpProcess):
             raise TypeError("process must be ChemicalJumpProcess.")
         if not isinstance(parameters, RelaxedChemicalJumpParameters):

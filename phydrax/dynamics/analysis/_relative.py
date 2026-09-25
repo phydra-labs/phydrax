@@ -36,7 +36,7 @@ class RelativeEquilibriumProblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         generators_ = tuple(generators)
         phases = tuple(phase_conditions)
         if not callable(vector_field):
@@ -137,7 +137,7 @@ class RelativePeriodicOrbitProblem(StrictModule):
         *,
         num_segments: int = 1,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(evolution, AbstractDifferentiableEvolution):
             raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         phases = tuple(spatial_phases)

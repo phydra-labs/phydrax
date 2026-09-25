@@ -94,7 +94,7 @@ class TRTCollisionPlan(StrictModule, NonTrainableState):
     collision_id: str = eqx.field(static=True)
     family: str = "trt"
 
-    def __init__(self, magic_parameter: float = 3.0 / 16.0, /):
+    def __init__(self, magic_parameter: float = 3.0 / 16.0, /) -> None:
         value = float(magic_parameter)
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError("TRT magic_parameter must be finite and positive.")
@@ -124,7 +124,9 @@ class MRTCollisionPlan(StrictModule, NonTrainableState):
     collision_id: str = eqx.field(static=True)
     family: str = "mrt"
 
-    def __init__(self, basis: MomentBasisPlan, spectrum: RelaxationSpectrumPlan, /):
+    def __init__(
+        self, basis: MomentBasisPlan, spectrum: RelaxationSpectrumPlan, /
+    ) -> None:
         if not isinstance(basis, MomentBasisPlan) or not isinstance(
             spectrum, RelaxationSpectrumPlan
         ):
@@ -150,7 +152,7 @@ class SmagorinskyCollisionPlan(StrictModule, NonTrainableState):
     collision_id: str = eqx.field(static=True)
     family: str = "smagorinsky"
 
-    def __init__(self, coefficient: float = 0.16, /):
+    def __init__(self, coefficient: float = 0.16, /) -> None:
         value = float(coefficient)
         if not np.isfinite(value) or value < 0.0:
             raise ValueError("Smagorinsky coefficient must be finite and nonnegative.")
@@ -166,7 +168,9 @@ class CentralMomentCollisionPlan(StrictModule, NonTrainableState):
     collision_id: str = eqx.field(static=True)
     family: str = "central-moment"
 
-    def __init__(self, basis: MomentBasisPlan, spectrum: RelaxationSpectrumPlan, /):
+    def __init__(
+        self, basis: MomentBasisPlan, spectrum: RelaxationSpectrumPlan, /
+    ) -> None:
         self.basis = basis
         self.spectrum = spectrum
         self.collision_id = canonical_fingerprint(
@@ -184,7 +188,9 @@ class CumulantCollisionPlan(StrictModule, NonTrainableState):
     collision_id: str = eqx.field(static=True)
     family: str = "cumulant"
 
-    def __init__(self, basis: MomentBasisPlan, spectrum: RelaxationSpectrumPlan, /):
+    def __init__(
+        self, basis: MomentBasisPlan, spectrum: RelaxationSpectrumPlan, /
+    ) -> None:
         self.basis = basis
         self.spectrum = spectrum
         self.collision_id = canonical_fingerprint(
@@ -216,7 +222,7 @@ class KBCCollisionPlan(StrictModule, NonTrainableState):
         variant: KBCVariant = "b",
         stabilizer: KBCStabilizerKind = "quadratic",
         root: KineticEntropyRootPlan | None = None,
-    ):
+    ) -> None:
         if variant not in ("a", "b", "c", "d"):
             raise ValueError(f"Unknown KBC variant {variant!r}.")
         if stabilizer not in ("quadratic", "exact", "hybrid"):
@@ -255,7 +261,7 @@ class EntropicCollisionPlan(StrictModule, NonTrainableState):
         iterations: int = 24,
         tolerance: float = 1.0e-11,
         strategy: str = "exact",
-    ):
+    ) -> None:
         selected = (
             KineticEntropyRootPlan(
                 strategy=strategy,

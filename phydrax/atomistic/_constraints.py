@@ -29,7 +29,7 @@ class DistanceConstraintPlan(StrictModule, NonTrainableState):
         *,
         maximum_iterations: int = 32,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         threshold = float(tolerance)
         if iterations <= 0 or not math.isfinite(threshold) or threshold <= 0.0:
@@ -65,7 +65,9 @@ class PreparedDistanceConstraints(StrictModule, NonTrainableState):
     system: PreparedAtomisticSystem
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: DistanceConstraintPlan, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: DistanceConstraintPlan, system: PreparedAtomisticSystem, /
+    ) -> None:
         if not isinstance(plan, DistanceConstraintPlan):
             raise TypeError("plan must be DistanceConstraintPlan.")
         if not isinstance(system, PreparedAtomisticSystem):

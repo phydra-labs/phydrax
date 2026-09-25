@@ -47,7 +47,7 @@ class QuantumPoisson1D(StrictModule):
 
     def __init__(
         self, basis, face_permittivity, fixed_charge_density, electrode_voltages
-    ):
+    ) -> None:
         if not isinstance(basis, EffectiveMass1D):
             raise TypeError(
                 "Quantum Poisson currently admits the EffectiveMass1D cell basis only."

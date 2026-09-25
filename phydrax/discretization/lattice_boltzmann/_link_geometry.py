@@ -51,7 +51,7 @@ class FixedSDFLinkGeometry(StrictModule, NonTrainableState):
         body_labels: ArrayLike | None = None,
         body_names: Sequence[str] | None = None,
         link_fractions: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("Fixed SDF link geometry requires an LBM discretization.")
         shape = discretization.grid.shape

@@ -31,7 +31,7 @@ class MonopoleKineticPolicy(StrictModule, NonTrainableState):
     compute_dtype: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, *, compute_dtype: object = "float64"):
+    def __init__(self, *, compute_dtype: object = "float64") -> None:
         dtype = real_precision_dtype_name(compute_dtype)
         self.compute_dtype = dtype
         self.method_id = f"monopole-sphere-selected-hessian-diagonal:dtype={dtype}"
@@ -119,7 +119,7 @@ class MonopoleSphereCoulombHamiltonian(AbstractLocalQuantumOperator):
         kinetic_strength: float = 1.0,
         interaction_strength: float = 1.0,
         kinetic: MonopoleKineticPolicy | None = None,
-    ):
+    ) -> None:
         count = int(electron_count)
         flux = int(twice_monopole_flux)
         radius_ = sqrt(flux / 2.0) if radius is None else float(radius)

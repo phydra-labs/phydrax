@@ -44,7 +44,7 @@ class KremerGrestProfilePlan(StrictModule, NonTrainableState):
         maximum_particles: int,
         maximum_chains: int,
         minimum_fene_margin: float = 0.05,
-    ):
+    ) -> None:
         steps = int(production_steps)
         particles = int(maximum_particles)
         chains = int(maximum_chains)
@@ -94,7 +94,7 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
         dynamics: PreparedAtomisticDynamics,
         chain_layout: PolymerChainLayoutPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, KremerGrestProfilePlan):
             raise TypeError("plan must be KremerGrestProfilePlan.")
         if not isinstance(dynamics, PreparedAtomisticDynamics):

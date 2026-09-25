@@ -57,7 +57,7 @@ class LocalVariationalRequest(StrictModule, NonTrainableState):
         material_mode: str = "none",
         history_mode: str = "none",
         explicit_rules: bool = False,
-    ):
+    ) -> None:
         action = str(action_kind)
         region = str(region_kind)
         operators = tuple(dict.fromkeys(str(value) for value in differential_operators))
@@ -136,7 +136,7 @@ class LocalVariationalSelection(StrictModule, NonTrainableState):
         reference_realization_id: str,
         offer_id: str,
         /,
-    ):
+    ) -> None:
         execution = str(execution_kind)
         kernel = str(kernel_mode)
         realization = str(operator_realization)
@@ -204,7 +204,7 @@ class LocalVariationalOffer(StrictModule, NonTrainableState):
         material_modes: Sequence[str] = ("none",),
         history_modes: Sequence[str] = ("none",),
         explicit_rules: bool = False,
-    ):
+    ) -> None:
         execution = str(execution_kind)
 
         def identities(values: Sequence[str], /) -> tuple[str, ...]:
@@ -340,7 +340,7 @@ class LocalVariationalCapabilities(StrictModule, NonTrainableState):
         provider_id: str,
         offers: Sequence[LocalVariationalOffer],
         /,
-    ):
+    ) -> None:
         provider = str(provider_id)
         offers_ = tuple(offers)
         if (
@@ -400,7 +400,7 @@ class LocalFieldBinding(StrictModule, NonTrainableState):
         execution_shape: Sequence[int],
         local_width: int,
         layout_id: str,
-    ):
+    ) -> None:
         name_ = str(name)
         if not isinstance(field_space, DiscreteFieldSpace):
             raise TypeError("field_space must be a DiscreteFieldSpace.")
@@ -544,7 +544,7 @@ class LocalMetricResult(StrictModule, NonTrainableState):
         inverse_hessian: ArrayLike | None = None,
         normals: ArrayLike | None = None,
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         points_ = jnp.asarray(points)
         weights = jnp.asarray(physical_weights)
         jacobian_ = jnp.asarray(jacobian)
@@ -718,7 +718,7 @@ class PreparedLocalRegion(StrictModule, NonTrainableState):
         neighbor_local_entities: ArrayLike | None = None,
         trace_permutations: ArrayLike | None = None,
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(domain, IntegrationDomain):
             raise TypeError("domain must be an IntegrationDomain.")
         block = str(block_name)

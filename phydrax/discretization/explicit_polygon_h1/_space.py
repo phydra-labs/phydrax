@@ -140,7 +140,7 @@ class ExplicitPolygonH1Plan(AbstractDiscretizationPlan):
         qualification_policy: ExplicitPolygonH1QualificationPolicy | None = None,
         admissibility_policy: PolygonAdmissibilityPolicy | None = None,
         resource_budget: ExplicitPolygonH1ResourceBudget | None = None,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         if mesh.topological_dimension != 2 or mesh.ambient_dimension != 2:
@@ -251,7 +251,9 @@ class ExplicitPolygonH1Discretization(AbstractPreparedLocalDiscretization):
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
 
-    def __init__(self, plan: ExplicitPolygonH1Plan, /, *, numeric_version: str = "0"):
+    def __init__(
+        self, plan: ExplicitPolygonH1Plan, /, *, numeric_version: str = "0"
+    ) -> None:
         if not isinstance(plan, ExplicitPolygonH1Plan):
             raise TypeError("plan must be ExplicitPolygonH1Plan.")
         version = str(numeric_version)

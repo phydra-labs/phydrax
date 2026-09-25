@@ -40,7 +40,7 @@ class FeatureImportance(StrictModule):
         gain: Any,
         cover: Any,
         frequency: Any,
-    ):
+    ) -> None:
         gain_ = jnp.asarray(gain)
         cover_ = jnp.asarray(cover)
         frequency_ = jnp.asarray(frequency)
@@ -76,7 +76,7 @@ class TreeConvergenceDiagnostics(StrictModule):
         iterations: Any,
         converged: Any,
         capacity_exhausted: Any,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
@@ -100,7 +100,7 @@ class PartialDependenceResult(StrictModule):
         average: Any,
         individual: Any | None,
         feature_index: int,
-    ):
+    ) -> None:
         self.grid = jnp.asarray(grid)
         self.average = jnp.asarray(average)
         self.individual = None if individual is None else jnp.asarray(individual)
@@ -114,7 +114,7 @@ class TreeSHAPExplanation(StrictModule):
     base_values: Array
     predictions: Array
 
-    def __init__(self, *, values: Any, base_values: Any, predictions: Any):
+    def __init__(self, *, values: Any, base_values: Any, predictions: Any) -> None:
         self.values = jnp.asarray(values)
         self.base_values = jnp.asarray(base_values)
         self.predictions = jnp.asarray(predictions)
@@ -127,7 +127,9 @@ class GradientAttribution(StrictModule):
     attributions: Array
     baseline: Array | None
 
-    def __init__(self, *, gradients: Any, attributions: Any, baseline: Any | None):
+    def __init__(
+        self, *, gradients: Any, attributions: Any, baseline: Any | None
+    ) -> None:
         self.gradients = jnp.asarray(gradients)
         self.attributions = jnp.asarray(attributions)
         self.baseline = None if baseline is None else jnp.asarray(baseline)
@@ -150,7 +152,7 @@ class TreeExport(StrictModule):
     gain: Array
     cover: Array
 
-    def __init__(self, model: TreeEnsemble, tree_index: int, /, *, case_index=()):
+    def __init__(self, model: TreeEnsemble, tree_index: int, /, *, case_index=()) -> None:
         tree = int(tree_index)
         if tree < 0 or tree >= model.tree_capacity:
             raise IndexError("tree_index is outside the fixed tree capacity.")

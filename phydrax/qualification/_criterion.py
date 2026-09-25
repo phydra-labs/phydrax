@@ -75,7 +75,7 @@ class QualificationCriterion(StrictModule, NonTrainableState):
         approval_id: str,
         issued_at: int,
         valid_until: int | None = None,
-    ):
+    ) -> None:
         if isinstance(target, bool) or not isinstance(target, (int, float)):
             raise TypeError("target must be a real number.")
         target_ = float(target)
@@ -185,7 +185,7 @@ class CampaignStartRecord(StrictModule, NonTrainableState):
         resolved_run_spec_id: str,
         support_tuple_id: str,
         started_at: int,
-    ):
+    ) -> None:
         self.campaign_spec_id = _identifier(campaign_spec_id, "campaign specification ID")
         self.criterion_id = _identifier(criterion_id, "campaign criterion ID")
         self.resolved_run_spec_id = _identifier(
@@ -251,7 +251,7 @@ class CampaignObservationRecord(StrictModule, NonTrainableState):
         support_tuple_id: str,
         raw_artifact_ids: Sequence[str],
         observed_at: int,
-    ):
+    ) -> None:
         self.start_record_id = _identifier(start_record_id, "campaign-start record ID")
         self.campaign_spec_id = _identifier(campaign_spec_id, "campaign specification ID")
         self.criterion_id = _identifier(criterion_id, "campaign criterion ID")

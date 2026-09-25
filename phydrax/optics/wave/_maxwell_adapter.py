@@ -30,7 +30,7 @@ class TangentialElectromagneticPlane(StrictModule):
         /,
         *,
         source_kind: Literal["fourier-modal", "periodic-window"],
-    ):
+    ) -> None:
         if not isinstance(electric, TangentialPlaneField) or not isinstance(
             magnetic, TangentialPlaneField
         ):

@@ -46,7 +46,7 @@ class ConservativeVortexRemeshPlan2D(StrictModule, NonTrainableState):
         /,
         *,
         boundary: str = "reject",
-    ):
+    ) -> None:
         lower_ = np.asarray(lower, dtype=np.float64)
         upper_ = np.asarray(upper, dtype=np.float64)
         shape_ = tuple(shape)

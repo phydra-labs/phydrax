@@ -55,7 +55,7 @@ class ChamberVolumePlan(StrictModule, NonTrainableState):
         *,
         minimum_volume: float | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(surface, OrientedChamberSurface):
             raise TypeError("surface must be anatomy.OrientedChamberSurface.")
         threshold = (
@@ -172,7 +172,7 @@ class FollowerPressurePlan(StrictModule, NonTrainableState):
         /,
         *,
         load_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(chamber, ChamberVolumePlan):
             raise TypeError("chamber must be ChamberVolumePlan.")
         generated = canonical_fingerprint(
@@ -299,7 +299,7 @@ class MechanicsChamber(StrictModule, NonTrainableState):
         /,
         *,
         pressure_load_id: str | None = None,
-    ):
+    ) -> None:
         identifier = str(chamber_id)
         if not identifier:
             raise ValueError("chamber_id must be non-empty.")

@@ -42,7 +42,7 @@ class CompressibleAerodynamicReference(StrictModule, NonTrainableState):
         moment_origin: ArrayLike,
         aerodynamic_basis: ArrayLike,
         /,
-    ):
+    ) -> None:
         pressure = float(reference_pressure)
         density = float(reference_density)
         velocity = float(reference_velocity)
@@ -112,7 +112,7 @@ class CompressibleSurfacePatchPlan(StrictModule, NonTrainableState):
         *,
         name: str,
         mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         axis_ = int(axis)
         name_ = str(name)
         mask_ = None if mask is None else jnp.asarray(mask, dtype=jnp.bool_)
@@ -184,7 +184,7 @@ class CompressibleSurfaceObservationPlan(StrictModule):
         patches: tuple[CompressibleSurfacePatchPlan, ...],
         reference: CompressibleAerodynamicReference,
         /,
-    ):
+    ) -> None:
         if (
             not isinstance(dynamics, PreparedFiniteVolumeDynamics)
             or not patches

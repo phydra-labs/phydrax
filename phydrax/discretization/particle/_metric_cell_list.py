@@ -52,7 +52,7 @@ class MetricCellListParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
         maximum_candidate_slots: int = 10_000_000,
         name: str = "metric-cell-list-particle-neighborhood",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         radius = float(search_radius)
         if not np.isfinite(radius) or radius <= 0.0:
             raise ValueError("search_radius must be finite and positive.")
@@ -120,7 +120,7 @@ class PreparedMetricCellListParticleNeighborhood(AbstractPreparedParticleNeighbo
         plan: MetricCellListParticleNeighborhoodPlan,
         particles: ParticleDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, MetricCellListParticleNeighborhoodPlan):
             raise TypeError("plan must be MetricCellListParticleNeighborhoodPlan.")
         if not isinstance(particles, ParticleDiscretization):

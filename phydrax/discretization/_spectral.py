@@ -126,7 +126,7 @@ class ModalTransform(StrictModule, NonTrainableState):
         active_mask: ArrayLike | None = None,
         mode_ids: Sequence[str] | None = None,
         transform_id: str | None = None,
-    ):
+    ) -> None:
         analysis_host = np.asarray(analysis)
         synthesis_host = np.asarray(synthesis)
         weights_host = np.asarray(quadrature_weights, dtype=np.float64).reshape((-1,))
@@ -246,7 +246,7 @@ class LaplacianEigenbasisReport(StrictModule, NonTrainableState):
         next_eigenvalue: float,
         boundary_gap: float,
         orthonormality_residual: float,
-    ):
+    ) -> None:
         method = str(method_id)
         source = str(source_id)
         requested = None if requested_modes is None else int(requested_modes)
@@ -329,7 +329,7 @@ class OperatorSpectrum(StrictModule, NonTrainableState):
         report: LaplacianEigenbasisReport | None = None,
         spectrum_id: str | None = None,
         zero_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(transform, ModalTransform):
             raise TypeError("transform must be a ModalTransform.")
         operator = str(operator_id)
@@ -459,7 +459,7 @@ class TensorModalTransform(StrictModule, NonTrainableState):
     modal_shape: tuple[int, ...] = eqx.field(static=True)
     transform_id: str = eqx.field(static=True)
 
-    def __init__(self, transforms: Sequence[ModalTransform], /):
+    def __init__(self, transforms: Sequence[ModalTransform], /) -> None:
         values = tuple(transforms)
         if not values or not all(isinstance(value, ModalTransform) for value in values):
             raise TypeError("transforms must contain one or more ModalTransform values.")
@@ -529,7 +529,7 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
         negative_eigenvalue_tolerance: float = 1e-10,
         orthonormality_tolerance: float = 1e-8,
         max_construction_bytes: int = _DEFAULT_CONSTRUCTION_BYTES,
-    ):
+    ) -> None:
         legacy = bool(eigenbasis)
         if legacy:
             if len(eigenbasis) != 3:
@@ -1189,7 +1189,7 @@ class BasisTransformPlan(StrictModule, NonTrainableState):
         /,
         *,
         max_construction_bytes: int = _DEFAULT_CONSTRUCTION_BYTES,
-    ):
+    ) -> None:
         nodes_value = tuple(
             jnp.asarray(value, dtype=jnp.float64).reshape((-1,)) for value in nodes
         )

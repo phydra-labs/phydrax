@@ -49,7 +49,7 @@ class GeneralEigenResolutionPolicy(StrictModule, NonTrainableState):
         residual_tolerance: float = 1e-7,
         condition_limit: float = 1e10,
         cluster_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

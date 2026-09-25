@@ -31,7 +31,7 @@ class DiffraxCollocationIntegralOperator(StrictModule):
         target: ComponentTarget | DensityTarget,
         plan: DiffraxCollocationQuadraturePlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, DiffraxCollocationQuadraturePlan):
             raise TypeError("plan must be CID DiffraxCollocationQuadraturePlan.")
         self.target = target

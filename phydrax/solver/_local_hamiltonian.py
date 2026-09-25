@@ -62,7 +62,7 @@ class LocalHamiltonianTerm(StrictModule):
         product_factors: Sequence[ArrayLike] | None = None,
         tolerance: float = 1e-8,
         term_id: str | None = None,
-    ):
+    ) -> None:
         value = jnp.asarray(generator)
         if value.ndim != 2 or value.shape[0] != value.shape[1] or value.shape[0] == 0:
             raise ValueError("generator must be one nonempty square matrix.")
@@ -191,7 +191,7 @@ class LocalHamiltonian(StrictModule):
         /,
         *,
         hamiltonian_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(layout, HilbertRegisterLayout):
             raise TypeError("layout must be a HilbertRegisterLayout.")
         selected = tuple(terms)
@@ -254,7 +254,7 @@ class FixedGridLocalHamiltonian(StrictModule):
         hbar: ArrayLike = 1.0,
         source_valid: ArrayLike = True,
         schedule_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(hamiltonian, LocalHamiltonian):
             raise TypeError("hamiltonian must be a LocalHamiltonian.")
         times = jnp.asarray(time_grid)
@@ -344,7 +344,7 @@ class LocalHamiltonianEvolutionPolicy(StrictModule):
         norm_tolerance: float = 1e-8,
         unitarity_tolerance: float = 1e-8,
         save_indices: Sequence[int] = (),
-    ):
+    ) -> None:
         if order not in (1, 2):
             raise ValueError("order must be one or two.")
         if differentiation not in ("autodiff", "reversible-product-formula"):

@@ -107,7 +107,7 @@ class CoDAOperatorState(StrictModule):
         quadrature_weights: Array,
         case_shape: Sequence[int],
         layer_values: Sequence[Array] = (),
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         cases = tuple(case_shape)
         if values_.ndim < len(cases) + 3:
@@ -161,7 +161,7 @@ class CoDABlock(StrictModule):
         factorization: Factorization,
         rank: int | float,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         self.width = int(width)
         self.spatial_ndim = int(spatial_ndim)
         hidden = round(float(feed_forward_multiplier) * self.width)
@@ -350,7 +350,7 @@ class CoDANO(AbstractEncodedOperatorModel):
         attention_block_size: int = 256,
         accumulation_dtype: str = "input",
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.fields = tuple(fields)
         if not self.fields or len({field.name for field in self.fields}) != len(
             self.fields

@@ -129,7 +129,7 @@ class UnstructuredAMRFluxRegister(StrictModule):
         coarse_topology_id: str = "unstructured-amr-coarse-topology",
         fine_topology_id: str = "unstructured-amr-fine-topology",
         topology_id: str | None = None,
-    ):
+    ) -> None:
         # The original one-array constructor remains valid.  Supplying two
         # arrays makes the exact coarse/fine mismatch explicit.
         first = jnp.asarray(integrated_correction)
@@ -363,7 +363,7 @@ class UnstructuredAMRHierarchyPlan(StrictModule, NonTrainableState):
         interface_map: ArrayLike | None = None,
         coarse_interface_route_ids: Sequence[str] | None = None,
         fine_interface_route_ids: Sequence[str] | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             coarse, UnstructuredFiniteVolumeDiscretization
         ) or not isinstance(fine, UnstructuredFiniteVolumeDiscretization):

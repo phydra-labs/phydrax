@@ -65,7 +65,7 @@ class NascentChainObservations(StrictModule):
         right_curve_ids: tuple[int, ...] = (),
         quadrature_order: int = 4,
         minimum_separation: float = 1e-8,
-    ):
+    ) -> None:
         if system.cell is not None:
             raise ValueError(
                 "Nascent observations require explicitly unwrapped nonperiodic coordinates."

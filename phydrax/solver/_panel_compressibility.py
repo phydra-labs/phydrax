@@ -33,7 +33,7 @@ class PanelCompressibilityPolicy(StrictModule, NonTrainableState):
         ] = "incompressible",
         mach_number: float = 0.0,
         /,
-    ):
+    ) -> None:
         mach = float(mach_number)
         if (
             kind not in ("incompressible", "prandtl-glauert", "karman-tsien")

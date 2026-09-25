@@ -53,7 +53,7 @@ class NativeGraphOperator(AbstractOperatorModel):
         source_name: str | None = None,
         input_key: str = "features",
         output_key: str | None = None,
-    ):
+    ) -> None:
         if not callable(processor):
             raise TypeError("NativeGraphOperator processor must be callable.")
         if not str(input_key):

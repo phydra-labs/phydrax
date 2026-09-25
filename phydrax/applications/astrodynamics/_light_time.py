@@ -59,7 +59,7 @@ class LightTimePlan(StrictModule, NonTrainableState):
         transmitter_provider_id,
         receiver_provider_id,
         gravitating_body_provider_id,
-    ):
+    ) -> None:
         if not all(
             callable(value)
             for value in (transmitter_state, receiver_state, gravitating_body_state)

@@ -101,7 +101,7 @@ class GeophysicalQuantity:
         sign_convention: str = "positive",
         support_association: str = "unspecified",
         reference_configuration: str = "absolute",
-    ):
+    ) -> None:
         value = resolve_quantity(
             domain="geophysical",
             reference_units=_REFERENCE_UNITS,

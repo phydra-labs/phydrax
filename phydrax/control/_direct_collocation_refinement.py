@@ -121,7 +121,7 @@ class DirectCollocationRefinementPolicy(StrictModule):
         minimum_defect_reduction: float = 0.05,
         failure_mode: DirectCollocationRefinementFailureMode = "status",
         policy_id: str = "control:direct-collocation:refinement",
-    ):
+    ) -> None:
         if mode not in ("uniform", "bulk-defect"):
             raise ValueError("mode must be 'uniform' or 'bulk-defect'.")
         levels = int(maximum_levels)

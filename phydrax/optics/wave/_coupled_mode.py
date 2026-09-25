@@ -127,7 +127,7 @@ class BidirectionalCoupledModePlan(StrictModule, NonTrainableState):
         maximum_sections: int = 100_000,
         maximum_workspace_bytes: int = 1 << 30,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         z_host = np.asarray(z_grid)
         detuning_host = np.asarray(detuning)
         coupling_host = np.asarray(coupling)

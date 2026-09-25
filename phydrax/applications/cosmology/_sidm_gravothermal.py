@@ -82,7 +82,7 @@ class GravothermalSIDMState(StrictModule):
         radial_faces: ArrayLike,
         time: ArrayLike,
         /,
-    ):
+    ) -> None:
         density = jnp.asarray(mass_density)
         faces = jnp.asarray(radial_faces, dtype=density.dtype)
         self.mass_density = density
@@ -210,7 +210,7 @@ class GravothermalSIDMPlan(StrictModule, NonTrainableState):
         redistribution: bool,
         training_use: bool,
         export: bool,
-    ):
+    ) -> None:
         faces = np.asarray(radial_faces, dtype=np.float64)
         if (
             faces.ndim != 1

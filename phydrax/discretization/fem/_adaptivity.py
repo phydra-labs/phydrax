@@ -23,7 +23,7 @@ class FiniteElementErrorEstimate(StrictModule):
     global_estimate: Array
     estimator_id: str = eqx.field(static=True)
 
-    def __init__(self, cell_indicators: ArrayLike, estimator_id: str, /):
+    def __init__(self, cell_indicators: ArrayLike, estimator_id: str, /) -> None:
         indicators = jnp.asarray(cell_indicators)
         if indicators.ndim != 1:
             raise ValueError("cell_indicators must be rank-1.")
@@ -179,7 +179,7 @@ class FiniteElementAdaptationMap(StrictModule, NonTrainableState):
         midpoint_vertex_ids: ArrayLike,
         midpoint_parent_vertex_ids: ArrayLike,
         /,
-    ):
+    ) -> None:
         parents = np.asarray(parent_cell_ids, dtype=np.int64)
         children = np.asarray(child_cell_ids, dtype=np.int64)
         valid = np.asarray(child_valid, dtype=np.bool_)
@@ -236,7 +236,7 @@ class FiniteElementTransferBundle(StrictModule, NonTrainableState):
         /,
         *,
         pairing_adjoint: ArrayLike | None = None,
-    ):
+    ) -> None:
         primal_ = jnp.asarray(primal)
         if primal_.ndim != 2 or not jnp.issubdtype(primal_.dtype, jnp.inexact):
             raise ValueError("Primal adaptation transfer must be one inexact matrix.")
@@ -542,7 +542,7 @@ class FiniteElementDWRIndicators(StrictModule):
     absolute: Array
     global_estimate: Array
 
-    def __init__(self, signed: ArrayLike, /):
+    def __init__(self, signed: ArrayLike, /) -> None:
         signed_ = jnp.asarray(signed)
         if signed_.ndim != 1:
             raise ValueError("DWR signed indicators must be rank-1.")

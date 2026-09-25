@@ -107,7 +107,7 @@ class SubspaceModel(AbstractFittedModel):
         centering_provenance: str,
         mask_provenance: str,
         query_layout_provenance: tuple[str, ...] = (),
-    ):
+    ) -> None:
         offset_ = jnp.asarray(offset)
         weighted_ = jnp.asarray(weighted_components)
         metric = jnp.asarray(feature_metric, dtype=offset_.real.dtype)
@@ -366,7 +366,7 @@ class PCA(AbstractRecipe):
         *,
         weight_policy: WeightPolicy = "statistical",
         differentiate: SubspaceGradientTarget = "projector",
-    ):
+    ) -> None:
         self.n_components = int(n_components)
         self.weight_policy = weight_policy
         self.differentiate = differentiate
@@ -403,7 +403,7 @@ class TruncatedSVD(AbstractRecipe):
         *,
         weight_policy: WeightPolicy = "statistical",
         differentiate: SubspaceGradientTarget = "projector",
-    ):
+    ) -> None:
         self.n_components = int(n_components)
         self.weight_policy = weight_policy
         self.differentiate = differentiate
@@ -446,7 +446,7 @@ class POD(AbstractRecipe):
         weight_policy: WeightPolicy = "product",
         differentiate: SubspaceGradientTarget = "projector",
         query_layout_provenance: tuple[str, ...] = (),
-    ):
+    ) -> None:
         self.n_components = int(n_components)
         self.physical_weights = (
             None

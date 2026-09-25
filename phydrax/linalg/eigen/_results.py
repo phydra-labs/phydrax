@@ -59,7 +59,7 @@ class EigenSolveDiagnostics(StrictModule):
         isolation_gaps: Any,
         initial_rank: Any,
         /,
-    ):
+    ) -> None:
         residuals = jnp.asarray(residual_norms)
         relative = jnp.asarray(relative_residuals)
         converged_ = jnp.asarray(converged, dtype=jnp.bool_)
@@ -128,7 +128,7 @@ class EigenSolveProvenance(StrictModule):
         symbolic_version: int,
         numeric_version: int,
         /,
-    ):
+    ) -> None:
         method_, problem_id_, plan_id_ = str(method), str(problem_id), str(plan_id)
         if not method_ or not problem_id_ or not plan_id_:
             raise ValueError("Eigen provenance identifiers must be non-empty.")
@@ -180,7 +180,7 @@ class EigenSolveResult(StrictModule):
         diagnostics: EigenSolveDiagnostics,
         provenance: EigenSolveProvenance,
         /,
-    ):
+    ) -> None:
         values = jnp.asarray(eigenvalues)
         mask = jnp.asarray(mode_mask, dtype=jnp.bool_)
         if values.ndim < 1 or mask.shape != values.shape:

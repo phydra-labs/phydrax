@@ -145,7 +145,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
         max_dense_dimension: int = 512,
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (fraction_to_boundary, minimum_barrier, filter_margin)

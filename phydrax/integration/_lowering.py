@@ -363,7 +363,7 @@ class IntegrationAxisSpec(AbstractAxisSpec):
     n: int
     rule: IntervalRule
 
-    def __init__(self, rule: IntervalRule):
+    def __init__(self, rule: IntervalRule) -> None:
         self.n = int(interval_rule_data(rule).nodes.shape[0])
         self.rule = rule
 

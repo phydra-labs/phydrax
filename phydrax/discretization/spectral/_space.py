@@ -175,7 +175,7 @@ class TensorSpectralPlan(AbstractDiscretizationPlan):
         precision: SpectralPrecisionPolicy | None = None,
         key: DiscretizationKey | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         bases_ = tuple(bases)
         if not bases_ or not all(
             isinstance(value, AbstractSpectralBasisPlan) for value in bases_
@@ -291,7 +291,7 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
         /,
         *,
         numeric_version: str = "0",
-    ):
+    ) -> None:
         if not isinstance(plan, TensorSpectralPlan):
             raise TypeError("plan must be a TensorSpectralPlan.")
         axes_ = tuple(axes)

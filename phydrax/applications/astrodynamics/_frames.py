@@ -48,7 +48,7 @@ class KinematicFrameTransform(StrictModule, NonTrainableState):
         /,
         *,
         transform_id: str,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         if not isinstance(source_frame, FrameDefinition) or not isinstance(
@@ -180,7 +180,7 @@ class ConstantKinematicEvaluator(StrictModule):
             0.0,
             0.0,
         ),
-    ):
+    ) -> None:
         rotation_ = jnp.asarray(rotation)
         self.rotation = rotation_
         self.rotation_rate = (
@@ -207,7 +207,7 @@ class PreparedFramePath(StrictModule, NonTrainableState):
     transforms: tuple[KinematicFrameTransform, ...]
     path_id: str = eqx.field(static=True)
 
-    def __init__(self, transforms: tuple[KinematicFrameTransform, ...], /):
+    def __init__(self, transforms: tuple[KinematicFrameTransform, ...], /) -> None:
         items = tuple(transforms)
         if not items:
             raise ValueError("Prepared frame path requires at least one transform.")

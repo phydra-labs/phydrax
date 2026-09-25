@@ -113,7 +113,7 @@ class ShortestPathSpace(AbstractCombinatorialSpace):
         source: int,
         target: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(relation, EdgeRelation):
             raise TypeError("relation must be an EdgeRelation.")
         if relation.source_size != relation.target_size:
@@ -370,7 +370,7 @@ class DAGShortestPath(AbstractLinearCombinatorialMethod):
         maximum_vertices: int = 1_000_000,
         maximum_edges: int = 10_000_000,
         maximum_incoming_capacity: int = 10_000_000,
-    ):
+    ) -> None:
         limits = (maximum_vertices, maximum_edges, maximum_incoming_capacity)
         if any(
             isinstance(value, bool) or not isinstance(value, Integral) for value in limits

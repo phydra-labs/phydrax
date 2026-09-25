@@ -68,7 +68,7 @@ class _SpeciesSelfConnection(StrictModule):
         *,
         dtype: jnp.dtype,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         counts = (
             representation.scalars,
             representation.pseudoscalars,
@@ -127,7 +127,7 @@ class _NequIPInteraction(StrictModule):
         *,
         dtype: jnp.dtype,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         plan = O3TensorProductPlan(
             representation,
             edge_representation,
@@ -217,7 +217,7 @@ class NequIPPotential(AbstractAtomisticPotential):
         maximum_tensor_product_parameters: int = 10_000_000,
         precision: AtomisticPrecisionPolicy | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(scale, AtomisticScaleContract):
             raise TypeError("scale must be an AtomisticScaleContract.")
         cutoff_value = float(cutoff)

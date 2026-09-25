@@ -72,7 +72,7 @@ class SemiconductorCircuitLaw(AbstractImplicitCircuitLaw):
 
     prepared: PreparedSemiconductorDevice
 
-    def __init__(self, prepared: PreparedSemiconductorDevice, /):
+    def __init__(self, prepared: PreparedSemiconductorDevice, /) -> None:
         self.prepared = prepared
         roles = tuple(
             "differential" if value else "algebraic"
@@ -230,7 +230,7 @@ def _circuit_jacobian(prepared, problem, initial, args):
     size, node_count = layout.size, len(layout.node_ids)
     rows, cols = [np.arange(size)], [np.arange(size)]
 
-    def block(row_indices, column_indices):
+    def block(row_indices, column_indices) -> None:
         shape = (len(row_indices), len(column_indices))
         rows.append(np.broadcast_to(np.asarray(row_indices)[:, None], shape).reshape(-1))
         cols.append(

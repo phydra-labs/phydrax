@@ -59,7 +59,7 @@ class PrecisionRecallFScoreResult(StrictModule):
         status: ArrayLike,
         effective_weight: ArrayLike,
         average: Average,
-    ):
+    ) -> None:
         self.precision = jnp.asarray(precision)
         self.recall = jnp.asarray(recall)
         self.fscore = jnp.asarray(fscore)

@@ -85,7 +85,7 @@ class MultiObjectiveBayesianOptimizationProblem(StrictModule):
         ] = (),
         validity: Callable[[BayesianOptimizationPoint], ArrayLike] | None = None,
         pending: Sequence[BayesianOptimizationPoint] = (),
-    ):
+    ) -> None:
         names, direction_tuple = tuple(objective_names), tuple(directions)
         if len(names) not in (2, 3):
             raise ValueError(
@@ -189,7 +189,7 @@ class GaussianProcessMultiObjectiveBayesianOptimization(StrictModule):
         max_hypervolume_points: int = 192,
         max_working_bytes: int = 256 * 1024 * 1024,
         max_hypervolume_work: int = 1_000_000_000,
-    ):
+    ) -> None:
         self.max_evaluations = _positive_integer(max_evaluations, name="max_evaluations")
         self.initial_evaluations = _positive_integer(
             initial_evaluations, name="initial_evaluations"
@@ -414,7 +414,7 @@ class _GPQuery(NamedTuple):
 class _PreparedGP:
     """Exact multi-output/scalar GP using one native observation factor per epoch."""
 
-    def __init__(self, points, values, state, max_bytes):
+    def __init__(self, points, values, state, max_bytes) -> None:
         self.state = state
         self.multioutput = isinstance(state, MultiOutputGaussianProcessLikelihoodState)
         self.train = self.design(points)

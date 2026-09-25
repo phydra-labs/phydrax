@@ -105,7 +105,7 @@ class MACDiscreteStochasticStressPlan(StrictModule, NonTrainableState):
         /,
         *,
         stress_id: str,
-    ):
+    ) -> None:
         if not stress_divergence.target.compatible(dissipation.source) or not (
             dissipation.source.compatible(dissipation.target)
         ):
@@ -171,7 +171,7 @@ class MACFluctuatingHydrodynamicsPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-8,
         matrix_function_policy: MatrixFunctionPolicy | None = None,
         differentiation: StochasticDifferentiationPolicy = "pathwise",
-    ):
+    ) -> None:
         if not noise_factor.target.compatible(dissipation.source) or not (
             dissipation.source.compatible(dissipation.target)
         ):
@@ -326,7 +326,7 @@ class MACInertialStochasticStepPlan(StrictModule, NonTrainableState):
         inverse_mass: AbstractLinearOperator,
         forcing: MACFluctuatingHydrodynamicsPlan,
         /,
-    ):
+    ) -> None:
         if not inverse_mass.source.compatible(velocity_space) or not (
             inverse_mass.target.compatible(velocity_space)
         ):
@@ -422,7 +422,7 @@ class FIBOverdampedPlan(StrictModule, NonTrainableState):
         drift_epsilon: float = 1.0e-6,
         matrix_function_policy: MatrixFunctionPolicy | None = None,
         differentiation: StochasticDifferentiationPolicy = "pathwise",
-    ):
+    ) -> None:
         if not callable(mobility):
             raise TypeError("mobility must be callable.")
         temperature_ = float(temperature)

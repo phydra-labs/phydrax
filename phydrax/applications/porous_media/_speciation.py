@@ -112,7 +112,7 @@ class MassActionSystem(StrictModule):
         davies_a: float = 0.509,
         maximum_ionic_strength: float = 0.5,
         charge_balance_component: int | None = None,
-    ):
+    ) -> None:
         primary = tuple(primary_names)
         secondary = tuple(secondary_names)
         names = primary + secondary

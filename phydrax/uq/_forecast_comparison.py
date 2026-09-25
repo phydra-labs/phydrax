@@ -35,7 +35,7 @@ class ForecastComparisonPlan(StrictModule):
         hac_lags: int = 0,
         horizon: int = 1,
         alternative: ForecastAlternative = "two-sided",
-    ):
+    ) -> None:
         lags = int(hac_lags)
         forecast_horizon = int(horizon)
         if lags < 0:

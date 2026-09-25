@@ -41,7 +41,7 @@ class ConstructionSequenceSearchProblem(AbstractBranchAndBoundProblem):
         /,
         *,
         problem_id: str = "construction-sequence-search",
-    ):
+    ) -> None:
         if not isinstance(space, PrecedenceSpace):
             raise TypeError("space must be a PrecedenceSpace.")
         if not all(

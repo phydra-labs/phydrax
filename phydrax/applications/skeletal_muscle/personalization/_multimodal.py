@@ -44,7 +44,7 @@ class _StaticMaskProjection(StrictModule):
         active_indices: tuple[int, ...],
         dtype: np.dtype,
         /,
-    ):
+    ) -> None:
         self.prediction_fn = prediction
         self.observation_shape = observation_shape
         self.valid_mask = valid_mask
@@ -85,7 +85,7 @@ class _ChannelPredictionMap(StrictModule):
         channel_ids: tuple[str, ...],
         prediction_fns: tuple[Callable[[PyTree[Any]], ArrayLike], ...],
         /,
-    ):
+    ) -> None:
         self.channel_ids = channel_ids
         self.prediction_fns = prediction_fns
 
@@ -119,7 +119,7 @@ class SkeletalObservationChannel(StrictModule, NonTrainableState):
         standard_uncertainty: ArrayLike,
         valid_mask: ArrayLike,
         /,
-    ):
+    ) -> None:
         identifiers = tuple(str(value).strip() for value in (channel_id, asset_id))
         if any(not value for value in identifiers):
             raise ValueError("Channel and asset IDs must be nonempty.")
@@ -227,7 +227,7 @@ class SkeletalMultimodalLikelihoodPlan(StrictModule, NonTrainableState):
     channel_ids: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, channels: Sequence[SkeletalObservationChannel], /):
+    def __init__(self, channels: Sequence[SkeletalObservationChannel], /) -> None:
         values = tuple(channels)
         if not values or any(
             not isinstance(value, SkeletalObservationChannel) for value in values

@@ -42,7 +42,7 @@ class GreekRequest(StrictModule):
         *,
         second_order_names: Sequence[str] = (),
         bump_sizes: ArrayLike | None = None,
-    ):
+    ) -> None:
         names = tuple(parameter_names)
         if not names or any(not isinstance(value, str) or not value for value in names):
             raise ValueError("parameter_names must contain non-empty strings.")
@@ -90,7 +90,7 @@ class GreekResult(StrictModule):
         request: GreekRequest,
         evidence: GreekEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(request, GreekRequest) or not isinstance(
             evidence, GreekEvidence
         ):

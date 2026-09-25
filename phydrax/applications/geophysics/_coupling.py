@@ -155,7 +155,7 @@ class SlabReservoir(AbstractCouplingSubsystem, NonTrainableState):
         conductance=10.0,
         water_rate=0.0,
         name="slab",
-    ):
+    ) -> None:
         capacity = _positive(dry_heat_capacity, "dry_heat_capacity")
         cp = _positive(water_heat_capacity, "water_heat_capacity")
         conductance_ = float(conductance)
@@ -268,7 +268,7 @@ class HydrostaticOceanCouplingSubsystem(AbstractCouplingSubsystem):
         heat_capacity=3990.0,
         freshwater_density=1000.0,
         name="hydrostatic-ocean",
-    ):
+    ) -> None:
         if not isinstance(ocean, PreparedHydrostaticOcean):
             raise TypeError(
                 "Hydrostatic coupling requires a native PreparedHydrostaticOcean, not a mosaic."
@@ -411,7 +411,7 @@ class BoussinesqOceanCouplingSubsystem(AbstractCouplingSubsystem):
         *,
         stress=False,
         name="boussinesq-ocean",
-    ):
+    ) -> None:
         if not isinstance(ocean, PreparedCartesianBoussinesqOcean):
             raise TypeError(
                 "Boussinesq coupling requires a native prepared rigid-lid ocean."

@@ -49,7 +49,7 @@ class _MPMPointHyperelasticLaw(HyperelasticLaw):
         time: Array,
         step_size: Array,
         /,
-    ):
+    ) -> None:
         self.base = base
         self.history = history
         self.reference_density = reference_density
@@ -106,7 +106,7 @@ class PlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
         /,
         *,
         reduction: BlockDiagonalPlaneStressReductionPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(base, AbstractImplicitMPMConstitutivePlan):
             raise TypeError("base must be AbstractImplicitMPMConstitutivePlan.")
         if base.dimension != 3 or base.kinematics != "three_dimensional":

@@ -51,7 +51,7 @@ class WandbTrainingSink:
         update_every: int = 1,
         maximum_metrics: int = 512,
         sink_id: str = "wandb-training",
-    ):
+    ) -> None:
         if not isinstance(run, _WandbRun):
             raise TypeError("run must provide callable define_metric() and log().")
         update_every_ = int(update_every)

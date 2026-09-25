@@ -45,7 +45,7 @@ class SpectralTraceTerm(StrictModule, NonTrainableState):
     coefficient: float = eqx.field(static=True)
     term_id: str = eqx.field(static=True)
 
-    def __init__(self, derivative_order: int, coefficient: float = 1.0, /):
+    def __init__(self, derivative_order: int, coefficient: float = 1.0, /) -> None:
         order = int(derivative_order)
         coefficient_ = float(coefficient)
         if order < 0 or not np.isfinite(coefficient_) or coefficient_ == 0.0:
@@ -75,7 +75,7 @@ class SpectralTraceConstraint(StrictModule, NonTrainableState):
         side: Literal["lower", "upper"],
         terms: Sequence[SpectralTraceTerm],
         /,
-    ):
+    ) -> None:
         terms_input = tuple(terms)
         if not terms_input or not all(
             isinstance(term, SpectralTraceTerm) for term in terms_input
@@ -117,7 +117,7 @@ class SpectralBoundaryConditionPlan(StrictModule, NonTrainableState):
     constraints: tuple[SpectralTraceConstraint, ...]
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, constraints: Sequence[SpectralTraceConstraint], /):
+    def __init__(self, constraints: Sequence[SpectralTraceConstraint], /) -> None:
         values = tuple(constraints)
         if not values or not all(
             isinstance(value, SpectralTraceConstraint) for value in values
@@ -262,7 +262,7 @@ class ConstrainedBasisPlan(AbstractSpectralBasisPlan):
         base: AbstractSpectralBasisPlan,
         conditions: SpectralBoundaryConditionPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(base, AbstractSpectralBasisPlan):
             raise TypeError("base must be an AbstractSpectralBasisPlan.")
         if base.family not in (
@@ -420,7 +420,7 @@ class BoundaryLiftPlan(StrictModule, NonTrainableState):
         conditions: SpectralBoundaryConditionPlan,
         values: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(conditions, SpectralBoundaryConditionPlan):
             raise TypeError("conditions must be a SpectralBoundaryConditionPlan.")
         values_ = jnp.asarray(values).reshape((-1,))
@@ -484,7 +484,7 @@ class PreparedBoundaryLift(StrictModule, NonTrainableState):
         *,
         coefficients: ArrayLike,
         values: ArrayLike,
-    ):
+    ) -> None:
         self.plan = plan
         self.base = base
         self.coefficients = jnp.asarray(coefficients)

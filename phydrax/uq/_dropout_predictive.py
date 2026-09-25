@@ -51,7 +51,7 @@ class MCDropoutCalibrationEvidence(StrictModule):
         method: MCDropoutCalibrationMethod,
         split_identity: str,
         draw_count: int,
-    ):
+    ) -> None:
         self.nominal_coverage = jnp.asarray(nominal_coverage, dtype=jnp.float64).reshape(
             ()
         )
@@ -87,7 +87,7 @@ class MCDropoutCalibration(StrictModule):
         split_identity: str,
         case_dim: str | None,
         evidence: MCDropoutCalibrationEvidence,
-    ):
+    ) -> None:
         coefficient_ = jnp.asarray(coefficient, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(coefficient_)) or not bool(coefficient_ > 0.0):
             raise ValueError("Calibration coefficient must be finite and positive.")

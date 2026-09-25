@@ -61,7 +61,7 @@ class ConstantRelaxationTime(StrictModule, NonTrainableState):
     seconds: float = eqx.field(static=True)
     mechanism_id: str = eqx.field(static=True)
 
-    def __init__(self, seconds: float, /, *, mechanism_id: str):
+    def __init__(self, seconds: float, /, *, mechanism_id: str) -> None:
         relaxation = _positive_scalar(seconds, "relaxation time")
         mechanism = str(mechanism_id).strip()
         if not mechanism:
@@ -97,7 +97,7 @@ class PeriodicBoltzmannPlan(StrictModule, NonTrainableState):
         cell_volume_m3: float,
         spin_degeneracy: int = 1,
         rank_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         energies = np.asarray(energies_joule)
         velocities = np.asarray(band_velocities_m_per_s)
         weights = np.asarray(k_weights, dtype=np.float64)

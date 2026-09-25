@@ -139,7 +139,9 @@ class EulerGraphStepper(StrictModule):
     vector_field: Callable[[GraphIR], GraphIR]
     dt: float = eqx.field(static=True)
 
-    def __init__(self, vector_field: Callable[[GraphIR], GraphIR], /, *, dt: float):
+    def __init__(
+        self, vector_field: Callable[[GraphIR], GraphIR], /, *, dt: float
+    ) -> None:
         self.vector_field = vector_field
         self.dt = float(dt)
 
@@ -153,7 +155,9 @@ class RK4GraphStepper(StrictModule):
     vector_field: Callable[[GraphIR], GraphIR]
     dt: float = eqx.field(static=True)
 
-    def __init__(self, vector_field: Callable[[GraphIR], GraphIR], /, *, dt: float):
+    def __init__(
+        self, vector_field: Callable[[GraphIR], GraphIR], /, *, dt: float
+    ) -> None:
         self.vector_field = vector_field
         self.dt = float(dt)
 
@@ -277,7 +281,7 @@ class AutoregressiveGraphRollout(StrictModule):
         *,
         steps: int,
         include_initial: bool = True,
-    ):
+    ) -> None:
         self.stepper = stepper
         self.steps = int(steps)
         self.include_initial = bool(include_initial)

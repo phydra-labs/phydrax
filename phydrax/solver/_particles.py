@@ -76,7 +76,7 @@ class InteractingParticleProblem(StrictModule):
         args: Any = None,
         problem_id: str = "interacting-particle-problem",
         mean_field_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(drift):
             raise TypeError("drift must be callable.")
         if diffusion is not None and not callable(diffusion):
@@ -217,7 +217,7 @@ class InteractingParticleSolution(StrictModule):
         num_particles: int,
         mean_field_id: str,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         grid = jnp.asarray(times, dtype=jnp.float64)
         values = jnp.asarray(particles)
         validity = jnp.asarray(valid, dtype=jnp.bool_)

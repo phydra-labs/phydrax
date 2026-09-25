@@ -73,7 +73,7 @@ class FlowMatchingBatch(StrictModule):
         coupling_id: str,
         policy_id: str,
         batch_id: str,
-    ):
+    ) -> None:
         state_array = jnp.asarray(state)
         velocity = jnp.asarray(target_velocity, dtype=state_array.dtype)
         if state_array.shape != velocity.shape or state_array.ndim < 1:
@@ -196,7 +196,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
         state_label: str = "x",
         time_label: str = "t",
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(velocity_name, str) or not velocity_name:
             raise ValueError("velocity_name must be a non-empty string.")
         if not isinstance(interpolant, AbstractEndpointInterpolant):

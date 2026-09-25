@@ -65,7 +65,7 @@ class InterfaceTransferTolerance(StrictModule, NonTrainableState):
         error_relative: float = 0.0,
         derivative_absolute: float,
         derivative_relative: float = 0.0,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -140,7 +140,7 @@ class InterfaceTransferProbe(StrictModule):
         /,
         *,
         probe_id: str,
-    ):
+    ) -> None:
         if not isinstance(transfer, FieldTransfer):
             raise TypeError("transfer must be a FieldTransfer.")
         source = transfer.source.vector_space
@@ -218,7 +218,7 @@ class InterfaceTransferCertificate(StrictModule, NonTrainableState):
         measure_id: str,
         common_quadrature_id: str,
         probe_id: str,
-    ):
+    ) -> None:
         if not isinstance(transfer, FieldTransfer):
             raise TypeError("transfer must be a FieldTransfer.")
         if not isinstance(evidence, InterfaceTransferEvidence):

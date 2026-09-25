@@ -72,7 +72,7 @@ class ReactiveElectrodePlan(StrictModule, NonTrainableState):
         electron_transfer: ArrayLike,
         capacitance_per_area: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         indices = np.asarray(boundary_node_indices)

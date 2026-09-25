@@ -43,7 +43,7 @@ class CouplingWaveformAdaptationPolicy(StrictModule, NonTrainableState):
         *,
         observable_tolerance: float,
         maximum_additions_per_attempt: int = 1,
-    ):
+    ) -> None:
         candidates = np.asarray(candidate_nodes, dtype=np.float64)
         tolerance = float(observable_tolerance)
         maximum = int(maximum_additions_per_attempt)
@@ -86,7 +86,7 @@ class CouplingWaveformGrid(StrictModule):
         /,
         *,
         capacity_id: str,
-    ):
+    ) -> None:
         nodes_ = jnp.asarray(nodes)
         active_ = jnp.asarray(active, dtype=jnp.bool_)
         count = jnp.asarray(sample_count, dtype=jnp.int32).reshape(())
@@ -139,7 +139,7 @@ class CouplingWaveformPlan(StrictModule, NonTrainableState):
         metric_order: int | None = None,
         adaptation: CouplingWaveformAdaptationPolicy | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         capacity = int(sample_capacity)
         degree = int(polynomial_degree)
         nodes = np.asarray(initial_nodes, dtype=np.float64)
@@ -212,7 +212,7 @@ class CouplingWaveform(StrictModule):
         values: Any,
         space: AbstractVectorSpace,
         /,
-    ):
+    ) -> None:
         if not isinstance(grid, CouplingWaveformGrid):
             raise TypeError("Coupling waveform grid must be CouplingWaveformGrid.")
         if not isinstance(space, AbstractVectorSpace):
@@ -330,7 +330,7 @@ class BarycentricCouplingTemporalTransfer(AbstractCouplingTemporalTransfer):
     degree: int = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
 
-    def __init__(self, degree: int = 1, /):
+    def __init__(self, degree: int = 1, /) -> None:
         degree_ = int(degree)
         if degree_ not in (0, 1, 2, 3):
             raise ValueError("Coupling temporal transfer degree must be 0..3.")
@@ -617,7 +617,7 @@ class FixedGridSubcyclingSubsystem(AbstractCouplingSubsystem, NonTrainableState)
         differentiable: bool,
         discretization_bundle_id: str | None = None,
         counts_complete: bool = True,
-    ):
+    ) -> None:
         if not callable(advance_substep) or not callable(observe):
             raise TypeError("Subcycling advance_substep and observe must be callable.")
         inputs = tuple(input_ports)

@@ -121,7 +121,7 @@ class _RadialCubatureMap(AbstractCubatureMap):
         center: Array,
         radius: Array,
         reference: CubatureReference,
-    ):
+    ) -> None:
         self.center = jnp.asarray(center, dtype=jnp.float64)
         self.radius = jnp.asarray(radius, dtype=jnp.float64).reshape(())
         self.reference = reference
@@ -225,7 +225,7 @@ class Ball(GeometrySource):
         radius: Any,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         self.center = _validate_nonempty_vector(center, name="center")
         self.radius = _validate_positive_scalar(radius, name="radius")
         self.feature_id = _feature_id(feature_id, "ball")
@@ -252,7 +252,7 @@ class Circle(GeometrySource):
         radius: Any,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         self.center = _validate_vector(center, 2, name="center")
         self.radius = _validate_positive_scalar(radius, name="radius")
         self.feature_id = _feature_id(feature_id, "circle")
@@ -279,7 +279,7 @@ class Sphere(GeometrySource):
         radius: Any,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         self.center = _validate_vector(center, 3, name="center")
         self.radius = _validate_positive_scalar(radius, name="radius")
         self.feature_id = _feature_id(feature_id, "sphere")
@@ -306,7 +306,7 @@ class _BallKernel(GeometryKernel):
         *,
         dimension: int,
         source_id: str,
-    ):
+    ) -> None:
         if dimension <= 0:
             raise ValueError("Ball dimension must be positive.")
         self.center = center
@@ -538,7 +538,7 @@ class Orthotope(GeometrySource):
         size: Any,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         center_ = _validate_nonempty_vector(center, name="center")
         size_ = _validate_nonempty_vector(size, name="size")
         if size_.shape != center_.shape:
@@ -571,7 +571,7 @@ class Box(GeometrySource):
         size: Any,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         center_ = _validate_vector(center, 3, name="center")
         size_ = _validate_vector(size, 3, name="size")
         if np.any(np.asarray(size_) <= 0.0):
@@ -602,7 +602,7 @@ class _OrthotopeKernel(GeometryKernel):
         *,
         dimension: int,
         source_id: str,
-    ):
+    ) -> None:
         if dimension <= 0:
             raise ValueError("Orthotope dimension must be positive.")
         self.center = center

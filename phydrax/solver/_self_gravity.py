@@ -66,7 +66,7 @@ class ConservativeGravityEnergyCoupling(AbstractPreparedAcceptedStepCoupling):
 
     gravity: PreparedNewtonianSelfGravity
 
-    def __init__(self, gravity: PreparedNewtonianSelfGravity, /):
+    def __init__(self, gravity: PreparedNewtonianSelfGravity, /) -> None:
         if not isinstance(gravity, PreparedNewtonianSelfGravity):
             raise TypeError("gravity must be PreparedNewtonianSelfGravity.")
         self.gravity = gravity
@@ -147,7 +147,7 @@ class NewtonianSelfGravityPlan(AbstractBalanceLawProcessPlan):
             ],
         ]
         | None = None,
-    ):
+    ) -> None:
         coupling = float(gravitational_constant)
         fraction = float(freefall_fraction)
         argument = None if gravity_argument is None else str(gravity_argument)
@@ -208,7 +208,7 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
         plan: NewtonianSelfGravityPlan,
         transport: AbstractPreparedBalanceLawTransport,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, NewtonianSelfGravityPlan):
             raise TypeError("plan must be NewtonianSelfGravityPlan.")
         if not isinstance(

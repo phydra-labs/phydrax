@@ -58,7 +58,7 @@ class IRSpectrumResult(StrictModule, NonTrainableState):
         source_result_ids: tuple[str, ...],
         plan_id: str,
         /,
-    ):
+    ) -> None:
         waves = jnp.asarray(wavenumbers)
         strengths = jnp.asarray(line_strengths, dtype=waves.dtype)
         grid_ = jnp.asarray(grid, dtype=waves.dtype)
@@ -141,7 +141,7 @@ class IRSpectrumPlan(StrictModule, NonTrainableState):
         grid_size: int = 4001,
         fwhm: float = 10.0,
         line_shape: SpectralLineShape = SpectralLineShape.GAUSSIAN,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         if not isinstance(calculation, AbstractPreparedElectronicCalculation):

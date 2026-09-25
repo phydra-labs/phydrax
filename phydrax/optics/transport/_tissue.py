@@ -66,7 +66,7 @@ class TissueTransportCoefficients(StrictModule, NonTrainableState):
         g: ArrayLike,
         n: ArrayLike,
         /,
-    ):
+    ) -> None:
         absorption = np.asarray(mu_a)
         scattering = np.asarray(mu_s)
         anisotropy = np.asarray(g)
@@ -143,7 +143,7 @@ class TissueTransportPlan(StrictModule, NonTrainableState):
         ray_tolerance: float = 1e-9,
         tie_tolerance: float = 1e-9,
         weight_tolerance: float = 0.0,
-    ):
+    ) -> None:
         maximum = int(maximum_interactions)
         branches = int(branch_capacity)
         stack = int(traversal_stack_capacity)

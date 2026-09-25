@@ -60,7 +60,7 @@ class UniformFiberArchitecturePlan(StrictModule, NonTrainableState):
         /,
         *,
         normalization_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         identifier = str(architecture_id).strip()
         tolerance = float(normalization_tolerance)
         if not identifier:

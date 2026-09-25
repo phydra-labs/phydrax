@@ -51,7 +51,7 @@ class ImplicitMPMMethodPlan(StrictModule, NonTrainableState):
         nonlinear_method: NewtonKrylov | None = None,
         termination: NonlinearTermination | None = None,
         /,
-    ):
+    ) -> None:
         method = (
             NewtonKrylov(
                 linear_policy=LinearSolvePolicy(
@@ -123,7 +123,7 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
         explicit: PreparedMPMDynamics,
         method: ImplicitMPMMethodPlan | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(explicit, PreparedMPMDynamics):
             raise TypeError("explicit must be PreparedMPMDynamics.")
         method_ = ImplicitMPMMethodPlan() if method is None else method

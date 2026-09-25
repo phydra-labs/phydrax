@@ -41,7 +41,7 @@ class PeriodicMaxwellBoundaryPolicy3D(StrictModule, NonTrainableState):
         maximum_edges: int = 2048,
         maximum_resident_bytes: int = 1_000_000_000,
         cfie_electric_weight: float = 0.5,
-    ):
+    ) -> None:
         cutoff = int(image_cutoff)
         limits = (int(maximum_images), int(maximum_edges), int(maximum_resident_bytes))
         weight = float(cfie_electric_weight)

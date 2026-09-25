@@ -62,7 +62,7 @@ class GibbsScanPolicy(StrictModule):
         /,
         *,
         updates_per_sweep: int | None = None,
-    ):
+    ) -> None:
         if kind not in ("systematic", "random-scan", "randomized-colors"):
             raise ValueError("Unknown Gibbs scan policy.")
         count = None if updates_per_sweep is None else int(updates_per_sweep)
@@ -80,7 +80,7 @@ class JointDiscreteBlock(StrictModule):
     maximum_configurations: int = eqx.field(static=True)
     block_id: str = eqx.field(static=True)
 
-    def __init__(self, variables, /, *, maximum_configurations: int = 4096):
+    def __init__(self, variables, /, *, maximum_configurations: int = 4096) -> None:
         selected = tuple(variables)
         if not selected or len(set(selected)) != len(selected) or min(selected) < 0:
             raise ValueError("Joint block variables must be unique and non-negative.")
@@ -113,7 +113,7 @@ class ParallelTempering(StrictModule):
     inverse_temperatures: Array
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, inverse_temperatures: ArrayLike, /):
+    def __init__(self, inverse_temperatures: ArrayLike, /) -> None:
         values = jnp.asarray(inverse_temperatures, dtype=jnp.float64).reshape((-1,))
         host = np.asarray(values)
         if values.size < 2 or np.any(~np.isfinite(host)) or np.any(host <= 0):

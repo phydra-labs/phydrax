@@ -99,7 +99,7 @@ class TwoTemperatureThermodynamicsPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_iterations: int = 80,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         if (
             not isinstance(heavy_thermodynamics, AbstractSpeciesThermodynamicsPlan)
@@ -375,7 +375,7 @@ class TwoTemperatureMixtureEulerSystem(
         density_floor: float = 1.0e-12,
         pressure_floor: float = 1.0e-12,
         maximum_thermal_iterations: int | None = None,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         density_floor_ = float(density_floor)
         pressure_floor_ = float(pressure_floor)
@@ -700,7 +700,7 @@ class TwoTemperatureMixtureNavierStokesSystem(
         density_floor: float = 1.0e-12,
         pressure_floor: float = 1.0e-12,
         maximum_thermal_iterations: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(transport, AbstractTransportClosure):
             raise TypeError("Two-temperature transport must be AbstractTransportClosure.")
         inviscid = TwoTemperatureMixtureEulerSystem(

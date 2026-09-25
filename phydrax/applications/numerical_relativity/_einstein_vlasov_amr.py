@@ -128,7 +128,7 @@ class EinsteinVlasovAMRStressTransferPlan(StrictModule, NonTrainableState):
         /,
         *,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         tolerance = float(conservation_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("Stress-transfer tolerance must be finite and nonnegative.")
@@ -335,7 +335,7 @@ class EinsteinVlasovParticleMigrationPlan(StrictModule, NonTrainableState):
         distribution: PreparedNumericalRelativityAMRDistribution,
         particle_capacity_per_owner: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(distribution, PreparedNumericalRelativityAMRDistribution):
             raise TypeError(
                 "distribution must be PreparedNumericalRelativityAMRDistribution."
@@ -549,7 +549,7 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
         frame_provider_id: str,
         placement_id: str,
         restart: NumericalRelativityRestartPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(template, EinsteinVlasovMatterState):
             raise TypeError("template must be EinsteinVlasovMatterState.")
         if not isinstance(route_template, EinsteinVlasovParticleRoute):

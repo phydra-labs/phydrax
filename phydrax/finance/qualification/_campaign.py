@@ -65,7 +65,7 @@ class FinanceQualificationMatrix(StrictModule, NonTrainableState):
         support_tuples: Sequence[SupportTuple],
         qualification_matrix: QualificationMatrix,
         /,
-    ):
+    ) -> None:
         supports = _support_tuples(support_tuples)
         if not isinstance(qualification_matrix, QualificationMatrix):
             raise TypeError("qualification_matrix must be a QualificationMatrix.")
@@ -139,7 +139,7 @@ class FinanceQualificationCampaign(StrictModule, NonTrainableState):
         /,
         *,
         evaluated_at: int,
-    ):
+    ) -> None:
         if not isinstance(matrix, FinanceQualificationMatrix):
             raise TypeError("matrix must be a FinanceQualificationMatrix.")
         if not isinstance(evidence, Sequence) or isinstance(evidence, str):

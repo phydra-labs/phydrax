@@ -90,7 +90,7 @@ class SGMCMCControlVariate(StrictModule):
         source_fingerprint: str,
         construction_duration_seconds: float,
         construction_gradient_evaluations: int,
-    ):
+    ) -> None:
         payload = {
             "center": array_tree_fingerprint(center),
             "full_gradient": array_tree_fingerprint(full_gradient),
@@ -187,7 +187,7 @@ class SGMCMCResult(AbstractChainSampleResult):
         sampling_duration_seconds: float,
         mean_update_gradient_norm: float,
         max_update_gradient_norm: float,
-    ):
+    ) -> None:
         total_duration = (
             float(compilation_duration_seconds)
             + float(burnin_duration_seconds)
@@ -1314,7 +1314,7 @@ def _write_sgmcmc_checkpoint(
     min_active_factors,
     max_active_factors,
     nonfinite_update_count,
-):
+) -> None:
     arrays: dict[str, Any] = {
         "gradient_norm": gradient_norm,
     }

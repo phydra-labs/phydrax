@@ -37,7 +37,7 @@ class ComplexStructureFamilyPlan(StrictModule):
         /,
         *,
         rank_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(base, TrainableHomogeneousHypersurface):
             raise TypeError("base must be TrainableHomogeneousHypersurface.")
         labels = tuple(str(value) for value in modulus_labels)

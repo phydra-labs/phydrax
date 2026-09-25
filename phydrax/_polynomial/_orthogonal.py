@@ -62,7 +62,7 @@ class OrthogonalRuleData(StrictModule, NonTrainableState):
         measure_mass: float,
         endpoint_policy: str,
         backend: str,
-    ):
+    ) -> None:
         nodes_host = np.asarray(nodes)
         weights_host = np.asarray(weights)
         if (

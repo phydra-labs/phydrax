@@ -191,7 +191,7 @@ class GeometryTransitionResult(StrictModule):
         displacement_norm: Array,
         projection_distance: Array,
         reflection_count: Array,
-    ):
+    ) -> None:
         pts = jnp.asarray(points, dtype=jnp.float64)
         if pts.ndim != 2:
             raise ValueError(

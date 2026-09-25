@@ -82,7 +82,7 @@ class NettingSet(StrictModule):
         *,
         agreement_scope_id: str,
         netting_set_id: str,
-    ):
+    ) -> None:
         ids = tuple(_identifier(value, "trade_id") for value in trade_ids)
         if not ids or len(set(ids)) != len(ids):
             raise ValueError("trade_ids must be non-empty and unique.")
@@ -116,7 +116,7 @@ class NettingSetCollection(StrictModule):
         /,
         *,
         collection_id: str,
-    ):
+    ) -> None:
         sets = tuple(netting_sets)
         if not sets or any(not isinstance(value, NettingSet) for value in sets):
             raise TypeError(
@@ -174,7 +174,7 @@ class CollateralAgreement(StrictModule):
         independent_amount_postable: ArrayLike = 0.0,
         remuneration_rate: ArrayLike = 0.0,
         agreement_id: str,
-    ):
+    ) -> None:
         if not isinstance(collateral_currency, Currency):
             raise TypeError("collateral_currency must be a Currency.")
         self.threshold_receivable = _scalar(
@@ -224,7 +224,7 @@ class PreparedCollateralAgreement(StrictModule):
         settles_on_grid: ArrayLike,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(agreement, CollateralAgreement):
             raise TypeError("agreement must be a CollateralAgreement.")
         nodes = _time_grid(times)
@@ -290,7 +290,7 @@ class CloseoutConvention(StrictModule):
         /,
         *,
         convention_id: str,
-    ):
+    ) -> None:
         if value_source not in ("risk_free", "replacement"):
             raise ValueError("Unsupported closeout value source.")
         if observation not in ("default_time", "mpor_end"):
@@ -329,7 +329,7 @@ class CloseoutIdentityBinding(StrictModule):
         own_law_id: str,
         own_realization_id: str,
         own_coupling_id: str,
-    ):
+    ) -> None:
         values = tuple(
             _identifier(value, name)
             for value, name in (

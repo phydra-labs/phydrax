@@ -36,7 +36,7 @@ class OceanAxisConvention(StrictModule, NonTrainableState):
         *,
         positive_up: bool = True,
         coordinate_units: str = "m",
-    ):
+    ) -> None:
         vertical = int(vertical_axis)
         units = str(coordinate_units)
         if vertical not in (0, 1, 2):
@@ -114,7 +114,7 @@ class LinearSeawaterReference(StrictModule, NonTrainableState):
         haline_contraction: float = 7.6e-4,
         temperature_name: str = "temperature",
         salinity_name: str = "salinity",
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

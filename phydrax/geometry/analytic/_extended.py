@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, NoReturn
 
 import equinox as eqx
 import jax
@@ -207,7 +207,7 @@ class _EllipseBoundaryMap(AbstractBoundaryMap):
     center: Array
     radii: Array
 
-    def __init__(self, center: Array, radii: Array):
+    def __init__(self, center: Array, radii: Array) -> None:
         self.center = center
         self.radii = radii
 
@@ -250,7 +250,7 @@ class Ellipse(GeometrySource):
         radii: Any,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         self.center = _validate_vector(center, 2, name="center")
         self.radii = _validate_positive_vector(radii, 2, name="radii")
         self.feature_id = _feature_id(feature_id, "ellipse")
@@ -276,7 +276,7 @@ class _EllipseKernel(GeometryKernel):
 
     def __init__(
         self, center: ParameterBinding, radii: ParameterBinding, *, source_id: str
-    ):
+    ) -> None:
         self.center = center
         self.radii = radii
         self.source_id = source_id
@@ -400,7 +400,7 @@ class _RectangleBoundaryMap(AbstractBoundaryMap):
     directions: Array
     lengths: Array
 
-    def __init__(self, center: Array, size: Array):
+    def __init__(self, center: Array, size: Array) -> None:
         half = 0.5 * size
         self.origins = center + jnp.stack(
             (
@@ -447,7 +447,7 @@ class Rectangle(GeometrySource):
     size: Array
     feature_id: str = eqx.field(static=True)
 
-    def __init__(self, center: Any, size: Any, *, feature_id: str | None = None):
+    def __init__(self, center: Any, size: Any, *, feature_id: str | None = None) -> None:
         self.center = _validate_vector(center, 2, name="center")
         self.size = _validate_positive_vector(size, 2, name="size")
         self.feature_id = _feature_id(feature_id, "rectangle")
@@ -469,7 +469,7 @@ def Square(center: Any, side: Any, *, feature_id: str | None = None) -> Rectangl
 class _PolygonBoundaryMap(AbstractBoundaryMap):
     vertices: Array
 
-    def __init__(self, vertices: Array):
+    def __init__(self, vertices: Array) -> None:
         self.vertices = vertices
 
     @property
@@ -502,7 +502,7 @@ class Polygon(GeometrySource):
     vertices: Array
     feature_id: str = eqx.field(static=True)
 
-    def __init__(self, vertices: Any, *, feature_id: str | None = None):
+    def __init__(self, vertices: Any, *, feature_id: str | None = None) -> None:
         host = np.asarray(vertices, dtype=np.float64)
         if host.ndim != 2 or host.shape[1] != 2 or host.shape[0] < 3:
             raise ValueError("vertices must have shape (num_vertices >= 3, 2).")
@@ -540,7 +540,9 @@ class _PolygonKernel(GeometryKernel):
     source_id: str = eqx.field(static=True)
     intersection_pairs: Array
 
-    def __init__(self, vertices: ParameterBinding, *, vertex_count: int, source_id: str):
+    def __init__(
+        self, vertices: ParameterBinding, *, vertex_count: int, source_id: str
+    ) -> None:
         pairs = [
             (first, second)
             for first in range(vertex_count)
@@ -739,7 +741,7 @@ class _EllipsoidBoundaryMap(AbstractBoundaryMap):
     center: Array
     radii: Array
 
-    def __init__(self, center: Array, radii: Array):
+    def __init__(self, center: Array, radii: Array) -> None:
         self.center = center
         self.radii = radii
 
@@ -786,7 +788,7 @@ class Ellipsoid(GeometrySource):
     radii: Array
     feature_id: str = eqx.field(static=True)
 
-    def __init__(self, center: Any, radii: Any, *, feature_id: str | None = None):
+    def __init__(self, center: Any, radii: Any, *, feature_id: str | None = None) -> None:
         self.center = _validate_vector(center, 3, name="center")
         self.radii = _validate_positive_vector(radii, 3, name="radii")
         self.feature_id = _feature_id(feature_id, "ellipsoid")
@@ -810,7 +812,7 @@ class _EllipsoidKernel(GeometryKernel):
     radii: ParameterBinding = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, center, radii, *, source_id):
+    def __init__(self, center, radii, *, source_id) -> None:
         self.center = center
         self.radii = radii
         self.source_id = source_id
@@ -941,7 +943,7 @@ class AxisAlignedEllipsoid(GeometrySource):
     radii: Array
     feature_id: str = eqx.field(static=True)
 
-    def __init__(self, center: Any, radii: Any, *, feature_id: str | None = None):
+    def __init__(self, center: Any, radii: Any, *, feature_id: str | None = None) -> None:
         center_ = _validate_nonempty_vector(center, name="center")
         radii_ = _validate_nonempty_vector(radii, name="radii")
         if radii_.shape != center_.shape or np.any(np.asarray(radii_) <= 0.0):
@@ -983,7 +985,7 @@ class _AxisAlignedEllipsoidKernel(GeometryKernel):
     dimension: int = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, center, radii, *, dimension: int, source_id: str):
+    def __init__(self, center, radii, *, dimension: int, source_id: str) -> None:
         self.center = center
         self.radii = radii
         self.dimension = dimension
@@ -1047,7 +1049,7 @@ class _AxisAlignedEllipsoidKernel(GeometryKernel):
         )
         return unit_measure * jnp.prod(radii)
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state, /) -> NoReturn:
         del state
         raise NotImplementedError(
             "ND ellipsoid boundary measure requires an explicit estimator."
@@ -1072,13 +1074,13 @@ class _AxisAlignedEllipsoidKernel(GeometryKernel):
         )
         return complete_sampling_result(center + radii * radial * directions)
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(self, state, num_points, /, *, key) -> NoReturn:
         del state, num_points, key
         raise NotImplementedError(
             "ND ellipsoid boundary sampling requires an explicit area sampler."
         )
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state, /) -> NoReturn:
         del state
         raise NotImplementedError(
             "ND ellipsoid boundary atlas requires a selected chart construction."
@@ -1094,7 +1096,7 @@ class _CylinderBoundaryMap(AbstractBoundaryMap):
 
     def __init__(
         self, base: Array, axis: Array, radius: Array, angle: Array, *, full: bool
-    ):
+    ) -> None:
         self.base = base
         self.axis = axis
         self.radius = radius
@@ -1175,7 +1177,7 @@ class Cylinder(GeometrySource):
         angle: Any = 2.0 * math.pi,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         self.base_center = _validate_vector(base_center, 3, name="base_center")
         self.axis = _validate_vector(axis, 3, name="axis")
         if float(np.linalg.norm(np.asarray(self.axis))) <= 0.0:
@@ -1217,7 +1219,7 @@ class _CylinderKernel(GeometryKernel):
     full: bool = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, base, axis, radius, angle, *, full, source_id):
+    def __init__(self, base, axis, radius, angle, *, full, source_id) -> None:
         self.base, self.axis, self.radius, self.angle = base, axis, radius, angle
         self.full, self.source_id = full, source_id
 
@@ -1372,7 +1374,7 @@ class _ConeBoundaryMap(AbstractBoundaryMap):
     angle: Array
     full: bool = eqx.field(static=True)
 
-    def __init__(self, base, axis, radii, angle, *, full):
+    def __init__(self, base, axis, radii, angle, *, full) -> None:
         self.base, self.axis, self.radii, self.angle, self.full = (
             base,
             axis,
@@ -1463,7 +1465,7 @@ class Cone(GeometrySource):
         angle=2.0 * math.pi,
         *,
         feature_id=None,
-    ):
+    ) -> None:
         self.base_center = _validate_vector(base_center, 3, name="base_center")
         self.axis = _validate_vector(axis, 3, name="axis")
         if float(np.linalg.norm(np.asarray(self.axis))) <= 0.0:
@@ -1516,7 +1518,7 @@ class _ConeKernel(GeometryKernel):
     full: bool = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, base, axis, radii, angle, *, full, source_id):
+    def __init__(self, base, axis, radii, angle, *, full, source_id) -> None:
         self.base, self.axis, self.radii, self.angle = base, axis, radii, angle
         self.full, self.source_id = full, source_id
 
@@ -1671,7 +1673,7 @@ class _TorusBoundaryMap(AbstractBoundaryMap):
     angle: Array
     full: bool = eqx.field(static=True)
 
-    def __init__(self, center, major, minor, angle, *, full):
+    def __init__(self, center, major, minor, angle, *, full) -> None:
         self.center, self.major, self.minor, self.angle, self.full = (
             center,
             major,
@@ -1747,7 +1749,7 @@ class Torus(GeometrySource):
 
     def __init__(
         self, center, inner_radius, outer_radius, angle=2.0 * math.pi, *, feature_id=None
-    ):
+    ) -> None:
         self.center = _validate_vector(center, 3, name="center")
         inner = float(np.asarray(inner_radius))
         outer = float(np.asarray(outer_radius))
@@ -1799,7 +1801,7 @@ class _TorusKernel(GeometryKernel):
     full: bool = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, center, major, minor, angle, *, full, source_id):
+    def __init__(self, center, major, minor, angle, *, full, source_id) -> None:
         self.center, self.major, self.minor, self.angle = center, major, minor, angle
         self.full, self.source_id = full, source_id
 
@@ -1934,7 +1936,7 @@ def _sample_boundary_atlas(
 class _TriangleBoundaryMap(AbstractBoundaryMap):
     triangles: Array
 
-    def __init__(self, triangles: Array):
+    def __init__(self, triangles: Array) -> None:
         self.triangles = triangles
 
     @property
@@ -1982,7 +1984,7 @@ class Wedge(GeometrySource):
     top_extent: Array
     feature_id: str = eqx.field(static=True)
 
-    def __init__(self, corner, extents, top_extent, *, feature_id=None):
+    def __init__(self, corner, extents, top_extent, *, feature_id=None) -> None:
         self.corner = _validate_vector(corner, 3, name="corner")
         self.extents = _validate_positive_vector(extents, 3, name="extents")
         top = float(np.asarray(top_extent))
@@ -2017,7 +2019,7 @@ class _WedgeKernel(GeometryKernel):
     source_id: str = eqx.field(static=True)
     faces: Array
 
-    def __init__(self, corner, extents, top_extent, *, source_id):
+    def __init__(self, corner, extents, top_extent, *, source_id) -> None:
         self.corner, self.extents, self.top_extent, self.source_id = (
             corner,
             extents,

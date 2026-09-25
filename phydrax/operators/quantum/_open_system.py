@@ -51,7 +51,7 @@ class _LindbladDissipatorCallable(StrictModule):
         collapse_operators: tuple[DomainFunction, ...],
         density_positions: tuple[int, ...],
         collapse_positions: tuple[tuple[int, ...], ...],
-    ):
+    ) -> None:
         self.density = density
         self.collapse_operators = collapse_operators
         self.density_positions = density_positions

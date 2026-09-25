@@ -104,7 +104,7 @@ class ContinuumSurfaceStressPlan(StrictModule, NonTrainableState):
     surface_tension: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, surface_tension: float, /):
+    def __init__(self, surface_tension: float, /) -> None:
         tension = float(surface_tension)
         if tension < 0.0 or not np.isfinite(tension):
             raise ValueError("surface_tension must be finite and non-negative.")
@@ -127,7 +127,7 @@ class BalancedInterfaceForcePlan(StrictModule, NonTrainableState):
         /,
         *,
         contact_angle: ContactAnglePlan | None = None,
-    ):
+    ) -> None:
         self.pressure_plan = pressure_plan
         self.surface_stress = surface_stress
         self.contact_angle = contact_angle

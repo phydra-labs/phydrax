@@ -80,7 +80,7 @@ class CliffordMetricField(StrictModule):
         signature: tuple[int, int],
         rank_tolerance: float = 1e-8,
         field_id: str,
-    ):
+    ) -> None:
         if not callable(metric):
             raise TypeError("metric must be callable.")
         dimension_ = int(dimension)
@@ -137,7 +137,7 @@ class PreparedCliffordMetricProduct(StrictModule):
     blade_count: int = eqx.field(static=True)
     permutation_table: tuple[tuple[tuple[int, ...], int], ...] = eqx.field(static=True)
 
-    def __init__(self, metric_field: CliffordMetricField, /):
+    def __init__(self, metric_field: CliffordMetricField, /) -> None:
         if not isinstance(metric_field, CliffordMetricField):
             raise TypeError("metric_field must be a CliffordMetricField.")
         table = []
@@ -198,7 +198,7 @@ class CliffordInverseResult(StrictModule):
         right_residual: ArrayLike,
         valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.value = jnp.asarray(value)
         self.left_residual = jnp.asarray(left_residual)
         self.right_residual = jnp.asarray(right_residual)
@@ -267,7 +267,7 @@ class PinElement(StrictModule):
         *,
         parity: int,
         tolerance: float = 1e-8,
-    ):
+    ) -> None:
         parity_ = int(parity)
         if parity_ not in (0, 1):
             raise ValueError("Pin parity must be zero or one.")
@@ -381,7 +381,7 @@ class SpinElement(StrictModule):
         /,
         *,
         tolerance: float = 1e-8,
-    ):
+    ) -> None:
         pin = PinElement(product, coordinates, value, parity=0, tolerance=tolerance)
         self.value = pin.value
         self.parity_residual = pin.parity_residual
@@ -407,7 +407,7 @@ class MinimalLeftIdeal(StrictModule):
         *,
         expected_dimension: int,
         tolerance: float = 1e-8,
-    ):
+    ) -> None:
         value = jnp.asarray(idempotent)
         residual = jnp.max(jnp.abs(product(coordinates, value, value) - value))
         basis = jax.vmap(lambda blade: product(coordinates, blade, value))(
@@ -440,7 +440,7 @@ class CliffordCochainProductPlan(StrictModule):
         /,
         *,
         plan_id: str,
-    ):
+    ) -> None:
         arrays = tuple(
             jnp.asarray(value)
             for value in (source_cells, left_cells, right_cells, coefficients)
@@ -491,7 +491,7 @@ class CliffordProjectorEvidence(StrictModule):
         plemelj_residual: ArrayLike,
         trace_residual: ArrayLike,
         tolerance: float,
-    ):
+    ) -> None:
         self.idempotence_residual = jnp.asarray(idempotence_residual)
         self.plemelj_residual = jnp.asarray(plemelj_residual)
         self.trace_residual = jnp.asarray(trace_residual)
@@ -524,7 +524,7 @@ class PreparedCauchyCliffordProjector(StrictModule):
         *,
         tolerance: float = 1e-6,
         projector_id: str,
-    ):
+    ) -> None:
         nodes_ = jnp.asarray(nodes)
         weights_ = jnp.asarray(weights)
         normals_ = jnp.asarray(normals)
@@ -580,7 +580,7 @@ class PreparedCauchyCliffordProjector(StrictModule):
 class ConformalCliffordModel(StrictModule):
     dimension: int = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         if int(dimension) < 1:
             raise ValueError("Conformal model dimension must be positive.")
         self.dimension = int(dimension)
@@ -602,7 +602,7 @@ class ConformalCliffordModel(StrictModule):
 class ProjectiveCliffordModel(StrictModule):
     radical_dimension: int = eqx.field(static=True)
 
-    def __init__(self, radical_dimension: int = 1, /):
+    def __init__(self, radical_dimension: int = 1, /) -> None:
         if int(radical_dimension) < 1:
             raise ValueError("Projective Clifford model requires a nonzero radical.")
         self.radical_dimension = int(radical_dimension)

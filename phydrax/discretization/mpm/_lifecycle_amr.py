@@ -44,7 +44,7 @@ class MPMParticleLifecyclePlan(StrictModule, NonTrainableState):
     capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, capacity: int, /):
+    def __init__(self, capacity: int, /) -> None:
         capacity_ = int(capacity)
         if capacity_ <= 0:
             raise ValueError("Particle lifecycle capacity must be positive.")
@@ -311,7 +311,7 @@ class MPMCapacityBucketPlan(StrictModule, NonTrainableState):
     buckets: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, buckets: Sequence[int], /):
+    def __init__(self, buckets: Sequence[int], /) -> None:
         values = tuple(sorted(set(int(value) for value in buckets)))
         if not values or any(value <= 0 for value in values):
             raise ValueError("Capacity buckets must be positive.")
@@ -341,7 +341,7 @@ class MPMPageTablePlan(StrictModule, NonTrainableState):
     maximum_probes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, capacity: int, /, *, maximum_probes: int = 16):
+    def __init__(self, capacity: int, /, *, maximum_probes: int = 16) -> None:
         capacity_ = int(capacity)
         probes = int(maximum_probes)
         if capacity_ <= 0 or probes <= 0:
@@ -418,7 +418,7 @@ class MPMAMRPlan(StrictModule, NonTrainableState):
         /,
         *,
         refinement_ratio: int = 2,
-    ):
+    ) -> None:
         shapes = tuple(tuple(shape) for shape in level_shapes)
         blocks = tuple(maximum_blocks)
         ratio = int(refinement_ratio)

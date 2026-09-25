@@ -26,7 +26,7 @@ class ToolpathEvent:
     power_w: float = 0.0
     mass_rate_kg_s: float = 0.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         supported = {"move", "deposit", "remove", "dwell", "heat"}
         if (
             not self.event_id

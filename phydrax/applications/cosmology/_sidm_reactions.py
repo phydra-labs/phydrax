@@ -203,7 +203,7 @@ class DarkTwoBodyReactionPlan(StrictModule, NonTrainableState):
         maximum_speed_fraction: float = 0.1,
         charge_tolerance: float = 0.0,
         detailed_balance_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if (
             not isinstance(incoming_species, tuple)
             or len(incoming_species) != 2
@@ -626,7 +626,7 @@ class InelasticSIDMPlan(StrictModule, NonTrainableState):
         channels: tuple[DarkTwoBodyReactionPlan, ...],
         radiation: DarkRadiationLedgerPlan,
         /,
-    ):
+    ) -> None:
         if (
             not isinstance(channels, tuple)
             or not channels

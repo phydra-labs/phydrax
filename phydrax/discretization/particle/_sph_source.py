@@ -118,7 +118,7 @@ class SPHParticleSourcePlan(StrictModule, NonTrainableState):
         density_initialization: SPHDensityInitialization,
         replay_policy: Any,
         schedule_id: str = "sph-emission",
-    ):
+    ) -> None:
         if not isinstance(population, ParticlePopulationPlan):
             raise TypeError("population must be ParticlePopulationPlan.")
         sites = np.asarray(source_sites, dtype=np.float64)

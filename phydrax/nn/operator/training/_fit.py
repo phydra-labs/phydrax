@@ -206,7 +206,7 @@ class OperatorValidationPolicy:
     relative_minimum_delta: float = 0.0
     select_best: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if int(self.every) <= 0:
             raise ValueError("Validation cadence must be positive.")
         if not self.monitor:

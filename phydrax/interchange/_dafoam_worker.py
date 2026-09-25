@@ -39,7 +39,7 @@ def _verify_runtime(runtime):
     return _fingerprint(pins)
 
 
-def main():
+def main() -> None:
     request = json.loads(Path("aerodynamic-request.json").read_text())
     runtime = request["runtime"]
     runtime_sha = _verify_runtime(runtime)

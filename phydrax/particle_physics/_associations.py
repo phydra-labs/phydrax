@@ -42,7 +42,7 @@ class AssociationTable(StrictModule, NonTrainableState):
         target_collection: str,
         source_capacity: int,
         target_capacity: int,
-    ):
+    ) -> None:
         source = jnp.asarray(source_indices, dtype=jnp.int32)
         target = jnp.asarray(target_indices, dtype=jnp.int32)
         weights_ = jnp.asarray(weights)

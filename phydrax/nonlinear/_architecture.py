@@ -74,7 +74,7 @@ class NonlinearModel(StrictModule):
         precision_evidence: PrecisionEvidenceEnvelope,
         precision_policy_id: str,
         model_id: str,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be AbstractLinearOperator.")
         if not isinstance(work, NonlinearWork):
@@ -207,7 +207,7 @@ class RootLinearModelPolicy(AbstractNonlinearModelPolicy):
         /,
         *,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         policy = JacobianPolicy() if jacobian is None else jacobian
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(policy, JacobianPolicy):
@@ -255,7 +255,7 @@ class NewtonDirectionPolicy(AbstractDirectionPolicy):
         /,
         *,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         policy = LinearSolvePolicy() if linear is None else linear
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(policy, LinearSolvePolicy):
@@ -406,7 +406,7 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
         minimum_rate: float = 1e-10,
         maximum_steps: int = 24,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -581,7 +581,7 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
 class RootResidualCertificate(AbstractNonlinearCertificate):
     precision: NonlinearPrecisionPolicy
 
-    def __init__(self, precision: NonlinearPrecisionPolicy | None = None, /):
+    def __init__(self, precision: NonlinearPrecisionPolicy | None = None, /) -> None:
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, NonlinearPrecisionPolicy):
             raise TypeError("precision must be NonlinearPrecisionPolicy or None.")

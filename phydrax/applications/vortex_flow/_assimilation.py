@@ -36,7 +36,7 @@ class VortexObservationSet(StrictModule, NonTrainableState):
         /,
         *,
         kind: str,
-    ):
+    ) -> None:
         matrix, value, deviation = (
             jnp.asarray(operator),
             jnp.asarray(values),
@@ -90,7 +90,7 @@ class VortexDataAssimilationPlan(StrictModule, NonTrainableState):
         /,
         *,
         policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not observations or any(
             not isinstance(observation, VortexObservationSet)
             for observation in observations

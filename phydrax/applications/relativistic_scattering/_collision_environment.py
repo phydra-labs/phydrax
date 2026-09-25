@@ -52,7 +52,7 @@ class CollisionEnvironmentPlan(StrictModule, NonTrainableState):
         time_unit: str,
         pileup_profile_id: str,
         beam_background_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         mean = float(mean_pileup)
         maximum = int(maximum_pileup)
         luminosity = float(instantaneous_luminosity)

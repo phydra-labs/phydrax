@@ -39,7 +39,7 @@ class PreparedResidualTerm(StrictModule):
         index: int,
         selection_scale: Any = 1.0,
         /,
-    ):
+    ) -> None:
         self.term = term
         self.realization = realization
         self.index = int(index)
@@ -72,7 +72,7 @@ class ResidualRootBlock(StrictModule):
         source_index: int,
         coordinate_kind: Literal["real", "imag"] = "real",
         event_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         array = jnp.asarray(values)
         if array.ndim != 1 or jnp.iscomplexobj(array):
             raise TypeError("Residual root blocks must be one-dimensional real arrays.")
@@ -110,7 +110,7 @@ class FunctionalResidualLayout(StrictModule):
     total_size: int = eqx.field(static=True)
     logical_blocks: tuple[tuple[int, str], ...] = eqx.field(static=True)
 
-    def __init__(self, blocks: Sequence[ResidualRootBlock], /):
+    def __init__(self, blocks: Sequence[ResidualRootBlock], /) -> None:
         values = tuple(blocks)
         entries: list[ResidualRootEntry] = []
         logical: list[tuple[int, str]] = []
@@ -412,7 +412,7 @@ class PreparedFunctionalResidual(StrictModule):
         iteration: Any,
         transform: Any = None,
         /,
-    ):
+    ) -> None:
         values = tuple(terms)
         if not values:
             raise ValueError("PreparedFunctionalResidual requires residual terms.")

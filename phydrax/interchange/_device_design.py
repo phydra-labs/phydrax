@@ -156,7 +156,7 @@ class DeviceQualificationError(ValueError):
     No numerical objective, noise estimate or training penalty is synthesized.
     """
 
-    def __init__(self, message: str, *, runs: Sequence[EnergyRunResult] = ()):
+    def __init__(self, message: str, *, runs: Sequence[EnergyRunResult] = ()) -> None:
         self.runs = tuple(runs)
         self.artifact = _artifact(
             "device-design-qualification",

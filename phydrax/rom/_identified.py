@@ -128,7 +128,7 @@ class IdentifiedReducedDynamics(StrictModule, NonTrainableState):
         *,
         identification_id: str,
         partition_id: str,
-    ):
+    ) -> None:
         if not isinstance(basis, ReducedBasisArtifact) or basis.role != "state":
             raise TypeError("basis must be a state ReducedBasisArtifact.")
         if not isinstance(system, (ContinuousSystem, DiscreteSystem)):

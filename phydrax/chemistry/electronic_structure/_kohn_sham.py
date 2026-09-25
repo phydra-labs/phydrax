@@ -50,7 +50,7 @@ class MolecularIntegrationGridPlan(StrictModule, NonTrainableState):
         points: ArrayLike,
         weights: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         points_ = jnp.asarray(points, dtype=np.dtype(system.coordinate_dtype))
@@ -122,7 +122,7 @@ class StaticPolarizabilityResult(StrictModule, NonTrainableState):
         unit: UnitDefinition,
         source_state_ids: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         tensor_ = jnp.asarray(tensor)
         if tensor_.shape != (3, 3):
             raise ValueError("Polarizability tensor must have shape (3, 3).")
@@ -178,7 +178,7 @@ class NativeLDAPlan(StrictModule, NonTrainableState):
         damping: float = 0.3,
         force_displacement: float = 1.0e-4,
         field_displacement: float = 1.0e-3,
-    ):
+    ) -> None:
         if basis.system_id != system.system_id or grid.system_id != system.system_id:
             raise ValueError("LDA basis/grid must belong to the supplied system.")
         if not bool(np.all(np.asarray(system.active_mask))) or not bool(

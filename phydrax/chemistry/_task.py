@@ -88,7 +88,7 @@ class GroundStateTaskPlan(StrictModule, NonTrainableState):
     task_kind: ElectronicTaskKind = eqx.field(static=True)
     task_id: str = eqx.field(static=True)
 
-    def __init__(self, properties: Sequence[ElectronicProperty], /):
+    def __init__(self, properties: Sequence[ElectronicProperty], /) -> None:
         normalized = _properties(properties, require_energy=True)
         self.properties = normalized
         self.task_kind = ElectronicTaskKind.GROUND_STATE
@@ -135,7 +135,7 @@ class CorrelationTaskPlan(StrictModule, NonTrainableState):
         /,
         *,
         relaxed_density: bool = False,
-    ):
+    ) -> None:
         normalized = _properties(properties, require_energy=True)
         self.properties = normalized
         self.relaxed_density = bool(relaxed_density)
@@ -172,7 +172,7 @@ class LinearResponseTaskPlan(StrictModule, NonTrainableState):
         gauge: str = "length",
         response_order: int = 1,
         properties: Sequence[ElectronicProperty] = (ElectronicProperty.POLARIZABILITY,),
-    ):
+    ) -> None:
         perturbation_ = _identifier(perturbation, "perturbation")
         gauge_ = _identifier(gauge, "gauge")
         frequency = np.asarray(frequencies, dtype=np.float64).reshape((-1,))
@@ -235,7 +235,7 @@ class ExcitedManifoldTaskPlan(StrictModule, NonTrainableState):
         properties: Sequence[ElectronicProperty] = (
             ElectronicProperty.TRANSITION_MOMENTS,
         ),
-    ):
+    ) -> None:
         roots = int(root_count)
         spin = _identifier(spin_sector, "spin_sector")
         symmetry = (
@@ -278,7 +278,7 @@ class NonadiabaticCouplingTaskPlan(StrictModule, NonTrainableState):
         /,
         *,
         route: str = "analytic",
-    ):
+    ) -> None:
         indices = tuple(state_indices)
         if len(indices) < 2 or len(set(indices)) != len(indices) or min(indices) < 0:
             raise ValueError(
@@ -307,7 +307,7 @@ class BandStructureTaskPlan(StrictModule, NonTrainableState):
     task_kind: ElectronicTaskKind = eqx.field(static=True)
     task_id: str = eqx.field(static=True)
 
-    def __init__(self, fractional_k_points: ArrayLike, /):
+    def __init__(self, fractional_k_points: ArrayLike, /) -> None:
         points = np.asarray(fractional_k_points, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 3 or np.any(~np.isfinite(points)):
             raise ValueError("Band-structure k points must have finite shape (K, 3).")

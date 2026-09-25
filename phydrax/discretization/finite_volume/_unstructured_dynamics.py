@@ -86,7 +86,7 @@ class UnstructuredFiniteVolumeBoundarySet(StrictModule, NonTrainableState):
         patch_names: tuple[str, ...],
         boundaries: Mapping[str, AbstractConservationBoundary],
         /,
-    ):
+    ) -> None:
         names = tuple(patch_names)
         if set(boundaries) != set(names):
             raise ValueError(
@@ -135,7 +135,7 @@ class UnstructuredFiniteVolumeMethodPlan(StrictModule):
         /,
         *,
         closure: AbstractFaceClosurePlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             reconstruction,
             (
@@ -231,7 +231,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         source_id: str | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
         coupling: PreparedUnstructuredFiniteVolumeCoupling | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             discretization,
             (UnstructuredFiniteVolumeDiscretization, DyadicFiniteVolumeDiscretization),

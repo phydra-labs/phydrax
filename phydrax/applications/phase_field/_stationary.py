@@ -38,7 +38,7 @@ class DoubleWellKinkPlan(StrictModule):
         maximum_backtracks: int = 12,
         residual_tolerance: float = 1e-10,
         maximum_matrix_elements: int = 10_000_000,
-    ):
+    ) -> None:
         points = np.asarray(coordinates, dtype=np.float64)
         if not isinstance(free_energy, DoubleWellFreeEnergy):
             raise TypeError("free_energy must be DoubleWellFreeEnergy.")

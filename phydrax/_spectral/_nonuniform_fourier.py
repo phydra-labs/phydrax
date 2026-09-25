@@ -59,7 +59,7 @@ class NonuniformFourierPlan(StrictModule):
         centered: bool = False,
         route: NonuniformFourierRoute = "direct",
         chunk_size: int = 256,
-    ):
+    ) -> None:
         supplied_shape = tuple(mode_shape)
         if not supplied_shape or len(supplied_shape) > 3:
             raise ValueError(
@@ -116,7 +116,7 @@ class PreparedNonuniformFourier(StrictModule, NonTrainableState):
         /,
         *,
         dtype: jnp.dtype = jnp.float32,
-    ):
+    ) -> None:
         if not isinstance(plan, NonuniformFourierPlan):
             raise TypeError("plan must be a NonuniformFourierPlan.")
         resolved_dtype = jnp.dtype(dtype)

@@ -40,7 +40,7 @@ class AugmentedInterfacePlan(StrictModule):
         *,
         primal_tolerance: float = 1.0e-6,
         dual_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         outer = int(outer_iterations)
         inner = int(inner_iterations)
         primal = float(primal_tolerance)
@@ -76,7 +76,7 @@ class AugmentedInterfaceResult(StrictModule):
         /,
         *,
         converged: bool,
-    ):
+    ) -> None:
         self.solver = solver
         self.constraint = constraint
         self.history = tuple(history)

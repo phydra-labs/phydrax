@@ -67,7 +67,7 @@ class SINGSupportPlan(StrictModule):
         rank: int,
         support_id: str,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         matrix = np.asarray(constraints, dtype=np.float64)
         basis = np.asarray(tangent_basis, dtype=np.float64)
         fixed_rank = int(rank)
@@ -176,7 +176,7 @@ class SINGTransitionPlan(StrictModule):
         surrogate_provider: Any = None,
         rank_tolerance: float = 1.0e-8,
         approximation_tolerance: float = 1.0e-4,
-    ):
+    ) -> None:
         if method not in ("euler-factor", "local-linearization", "ensemble-moments"):
             raise ValueError("Unknown SING transition method.")
         if support is not None and not isinstance(support, SINGSupportPlan):
@@ -379,7 +379,7 @@ class _ProjectedEulerTransition(AbstractTransitionKernel):
         ambient: EulerMaruyamaTransitionKernel,
         support: SINGSupportPlan,
         /,
-    ):
+    ) -> None:
         self.ambient = ambient
         self.support = support
         self.wiener_terms = ambient.wiener_terms
@@ -479,7 +479,9 @@ class _ProjectedObservationModel(AbstractObservationModel):
     observation_shape: tuple[int, ...] = eqx.field(static=True)
     observation_id: str = eqx.field(static=True)
 
-    def __init__(self, ambient: AbstractObservationModel, support: SINGSupportPlan, /):
+    def __init__(
+        self, ambient: AbstractObservationModel, support: SINGSupportPlan, /
+    ) -> None:
         self.ambient = ambient
         self.support = support
         self.state_shape = (support.rank,)

@@ -33,7 +33,7 @@ class ROMArtifactReference(StrictModule, NonTrainableState):
         /,
         *,
         required: bool = True,
-    ):
+    ) -> None:
         values = tuple(
             str(value) for value in (role, artifact_id, recipe_id, archive_uri)
         )
@@ -97,7 +97,7 @@ class ROMDeploymentBundle(StrictModule, NonTrainableState):
         execution_requirements_id: str,
         resource_policy_id: str,
         qualification_ids: Sequence[str],
-    ):
+    ) -> None:
         model = str(model_id)
         refs = tuple(references)
         capabilities = tuple(str(value) for value in capability_profile_ids)

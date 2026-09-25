@@ -91,7 +91,7 @@ class SingleSiteDMFTPlan(StrictModule, NonTrainableState):
         fixed_point_tolerance: float = 1e-5,
         density_tolerance: float = 1e-5,
         bath_tolerance: float = 2e-2,
-    ):
+    ) -> None:
         energies = jnp.asarray(lattice_energies)
         weights = jnp.asarray(lattice_weights)
         labels = jnp.asarray(indices)
@@ -180,7 +180,7 @@ class DMFTState(StrictModule):
     self_energy: Array
     chemical_potential: Array
 
-    def __init__(self, self_energy: ArrayLike, chemical_potential: ArrayLike, /):
+    def __init__(self, self_energy: ArrayLike, chemical_potential: ArrayLike, /) -> None:
         sigma = jnp.asarray(self_energy)
         chemical = jnp.asarray(chemical_potential)
         if sigma.ndim != 1 or chemical.shape != ():
@@ -200,7 +200,9 @@ class DMFTResidualArguments(StrictModule):
     plan: SingleSiteDMFTPlan
     provider: AbstractImpurityProvider
 
-    def __init__(self, plan: SingleSiteDMFTPlan, provider: AbstractImpurityProvider, /):
+    def __init__(
+        self, plan: SingleSiteDMFTPlan, provider: AbstractImpurityProvider, /
+    ) -> None:
         if not isinstance(plan, SingleSiteDMFTPlan):
             raise TypeError("plan must be SingleSiteDMFTPlan.")
         if not isinstance(provider, AbstractImpurityProvider):

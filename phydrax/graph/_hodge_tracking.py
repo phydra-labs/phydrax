@@ -32,7 +32,7 @@ class HodgeSubspaceTracking(StrictModule, NonTrainableState):
         *,
         source_id: str,
         target_id: str,
-    ):
+    ) -> None:
         source = jnp.asarray(source_basis)
         target = jnp.asarray(target_basis)
         pairing = jnp.asarray(metric)

@@ -65,7 +65,7 @@ class _HighOrderTENOPlan(StrictModule, NonTrainableState):
         *,
         cutoff: float = 1e-6,
         epsilon: float = 1e-14,
-    ):
+    ) -> None:
         if order == 6:
             offsets = (-2, -1, 0, 1, 2, 3)
             candidates = ((-2, -1, 0), (-1, 0, 1), (0, 1, 2), (0, 1, 2, 3))
@@ -261,7 +261,7 @@ class ExplicitStabilizationPlan(StrictModule, NonTrainableState):
         *,
         differentiability: BranchDifferentiationPolicy = BranchDifferentiationPolicy.FROZEN_DECISION,
         periodic: bool = False,
-    ):
+    ) -> None:
         strength_ = float(strength)
         if not np.isfinite(strength_) or strength_ < 0.0 or strength_ > 0.5:
             raise ValueError("Filter strength must lie in [0, 0.5].")

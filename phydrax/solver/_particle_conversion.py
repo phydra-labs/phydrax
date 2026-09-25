@@ -55,7 +55,7 @@ class ParticleConversionSolverPlan(StrictModule, NonTrainableState):
         *,
         substeps: int = 1,
         solver_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(backend, ParticleConversionBackend):
             raise TypeError("backend must be a ParticleConversionBackend.")
         count = int(substeps)

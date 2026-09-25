@@ -40,7 +40,7 @@ class LocalObservable(StrictModule):
         /,
         *,
         hermiticity_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         value = jnp.asarray(matrix)
         if value.ndim != 2 or value.shape[0] != value.shape[1]:
             raise ValueError("Observable matrix must have exact square shape (dT, dT).")

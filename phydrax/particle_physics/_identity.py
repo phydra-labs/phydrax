@@ -56,7 +56,7 @@ class ParticleCatalogReference(StrictModule, NonTrainableState):
         provider_release: str,
         checksum: str,
         citation_url: str,
-    ):
+    ) -> None:
         self.source_id = _identifier(source_id, "Source ID")
         self.provider_release = _identifier(provider_release, "Provider release")
         self.checksum = _identifier(checksum, "Checksum")

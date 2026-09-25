@@ -34,7 +34,7 @@ class ElasticRollingTorsionalResistancePlan(AbstractDEMRotationalContactPlan):
         torsional_damping: ArrayLike = 0.0,
         torsional_friction: ArrayLike = 0.0,
         rotational_law_id: str | None = None,
-    ):
+    ) -> None:
         values = tuple(
             np.asarray(value)
             for value in (

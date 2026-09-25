@@ -49,7 +49,7 @@ class BlockAMRReferenceParityPlan(StrictModule, NonTrainableState):
         provider_revision: str,
         absolute_tolerance: float,
         relative_tolerance: float,
-    ):
+    ) -> None:
         entries = tuple(
             sorted(
                 (str(name), np.asarray(value)) for name, value in reference_values.items()

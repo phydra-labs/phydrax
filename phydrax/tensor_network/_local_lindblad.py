@@ -34,7 +34,7 @@ class LocalKrausPreparationEvidence(StrictModule):
         completeness_residual: ArrayLike,
         reconstruction_residual: ArrayLike,
         tolerance: float,
-    ):
+    ) -> None:
         self.choi_hermiticity_residual = jnp.asarray(choi_hermiticity_residual)
         self.raw_minimum_choi_eigenvalue = jnp.asarray(raw_minimum_choi_eigenvalue)
         self.numerical_cleanup_norm = jnp.asarray(numerical_cleanup_norm)
@@ -62,7 +62,7 @@ class PreparedLocalKrausChannel(StrictModule):
         evidence: LocalKrausPreparationEvidence,
         step_size: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = jnp.asarray(kraus)
         self.kraus = values
         self.superoperator = jnp.asarray(superoperator)

@@ -65,7 +65,7 @@ class MongeMapTerm(AbstractScalarTerm):
         transport_weight: float = 1.0,
         discrepancy_weight: float = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(map_field, str) or not map_field:
             raise ValueError("map_field must be non-empty.")
         if not isinstance(source_realization, IntegrationRealization):
@@ -130,7 +130,7 @@ class NeuralDualTransportTerm(AbstractScalarTerm):
         constraint_weight: float = 1.0,
         full_pair_coverage: bool = False,
         label: str | None = None,
-    ):
+    ) -> None:
         if not source_potential or not target_potential:
             raise ValueError("potential field names must be non-empty.")
         if not isinstance(source_realization, IntegrationRealization) or not isinstance(

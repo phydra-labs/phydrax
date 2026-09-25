@@ -54,7 +54,7 @@ class CausalRecurrentConfig(StrictModule):
         method: CausalNewton | CausalLevenbergMarquardt | None = None,
         termination: NonlinearTermination | None = None,
         failure_policy: CausalRecurrentFailurePolicy = "raise",
-    ):
+    ) -> None:
         method_ = CausalLevenbergMarquardt() if method is None else method
         termination_ = NonlinearTermination() if termination is None else termination
         if not isinstance(method_, (CausalNewton, CausalLevenbergMarquardt)):

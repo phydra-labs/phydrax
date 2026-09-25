@@ -721,7 +721,7 @@ class SequentialOpticsPlan(StrictModule, NonTrainableState):
         intersection_tolerance: float = 1.0e-9,
         forward_tolerance: float = 1.0e-10,
         incidence_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         frame_tuple = tuple(frames)
         kinds = tuple(surface_kinds)
         routes = tuple(interactions)
@@ -959,7 +959,7 @@ class PreparedSequentialOptics(StrictModule, NonTrainableState):
     source_plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: SequentialOpticsPlan, /):
+    def __init__(self, plan: SequentialOpticsPlan, /) -> None:
         if not isinstance(plan, SequentialOpticsPlan):
             raise TypeError("plan must be a SequentialOpticsPlan.")
         rotations = np.stack([np.asarray(frame.rotation) for frame in plan.frames])

@@ -71,7 +71,7 @@ class ConflictFreeUpdatePolicy(StrictModule, NonTrainableState):
         feasibility_tolerance: float = 1e-10,
         maximum_condition: float = 1e12,
         failure: ConflictFreeUpdateFailureMode = "status",
-    ):
+    ) -> None:
         norm = float(minimum_norm)
         tolerance = float(feasibility_tolerance)
         condition = float(maximum_condition)

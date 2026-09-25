@@ -33,7 +33,7 @@ class GeometryMeasurePartition(StrictModule):
         measures: Array,
         *,
         kind: Literal["segment", "triangle"],
-    ):
+    ) -> None:
         vertices_ = jnp.asarray(vertices, dtype=jnp.float64)
         measures_ = jnp.asarray(measures, dtype=jnp.float64).reshape((-1,))
         simplex_size = 2 if kind == "segment" else 3
@@ -156,7 +156,7 @@ class BoundaryAtlasPartition(StrictModule):
         quadrature_order: int = 12,
         candidate_count: int = 64,
         maximum_quadrature_points: int = 1_000_000,
-    ):
+    ) -> None:
         if not isinstance(atlas, BoundaryAtlas):
             raise TypeError("atlas must be a BoundaryAtlas.")
         if quadrature_order < 2 or candidate_count < 2:

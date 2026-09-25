@@ -133,7 +133,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         external_acceleration: ExternalMPMAcceleration | None = None,
         external_acceleration_id: str | None = None,
         resource_policy: MPMResourcePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be ParticleDiscretization.")
         if not isinstance(splat, PreparedParticleGridSplat):

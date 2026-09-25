@@ -57,7 +57,7 @@ class _ChannelLastGroupNorm(StrictModule):
         /,
         *,
         eps: float = 1e-5,
-    ):
+    ) -> None:
         self.channels = int(channels)
         self.groups = int(groups)
         self.spatial_ndim = int(spatial_ndim)
@@ -187,7 +187,7 @@ class _FlowerBlock(StrictModule):
         minimum_route_scale: float,
         route_scale_factor: float,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         warp_key, identity_key, modulation_key = jr.split(key, 3)
         warp_kwargs = dict(
             spatial_ndim=spatial_ndim,
@@ -303,7 +303,7 @@ class _StrideTwoConvND(StrictModule):
         out_channels: int,
         transpose: bool,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         self.spatial_ndim = int(spatial_ndim)
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
@@ -373,7 +373,7 @@ class _ResolutionConsistentTransitionND(StrictModule):
         boundary: tuple[WarpBoundaryMode, ...],
         mask_mode: WarpMaskMode,
         key: Key[Array, ""],
-    ):
+    ) -> None:
         self.spatial_ndim = int(spatial_ndim)
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
@@ -532,7 +532,7 @@ class FlowerDiagnostics(StrictModule):
         blocks: Sequence[RectilinearWarpDiagnostics],
         level_shapes: Sequence[Sequence[int]],
         transition_mode: FlowerTransitionMode,
-    ):
+    ) -> None:
         self.blocks = tuple(blocks)
         self.level_shapes = tuple(tuple(shape) for shape in level_shapes)
         self.transition_mode = transition_mode
@@ -604,7 +604,7 @@ class Flower(AbstractOperatorModel):
         route_scale_factor: float = 1e-3,
         conserve_mass: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
         self.spatial_ndim = int(spatial_ndim)

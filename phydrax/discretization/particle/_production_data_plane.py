@@ -37,7 +37,7 @@ class ParticleSearchKey(StrictModule, NonTrainableState):
         source_population_id: str,
         search_radius: float,
         /,
-    ):
+    ) -> None:
         radius = float(search_radius)
         if radius <= 0.0 or not np.isfinite(radius):
             raise ValueError("search_radius must be finite and positive.")
@@ -82,7 +82,7 @@ class MultiPopulationCellPlan(StrictModule, NonTrainableState):
         cell_size: float,
         maximum_particles_per_cell: Sequence[int],
         /,
-    ):
+    ) -> None:
         size = float(cell_size)
         capacities = tuple(maximum_particles_per_cell)
         if size <= 0.0 or not capacities or any(value <= 0 for value in capacities):
@@ -123,7 +123,7 @@ class PreparedMultiPopulationCells(StrictModule, NonTrainableState):
         plan: MultiPopulationCellPlan,
         populations: Sequence[ParticlePopulation],
         /,
-    ):
+    ) -> None:
         values = tuple(populations)
         if len(values) != len(plan.maximum_particles_per_cell):
             raise ValueError("Cell capacity count must match populations.")
@@ -353,7 +353,7 @@ class PreparedSearchGroup(StrictModule, NonTrainableState):
         prepared: PreparedMultiPopulationCells,
         keys: Sequence[ParticleSearchKey],
         /,
-    ):
+    ) -> None:
         values = tuple(keys)
         self.prepared = prepared
         self.keys = values

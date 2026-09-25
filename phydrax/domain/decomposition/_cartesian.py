@@ -26,7 +26,7 @@ from ._cover import PairedSupport, SubdomainCover, SubdomainPatch
 
 
 class _IdentityCoordinate(StrictModule, NonTrainableState):
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     def __call__(self, value, /, *, key=None, **kwargs):
@@ -57,7 +57,7 @@ class _PeriodicCoordinate(StrictModule, NonTrainableState):
         *,
         vector_coordinate: bool,
         direction: str,
-    ):
+    ) -> None:
         if direction not in ("to-local", "to-ambient"):
             raise ValueError("Unknown periodic coordinate direction.")
         self.lower = tuple(float(value) for value in lower)
@@ -104,7 +104,7 @@ class _BoxSupport(StrictModule, NonTrainableState):
         center: Sequence[float],
         periodic: Sequence[bool],
         vector_coordinate: bool,
-    ):
+    ) -> None:
         self.lower = tuple(float(value) for value in lower)
         self.upper = tuple(float(value) for value in upper)
         self.ambient_lower = tuple(float(value) for value in ambient_lower)
@@ -151,7 +151,7 @@ class _BoxWindow(StrictModule, NonTrainableState):
         ambient_upper: Sequence[float],
         periodic: Sequence[bool],
         vector_coordinate: bool,
-    ):
+    ) -> None:
         self.support_lower = tuple(float(value) for value in support_lower)
         self.core_lower = tuple(float(value) for value in core_lower)
         self.core_upper = tuple(float(value) for value in core_upper)
@@ -216,7 +216,7 @@ class _AffineCoordinate(StrictModule, NonTrainableState):
         upper: Sequence[float],
         *,
         vector_coordinate: bool,
-    ):
+    ) -> None:
         lower_ = np.asarray(lower, dtype=np.float64)
         upper_ = np.asarray(upper, dtype=np.float64)
         self.center = tuple(float(value) for value in 0.5 * (lower_ + upper_))
@@ -237,7 +237,7 @@ class _FaceEmbedding(StrictModule, NonTrainableState):
     boundary: float = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
 
-    def __init__(self, axis: int, boundary: float, dimension: int):
+    def __init__(self, axis: int, boundary: float, dimension: int) -> None:
         self.axis = int(axis)
         self.boundary = float(boundary)
         self.dimension = int(dimension)
@@ -266,7 +266,7 @@ class AxisPartition(StrictModule, NonTrainableState):
         *,
         overlap_fraction: float = 0.0,
         periodic: bool = False,
-    ):
+    ) -> None:
         boundaries_ = tuple(float(value) for value in boundaries)
         if len(boundaries_) < 2:
             raise ValueError("AxisPartition requires at least two boundaries.")
@@ -311,7 +311,7 @@ class BoxPartition(StrictModule, NonTrainableState):
 
     axes: tuple[AxisPartition, ...]
 
-    def __init__(self, axes: Sequence[AxisPartition], /):
+    def __init__(self, axes: Sequence[AxisPartition], /) -> None:
         axes_ = tuple(axes)
         if not axes_ or any(not isinstance(axis, AxisPartition) for axis in axes_):
             raise TypeError("axes must be a non-empty sequence of AxisPartition objects.")
@@ -489,7 +489,7 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
         overlap_fraction: float | Sequence[float] = 0.0,
         periodic: bool | Sequence[bool] = False,
         cover_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(label, str) or not label:
             raise ValueError("label must be a non-empty string.")
         provided = sum(

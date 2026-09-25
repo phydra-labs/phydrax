@@ -62,7 +62,7 @@ class OpticalDielectricResult(StrictModule, NonTrainableState):
         evidence: OpticalDielectricEvidence,
         kubo_plan_id: str,
         /,
-    ):
+    ) -> None:
         self.angular_frequencies_rad_per_s = jnp.asarray(angular_frequencies_rad_per_s)
         self.conductivity_tensor_siemens_per_m = jnp.asarray(
             conductivity_tensor_siemens_per_m
@@ -103,7 +103,7 @@ class OpticalDielectricPlan(StrictModule, NonTrainableState):
         *,
         passivity_tolerance: float = 1.0e-10,
         f_sum_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         vectors = jnp.asarray(polarizations)
         labels = tuple(str(label).strip() for label in channel_labels)
         passivity = float(passivity_tolerance)

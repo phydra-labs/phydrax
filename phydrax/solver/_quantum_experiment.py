@@ -55,7 +55,7 @@ class ClassicalRegisterLayout(StrictModule):
         /,
         *,
         maximum_total_bits: int,
-    ):
+    ) -> None:
         identifiers = tuple(str(value) for value in register_ids)
         widths = tuple(bit_widths)
         maximum = int(maximum_total_bits)
@@ -108,7 +108,7 @@ class QuantumExperimentProgram(StrictModule):
         /,
         *,
         branch_capacity: int,
-    ):
+    ) -> None:
         if not isinstance(prefix, QuantumProgram):
             raise TypeError("prefix must be a QuantumProgram.")
         if not isinstance(instrument, QuantumInstrument):

@@ -62,7 +62,7 @@ class SeparableFeynmaNN(_AbstractStructuredInputModel):
         keep_output_complex: bool = False,
         scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         r"""Create a separable FeynmaNN.
 
         `SeparableFeynmaNN` forwards FeynmaNN hyperparameters to each internal

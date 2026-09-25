@@ -110,7 +110,7 @@ class O3TensorProductPlan(StrictModule, NonTrainableState):
         maximum_parameters: int = 10_000_000,
         maximum_multiply_adds: int = 2_000_000_000,
         maximum_coefficients: int = 1_000_000,
-    ):
+    ) -> None:
         if not isinstance(left_representation, O3Representation):
             raise TypeError("left_representation must be an O3Representation.")
         if not isinstance(right_representation, O3Representation):
@@ -356,7 +356,7 @@ class O3TensorProduct(StrictModule):
         internal_weights: bool = True,
         dtype: DTypeLike = jnp.float64,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(plan, O3TensorProductPlan):
             raise TypeError("plan must be an O3TensorProductPlan.")
         dtype_ = jnp.dtype(dtype)

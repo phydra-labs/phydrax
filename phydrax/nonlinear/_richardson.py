@@ -95,7 +95,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
         minimum_rate: float = 1e-8,
         maximum_search_steps: int = 20,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, NonlinearPrecisionPolicy):
             raise TypeError("precision must be a NonlinearPrecisionPolicy or None.")

@@ -45,7 +45,7 @@ class GraphBatch(StrictModule, Mapping[str, PyTree[cx.AxisArray]]):  # ty: ignor
         graph: GraphIR,
         graph_label: str,
         component_kind: GraphComponentKind,
-    ):
+    ) -> None:
         if structure.axis_names is None:
             raise ValueError(
                 "GraphBatch requires a canonicalized SampleLayout (axis_names set)."

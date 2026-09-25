@@ -75,7 +75,7 @@ class IntervalDistanceReconstruction(StrictModule):
         chirality_sign=(),
         minimum_volume=(),
         chirality_standard_deviation=(),
-    ):
+    ) -> None:
         if not isinstance(system, PreparedAtomisticSystem):
             raise TypeError("Reconstruction must consume an existing atomistic support.")
         if system.cell is not None:

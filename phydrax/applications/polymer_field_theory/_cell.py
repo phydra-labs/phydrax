@@ -39,7 +39,7 @@ class IsotropicSCFTCellPlan(StrictModule, NonTrainableState):
         target_log_scale_derivative: float = 0.0,
         absolute_tolerance: float = 1.0e-8,
         maximum_iterations: int = 32,
-    ):
+    ) -> None:
         lower = float(minimum_scale)
         upper = float(maximum_scale)
         target = float(target_log_scale_derivative)

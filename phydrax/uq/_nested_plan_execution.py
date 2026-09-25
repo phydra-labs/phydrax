@@ -192,7 +192,7 @@ class _ProposalOutcome(NamedTuple):
 
 
 class _Evaluator:
-    def __init__(self, evaluate_one, *, count: int, limit: int):
+    def __init__(self, evaluate_one, *, count: int, limit: int) -> None:
         self.evaluate_one = evaluate_one
         self.count = int(count)
         self.limit = int(limit)

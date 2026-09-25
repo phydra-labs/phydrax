@@ -49,7 +49,7 @@ class CompiledChannelFlowDynamics(StrictModule):
         stokes_plan: ChannelStokesPlan,
         spatial_method: PreparedPseudospectralMethod,
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, IncompressibleFlowProblem):
             raise TypeError("problem must be an IncompressibleFlowProblem.")
         if problem.spatial_dimension != 3:

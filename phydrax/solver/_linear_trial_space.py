@@ -73,7 +73,7 @@ class LinearTrialSpaceResult(StrictModule):
         affine_audit_tolerance: Array,
         coefficient_count: int,
         residual_count: int,
-    ):
+    ) -> None:
         if not isinstance(linear_result, LinearSolveResult):
             raise TypeError("linear_result must be a LinearSolveResult.")
         affine_residual = jnp.asarray(affine_audit_residual)

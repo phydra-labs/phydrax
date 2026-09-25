@@ -43,7 +43,7 @@ class PrimaryHistoryKey:
     primary_id: str
     fraction_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for name, value in asdict(self).items():
             _text(value, name)
 
@@ -54,7 +54,7 @@ class RadiationEventKey:
     stage: str
     record_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.stage not in ("physical", "chemical"):
             raise ValueError("Event stage must be physical or chemical.")
         _text(self.record_id, "record_id")
@@ -85,7 +85,7 @@ class RadiationSource:
     chemistry_model_id: str | None = None
     scavenging_model_id: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.rights, tuple) or not self.rights:
             raise ValueError("Source requires immutable governing reference manifests.")
         if (
@@ -184,7 +184,7 @@ class PhysicalInteraction:
     carried_energy: float | None = None
     kinetic_energy_loss: float | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.key.stage != "physical":
             raise ValueError("Physical interactions require physical event keys.")
         _point(self.position)
@@ -225,7 +225,7 @@ class InteractionLedger:
     source: RadiationSource
     records: tuple[PhysicalInteraction, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not all(isinstance(item, PhysicalInteraction) for item in self.records):
             raise TypeError("Interaction ledger requires physical interactions.")
         object.__setattr__(self, "records", _canonical_events(self.records, self.source))

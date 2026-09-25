@@ -113,7 +113,7 @@ class OperatorAttention(StrictModule):
         block_size: int = 256,
         accumulation_dtype: str = "input",
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.source_channels = int(source_channels)
         self.query_channels = (
             self.source_channels if query_channels is None else int(query_channels)
@@ -189,7 +189,7 @@ class SliceAttention(StrictModule):
         num_heads: int = 4,
         head_dim: int = 16,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.channels = int(channels)
         self.out_channels = self.channels if out_channels is None else int(out_channels)
         self.num_slices = int(num_slices)
@@ -277,7 +277,7 @@ class CodomainAttention(StrictModule):
         num_heads: int = 4,
         head_dim: int = 16,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.channels = int(channels)
         self.out_channels = self.channels if out_channels is None else int(out_channels)
         self.core = _AttentionCore(
@@ -336,7 +336,7 @@ class AxialOperatorAttention(StrictModule):
         num_heads: int = 4,
         head_dim: int = 16,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.channels = int(channels)
         self.core = _AttentionCore(
             source_channels=self.channels,

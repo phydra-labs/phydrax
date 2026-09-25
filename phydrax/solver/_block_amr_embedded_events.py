@@ -50,7 +50,7 @@ class MovingEmbeddedBoundaryEventEvidence(StrictModule, NonTrainableState):
         budget_defect: float,
         successful: bool,
         /,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -113,7 +113,7 @@ class MovingEmbeddedBoundaryEventPlan(StrictModule, NonTrainableState):
         *,
         sign_tolerance: float = 1.0e-10,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         body = str(body_id)
         sign = float(sign_tolerance)
         conservation = float(conservation_tolerance)

@@ -268,7 +268,7 @@ class FittedTransformedTargetRegressor(AbstractFittedModel):
         target_schema: TargetSchema,
         target_shape: tuple[int, ...],
         derivative_contract: DerivativeContract,
-    ):
+    ) -> None:
         if not isinstance(regressor, AbstractArrayModel):
             raise TypeError("regressor must be an AbstractArrayModel.")
         if not isinstance(transformer, AbstractArrayModel):
@@ -364,7 +364,7 @@ class TransformedTargetRegressor(AbstractRecipe):
         regressor: AbstractRecipe,
         transformer: AbstractRecipe,
         /,
-    ):
+    ) -> None:
         if not isinstance(regressor, AbstractRecipe):
             raise TypeError("regressor must be an AbstractRecipe.")
         if not isinstance(transformer, AbstractRecipe):

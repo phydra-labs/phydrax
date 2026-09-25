@@ -341,7 +341,7 @@ class MACDistributedState(StrictModule):
         topology_id: str,
         layout_id: str,
         /,
-    ):
+    ) -> None:
         values = tuple(velocity)
         self.pressure = pressure
         self.velocity = values
@@ -391,7 +391,7 @@ class MACDistributedTopologyPlan(StrictModule, NonTrainableState):
         *,
         halo_width: int = 1,
         execution_group_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if not isinstance(mesh, Mesh):
@@ -639,7 +639,7 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
         plan: MACDistributedTopologyPlan,
         momentum: PreparedMACMomentumOperators | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, MACDistributedTopologyPlan):
             raise TypeError("plan must be MACDistributedTopologyPlan.")
         if momentum is not None and not isinstance(

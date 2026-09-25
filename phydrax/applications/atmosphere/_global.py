@@ -247,7 +247,7 @@ class GlobalPrimitiveEquationPlan(StrictModule):
         water_projection_tolerance=1e-12,
         angular_momentum_projection="none",
         maximum_angular_momentum_projection_fraction=1e-5,
-    ):
+    ) -> None:
         if (
             not isinstance(space, SphericalSpectralDiscretization)
             or space.layout.spin != 0
@@ -402,7 +402,7 @@ class PreparedGlobalAtmosphere(StrictModule):
     levels: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: GlobalPrimitiveEquationPlan):
+    def __init__(self, plan: GlobalPrimitiveEquationPlan) -> None:
         self.plan = plan
         original = plan.space.plan
         limit = int(np.ceil(plan.padding_factor * original.bandlimit))

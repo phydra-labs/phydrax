@@ -29,7 +29,7 @@ _ADEngine = Literal["auto", "reverse", "forward", "jvp"]
 class _VectorValueCallable(StrictModule):
     function: DomainFunction
 
-    def __init__(self, function: DomainFunction):
+    def __init__(self, function: DomainFunction) -> None:
         self.function = function
 
     def __call__(self, *args: Any, key=None, **kwargs: Any):
@@ -48,7 +48,7 @@ class _StackPairCallable(StrictModule):
         second: DomainFunction,
         first_positions: tuple[int, ...],
         second_positions: tuple[int, ...],
-    ):
+    ) -> None:
         self.first = first
         self.second = second
         self.first_positions = first_positions
@@ -213,7 +213,7 @@ class _PoissonBracketCallable(StrictModule):
         deps: tuple[str, ...],
         variables: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         positions = {label: index for index, label in enumerate(deps)}
         self.left_derivatives = left_derivatives
         self.right_derivatives = right_derivatives
@@ -286,7 +286,7 @@ class _PoissonHamiltonianCallable(StrictModule):
         deps: tuple[str, ...],
         variables: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         positions = {label: index for index, label in enumerate(deps)}
         self.derivatives = derivatives
         self.poisson = poisson

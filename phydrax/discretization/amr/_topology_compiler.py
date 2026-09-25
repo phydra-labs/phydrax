@@ -31,7 +31,9 @@ class BlockTopologyCompileStatus(StrictModule, NonTrainableState):
     message: str = eqx.field(static=True)
     status_id: str = eqx.field(static=True)
 
-    def __init__(self, code: str, successful: bool, changed: bool, message: str, /):
+    def __init__(
+        self, code: str, successful: bool, changed: bool, message: str, /
+    ) -> None:
         code_ = str(code)
         message_ = str(message)
         if code_ not in (
@@ -79,7 +81,7 @@ class BlockTopologyCompileEvidence(StrictModule, NonTrainableState):
         proper_nesting_rejections: Sequence[int],
         overflow_level: int | None,
         /,
-    ):
+    ) -> None:
         requested = tuple(requested_blocks)
         realized = tuple(realized_blocks)
         capacities_ = tuple(capacities)
@@ -128,7 +130,7 @@ class BlockTopologyRouteGraph(StrictModule, NonTrainableState):
         parent_slots: Sequence[ArrayLike],
         child_offsets: Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         old_to_new = tuple(
             jnp.asarray(value, dtype=jnp.int32) for value in old_to_new_slots
         )
@@ -170,7 +172,7 @@ class BlockTopologyCompileResult(StrictModule, NonTrainableState):
         status: BlockTopologyCompileStatus,
         evidence: BlockTopologyCompileEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(topology, BlockHierarchyTopology):
             raise TypeError("Compiled topology result requires BlockHierarchyTopology.")
         self.topology = topology
@@ -423,7 +425,7 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
         *,
         tag_buffer: int = 0,
         proper_nesting: int = 0,
-    ):
+    ) -> None:
         if not isinstance(plan, BlockHierarchyPlan):
             raise TypeError("Block topology compiler requires BlockHierarchyPlan.")
         buffer_ = int(tag_buffer)

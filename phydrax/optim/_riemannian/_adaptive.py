@@ -38,7 +38,7 @@ class RiemannianAdamState(StrictModule):
         maximum_second_moment: PyTree[Array],
         metrics: RiemannianStepMetrics,
         /,
-    ):
+    ) -> None:
         self.step = step
         self.first_moment = first_moment
         self.second_moment = second_moment
@@ -79,7 +79,7 @@ class RiemannianAdam(AbstractRiemannianOptimizer):
         epsilon: float = 1e-8,
         amsgrad: bool = False,
         max_gradient_norm: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(parameter_geometry, ParameterGeometry):
             raise TypeError("parameter_geometry must be a ParameterGeometry.")
         if isinstance(learning_rate, (int, float)):

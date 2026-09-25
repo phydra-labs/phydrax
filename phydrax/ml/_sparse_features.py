@@ -31,7 +31,7 @@ class SparseFeatures(StrictModule):
         feature_count: int,
         valid: ArrayLike | None = None,
         case_shape: tuple[int, ...] = (),
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         columns_ = jnp.asarray(column_indices)
         cases = tuple(case_shape)

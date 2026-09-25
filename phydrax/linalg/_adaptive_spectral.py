@@ -62,7 +62,7 @@ class AdaptiveStochasticPolicy(StrictModule):
         relative_tolerance: float = 1e-2,
         absolute_tolerance: float = 1e-6,
         confidence_level: float = 0.95,
-    ):
+    ) -> None:
         minimum = int(min_probes)
         maximum = int(max_probes)
         batch = int(batch_size)

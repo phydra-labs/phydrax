@@ -33,7 +33,7 @@ class DenseEigenState(StrictModule):
         *,
         operator_matvec_count: int,
         metric_matvec_count: int,
-    ):
+    ) -> None:
         reduced = jnp.asarray(reduced_operator)
         factor = jnp.asarray(metric_factor)
         if (
@@ -81,7 +81,7 @@ class PreparedEigenSolve(StrictModule):
         initial_rank: ArrayLike | None = None,
         symbolic_version: int = 1,
         numeric_version: int = 0,
-    ):
+    ) -> None:
         if not isinstance(problem, (Eigenproblem, GeneralizedEigenproblem)):
             raise TypeError("problem must be an Eigenproblem or GeneralizedEigenproblem.")
         if not isinstance(plan, EigenSolvePlan):

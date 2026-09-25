@@ -81,7 +81,7 @@ class DAEInitializationSpec(StrictModule):
         *,
         fixed_state: ArrayLike | None = None,
         fixed_rate: ArrayLike | None = None,
-    ):
+    ) -> None:
         if mode not in ("index-one", "fixed-rate", "check", "custom"):
             raise ValueError("Unknown DAE initialization mode.")
         if mode == "custom":
@@ -162,7 +162,7 @@ class DAEInitializationResult(StrictModule):
         status: Array,
         nonlinear_result: NonlinearResult | None,
         initialization_id: str,
-    ):
+    ) -> None:
         if nonlinear_result is not None and not isinstance(
             nonlinear_result, NonlinearResult
         ):

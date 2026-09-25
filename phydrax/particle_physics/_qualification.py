@@ -46,7 +46,7 @@ class HEPQualificationBundle(StrictModule, NonTrainableState):
         capability: CapabilityProfile,
         scientific_claim: ScientificClaimProfile,
         /,
-    ):
+    ) -> None:
         if (
             not isinstance(support, SupportTuple)
             or not isinstance(capability, CapabilityProfile)

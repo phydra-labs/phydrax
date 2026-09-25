@@ -61,7 +61,7 @@ class PhaseFieldAdaptiveEpoch(StrictModule, NonTrainableState):
         state: AllenCahnAcceptedState | CahnHilliardAcceptedState,
         epoch_index: int = 0,
         /,
-    ):
+    ) -> None:
         index = int(epoch_index)
         if not isinstance(method, (PreparedAllenCahnFEM, PreparedCahnHilliardFEM)):
             raise TypeError("Adaptive phase-field method has an invalid type.")
@@ -117,7 +117,7 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
         gradient_threshold: float,
         mass_tolerance: float = 1.0e-10,
         energy_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (gradient_threshold, mass_tolerance, energy_tolerance)
@@ -299,7 +299,7 @@ class PhaseFieldHPTransactionPlan(StrictModule, NonTrainableState):
     transaction: FiniteElementTopologyTransaction
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, *, mass_tolerance: float = 1.0e-10):
+    def __init__(self, *, mass_tolerance: float = 1.0e-10) -> None:
         tolerance = float(mass_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("hp phase-field mass tolerance must be nonnegative.")

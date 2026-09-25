@@ -144,7 +144,7 @@ class TLEPropagationEpoch(StrictModule):
     offset_seconds: Array
     epoch_model_id: str = eqx.field(static=True)
 
-    def __init__(self, source: TimeInstant, offset_seconds: ArrayLike, /):
+    def __init__(self, source: TimeInstant, offset_seconds: ArrayLike, /) -> None:
         if not isinstance(source, TimeInstant):
             raise TypeError("source must be a TimeInstant.")
         if source.scale != "UTC":
@@ -252,7 +252,7 @@ class TLEPropagationPlan(StrictModule, NonTrainableState):
         j2: ArrayLike = 1.082616e-3,
         j3: ArrayLike = -2.53881e-6,
         j4: ArrayLike = -1.65597e-6,
-    ):
+    ) -> None:
         if not isinstance(record, TleRecord):
             raise TypeError("record must be a TleRecord.")
         native_context = self.native_context(record)

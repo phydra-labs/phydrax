@@ -74,7 +74,7 @@ class UnstructuredConservativeRemapEvidence(StrictModule):
         helper_evidence_id: str = "",
         resource_evidence_id: str = "",
         evidence_id: str = "",
-    ):
+    ) -> None:
         if not isinstance(status, UnstructuredConservativeRemapStatus):
             raise TypeError("status must be UnstructuredConservativeRemapStatus.")
         counts = {

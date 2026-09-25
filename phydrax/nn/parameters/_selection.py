@@ -85,7 +85,7 @@ class ParameterSubspace(StrictModule):
         filter_spec: PyTree[bool] | Callable,
         *,
         alias_groups: Sequence[Sequence[str]] = (),
-    ):
+    ) -> None:
         mask = _selection_mask(tree, filter_spec)
         # Terminal nodes are wholly frozen: `None` in the selection and whole in
         # the complement, matching the role lanes of `partition_parameters`.

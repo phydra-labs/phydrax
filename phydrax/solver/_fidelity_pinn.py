@@ -51,7 +51,7 @@ class FidelityFieldTransfer(StrictModule, NonTrainableState):
         *,
         transfer_id: str | None = None,
         transform: Callable[[DomainFunction], DomainFunction] | None = None,
-    ):
+    ) -> None:
         source = str(source_level_id)
         target = str(target_level_id)
         if not source or not target or source == target:
@@ -90,7 +90,7 @@ class _ConditionedCorrectionEvaluator(StrictModule):
         model: AbstractArrayModel,
         correction_id: str,
         /,
-    ):
+    ) -> None:
         self.parent = freeze_domain_function(parent)
         self.model = model
         self.correction_id = correction_id
@@ -157,7 +157,7 @@ class FidelityPINNResult(StrictModule, NonTrainableState):
         training_observations: Sequence[PreparedFidelityObservation] = (),
         validation_observations: Sequence[PreparedFidelityObservation] = (),
         source_result_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(path, FidelityPath):
             raise TypeError("path must be a FidelityPath.")
         if not isinstance(solver, FunctionalSolver):

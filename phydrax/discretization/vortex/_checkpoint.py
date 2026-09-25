@@ -38,7 +38,7 @@ class VortexCheckpointPlan(StrictModule, NonTrainableState):
     plan_ids: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, state_kind: str, plan_ids: tuple[str, ...], /):
+    def __init__(self, state_kind: str, plan_ids: tuple[str, ...], /) -> None:
         kind = str(state_kind)
         identifiers = tuple(str(value) for value in plan_ids)
         if not kind or not identifiers or any(not value for value in identifiers):

@@ -41,7 +41,7 @@ class MultiChargeCanonicalPlan(StrictModule, NonTrainableState):
         *,
         periodicities: Sequence[float],
         volume: float,
-    ):
+    ) -> None:
         if not isinstance(convention, ChemicalChargeConvention):
             raise TypeError("convention must be ChemicalChargeConvention.")
         nodes = tuple(node_shape)
@@ -167,7 +167,7 @@ class QCDReweightingPlan(StrictModule, NonTrainableState):
         determinant_prescription_id: str,
         chain_evidence_id: str,
         numerical: PhaseQuenchedReweightingPlan | None = None,
-    ):
+    ) -> None:
         labels = tuple(
             str(value).strip()
             for value in (

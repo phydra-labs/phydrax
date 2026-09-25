@@ -141,7 +141,7 @@ class FieldProjectionMetric(StrictModule):
         *,
         scale: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         name = str(field)
         if not name:
             raise ValueError("field must be non-empty.")
@@ -194,7 +194,7 @@ class NeuralTangentSolvePolicy(StrictModule):
         damping: float = 1e-6,
         maximum_relative_defect: float | None = None,
         preconditioner: AbstractPreconditionerBuilder | None = None,
-    ):
+    ) -> None:
         if formulation not in ("rectangular", "gram"):
             raise ValueError("formulation must be 'rectangular' or 'gram'.")
         damping_ = float(damping)
@@ -267,7 +267,7 @@ class NeuralGalerkinAdjointPolicy(StrictModule):
         *,
         maximum_primal_residual: float = 1.0e-6,
         maximum_adjoint_residual: float = 1.0e-6,
-    ):
+    ) -> None:
         if mode not in ("recursive_checkpoint", "certified_backsolve"):
             raise ValueError("Unknown neural Galerkin adjoint policy.")
         primal = float(maximum_primal_residual)
@@ -290,7 +290,7 @@ class NeuralGalerkinEpoch(StrictModule):
 
     def __init__(
         self, problem: NeuralGalerkinProblem, grid: TimeGrid, /, *, population_id: str
-    ):
+    ) -> None:
         if not isinstance(problem, NeuralGalerkinProblem) or not isinstance(
             grid, TimeGrid
         ):
@@ -308,7 +308,7 @@ class NeuralGalerkinEpochPlan(StrictModule):
     epochs: tuple[NeuralGalerkinEpoch, ...]
     replay_id: str = eqx.field(static=True)
 
-    def __init__(self, epochs: Sequence[NeuralGalerkinEpoch], /):
+    def __init__(self, epochs: Sequence[NeuralGalerkinEpoch], /) -> None:
         values = tuple(epochs)
         if not values or any(
             not isinstance(value, NeuralGalerkinEpoch) for value in values
@@ -377,7 +377,7 @@ class NeuralGalerkinProblem(StrictModule):
         args: Any = None,
         evaluation_key: Key[Array, ""] = DOC_KEY0,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         fields = frozendict(functions)
         if not fields or any(
             not isinstance(value, DomainFunction) for value in fields.values()

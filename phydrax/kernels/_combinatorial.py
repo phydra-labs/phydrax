@@ -111,7 +111,7 @@ class HammingSpectralKernel(AbstractPositiveDefiniteKernel):
         *,
         max_level: int | None = None,
         normalize: bool = True,
-    ):
+    ) -> None:
         resolved_dimension = int(dimension)
         resolved_alphabet = int(alphabet_size)
         if resolved_dimension <= 0:
@@ -214,7 +214,7 @@ class HypercubeSpectralKernel(AbstractPositiveDefiniteKernel):
         *,
         max_level: int | None = None,
         normalize: bool = True,
-    ):
+    ) -> None:
         self.hamming_kernel = HammingSpectralKernel(
             dimension,
             2,

@@ -45,7 +45,7 @@ class FiniteVolumeStageEpochTransition(StrictModule, NonTrainableState):
         stage_index: int,
         event_id: str,
         /,
-    ):
+    ) -> None:
         source = str(source_dynamics_id)
         successor = str(successor_dynamics_id)
         event = str(event_id)

@@ -77,7 +77,7 @@ class HPCFilesystemProfile(StrictModule, NonTrainableState):
         directory_fsync: bool,
         advisory_locking: bool,
         attempt_private_staging: bool,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         filesystem_ = _identifier(filesystem, "filesystem")
         self.provider_id = provider
@@ -133,7 +133,7 @@ class POSIXRepositoryPolicy(StrictModule, NonTrainableState):
         *,
         maximum_chunk_bytes: int = _DEFAULT_CHUNK_LIMIT,
         maximum_metadata_bytes: int = _METADATA_LIMIT,
-    ):
+    ) -> None:
         if not isinstance(filesystem_profile, HPCFilesystemProfile):
             raise TypeError("filesystem_profile must be HPCFilesystemProfile.")
         filesystem_profile.require_transactional_support()
@@ -175,7 +175,7 @@ class ObjectStoreProfile(StrictModule, NonTrainableState):
         strongly_consistent_listing: bool,
         multipart_free_objects: bool,
         maximum_object_bytes: int,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         maximum = _positive(maximum_object_bytes, "maximum_object_bytes")
         self.provider_id = provider
@@ -264,7 +264,7 @@ class ArtifactGuardRecoveryAuthorization(StrictModule, NonTrainableState):
         /,
         *,
         worker_fenced: bool,
-    ):
+    ) -> None:
         if worker_fenced is not True:
             raise ValueError(
                 "Artifact guard recovery requires external worker-fencing evidence."
@@ -335,7 +335,7 @@ class ConditionalObjectClient(Protocol):
 class InMemoryConditionalObjectClient:
     """Standards-faithful conditional object client for qualification scenarios."""
 
-    def __init__(self, /, *, maximum_object_bytes: int):
+    def __init__(self, /, *, maximum_object_bytes: int) -> None:
         self.maximum_object_bytes = _positive(
             maximum_object_bytes, "maximum_object_bytes"
         )
@@ -425,7 +425,7 @@ class POSIXArtifactRepository:
         /,
         *,
         failure_injector: FailureInjector | None = None,
-    ):
+    ) -> None:
         if not isinstance(policy, POSIXRepositoryPolicy):
             raise TypeError("policy must be POSIXRepositoryPolicy.")
         policy.filesystem_profile.require_transactional_support()
@@ -1603,7 +1603,7 @@ class S3ArtifactRepository:
         *,
         maximum_chunk_bytes: int = _DEFAULT_CHUNK_LIMIT,
         failure_injector: FailureInjector | None = None,
-    ):
+    ) -> None:
         if not isinstance(profile, ObjectStoreProfile):
             raise TypeError("profile must be ObjectStoreProfile.")
         profile.require_transactional_support()

@@ -41,7 +41,7 @@ class SmoothDualLP(StrictModule):
         num_steps: int = 1000,
         learning_rate: float = 0.05,
         temperature: float = 0.1,
-    ):
+    ) -> None:
         steps = int(num_steps)
         rate = float(learning_rate)
         temp = float(temperature)

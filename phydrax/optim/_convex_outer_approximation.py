@@ -75,7 +75,7 @@ class ConvexMINLPCut(StrictModule, NonTrainableState):
         kind: ConvexMINLPCutKind,
         source_index: int,
         evidence_id: str,
-    ):
+    ) -> None:
         row_ = jnp.asarray(row)
         rhs_ = jnp.asarray(rhs, dtype=row_.dtype)
         if row_.ndim != 1 or rhs_.shape != ():
@@ -127,7 +127,7 @@ class ConvexMINLPOuterApproximation(StrictModule, NonTrainableState):
         duplicate_tolerance: float = 1e-9,
         absolute_gap: float = 1e-7,
         relative_gap: float = 1e-7,
-    ):
+    ) -> None:
         master_ = NativeMixedIntegerBranchAndBound() if master is None else master
         if not isinstance(master_, AbstractMixedIntegerMethod):
             raise TypeError("master must be an AbstractMixedIntegerMethod.")

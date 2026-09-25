@@ -14,7 +14,7 @@ class SystemEvent:
     indicator_index: int
     direction: int = 0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.event_id, str) or not self.event_id:
             raise ValueError("System event identifier must be nonempty.")
         if (

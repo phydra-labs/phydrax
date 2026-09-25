@@ -334,7 +334,7 @@ class TreeStructureDiagnostics(StrictModule):
         used_leaves: Any,
         maximum_depth_bound: Any,
         capacity_exhausted: Any,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.used_trees = jnp.asarray(used_trees, dtype=jnp.int32)
         self.tree_capacity = jnp.asarray(tree_capacity, dtype=jnp.int32)
@@ -419,7 +419,7 @@ class TreeEnsemble(AbstractFittedModel):
         out_size: int | tuple[int, ...] | Literal["scalar"] | None = None,
         max_steps: int | None = None,
         capacity_exhausted: ArrayLike = False,
-    ):
+    ) -> None:
         case_shape_ = tuple(case_shape)
         prefix = case_shape_
         feature_index_ = jnp.asarray(feature_index, dtype=jnp.int32)

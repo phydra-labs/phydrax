@@ -156,7 +156,7 @@ class ParaxialResonatorPlan(StrictModule, NonTrainableState):
         closure_tolerance: float = 1e-9,
         marginal_tolerance: float = 1e-7,
         condition_limit: float = 1e12,
-    ):
+    ) -> None:
         if not isinstance(maps, tuple) or not maps:
             raise TypeError("maps must be a nonempty tuple of DifferentialRayMap values.")
         if any(not isinstance(ray_map, DifferentialRayMap) for ray_map in maps):

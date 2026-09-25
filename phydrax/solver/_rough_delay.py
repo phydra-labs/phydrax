@@ -86,7 +86,7 @@ class RoughDelayDifferentialProblem(StrictModule):
         args: Any = None,
         geometry: AbstractStateGeometry | None = None,
         problem_id: str = "rough-delay-differential-problem",
-    ):
+    ) -> None:
         if not callable(vector_fields):
             raise TypeError("vector_fields must be callable.")
         if not callable(history):

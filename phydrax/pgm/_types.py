@@ -60,7 +60,7 @@ class FactorGraphProvenance(StrictModule):
         implementation: str,
         exact: bool,
         configuration: tuple[tuple[str, str], ...] = (),
-    ):
+    ) -> None:
         for name, value in (
             ("structure_id", structure_id),
             ("plan_id", plan_id),

@@ -85,7 +85,7 @@ class HarmonicCoordinateSpec(StrictModule, NonTrainableState):
         *,
         lower_value: float = 0.0,
         upper_value: float = 1.0,
-    ):
+    ) -> None:
         name_ = _nonempty(name, "Harmonic coordinate name")
         lower_role_ = _nonempty(lower_role, "Lower boundary role")
         upper_role_ = _nonempty(upper_role, "Upper boundary role")
@@ -135,7 +135,7 @@ class HarmonicCoordinateEvidence(StrictModule, NonTrainableState):
         finite: ArrayLike,
         successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         arrays = (
             np.shape(solver_status),
             np.shape(solver_residual_norm),
@@ -184,7 +184,7 @@ class HarmonicCoordinateFields(StrictModule):
         /,
         *,
         fields_id: str,
-    ):
+    ) -> None:
         names_ = tuple(str(name) for name in names)
         nodal = jnp.asarray(nodal_values)
         cells = jnp.asarray(cell_values)
@@ -283,7 +283,7 @@ class HarmonicCoordinatePlan(StrictModule, NonTrainableState):
         roles: CardiacBoundaryRoles,
         specs: HarmonicCoordinateSpec | Sequence[HarmonicCoordinateSpec],
         /,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         if not isinstance(roles, CardiacBoundaryRoles):
@@ -343,7 +343,9 @@ class PreparedHarmonicCoordinates(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
     numeric_version: str = eqx.field(static=True)
 
-    def __init__(self, plan: HarmonicCoordinatePlan, /, *, numeric_version: str = "0"):
+    def __init__(
+        self, plan: HarmonicCoordinatePlan, /, *, numeric_version: str = "0"
+    ) -> None:
         if not isinstance(plan, HarmonicCoordinatePlan):
             raise TypeError("plan must be a HarmonicCoordinatePlan.")
         version = _nonempty(numeric_version, "numeric_version")

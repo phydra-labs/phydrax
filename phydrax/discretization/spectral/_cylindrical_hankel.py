@@ -80,7 +80,7 @@ class CylindricalHankelPlan(StrictModule, NonTrainableState):
         inverse_tolerance: float = 2.0e-6,
         parseval_tolerance: float = 2.0e-6,
         maximum_matrix_elements: int = 4_194_304,
-    ):
+    ) -> None:
         radius_value = float(radius)
         count = int(radial_count)
         azimuthal_order = int(order)

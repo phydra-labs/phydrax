@@ -48,7 +48,7 @@ class UnstructuredWhitneyCurrentPlan(StrictModule, NonTrainableState):
         *,
         maximum_segments: int = 8,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if locator.cell_map.coordinate_element.degree != 1:
             raise ValueError("Whitney current requires an order-one cell map.")
         cells = np.asarray(locator.cells, dtype=np.int32)

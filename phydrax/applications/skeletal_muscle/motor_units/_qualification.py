@@ -57,7 +57,7 @@ class FuglevandWinterPatla1993QualificationPlan(StrictModule, NonTrainableState)
         normal_standard_deviation_tolerance: float = 0.08,
         twitch_relative_tolerance: float = 2.0e-6,
         minimum_force_standard_deviation: float = 1.0e-8,
-    ):
+    ) -> None:
         values = (
             float(normal_mean_tolerance),
             float(normal_standard_deviation_tolerance),

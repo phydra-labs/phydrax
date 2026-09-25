@@ -89,7 +89,7 @@ class FullStateInformation(StrictModule):
         *,
         information_id: str = "full-state",
         timing: str = "pre-action",
-    ):
+    ) -> None:
         self.information_id = _name(information_id, owner="information_id")
         self.timing = _name(timing, owner="timing")
 
@@ -109,7 +109,7 @@ class CentralizedObservationInformation(StrictModule):
         *,
         information_id: str = "centralized-observation",
         timing: str = "pre-action",
-    ):
+    ) -> None:
         self.information_id = _name(information_id, owner="information_id")
         self.timing = _name(timing, owner="timing")
 
@@ -134,7 +134,7 @@ class GaussianBelief(StrictModule):
         *,
         belief_id: str = "gaussian-belief",
         validation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         tolerance = _tolerance(validation_tolerance, owner="validation_tolerance")
         mean_array = _real_array(mean, owner="mean")
         if mean_array.ndim != 1 or mean_array.shape[0] < 1:
@@ -212,7 +212,7 @@ class FiniteStateCommonInformationGame(StrictModule):
         *,
         game_id: str = "finite-state-common-information-game",
         probability_tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         if isinstance(player_ids, str):
             raise TypeError("player_ids must be a sequence of identifiers.")
         players = tuple(player_ids)
@@ -350,7 +350,7 @@ class CommonInformationEquilibriumSelector(StrictModule):
         /,
         *,
         selector_id: str,
-    ):
+    ) -> None:
         if not callable(selection):
             raise TypeError("selection must be callable.")
         self.selection = selection
@@ -391,7 +391,7 @@ class CommonInformationPolicy(StrictModule):
         horizon: int,
         num_common_states: int,
         /,
-    ):
+    ) -> None:
         if len(prescriptions) != len(player_ids):
             raise ValueError("prescriptions must provide one table per player.")
         tables = tuple(jnp.asarray(table, dtype=jnp.int32) for table in prescriptions)

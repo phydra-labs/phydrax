@@ -74,7 +74,7 @@ class CharacteristicBoundaryPolicy(StrictModule):
         *,
         reset_map: Callable[[Array], ArrayLike] | None = None,
         priority: int = 0,
-    ):
+    ) -> None:
         if not isinstance(schedule, PreparedHybridSchedule):
             raise TypeError("schedule must be PreparedHybridSchedule.")
         if action not in ("stop", "reflect", "absorb", "reset", "periodic"):
@@ -126,7 +126,7 @@ class DiffusiveCharacteristicPlan(StrictModule):
         /,
         *,
         interpretation: Literal["ito", "stratonovich"] = "ito",
-    ):
+    ) -> None:
         if not isinstance(ensemble, PreparedStochasticPathEnsemble):
             raise TypeError("ensemble must be PreparedStochasticPathEnsemble.")
         if not isinstance(integration, IntegrationRealization):
@@ -414,7 +414,7 @@ class CharacteristicProjectionProblem(StrictModule):
         boundary_policy: CharacteristicBoundaryPolicy | None = None,
         args: Any = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name = str(field)
         coordinate = str(coordinate_label)
         if not name or not coordinate:

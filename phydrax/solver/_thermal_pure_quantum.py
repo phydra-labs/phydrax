@@ -46,7 +46,7 @@ class ThermalPureQuantumPlan(StrictModule):
         matrix_function: MatrixFunctionPolicy,
         maximum_retained_bytes: int,
         maximum_workspace_bytes: int,
-    ):
+    ) -> None:
         beta_ = float(beta)
         probes = int(probe_count)
         observables = int(observable_count)

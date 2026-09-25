@@ -57,7 +57,7 @@ class PeriodicEwaldEvidence(StrictModule, NonTrainableState):
         neutrality: EwaldNeutralityKind,
         residual_tolerance: float,
         /,
-    ):
+    ) -> None:
         if neutrality not in ("require-neutral", "uniform-background"):
             raise ValueError("Unknown Ewald neutrality policy.")
         tolerance = float(residual_tolerance)
@@ -142,7 +142,7 @@ class PeriodicEwaldResult(StrictModule, NonTrainableState):
         plan_id: str,
         prepared_id: str,
         cell_id: str,
-    ):
+    ) -> None:
         energy_ = jnp.asarray(energy).reshape(())
         force = jnp.asarray(forces, dtype=energy_.dtype)
         stress_ = jnp.asarray(stress, dtype=energy_.dtype)
@@ -224,7 +224,7 @@ class PeriodicEwaldPlan(StrictModule, NonTrainableState):
         charge_tolerance: float = 1.0e-12,
         minimum_distance: float = 1.0e-10,
         residual_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if (
             not isinstance(cell, PeriodicCell)
             or not cell.fully_periodic
@@ -290,7 +290,7 @@ class PreparedPeriodicEwald(StrictModule, NonTrainableState):
     reciprocal_indices: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: PeriodicEwaldPlan, /):
+    def __init__(self, plan: PeriodicEwaldPlan, /) -> None:
         if not isinstance(plan, PeriodicEwaldPlan):
             raise TypeError("plan must be PeriodicEwaldPlan.")
         real = np.stack(
@@ -513,7 +513,9 @@ class GTHProjectorChannel(StrictModule, NonTrainableState):
     coupling: Array
     channel_id: str = eqx.field(static=True)
 
-    def __init__(self, angular_momentum: int, radius: float, coupling: ArrayLike, /):
+    def __init__(
+        self, angular_momentum: int, radius: float, coupling: ArrayLike, /
+    ) -> None:
         angular = int(angular_momentum)
         radius_ = float(radius)
         coupling_ = jnp.asarray(coupling)
@@ -563,7 +565,7 @@ class GTHComponentEvidence(StrictModule, NonTrainableState):
         source_manifest_id: str,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         norms = jnp.asarray(component_norms).reshape((-1,))
         source = str(source_manifest_id).strip()
         plan = str(plan_id).strip()
@@ -600,7 +602,7 @@ class GTHLocalEvaluation(StrictModule, NonTrainableState):
         evidence: GTHComponentEvidence,
         coefficient_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         squared = jnp.asarray(squared_wavevectors, dtype=values_.real.dtype)
         if values_.shape != squared.shape:
@@ -643,7 +645,7 @@ class GTHNonlocalEvaluation(StrictModule, NonTrainableState):
         evidence: GTHComponentEvidence,
         energy_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         channel = jnp.asarray(channel_energies)
         energy_ = jnp.asarray(energy, dtype=channel.real.dtype).reshape(())
         if channel.ndim != 1 or channel.size == 0:
@@ -694,7 +696,7 @@ class GTHPseudopotentialPlan(StrictModule, NonTrainableState):
         /,
         *,
         channels: tuple[GTHProjectorChannel, ...] = (),
-    ):
+    ) -> None:
         charge = float(ionic_charge)
         radius = float(local_radius)
         coefficients = jnp.asarray(local_coefficients)

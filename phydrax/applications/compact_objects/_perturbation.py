@@ -51,7 +51,7 @@ class PerturbationConvention(StrictModule, NonTrainableState):
     tetrad: str = eqx.field(static=True)
     convention_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         phase = "exp(-i*omega*t+i*m*phi)"
         angular_basis = "orthonormal spin-weighted spherical harmonics"
         angular_normalization = (
@@ -115,7 +115,7 @@ class SeparatedMode(StrictModule, NonTrainableState):
         family: str = "qnm",
         background_id: str,
         convention_id: str | None = None,
-    ):
+    ) -> None:
         values = (spin_weight, ell, m, overtone)
         if any(
             isinstance(value, bool) or not isinstance(value, Integral) for value in values
@@ -178,7 +178,7 @@ class RadialBoundaryCondition(StrictModule, NonTrainableState):
         /,
         *,
         convention_id: str | None = None,
-    ):
+    ) -> None:
         if horizon not in ("ingoing", "outgoing") or infinity not in (
             "ingoing",
             "outgoing",

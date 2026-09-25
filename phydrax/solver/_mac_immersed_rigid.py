@@ -124,7 +124,7 @@ class MACRigidImmersedProjectionPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
 
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
@@ -557,7 +557,7 @@ class MACRigidImmersedEulerMethod(StrictModule, NonTrainableState):
         projection: MACRigidImmersedProjectionPlan,
         step_size: float,
         /,
-    ):
+    ) -> None:
         step = float(step_size)
         if step <= 0.0:
             raise ValueError("step_size must be positive.")
@@ -777,7 +777,7 @@ class MACRigidImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
         *,
         maximum_iterations: int = 8,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         tolerance_ = float(tolerance)
         if iterations <= 0 or tolerance_ <= 0.0:
@@ -874,7 +874,7 @@ class MACRigidImmersedMidpointMethod(StrictModule, NonTrainableState):
     backward_euler: MACRigidImmersedBackwardEulerMethod
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, backward_euler: MACRigidImmersedBackwardEulerMethod, /):
+    def __init__(self, backward_euler: MACRigidImmersedBackwardEulerMethod, /) -> None:
         self.backward_euler = backward_euler
         self.method_id = canonical_fingerprint(
             {

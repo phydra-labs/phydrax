@@ -42,7 +42,7 @@ class NeutrinoOscillationParameters(StrictModule, NonTrainableState):
         delta_m21_squared: float,
         delta_m31_squared: float,
         ordering: NeutrinoMassOrdering,
-    ):
+    ) -> None:
         angles = tuple(map(float, (theta12, theta13, theta23, delta_cp)))
         splittings = tuple(map(float, (delta_m21_squared, delta_m31_squared)))
         if (

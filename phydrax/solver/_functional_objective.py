@@ -130,7 +130,7 @@ class _ObjectiveTerm(StrictModule):
         /,
         *,
         index: int,
-    ):
+    ) -> None:
         mode = _term_mode(term)
         if (mode == "adaptive_population") != (population is not None):
             raise ValueError(
@@ -157,7 +157,7 @@ class _TermSelection(StrictModule):
     scale: Any
     indices: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, indices: Sequence[int], scale: Any = 1.0, /):
+    def __init__(self, indices: Sequence[int], scale: Any = 1.0, /) -> None:
         self.indices = tuple(indices)
         self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
@@ -181,7 +181,7 @@ class _PreparedTerm(StrictModule):
         key: Any,
         payload_kind: _PreparedPayloadKind,
         evaluation_kwargs: Mapping[str, Any],
-    ):
+    ) -> None:
         if payload_kind == "none":
             if payload is not None:
                 raise ValueError("Prepared term payload kind does not match its payload.")
@@ -217,7 +217,7 @@ class _PreparedObjective(StrictModule):
         iteration: Any,
         enforcement: EnforcementProgram | None,
         /,
-    ):
+    ) -> None:
         self.terms = tuple(terms)
         self.selection = selection
         self.model_loss_key = model_loss_key
@@ -240,7 +240,7 @@ class _ObjectiveValues(StrictModule):
         model_loss_values: Any,
         component_values: Any,
         /,
-    ):
+    ) -> None:
         self.total = total
         self.term_values = term_values
         self.model_loss_values = model_loss_values
@@ -490,7 +490,7 @@ class _FunctionalObjective(StrictModule):
         evaluation_terms: AbstractScalarTerm | Sequence[AbstractScalarTerm] = (),
         enforcement: EnforcementProgram | None = None,
         collocation_key: Any,
-    ):
+    ) -> None:
         training_terms = _terms_tuple(terms, name="terms")
         diagnostic_terms = _terms_tuple(evaluation_terms, name="evaluation_terms")
         if any(_term_mode(term) == "adaptive_population" for term in diagnostic_terms):

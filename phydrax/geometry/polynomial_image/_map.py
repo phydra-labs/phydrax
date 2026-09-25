@@ -36,7 +36,7 @@ class SparsePolynomialMap(StrictModule):
         /,
         *,
         exact_system: ExactSparsePolynomialSystem | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, SparsePolynomialSystem):
             raise TypeError("system must be a SparsePolynomialSystem.")
         if exact_system is not None:

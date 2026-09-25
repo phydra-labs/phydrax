@@ -49,7 +49,7 @@ class BosonicGaussianState(StrictModule):
         tolerance: float = 1e-9,
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         hbar_ = float(hbar)
         if not isfinite(hbar_) or hbar_ <= 0.0:
             raise ValueError("hbar must be finite and strictly positive.")
@@ -149,7 +149,7 @@ class BosonicGaussianChannel(StrictModule):
         tolerance: float = 1e-9,
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         hbar_ = float(hbar)
         if not isfinite(hbar_) or hbar_ <= 0.0:
             raise ValueError("hbar must be finite and strictly positive.")

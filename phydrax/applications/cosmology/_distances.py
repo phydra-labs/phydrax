@@ -46,7 +46,7 @@ class FLRWDistancePlan(StrictModule, NonTrainableState):
         light_speed: float = 1.0,
         order: int = 64,
         near_flat_threshold: float = 1.0e-6,
-    ):
+    ) -> None:
         speed = float(light_speed)
         order_ = int(order)
         threshold = float(near_flat_threshold)

@@ -53,7 +53,7 @@ class StructuralEnsembleHypothesis:
     source_case_ids: tuple[str, ...]
     parent_case_ids: tuple[str, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not isinstance(self.state_ids, tuple)
             or len(self.state_ids) < 2
@@ -138,7 +138,7 @@ class ConditionPopulationModel(StrictModule, NonTrainableState):
         kind: PopulationModelKind,
         design: ArrayLike | None = None,
         feature_names: tuple[str, ...] = (),
-    ):
+    ) -> None:
         conditions, states, names = (
             tuple(condition_ids),
             tuple(state_ids),
@@ -223,7 +223,7 @@ class EnsembleDiagnosticPolicy:
     singular_relative_tolerance: float
     maximum_residual_correlation: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -370,7 +370,7 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
         response_prior_scale: float,
         population_prior_scale: float = 2.0,
         dirichlet_concentration: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(batch, MutationProfileBatch) or not isinstance(
             hypothesis, StructuralEnsembleHypothesis
         ):

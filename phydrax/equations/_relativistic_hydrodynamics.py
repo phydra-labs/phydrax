@@ -42,7 +42,7 @@ class RelativisticHydrodynamicsLayout(StrictModule, NonTrainableState):
     momentum_variance: str = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, densitized: bool):
+    def __init__(self, dimension: int, /, *, densitized: bool) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (1, 2, 3):
             raise ValueError("Relativistic hydrodynamics dimension must be 1, 2, or 3.")
@@ -162,7 +162,7 @@ class ValenciaGeometrySource(StrictModule, NonTrainableState):
         beta_gradient: ArrayLike,
         spatial_metric_gradient: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(geometry, ADMGridGeometry):
             raise TypeError("geometry must be an ADMGridGeometry.")
         alpha = jnp.asarray(alpha_gradient, dtype=geometry.alpha.dtype)
@@ -495,7 +495,7 @@ class SRHDSystem(AbstractConservationSystem, NonTrainableState):
         *,
         density_floor: float = 1.0e-12,
         pressure_floor: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(eos, AbstractRelativisticEOS):
             raise TypeError("eos must be an AbstractRelativisticEOS.")
         if eos.scale.speed_of_light != 1:
@@ -734,7 +734,7 @@ class ValenciaGRHDSystem(StrictModule, NonTrainableState):
         density_floor: float = 1.0e-12,
         pressure_floor: float = 1.0e-12,
         convention: RelativityConvention | None = None,
-    ):
+    ) -> None:
         if not isinstance(eos, AbstractRelativisticEOS):
             raise TypeError("eos must be an AbstractRelativisticEOS.")
         if eos.scale.speed_of_light != 1:

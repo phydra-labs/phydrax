@@ -147,7 +147,9 @@ class SignedQualificationRecord:
 class QualificationRoleTrust:
     """Public verifiers plus disjoint role memberships; never installs authority keys."""
 
-    def __init__(self, store: SigningTrustStore, roles: Mapping[str, Sequence[str]], /):
+    def __init__(
+        self, store: SigningTrustStore, roles: Mapping[str, Sequence[str]], /
+    ) -> None:
         if set(roles) != QUALIFICATION_ROLES:
             raise ValueError("All six qualification roles must be configured explicitly.")
         normalized = {role: frozenset(keys) for role, keys in roles.items()}
@@ -268,7 +270,7 @@ class QualificationRoleTrust:
 class AsymmetricReleaseSigner:
     """Adapt Ed25519/KMS purpose signing to the existing ReleaseIndex protocol."""
 
-    def __init__(self, signer: AsymmetricSigner, /, *, issued_at: int):
+    def __init__(self, signer: AsymmetricSigner, /, *, issued_at: int) -> None:
         if signer.algorithm not in ("Ed25519", "ECDSA_SHA_256", "RSASSA_PSS_SHA_256"):
             raise ValueError(
                 "Production release signing requires an asymmetric algorithm."
@@ -300,7 +302,7 @@ class AsymmetricReleaseTrustPolicy:
         *,
         proofs: Sequence[object] = (),
         max_index_age: int,
-    ):
+    ) -> None:
         if type(max_index_age) is not int or max_index_age <= 0:
             raise ValueError("Index freshness must have a positive finite bound.")
         self.roles = roles

@@ -31,7 +31,7 @@ class AlgebraResourceBudget(StrictModule, NonTrainableState):
         maximum_audit_terms: int = 2_000_000,
         maximum_plan_bytes: int = 64 * 1024**2,
         maximum_dense_kernel_bytes: int = 16 * 1024**2,
-    ):
+    ) -> None:
         names = (
             "maximum_coordinates",
             "maximum_product_pairs",
@@ -112,7 +112,7 @@ class AlgebraResourceEvidence(StrictModule, NonTrainableState):
         plan_bytes: int,
         dense_kernel_bytes: int,
         budget: AlgebraResourceBudget,
-    ):
+    ) -> None:
         if not isinstance(budget, AlgebraResourceBudget):
             raise TypeError("budget must be AlgebraResourceBudget.")
         values = tuple(

@@ -43,7 +43,7 @@ class TransformDiagonalSolvePlan(StrictModule, NonTrainableState):
         gauge: GaugePolicy = "minimum_norm",
         zero_tolerance: float = 1e-10,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(representation, TransformDiagonalRepresentation):
             raise TypeError("representation must be TransformDiagonalRepresentation.")
         if not isinstance(representation.operator.source, ArraySpace) or not isinstance(
@@ -112,7 +112,7 @@ class PreparedTransformDiagonalSolve(StrictModule, NonTrainableState):
     nullspace_dimension: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: TransformDiagonalSolvePlan, /):
+    def __init__(self, plan: TransformDiagonalSolvePlan, /) -> None:
         if not isinstance(plan, TransformDiagonalSolvePlan):
             raise TypeError("plan must be a TransformDiagonalSolvePlan.")
         diagonal = (plan.representation.modal_values + plan.diagonal_shift).reshape((-1,))

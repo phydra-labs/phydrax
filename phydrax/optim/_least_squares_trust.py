@@ -135,7 +135,7 @@ class DoglegLeastSquares(AbstractLeastSquaresMethod):
         nonmonotone_window: int = 1,
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if mode not in ("traditional", "subspace", "dogbox"):
             raise ValueError("Unknown dogleg mode.")
         values = tuple(
@@ -446,7 +446,7 @@ class TrustRegionReflective(AbstractLeastSquaresMethod):
 
     method: BoundedLevenbergMarquardt
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         self.method = BoundedLevenbergMarquardt(**kwargs)
 
     @property

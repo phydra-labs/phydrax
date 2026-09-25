@@ -64,7 +64,7 @@ class SeparableKAN(_AbstractStructuredInputModel):
         use_bias: bool = True,
         scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         r"""Create a separable KAN.
 
         `SeparableKAN` forwards KAN hyperparameters to each internal scalar

@@ -27,7 +27,7 @@ class CoordinateAtlas(StrictModule):
         charts: Sequence[CoordinateChart],
         transitions: Sequence[ChartTransition],
         /,
-    ):
+    ) -> None:
         charts_ = tuple(charts)
         if not charts_ or any(
             not isinstance(chart, CoordinateChart) for chart in charts_
@@ -127,7 +127,7 @@ class AtlasValidationReport(StrictModule):
         finite: ArrayLike,
         maximum_inverse_residual: ArrayLike,
         maximum_jacobian_inverse_residual: ArrayLike,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.maximum_inverse_residual = jnp.asarray(maximum_inverse_residual)
@@ -206,7 +206,7 @@ class PatchwiseScalarField(StrictModule):
         atlas: CoordinateAtlas,
         local_fields: Sequence[Callable[[Array], Array]],
         /,
-    ):
+    ) -> None:
         if not isinstance(atlas, CoordinateAtlas):
             raise TypeError("PatchwiseScalarField requires a CoordinateAtlas.")
         fields = tuple(local_fields)
@@ -245,7 +245,7 @@ class ComplexAtlasStructure(StrictModule):
         atlas: CoordinateAtlas,
         local_structures: Sequence[AlmostComplexStructure],
         /,
-    ):
+    ) -> None:
         if not isinstance(atlas, CoordinateAtlas):
             raise TypeError("ComplexAtlasStructure requires a CoordinateAtlas.")
         structures = tuple(local_structures)

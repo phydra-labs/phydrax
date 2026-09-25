@@ -27,7 +27,7 @@ class MomentRecombination(StrictModule):
         *,
         rcond: float | None = None,
         tree_reduction_factor: int = 2,
-    ):
+    ) -> None:
         if rcond is not None:
             condition = float(rcond)
             if not math.isfinite(condition) or condition <= 0.0:

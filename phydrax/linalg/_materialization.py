@@ -26,7 +26,7 @@ class MaterializationPolicy(StrictModule):
         *,
         max_entries: int = 1_000_000,
         max_bytes: int = 64 * 1024 * 1024,
-    ):
+    ) -> None:
         entries = int(max_entries)
         byte_count = int(max_bytes)
         if entries < 1 or byte_count < 1:

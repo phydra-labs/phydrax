@@ -68,7 +68,7 @@ class FixedTopologyGraphDiffusion(StrictModule):
         payload_kind: GraphPayloadKind,
         payload_key: str,
         process_id: str | None = None,
-    ):
+    ) -> None:
         from ..stochastic._gaussian_diffusion import AbstractGaussianDiffusion
 
         if not isinstance(template, GraphIR):

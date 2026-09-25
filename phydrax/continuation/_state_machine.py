@@ -53,7 +53,7 @@ class ParameterRealization(StrictModule):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("Parameter realization problem_id must be non-empty.")
@@ -144,7 +144,7 @@ class ContinuationCandidate(StrictModule):
         parent_point_id: str = "",
         attempt_index: int,
         retry_index: int,
-    ):
+    ) -> None:
         if not isinstance(realization, ParameterRealization):
             raise TypeError("realization must be a ParameterRealization.")
         state_ = validate_inexact_tree(state, name="continuation candidate state")
@@ -261,7 +261,7 @@ class ParameterTransferEvidence(StrictModule):
         target_realization_id: str,
         parameter_paths: tuple[str, ...],
         message: str = "",
-    ):
+    ) -> None:
         target = str(target_realization_id)
         paths = tuple(str(path) for path in parameter_paths)
         if not target or not paths or any(not path for path in paths):
@@ -373,7 +373,7 @@ class ContinuationAcceptedState(StrictModule):
         application_state_id: str,
         decision_id: str,
         accepted_index: int,
-    ):
+    ) -> None:
         if not isinstance(candidate, ContinuationCandidate):
             raise TypeError("candidate must be a ContinuationCandidate.")
         if not bool(candidate.numerical_accepted):
@@ -464,7 +464,7 @@ class ContinuationStepResult(StrictModule):
         source_application_state_id: str,
         restored_application_state_id: str,
         message: str = "",
-    ):
+    ) -> None:
         if not isinstance(candidate, ContinuationCandidate):
             raise TypeError("candidate must be a ContinuationCandidate.")
         if not isinstance(transfer, ParameterTransferEvidence):
@@ -681,7 +681,7 @@ class CallableContinuationAdapter(AbstractContinuationAdapter):
         state_identity: Callable[[Any, Any], str] | None = None,
         checkpoint: Callable[[Any, Any], Any] | None = None,
         restore: Callable[[Any, Any], Any] | None = None,
-    ):
+    ) -> None:
         from ._core import ContinuationCurveProblem
 
         if not isinstance(problem, ContinuationCurveProblem):
@@ -875,7 +875,7 @@ class ContinuationAdapterAudit(StrictModule):
         coordinate_interval_matches: Any,
         spaces_match: Any,
         representation_matches: Any,
-    ):
+    ) -> None:
         flags = tuple(
             jnp.asarray(value, dtype=jnp.bool_)
             for value in (

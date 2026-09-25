@@ -50,7 +50,7 @@ class ClimateDrivers(StrictModule):
         concentrations: ArrayLike,
         gas_forcing: ArrayLike,
         external_forcing: ArrayLike,
-    ):
+    ) -> None:
         self.emissions = jnp.asarray(emissions)
         self.concentrations = jnp.asarray(concentrations)
         self.gas_forcing = jnp.asarray(gas_forcing)
@@ -110,7 +110,7 @@ class ReducedClimatePlan(StrictModule):
         *,
         roles: tuple[str, ...] = ("emissions", "emissions", "emissions"),
         budget_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         gases_ = GasBoxModel() if gases is None else gases
         energy_ = MultilayerEnergyBalance() if energy is None else energy
         forcing_ = Myhre1998Forcing() if forcing is None else forcing
@@ -177,7 +177,7 @@ class PreparedReducedClimate(StrictModule):
         *,
         time_spec: GeophysicalTimeSpec | None = None,
         seconds_per_time_unit: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, ReducedClimatePlan) or not isinstance(grid, TimeGrid):
             raise TypeError(
                 "Preparation requires ReducedClimatePlan and native TimeGrid."
@@ -442,7 +442,7 @@ class ReducedClimateFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
     start_step: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, climate: PreparedReducedClimate, start_step: int = 0, /):
+    def __init__(self, climate: PreparedReducedClimate, start_step: int = 0, /) -> None:
         self.climate = climate
         self.start_step = int(start_step)
         self.method_id = canonical_fingerprint(

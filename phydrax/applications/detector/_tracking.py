@@ -41,7 +41,7 @@ class TrackMeasurementBank(StrictModule, NonTrainableState):
         active: ArrayLike,
         association_id: str,
         conditions_id: str,
-    ):
+    ) -> None:
         event_ids_ = jnp.asarray(event_ids)
         positions_ = jnp.asarray(positions)
         times_ = jnp.asarray(times, dtype=positions_.dtype)
@@ -96,7 +96,7 @@ class TrackFitPlan(StrictModule, NonTrainableState):
         conditions_id: str,
         minimum_measurements: int = 2,
         regularization: float = 1.0e-12,
-    ):
+    ) -> None:
         association = str(association_id).strip()
         conditions = str(conditions_id).strip()
         minimum = int(minimum_measurements)

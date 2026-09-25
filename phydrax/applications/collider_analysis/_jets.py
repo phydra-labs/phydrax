@@ -53,7 +53,7 @@ class JetDefinition(StrictModule, NonTrainableState):
         *,
         recombination_scheme: JetRecombinationScheme = JetRecombinationScheme.E_SCHEME,
         minimum_transverse_momentum: float = 0.0,
-    ):
+    ) -> None:
         radius_ = float(radius)
         minimum = float(minimum_transverse_momentum)
         if not isinstance(algorithm, JetAlgorithm) or not isinstance(
@@ -102,7 +102,7 @@ class JetInputBatch(StrictModule, NonTrainableState):
         *,
         source_collection_id: str,
         momentum_unit_id: str,
-    ):
+    ) -> None:
         event_ids_ = jnp.asarray(event_ids)
         momenta_ = jnp.asarray(momenta)
         active_ = jnp.asarray(active, dtype=jnp.bool_)
@@ -150,7 +150,9 @@ class JetProviderPlan(StrictModule, NonTrainableState):
     provider: HEPProviderBinding
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, definition: JetDefinition, provider: HEPProviderBinding, /):
+    def __init__(
+        self, definition: JetDefinition, provider: HEPProviderBinding, /
+    ) -> None:
         if not isinstance(definition, JetDefinition) or not isinstance(
             provider, HEPProviderBinding
         ):
@@ -328,7 +330,7 @@ class FuzzyJetPlan(StrictModule, NonTrainableState):
         iteration_count: int = 32,
         pileup_density: float = 1.0e-6,
         minimum_component_weight: float = 1.0e-6,
-    ):
+    ) -> None:
         count = int(component_count)
         radius = float(radius_scale)
         iterations = int(iteration_count)

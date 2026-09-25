@@ -116,7 +116,7 @@ class HybridCrossInteractionPlan(StrictModule, NonTrainableState):
         linker_length: ArrayLike = 0.0,
         electrostatic_prefactor: ArrayLike = 0.0,
         screening: ArrayLike = 0.0,
-    ):
+    ) -> None:
         pairs = np.asarray(site_pairs)
         if pairs.ndim != 2 or pairs.shape[1] != 2 or pairs.dtype.kind not in "iu":
             raise TypeError(
@@ -265,7 +265,7 @@ class PreparedHybridModel(StrictModule, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         if not isinstance(protein_network, PreparedElasticNetwork):
             raise TypeError("protein_network must be PreparedElasticNetwork.")
         if not isinstance(nucleotide_model, PreparedNucleotideModel):

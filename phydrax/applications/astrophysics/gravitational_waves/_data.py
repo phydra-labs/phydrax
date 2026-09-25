@@ -77,7 +77,7 @@ class OneSidedPowerSpectralDensity(StrictModule, NonTrainableState):
         sample_interval: float,
         active: ArrayLike | None = None,
         psd_id: str = "one-sided-psd",
-    ):
+    ) -> None:
         count = int(sample_count)
         interval = float(sample_interval)
         if count < 4 or not np.isfinite(interval) or interval <= 0.0:
@@ -166,7 +166,7 @@ class DetectorStrainData(StrictModule, NonTrainableState):
         start_time_gps: float,
         active: ArrayLike | None = None,
         window_power: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(psd, OneSidedPowerSpectralDensity):
             raise TypeError("psd must be OneSidedPowerSpectralDensity.")
         if not isinstance(provenance, ObservationDataProvenance):
@@ -234,7 +234,7 @@ class DetectorNetworkData(StrictModule, NonTrainableState):
     start_time_gps: float = eqx.field(static=True)
     network_id: str = eqx.field(static=True)
 
-    def __init__(self, detectors: Sequence[DetectorStrainData], /):
+    def __init__(self, detectors: Sequence[DetectorStrainData], /) -> None:
         items = tuple(detectors)
         if not items or any(not isinstance(item, DetectorStrainData) for item in items):
             raise TypeError("detectors must contain DetectorStrainData values.")
@@ -319,7 +319,7 @@ class GravitationalWaveDataPlan(StrictModule, NonTrainableState):
         notches: Sequence[tuple[float, float]] = (),
         window: WindowKind = "tukey",
         tukey_alpha: float = 0.2,
-    ):
+    ) -> None:
         count = int(sample_count)
         interval = float(sample_interval)
         start = float(start_time_gps)

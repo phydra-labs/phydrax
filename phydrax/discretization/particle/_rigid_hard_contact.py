@@ -320,7 +320,7 @@ class HardContactRoutePlan(StrictModule, NonTrainableState):
         geometry_tolerance: float = 1.0e-8,
         energy_tolerance: float = 1.0e-9,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         left = np.asarray(left_body)
         right = np.asarray(right_body)
         keys = np.asarray(route_keys)
@@ -547,7 +547,9 @@ class PreparedHardContact(StrictModule, NonTrainableState):
     tangent_policy: LinearSolvePolicy
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: HardContactRoutePlan, bodies: PreparedRigidBodySet, /):
+    def __init__(
+        self, plan: HardContactRoutePlan, bodies: PreparedRigidBodySet, /
+    ) -> None:
         if not isinstance(plan, HardContactRoutePlan):
             raise TypeError("plan must be a HardContactRoutePlan.")
         if not isinstance(bodies, PreparedRigidBodySet):

@@ -109,7 +109,7 @@ class RadialDistributionPlan(StrictModule, NonTrainableState):
     maximum_radius: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, bin_count: int, maximum_radius: float, /):
+    def __init__(self, bin_count: int, maximum_radius: float, /) -> None:
         bins = int(bin_count)
         radius = float(maximum_radius)
         if bins <= 0 or not math.isfinite(radius) or radius <= 0.0:
@@ -254,7 +254,7 @@ class StaticStructureFactorPlan(StrictModule, NonTrainableState):
         *,
         maximum_frames: int,
         maximum_particles: int,
-    ):
+    ) -> None:
         vectors = np.asarray(wave_vectors, dtype=np.float64)
         frame_capacity = int(maximum_frames)
         particle_capacity = int(maximum_particles)
@@ -391,7 +391,7 @@ class LaggedCorrelationPlan(StrictModule, NonTrainableState):
         maximum_frames: int,
         maximum_particles: int,
         spatial_dimension: int = 3,
-    ):
+    ) -> None:
         lags = np.asarray(lag_steps)
         frames = int(maximum_frames)
         particles = int(maximum_particles)
@@ -554,7 +554,7 @@ class DiffusionFitPlan(StrictModule, NonTrainableState):
         minimum_r_squared: float = 0.9,
         maximum_relative_standard_error: float = 0.25,
         maximum_einstein_green_kubo_relative_error: float = 0.5,
-    ):
+    ) -> None:
         first = int(first_lag_index)
         last = int(last_lag_index)
         dimension = int(spatial_dimension)

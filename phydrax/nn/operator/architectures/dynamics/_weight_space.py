@@ -61,7 +61,7 @@ class WeightSpaceOperator(AbstractOperatorModel):
         maximum_retention: float = 0.999,
         input_scale: float = 1e-2,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(subspace, ParameterSubspace):
             raise TypeError("subspace must be a ParameterSubspace.")
         self.in_size = int(observation_size)

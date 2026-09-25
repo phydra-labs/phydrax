@@ -35,7 +35,7 @@ class ManifoldWarpDiagnostics(StrictModule):
         tangent_displacement: Array,
         transported_points: Array,
         interpolation_weights: Array,
-    ):
+    ) -> None:
         self.tangent_displacement = jnp.asarray(tangent_displacement)
         self.transported_points = jnp.asarray(transported_points)
         self.interpolation_weights = jnp.asarray(interpolation_weights)
@@ -98,7 +98,7 @@ class ManifoldMultiheadWarp(StrictModule, ParameterOwner):
         displacement_width: int | None = None,
         kernel_scale: float = 0.2,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.ambient_dim = int(ambient_dim)
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)

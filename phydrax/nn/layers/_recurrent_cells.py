@@ -96,7 +96,7 @@ class CfCCell(AbstractTimeAwareRecurrentCell):
         use_bias: bool = True,
         dtype: Any = jnp.float32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
         resolved_depth = int(backbone_depth)
         if resolved_depth != backbone_depth or resolved_depth < 0:
@@ -284,7 +284,7 @@ class RNNCell(AbstractRecurrentCell):
         use_bias: bool = True,
         dtype: Any = jnp.float32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
         if activation not in ("tanh", "relu"):
             raise ValueError("activation must be 'tanh' or 'relu'.")
@@ -375,7 +375,7 @@ class GRUCell(AbstractRecurrentCell):
         use_bias: bool = True,
         dtype: Any = jnp.float32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
         resolved_dtype = _validate_real_dtype(dtype)
         self.cell = eqx.nn.GRUCell(
@@ -448,7 +448,7 @@ class LSTMCell(AbstractRecurrentOutputCell):
         use_bias: bool = True,
         dtype: Any = jnp.float32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
         resolved_dtype = _validate_real_dtype(dtype)
         self.cell = eqx.nn.LSTMCell(
@@ -594,7 +594,7 @@ class ArtificialLIFCell(AbstractTimeAwareRecurrentCell, AbstractRecurrentOutputC
         use_bias: bool = True,
         dtype: Any = jnp.float32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
         constants = tuple(
             float(value)
@@ -760,7 +760,7 @@ class StackedRecurrentCell(AbstractTimeAwareRecurrentCell, AbstractRecurrentOutp
 
     def __init__(
         self, cells: tuple[AbstractRecurrentCell, ...] | list[AbstractRecurrentCell]
-    ):
+    ) -> None:
         resolved = tuple(cells)
         if not resolved or any(
             not isinstance(cell, AbstractRecurrentCell) for cell in resolved

@@ -41,7 +41,7 @@ class CanonicalFugacityPlan(StrictModule, NonTrainableState):
         temperature: float,
         maximum_nodes: int = 4096,
         maximum_fourier_entries: int = 4_194_304,
-    ):
+    ) -> None:
         minimum = int(minimum_charge)
         maximum = int(maximum_charge)
         nodes = int(node_count)
