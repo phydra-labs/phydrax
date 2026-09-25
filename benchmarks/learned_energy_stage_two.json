@@ -6,7 +6,7 @@
     "path": "benchmarks/learned_energy_stage_two.phxml",
     "prepared_binding_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9"
   },
-  "artifact_id": "f27c7af312835c291b5b046cc994466f5dabc28be656339900d0f564e798385e",
+  "artifact_id": "08082a04f8ab7a30c151d90dba2829fba8333c4ea50ed7040de912c8dcebd982",
   "attempt_count": 6,
   "curriculum": [
     1,
@@ -28,7 +28,7 @@
     "trained_no_regression": true
   },
   "identities": {
-    "checkpoint_state_id": "eb7669e36b1aca0db1ef7ef1ebd7c0be399d67e2c7cfce2de8c58ad9800602af",
+    "checkpoint_state_id": "03c0fd9a972d61c1cfcfe0f1850c722e96923ec54acee8edca16b6db005e27a2",
     "final_model_revision_id": "0b0eb11145c8ff78e5c95d489cd9e349ce9b779170190cd6e0fc9f89ade4b5f4",
     "normalizer_id": "af380d4ebba3c9e63fe5ad9683ae69147aaeda00f159af8d4b20c49463d39663",
     "rollout_preparation_id": "691525564fe6bcc419c62186f15a3f9e1c6272d182f5c0caca26f90e6ebbbb22",

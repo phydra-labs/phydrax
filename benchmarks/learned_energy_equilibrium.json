@@ -105,7 +105,7 @@
   },
   "environment": {
     "default_float_dtype": "float64",
-    "fingerprint": "5b0f127a81269cb6023ee92f5d2dfc60342d214a0ac69b8d64a1abe11367f338",
+    "fingerprint": "ec41c30441f07b25c837334ba35cc0b82fb91e494a1d0d31f4b7129e5645457e",
     "jax": {
       "backend": "cpu",
       "devices": [
@@ -121,7 +121,7 @@
     "logical_cpus": 10,
     "machine": "arm64",
     "numpy_version": "2.4.6",
-    "package_fingerprint": "0b3c5540bbe3fb86339725b1c6bf9f500335df0501ce24e4559cc3aafc085e26",
+    "package_fingerprint": "e19d913a0b85060f926d66a77c75a54d0b4afdd7efd8735c99fa82d679cca85f",
     "performance_environment": {
       "JAX_COMPILATION_CACHE_DIR": null,
       "JAX_PLATFORMS": null,
@@ -185,7 +185,7 @@
     "all_populations_positive": true,
     "all_successful": true,
     "all_targets_in_hull_interior": true,
-    "generation_wall_seconds_including_first_jit": 1.040805375,
+    "generation_wall_seconds_including_first_jit": 0.357688042,
     "maximum_iterations": 10,
     "maximum_relative_energy_error": 8.556632174375e-16,
     "maximum_root_residual": 2.956611669714468e-11,
@@ -216,58 +216,58 @@
         "collection": "interleaved oracle/learned pairs with alternating order",
         "comparable": true,
         "comparison": {
-          "absolute_degradation": -8.606250000000004e-05,
+          "absolute_degradation": -6.40835e-05,
           "absolute_interval": [
-            -0.000263791,
-            1.0582499999999982e-05
+            -0.00030039650000000004,
+            7.848050000000003e-05
           ],
           "baseline": {
             "count": 10,
-            "max_seconds": 0.001623958,
-            "mean_seconds": 0.0006520959,
-            "median_seconds": 0.000494479,
-            "min_seconds": 0.000378459,
+            "max_seconds": 0.000719042,
+            "mean_seconds": 0.0004106709,
+            "median_seconds": 0.000371021,
+            "min_seconds": 0.000215208,
             "samples_seconds": [
-              0.000794208,
-              0.000405,
-              0.000982958,
-              0.000397834,
-              0.001623958,
-              0.0005505,
-              0.000378459,
-              0.000438458,
-              0.000560834,
-              0.00038875
+              0.000719042,
+              0.000527042,
+              0.000353125,
+              0.000356875,
+              0.000227292,
+              0.000570375,
+              0.000215208,
+              0.000385167,
+              0.000485666,
+              0.000266917
             ],
-            "std_seconds": 0.000375287469399246
+            "std_seconds": 0.0001546348476886436
           },
           "candidate": {
             "count": 10,
-            "max_seconds": 0.00096825,
-            "mean_seconds": 0.0004662332,
-            "median_seconds": 0.0004084165,
-            "min_seconds": 0.0002905,
+            "max_seconds": 0.000873209,
+            "mean_seconds": 0.00037420840000000003,
+            "median_seconds": 0.00030693750000000003,
+            "min_seconds": 0.00015425,
             "samples_seconds": [
-              0.000530417,
-              0.000307083,
-              0.00096825,
-              0.00038675,
-              0.000532333,
-              0.000399792,
-              0.000417041,
-              0.0002905,
-              0.000506833,
-              0.000323333
+              0.000873209,
+              0.000171333,
+              0.000685584,
+              0.000347833,
+              0.000271666,
+              0.000181625,
+              0.000290791,
+              0.00015425,
+              0.000442709,
+              0.000323084
             ],
-            "std_seconds": 0.0001876009729632552
+            "std_seconds": 0.0002231725698441455
           },
           "paired": true,
           "reason": null,
           "regressed": false,
-          "relative_degradation": -0.1740468250421151,
+          "relative_degradation": -0.17272202921128452,
           "relative_interval": [
-            -0.3321434687134856,
-            0.026600290573455216
+            -0.6019087420317143,
+            0.2536892035398231
           ],
           "sufficient_samples": true
         },
@@ -275,57 +275,57 @@
         "dtype": "float64",
         "learned": {
           "compilation": {
-            "compilation_seconds": 0.423993167,
-            "lowering_seconds": 0.09403825
+            "compilation_seconds": 0.214547083,
+            "lowering_seconds": 0.055243458
           },
           "operation": "JIT bound-model predict_dual plus evaluate",
           "steady_state": {
             "count": 10,
-            "max_seconds": 0.00096825,
-            "mean_seconds": 0.0004662332,
-            "median_seconds": 0.0004084165,
-            "min_seconds": 0.0002905,
+            "max_seconds": 0.000873209,
+            "mean_seconds": 0.00037420840000000003,
+            "median_seconds": 0.00030693750000000003,
+            "min_seconds": 0.00015425,
             "samples_seconds": [
-              0.000530417,
-              0.000307083,
-              0.00096825,
-              0.00038675,
-              0.000532333,
-              0.000399792,
-              0.000417041,
-              0.0002905,
-              0.000506833,
-              0.000323333
+              0.000873209,
+              0.000171333,
+              0.000685584,
+              0.000347833,
+              0.000271666,
+              0.000181625,
+              0.000290791,
+              0.00015425,
+              0.000442709,
+              0.000323084
             ],
-            "std_seconds": 0.0001876009729632552
+            "std_seconds": 0.0002231725698441455
           }
         },
-        "median_speedup_oracle_over_learned": 1.2107223875626965,
+        "median_speedup_oracle_over_learned": 1.2087835471390755,
         "oracle": {
           "compilation": {
-            "compilation_seconds": 0.393394875,
-            "lowering_seconds": 0.088168292
+            "compilation_seconds": 0.254951458,
+            "lowering_seconds": 0.054001834
           },
           "operation": "JIT PositiveEnergyEquilibriumPlan.solve",
           "steady_state": {
             "count": 10,
-            "max_seconds": 0.001623958,
-            "mean_seconds": 0.0006520959,
-            "median_seconds": 0.000494479,
-            "min_seconds": 0.000378459,
+            "max_seconds": 0.000719042,
+            "mean_seconds": 0.0004106709,
+            "median_seconds": 0.000371021,
+            "min_seconds": 0.000215208,
             "samples_seconds": [
-              0.000794208,
-              0.000405,
-              0.000982958,
-              0.000397834,
-              0.001623958,
-              0.0005505,
-              0.000378459,
-              0.000438458,
-              0.000560834,
-              0.00038875
+              0.000719042,
+              0.000527042,
+              0.000353125,
+              0.000356875,
+              0.000227292,
+              0.000570375,
+              0.000215208,
+              0.000385167,
+              0.000485666,
+              0.000266917
             ],
-            "std_seconds": 0.000375287469399246
+            "std_seconds": 0.0001546348476886436
           }
         },
         "paired": true,
@@ -342,58 +342,58 @@
         "collection": "interleaved oracle/learned pairs with alternating order",
         "comparable": true,
         "comparison": {
-          "absolute_degradation": -0.0032057500000000003,
+          "absolute_degradation": -0.006842583499999999,
           "absolute_interval": [
-            -0.004919166500000001,
-            -0.000652583
+            -0.011766104000000001,
+            -0.0023958545
           ],
           "baseline": {
             "count": 10,
-            "max_seconds": 0.006773208,
-            "mean_seconds": 0.0039523875,
-            "median_seconds": 0.004093625,
-            "min_seconds": 0.001619667,
+            "max_seconds": 0.018667667,
+            "mean_seconds": 0.008173462400000001,
+            "median_seconds": 0.0074650624999999995,
+            "min_seconds": 0.001961791,
             "samples_seconds": [
-              0.001619667,
-              0.003163042,
-              0.005161833,
-              0.005866458,
-              0.004340625,
-              0.003846625,
-              0.00165575,
-              0.005346042,
-              0.006773208,
-              0.001750625
+              0.003922334,
+              0.006764625,
+              0.001961791,
+              0.003907333,
+              0.002297125,
+              0.012269833,
+              0.0081655,
+              0.018667667,
+              0.014762208,
+              0.009016208
             ],
-            "std_seconds": 0.0017712874605818926
+            "std_seconds": 0.005314164212531867
           },
           "candidate": {
             "count": 10,
-            "max_seconds": 0.00686825,
-            "mean_seconds": 0.0015343792,
-            "median_seconds": 0.000887875,
-            "min_seconds": 0.000270667,
+            "max_seconds": 0.004256584,
+            "mean_seconds": 0.0011502041,
+            "median_seconds": 0.000622479,
+            "min_seconds": 0.00027125,
             "samples_seconds": [
-              0.00139525,
-              0.002720083,
-              0.00686825,
-              0.00036625,
-              0.000865417,
-              0.00034075,
-              0.001098042,
-              0.000910333,
-              0.00050875,
-              0.000270667
+              0.001787791,
+              0.000974,
+              0.000476375,
+              0.00027125,
+              0.001879708,
+              0.000713875,
+              0.004256584,
+              0.000321625,
+              0.000531083,
+              0.00028975
             ],
-            "std_seconds": 0.001906329527098964
+            "std_seconds": 0.0011767141340273304
           },
           "paired": true,
           "reason": null,
           "regressed": false,
-          "relative_degradation": -0.7831078811566766,
+          "relative_degradation": -0.9166143619025292,
           "relative_interval": [
-            -0.913646218205136,
-            -0.3553017503944809
+            -0.9643281299632838,
+            -0.6479403589801379
           ],
           "sufficient_samples": true
         },
@@ -401,57 +401,57 @@
         "dtype": "float64",
         "learned": {
           "compilation": {
-            "compilation_seconds": 0.551487375,
-            "lowering_seconds": 0.087580417
+            "compilation_seconds": 0.291757167,
+            "lowering_seconds": 0.070157875
           },
           "operation": "JIT bound-model predict_dual plus evaluate",
           "steady_state": {
             "count": 10,
-            "max_seconds": 0.00686825,
-            "mean_seconds": 0.0015343792,
-            "median_seconds": 0.000887875,
-            "min_seconds": 0.000270667,
+            "max_seconds": 0.004256584,
+            "mean_seconds": 0.0011502041,
+            "median_seconds": 0.000622479,
+            "min_seconds": 0.00027125,
             "samples_seconds": [
-              0.00139525,
-              0.002720083,
-              0.00686825,
-              0.00036625,
-              0.000865417,
-              0.00034075,
-              0.001098042,
-              0.000910333,
-              0.00050875,
-              0.000270667
+              0.001787791,
+              0.000974,
+              0.000476375,
+              0.00027125,
+              0.001879708,
+              0.000713875,
+              0.004256584,
+              0.000321625,
+              0.000531083,
+              0.00028975
             ],
-            "std_seconds": 0.001906329527098964
+            "std_seconds": 0.0011767141340273304
           }
         },
-        "median_speedup_oracle_over_learned": 4.61058707588343,
+        "median_speedup_oracle_over_learned": 11.992472838441135,
         "oracle": {
           "compilation": {
-            "compilation_seconds": 0.4510335,
-            "lowering_seconds": 0.25922375
+            "compilation_seconds": 0.359641958,
+            "lowering_seconds": 0.091450666
           },
           "operation": "JIT PositiveEnergyEquilibriumPlan.solve",
           "steady_state": {
             "count": 10,
-            "max_seconds": 0.006773208,
-            "mean_seconds": 0.0039523875,
-            "median_seconds": 0.004093625,
-            "min_seconds": 0.001619667,
+            "max_seconds": 0.018667667,
+            "mean_seconds": 0.008173462400000001,
+            "median_seconds": 0.0074650624999999995,
+            "min_seconds": 0.001961791,
             "samples_seconds": [
-              0.001619667,
-              0.003163042,
-              0.005161833,
-              0.005866458,
-              0.004340625,
-              0.003846625,
-              0.00165575,
-              0.005346042,
-              0.006773208,
-              0.001750625
+              0.003922334,
+              0.006764625,
+              0.001961791,
+              0.003907333,
+              0.002297125,
+              0.012269833,
+              0.0081655,
+              0.018667667,
+              0.014762208,
+              0.009016208
             ],
-            "std_seconds": 0.0017712874605818926
+            "std_seconds": 0.005314164212531867
           }
         },
         "paired": true,
@@ -648,6 +648,6 @@
       }
     ],
     "validation_interval": 50,
-    "wall_seconds": 32.987815208
+    "wall_seconds": 12.133265125
   }
 }

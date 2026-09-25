@@ -2461,7 +2461,7 @@
   },
   "environment": {
     "default_float_dtype": "float64",
-    "fingerprint": "5b0f127a81269cb6023ee92f5d2dfc60342d214a0ac69b8d64a1abe11367f338",
+    "fingerprint": "ec41c30441f07b25c837334ba35cc0b82fb91e494a1d0d31f4b7129e5645457e",
     "jax": {
       "backend": "cpu",
       "devices": [
@@ -2477,7 +2477,7 @@
     "logical_cpus": 10,
     "machine": "arm64",
     "numpy_version": "2.4.6",
-    "package_fingerprint": "0b3c5540bbe3fb86339725b1c6bf9f500335df0501ce24e4559cc3aafc085e26",
+    "package_fingerprint": "e19d913a0b85060f926d66a77c75a54d0b4afdd7efd8735c99fa82d679cca85f",
     "performance_environment": {
       "JAX_COMPILATION_CACHE_DIR": null,
       "JAX_PLATFORMS": null,
@@ -2526,14 +2526,14 @@
   },
   "identities": {
     "energy_plan": "b4cb8e1f0260cd96191636b31f2fa817f83c59e2c5a6375bedc7ce3765eaf189",
-    "host": "5b0f127a81269cb6023ee92f5d2dfc60342d214a0ac69b8d64a1abe11367f338",
+    "host": "ec41c30441f07b25c837334ba35cc0b82fb91e494a1d0d31f4b7129e5645457e",
     "kinetic_method": "6199410282d847d6b25d7bf44a56144b92974898716efd9a22a781e3f218d2eb",
     "material": "2a9118f25ff3fa199ce1cd53ac2d948f42809a1728b021f1477dd5ae6bf05ea3",
     "model_artifact": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
     "model_numeric_revision": "0b0eb11145c8ff78e5c95d489cd9e349ce9b779170190cd6e0fc9f89ade4b5f4",
     "model_semantic": "6099df26a77c314633b3756b8e278386e79b7607b96b70533eef00c5ef1149d5",
     "normalizer": "af380d4ebba3c9e63fe5ad9683ae69147aaeda00f159af8d4b20c49463d39663",
-    "parent_spatial_qualification": "99d0c0e0bad4ac7ac3bf462cefc96fad0693fa4e94210b3dea317c0a66bf00a3",
+    "parent_spatial_qualification": "8eb2640b5c8dce4239f6d2069dc59211522584ad309bd2d139c8dd1575e2fe63",
     "prepared_binding": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
     "prepared_spatial": "f73b1407688dd9342745c0b80c1bdd335b8dc57cd5eb268565a217131429cf90",
     "quadrature": "e98e367a69a4a752157e9b59c0ed86a14962bab97bb018bdfe919b7492ef05bf",
@@ -2546,11 +2546,11 @@
     "parent_spatial_path": "benchmarks/learned_energy_spatial.json",
     "sha256_after": {
       "model_artifact": "55727704a035be1d1392081329ad314f45cc0cb52826c4aeb788fa339cd0813a",
-      "parent_spatial": "d81cd0ab0d3359925fbf859b2b49e08a3bada24c56f29093f7ed5864c0abf02c"
+      "parent_spatial": "a016442d151ac86ef6b0330a95f2425b455f9e06e88e715ca7afc62aed77cae5"
     },
     "sha256_before": {
       "model_artifact": "55727704a035be1d1392081329ad314f45cc0cb52826c4aeb788fa339cd0813a",
-      "parent_spatial": "d81cd0ab0d3359925fbf859b2b49e08a3bada24c56f29093f7ed5864c0abf02c"
+      "parent_spatial": "a016442d151ac86ef6b0330a95f2425b455f9e06e88e715ca7afc62aed77cae5"
     },
     "unchanged": true
   },
@@ -2907,15 +2907,15 @@
   "parent_spatial": {
     "passed": true,
     "path": "benchmarks/learned_energy_spatial.json",
-    "qualification_id": "99d0c0e0bad4ac7ac3bf462cefc96fad0693fa4e94210b3dea317c0a66bf00a3"
+    "qualification_id": "8eb2640b5c8dce4239f6d2069dc59211522584ad309bd2d139c8dd1575e2fe63"
   },
   "passed": true,
   "prepared_contracts": {
     "fixed-horizon": {
-      "contract_id": "6ebeb0a8835967a96966ff6bde9fd1c22512cdeb0c05ff2a1fbf33ff25b1183b",
+      "contract_id": "1ec6f6d1ff2da9096d4906aa94dcb87ce539072e660d5ffd420c81ae91eaf5dd",
       "execution_mode": "fixed-horizon",
       "frozen_artifact_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
-      "host_id": "5b0f127a81269cb6023ee92f5d2dfc60342d214a0ac69b8d64a1abe11367f338",
+      "host_id": "ec41c30441f07b25c837334ba35cc0b82fb91e494a1d0d31f4b7129e5645457e",
       "input_dtypes": [
         "<f8",
         "<f8"
@@ -2996,10 +2996,10 @@
       "topology_id": "aabc5ec81f6596a837ff8089761d1de8d026beada59c9d6585f0f98224e8821e"
     },
     "frozen-equilibrium": {
-      "contract_id": "a4c777fdd218fe42853b2f3f59a37e0161b99f087466d94b63c2bdba8211182d",
+      "contract_id": "964069b752036047a51b039429e6e43ac893804a1fbc0cb9f72f2c98f6e3d31f",
       "execution_mode": "frozen-equilibrium",
       "frozen_artifact_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
-      "host_id": "5b0f127a81269cb6023ee92f5d2dfc60342d214a0ac69b8d64a1abe11367f338",
+      "host_id": "ec41c30441f07b25c837334ba35cc0b82fb91e494a1d0d31f4b7129e5645457e",
       "input_dtypes": [
         "<f8"
       ],
@@ -3073,10 +3073,10 @@
       "topology_id": "aabc5ec81f6596a837ff8089761d1de8d026beada59c9d6585f0f98224e8821e"
     },
     "one-step": {
-      "contract_id": "68a2d12c165a3335cc1f340d82d84469b6eba5c1152bd220eb01e4a5dac60f6d",
+      "contract_id": "eaa3789f4aadb2a60ecffaea45aaf269a0df6a1db4ababd23da92ef760215a82",
       "execution_mode": "one-step",
       "frozen_artifact_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
-      "host_id": "5b0f127a81269cb6023ee92f5d2dfc60342d214a0ac69b8d64a1abe11367f338",
+      "host_id": "ec41c30441f07b25c837334ba35cc0b82fb91e494a1d0d31f4b7129e5645457e",
       "input_dtypes": [
         "<f8",
         "<f8"
@@ -3157,7 +3157,7 @@
       "topology_id": "aabc5ec81f6596a837ff8089761d1de8d026beada59c9d6585f0f98224e8821e"
     }
   },
-  "qualification_id": "96dd8c4843863edfdc9a1970c068146ed7a0e0c1be1c11e6b4171d4f2af9ac3e",
+  "qualification_id": "d031ee80ad3ff921d3835d93ba4dd5320840a4bfe98bed227798bafc6179386e",
   "qualification_status": "qualified",
   "scope": {
     "claim": "frozen fixed-shape periodic D2V17 forward IREE deployment only",

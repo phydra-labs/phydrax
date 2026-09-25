@@ -158,7 +158,7 @@
   },
   "environment": {
     "default_float_dtype": "float64",
-    "fingerprint": "5b0f127a81269cb6023ee92f5d2dfc60342d214a0ac69b8d64a1abe11367f338",
+    "fingerprint": "ec41c30441f07b25c837334ba35cc0b82fb91e494a1d0d31f4b7129e5645457e",
     "jax": {
       "backend": "cpu",
       "devices": [
@@ -174,7 +174,7 @@
     "logical_cpus": 10,
     "machine": "arm64",
     "numpy_version": "2.4.6",
-    "package_fingerprint": "0b3c5540bbe3fb86339725b1c6bf9f500335df0501ce24e4559cc3aafc085e26",
+    "package_fingerprint": "e19d913a0b85060f926d66a77c75a54d0b4afdd7efd8735c99fa82d679cca85f",
     "performance_environment": {
       "JAX_COMPILATION_CACHE_DIR": null,
       "JAX_PLATFORMS": null,
@@ -287,7 +287,7 @@
       "path": "benchmarks/learned_energy_spatial.json",
       "prepared_binding_id": "ab49b6a07cdac9a5fc7ec9fbf8f8feff1cdb48e5dc1b461e3a32c941c013a89f",
       "prepared_runtime_id": "f73b1407688dd9342745c0b80c1bdd335b8dc57cd5eb268565a217131429cf90",
-      "qualification_id": "99d0c0e0bad4ac7ac3bf462cefc96fad0693fa4e94210b3dea317c0a66bf00a3",
+      "qualification_id": "8eb2640b5c8dce4239f6d2069dc59211522584ad309bd2d139c8dd1575e2fe63",
       "transport_plan_id": "aabc5ec81f6596a837ff8089761d1de8d026beada59c9d6585f0f98224e8821e"
     },
     "stage_two": {
@@ -296,7 +296,7 @@
       "model_revision_id": "0b0eb11145c8ff78e5c95d489cd9e349ce9b779170190cd6e0fc9f89ade4b5f4",
       "path": "benchmarks/learned_energy_stage_two.json",
       "prepared_binding_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
-      "qualification_artifact_id": "f27c7af312835c291b5b046cc994466f5dabc28be656339900d0f564e798385e",
+      "qualification_artifact_id": "08082a04f8ab7a30c151d90dba2829fba8333c4ea50ed7040de912c8dcebd982",
       "rollout_preparation_id": "691525564fe6bcc419c62186f15a3f9e1c6272d182f5c0caca26f90e6ebbbb22",
       "semantic_id": "6099df26a77c314633b3756b8e278386e79b7607b96b70533eef00c5ef1149d5",
       "training_plan_id": "1d55cc5ffdc93905e7f2277228b055bcde4e07fd6112c049e49682fcbd312a1b",
@@ -304,7 +304,7 @@
     }
   },
   "passed": true,
-  "qualification_id": "a98ad08ccd26aed298702615053b7602df2cb17afaf87eba030d489207c7690f",
+  "qualification_id": "f6e0133cd0093bd521601a2c533de1b3d14253f6abae95a15f7a9cfc7074241b",
   "riemann_comparison": {
     "case": "low-amplitude Riemann-style discontinuity",
     "claim": "FV-owned low-amplitude fixed-region comparison only",
