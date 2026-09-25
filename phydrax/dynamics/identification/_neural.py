@@ -10,7 +10,7 @@ from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
 from math import ceil
 from pathlib import Path
-from typing import Any, Literal, NamedTuple
+from typing import Any, final, Literal, NamedTuple
 
 import equinox as eqx
 import jax
@@ -29,6 +29,7 @@ from ..._fingerprint import (
 from ..._frozendict import frozendict
 from ..._iteration import IterationSession
 from ..._model import AbstractArrayModel
+from ..._strict import StrictModule
 from ..._trainable import (
     combine_parameters,
     partition_parameters,
@@ -947,6 +948,27 @@ def _objective_contributions(
     return total, tuple(term_contributions), runtime_valid
 
 
+@final
+class _DiscreteRolloutObjective(StrictModule):
+    """Kernel objective of one discrete-model fit.
+
+    The rollout transition is a visible dynamic child: its arrays (for example a
+    discretization, operators, and projection solver) are PyTree leaves instead
+    of state captured by the objective. `evaluate` is a stateless operation over
+    the array-free fit configuration and receives the transition explicitly.
+    """
+
+    transition: AbstractDiscreteModelRolloutTransition
+    evaluate: Callable[..., Any] = eqx.field(static=True)
+
+    def __call__(
+        self, parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any, /
+    ) -> tuple[_ObjectiveContribution, Any, Any]:
+        return self.evaluate(
+            self.transition, parameters, model_state, fixed, payload, keys
+        )
+
+
 def _tree_real_result_dtype(tree: Any, /):
     dtypes = tuple(
         leaf.dtype for leaf in jax.tree_util.tree_leaves(tree) if eqx.is_array(leaf)
@@ -1535,7 +1557,7 @@ def fit_discrete_model(
     }
     fit_fingerprint = canonical_fingerprint(fit_contract)
 
-    def training_objective(parameters, model_state, fixed, payload, keys):
+    def training_objective(transition, parameters, model_state, fixed, payload, keys):
         batch, target_parameters, execution_control = payload
         step = keys.accepted_cursor
         total, components, valid = _objective_contributions(
@@ -1545,7 +1567,7 @@ def fit_discrete_model(
             rollout_policy,
             terms,
             state_layout,
-            resolved_transition,
+            transition,
             keys.attempt_key("rollout"),
             step,
             target_model=(
@@ -1576,7 +1598,7 @@ def fit_discrete_model(
                 objective_id=_OBJECTIVE_ID,
                 kind=ObjectiveKind.ROLLOUT,
                 route=DerivativeRoute.UNROLLED,
-                fn=training_objective,
+                fn=_DiscreteRolloutObjective(resolved_transition, training_objective),
             ),
         ),
         TrainingKernelSpec(
