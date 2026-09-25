@@ -13,6 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
@@ -221,7 +222,7 @@ def solve_point_cloud_poisson(
     if not isinstance(boundary, PointBoundaryPlan):
         raise TypeError("boundary must be PointBoundaryPlan.")
     count = discretization.state_shape[0]
-    dtype = jnp.result_type(source, boundary.values, jnp.float64)
+    dtype = inexact_result_type(source, boundary.values)
     source_ = jnp.asarray(source, dtype=dtype)
     if source_.shape != (count,) or boundary.values.shape != (count,):
         raise ValueError("Point Poisson source/boundary values must match point count.")

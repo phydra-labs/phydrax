@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...imaging import backward_warp
@@ -150,7 +151,7 @@ def build_cost_volume_2d(
         raise TypeError("plan must be a CostVolumePlan.")
 
     base = (
-        jnp.zeros((rows, columns, 2), dtype=jnp.result_type(reference.dtype, jnp.float64))
+        jnp.zeros((rows, columns, 2), dtype=inexact_result_type(reference.dtype))
         if base_displacement_rc is None
         else jnp.asarray(base_displacement_rc)
     )
@@ -166,9 +167,7 @@ def build_cost_volume_2d(
     if target_valid is not None and jnp.asarray(target_valid).shape != (rows, columns):
         raise ValueError("target_valid must have shape (rows, columns).")
 
-    normalization = jnp.asarray(
-        channels, dtype=jnp.result_type(reference.dtype, jnp.float64)
-    )
+    normalization = jnp.asarray(channels, dtype=inexact_result_type(reference.dtype))
 
     def evaluate_offset(offset_rc: Array) -> tuple[Array, Array]:
         candidate = base + offset_rc

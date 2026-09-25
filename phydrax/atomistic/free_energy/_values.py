@@ -194,6 +194,7 @@ class FreeEnergyStatePlan(StrictModule, NonTrainableState):
             measure_id=self.measure_id,
             bias_id=self.bias_id,
             unit_system_id=self.unit_system_id,
+            inverse_temperature=self.inverse_temperature,
             charge_evidence_id=self.charge_evidence_id,
             dataset_id=dataset.dataset_id,
             analysis_id=result.analysis_id,
@@ -213,6 +214,7 @@ class FreeEnergyStateResult(StrictModule, NonTrainableState):
     measure_id: str = eqx.field(static=True)
     bias_id: str | None = eqx.field(static=True)
     unit_system_id: str = eqx.field(static=True)
+    inverse_temperature: float = eqx.field(static=True)
     charge_evidence_id: str = eqx.field(static=True)
     dataset_id: str = eqx.field(static=True)
     analysis_id: str = eqx.field(static=True)
@@ -235,6 +237,8 @@ class FreeEnergyProtocolLegResult(StrictModule, NonTrainableState):
     source_bias_id: str | None = eqx.field(static=True)
     destination_bias_id: str | None = eqx.field(static=True)
     unit_system_id: str = eqx.field(static=True)
+    source_inverse_temperature: float = eqx.field(static=True)
+    destination_inverse_temperature: float = eqx.field(static=True)
     source_charge_evidence_id: str = eqx.field(static=True)
     destination_charge_evidence_id: str = eqx.field(static=True)
     dataset_id: str = eqx.field(static=True)
@@ -440,6 +444,8 @@ class FreeEnergyProtocolLegPlan(StrictModule, NonTrainableState):
             source_bias_id=self.source.bias_id,
             destination_bias_id=self.destination.bias_id,
             unit_system_id=self.source.unit_system_id,
+            source_inverse_temperature=self.source.inverse_temperature,
+            destination_inverse_temperature=self.destination.inverse_temperature,
             source_charge_evidence_id=self.source.charge_evidence_id,
             destination_charge_evidence_id=self.destination.charge_evidence_id,
             dataset_id=dataset.dataset_id,

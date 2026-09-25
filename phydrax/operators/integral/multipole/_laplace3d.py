@@ -1157,7 +1157,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             & finite
             & ~stale
         )
-        return AbstractLaplaceMultipoleEvaluation3D(
+        return LaplaceMultipoleEvaluation3D(
             values=values,
             far_values=far_values,
             near_values=near_values,
@@ -1629,7 +1629,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         capacity = self._capacity_evidence()
         finite = jnp.all(jnp.isfinite(values))
         successful = capacity.successful & truncation.well_separated & finite & ~stale
-        return AbstractLaplaceMultipoleEvaluation3D(
+        return LaplaceMultipoleEvaluation3D(
             values=values,
             far_values=far_values,
             near_values=near_values,

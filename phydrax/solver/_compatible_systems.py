@@ -321,10 +321,12 @@ class CompatibleVariableDensityProjection(StrictModule, NonTrainableState):
         size = self.bridge.cochain.cell_counts[0]
         matrix = jax.vmap(poisson_action)(jnp.eye(size)).T
         divergence = self.bridge.codifferential(1, velocity_)
+        # δ(ρ⁻¹d·) is self-adjoint only in the Hodge-weighted inner product; its
+        # coordinate matrix is nonsymmetric at boundary duals, so it must not be
+        # symmetrized before the pseudoinverse.
         factors = factor_pseudoinverse(
             matrix,
             RankPolicy(relative_cutoff=1.0e-12),
-            hermitian=True,
         )
         pressure = apply_pseudoinverse(factors, divergence)
         pressure = eqx.error_if(

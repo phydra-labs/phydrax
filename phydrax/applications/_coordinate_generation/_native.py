@@ -241,12 +241,22 @@ class ConditionalCoordinateVelocity(StrictModule):
     representation_id: str = eqx.field(static=True)
     condition_names: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, support, decoder, condition_names, *, width, depth, key):
+    def __init__(self, support, decoder, condition_names, network):
         if (
             not isinstance(decoder, AbstractCoordinateDecoder)
             or decoder.support_id != support.support_id
         ):
             raise ValueError("Model decoder must bind the exact coordinate support.")
+        names = tuple(condition_names)
+        if (
+            not isinstance(network, MLP)
+            or network.in_size != _network_input_size(support, decoder, names)
+            or network.out_size != decoder.coordinate_size
+        ):
+            raise ValueError(
+                "Coordinate network must map state, time, conditions, and token "
+                "features to the decoder coordinate size."
+            )
         self.decoder = decoder
         self.masses = tuple(float(v) for v in np.asarray(support.template.masses[0]))
         self.mask = tuple(bool(v) for v in np.asarray(support.template.atom_mask[0]))
@@ -254,15 +264,8 @@ class ConditionalCoordinateVelocity(StrictModule):
         self.support_id = support.support_id
         self.coordinate_size = decoder.coordinate_size
         self.representation_id = decoder.representation_id
-        self.condition_names = tuple(condition_names)
-        feature_size = len(self.token_features) * len(self.token_features[0])
-        self.network = MLP(
-            in_size=self.coordinate_size + 1 + len(condition_names) + feature_size,
-            out_size=self.coordinate_size,
-            width_size=width,
-            depth=depth,
-            key=key,
-        )
+        self.condition_names = names
+        self.network = network
 
     def center(self, value):
         """Project a one-case model state; name retained for Cartesian callers."""
@@ -278,6 +281,16 @@ class ConditionalCoordinateVelocity(StrictModule):
             )
         )
         return self.center(self.network(features))
+
+
+def _network_input_size(support, decoder, condition_names):
+    features = support.token_features
+    return (
+        decoder.coordinate_size
+        + 1
+        + len(condition_names)
+        + len(features) * len(features[0])
+    )
 
 
 def _velocity_function(model):
@@ -373,9 +386,13 @@ def fit_coordinate_model(
         support,
         data.decoder,
         data.condition_names,
-        width=width,
-        depth=depth,
-        key=model_key,
+        MLP(
+            in_size=_network_input_size(support, data.decoder, data.condition_names),
+            out_size=data.decoder.coordinate_size,
+            width_size=width,
+            depth=depth,
+            key=model_key,
+        ),
     )
     interpolant = LinearEndpointInterpolant((data.decoder.coordinate_size,))
     provider = lambda sample_key: _endpoints(
@@ -615,7 +632,10 @@ def sample_coordinate_proposals(
 def save_coordinate_model(
     path, fit, *, commercial_use=False, redistribution=False, export=False
 ):
-    """Use native pickle-free ML artifacts; retain every inherited restriction."""
+    """Archive the trained network; the fixed support and decoder stay caller-owned.
+
+    Uses native pickle-free ML artifacts and retains every inherited restriction.
+    """
     require_coordinate_rights(
         fit.rights,
         commercial_use=commercial_use,
@@ -624,7 +644,7 @@ def save_coordinate_model(
     )
     return save_ml_artifact(
         path,
-        fit.model,
+        fit.model.network,
         provenance={
             "conditioning": {
                 "support_id": fit.support.support_id,
@@ -651,9 +671,20 @@ def save_coordinate_model(
 
 
 def load_coordinate_model(
-    path, support, *, weight_rights, commercial_use=False, export=False
+    path,
+    support,
+    *,
+    weight_rights,
+    decoder=None,
+    commercial_use=False,
+    export=False,
 ):
-    """Load admitted, checksum-bound weights; never fetch a checkpoint or provider."""
+    """Load admitted, checksum-bound weights; never fetch a checkpoint or provider.
+
+    The archived network is rebound to the caller's prepared `support` and
+    `decoder` (default: the Cartesian decoder of `support`); both must match the
+    support and representation the network was trained on.
+    """
     require_coordinate_rights(
         (weight_rights,), commercial_use=commercial_use, export=export
     )
@@ -668,17 +699,19 @@ def load_coordinate_model(
     if digest != weight_rights.checksum or len(payload) != weight_rights.size_bytes:
         raise ValueError("Weight bytes do not match their rights manifest.")
     artifact = read_ml_artifact(source)
-    model = artifact.model
+    metadata = artifact.manifest.provenance
+    conditioning = metadata["conditioning"]
+    decoder_ = CartesianCoordinateDecoder(support) if decoder is None else decoder
     if (
-        not isinstance(model, ConditionalCoordinateVelocity)
-        or model.support_id != support.support_id
-        or model.decoder.support_id != support.support_id
-        or model.representation_id != model.decoder.representation_id
+        conditioning["support_id"] != support.support_id
+        or conditioning["representation_id"] != decoder_.representation_id
     ):
         raise ValueError(
             "Checkpoint is not the requested fixed-chemistry coordinate model."
         )
-    metadata = artifact.manifest.provenance
+    model = ConditionalCoordinateVelocity(
+        support, decoder_, tuple(conditioning["conditions"]), artifact.model
+    )
     parents = tuple(
         ReferenceArtifactManifest.from_record(item) for item in metadata["rights"]
     )

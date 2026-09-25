@@ -125,7 +125,14 @@ def test_implicit_step_rejects_invalid_tangent_or_deformation_jacobian(
     )
 
     assert not bool(detail.successful)
-    assert eqx.tree_equal(detail.accepted_state, initial)
+    rejected = eqx.tree_at(
+        lambda state: state.last_status,
+        initial,
+        jnp.asarray(
+            int(phx.discretization.MPMRunStatus.NONLINEAR_FAILED), dtype=jnp.int32
+        ),
+    )
+    assert eqx.tree_equal(detail.accepted_state, rejected)
 
 
 def test_implicit_plane_stress_uses_condensed_material_tangent():

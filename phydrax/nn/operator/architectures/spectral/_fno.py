@@ -38,6 +38,8 @@ from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.signal import fourier_resample as _fourier_resample
 
+from ....._precision import inexact_result_type
+
 
 Factorization = Literal["dense", "cp", "tucker"]
 Activation = Literal["gelu", "silu", "tanh"]
@@ -401,7 +403,7 @@ class MultiScaleSpectralConvND(StrictModule):
         spatial_axes = tuple(range(array.ndim - ndim - 1, array.ndim - 1))
         output = jnp.zeros(
             (*array.shape[:-1], self.out_channels),
-            dtype=jnp.result_type(array.dtype, jnp.float64),
+            dtype=inexact_result_type(array.dtype),
         )
         for gain, scale, branch in zip(
             self.branch_gain, self.scales, self.branches, strict=True

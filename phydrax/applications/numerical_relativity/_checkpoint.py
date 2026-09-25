@@ -28,6 +28,7 @@ from ...lifecycle._chunk_repository import (
     ChunkEncoding,
 )
 from ...lifecycle._distributed_checkpoint import (
+    _NO_PARENT_ID,
     assemble_distributed_checkpoint_from_repository,
     ProcessCheckpointPublication,
     publish_process_checkpoint,
@@ -1255,9 +1256,11 @@ def _validate_publication(
     metadata = dict(durable.metadata)
     supplied_metadata = dict(supplied.metadata)
     parent_checkpoint_id = (
-        "" if parent_manifest is None else parent_manifest.checkpoint_id
+        _NO_PARENT_ID if parent_manifest is None else parent_manifest.checkpoint_id
     )
-    parent_manifest_id = "" if parent_manifest is None else parent_manifest.manifest_id
+    parent_manifest_id = (
+        _NO_PARENT_ID if parent_manifest is None else parent_manifest.manifest_id
+    )
     expected = {
         "repository_id": repository.provider_id,
         "checkpoint_id": plan.checkpoint_id,
@@ -1294,8 +1297,11 @@ def _validate_publication(
             or int(descriptor.get("byte_count", -1)) != shard.byte_count
             or descriptor.get("layout_id") not in shard.layout_ids
             or any(
-                str(descriptor.get(key)) != value for key, value in shard_metadata.items()
+                str(descriptor.get(key)) != value
+                for key, value in shard_metadata.items()
+                if key != "artifact_manifest_id"
             )
+            or shard_metadata.get("artifact_manifest_id") != durable.manifest_id
             or shard_metadata.get("artifact_id") != artifact_id
             or shard_metadata.get("process_index") != str(process_index)
             or shard_metadata.get("topology_epoch") != str(plan.topology_epoch)
@@ -1361,8 +1367,8 @@ def _validate_manifest_repository_binding(
     plan: NumericalRelativityCheckpointPlan,
     /,
 ) -> None:
-    parent_checkpoint_id = manifest.parent_checkpoint_id or ""
-    parent_manifest_id = manifest.parent_manifest_id or ""
+    parent_checkpoint_id = manifest.parent_checkpoint_id or _NO_PARENT_ID
+    parent_manifest_id = manifest.parent_manifest_id or _NO_PARENT_ID
     processes = set()
     durable_by_artifact: dict[str, ArtifactManifest] = {}
     descriptors_by_artifact: dict[str, dict[str, dict[str, Any]]] = {}

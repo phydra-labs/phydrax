@@ -559,18 +559,24 @@ def _square_root_rts_smoother(result: KalmanFilterResult, /) -> KalmanSmootherRe
         pair_valid = (
             base_valid[:, index] & valid[:, index + 1] & factor_valid & proposed_finite
         )
+        # An inactive successor starts the backward pass: the step keeps its filtered
+        # moments and validity, matching the covariance-form recursion.
+        next_active = active[:, index + 1]
+        smoothed = next_active & pair_valid
         means = means.at[:, index].set(
-            jnp.where(pair_valid[:, None], proposed_mean, filtered_mean[:, index])
+            jnp.where(smoothed[:, None], proposed_mean, filtered_mean[:, index])
         )
         roots = roots.at[:, index].set(
             jnp.where(
-                pair_valid[:, None, None],
+                smoothed[:, None, None],
                 proposed_factor.factor,
                 filtered_factors.factor[:, index],
             )
         )
-        valid = valid.at[:, index].set(pair_valid)
-        gains = gains.at[:, index].set(jnp.where(pair_valid[:, None, None], gain, 0.0))
+        valid = valid.at[:, index].set(
+            jnp.where(next_active, pair_valid, base_valid[:, index])
+        )
+        gains = gains.at[:, index].set(jnp.where(smoothed[:, None, None], gain, 0.0))
     covariances = _covariance(roots)
     return KalmanSmootherResult(
         means=means.reshape(case_shape + (num_steps,) + result.state_shape),

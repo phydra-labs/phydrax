@@ -18,6 +18,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from .._data_plane import EPOCH_ORDER_ALGORITHM, IndexEpochPlan
 from .._fingerprint import array_tree_fingerprint
+from .._precision import inexact_result_type
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from ._posterior import ParameterSpace
@@ -284,7 +285,7 @@ class ArrayMinibatchSource(StrictModule):
         probabilities = jnp.full(
             (self._batch_capacity,),
             1.0 / self._num_factors,
-            dtype=jnp.result_type(jnp.float64),
+            dtype=inexact_result_type(),
         )
         weights = jnp.full(
             (self._batch_capacity,),

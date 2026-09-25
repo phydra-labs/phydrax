@@ -19,6 +19,7 @@ from jaxtyping import Array, ArrayLike, Key
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import DenseLinearOperator, LinearSystem, solve
@@ -782,9 +783,7 @@ def evolve_variable_sector_tdvp(
     history = [initial]
     finite_steps = []
     enabled = tail_evidence.accepted
-    dt = jnp.asarray(
-        plan.time_step, dtype=jnp.result_type(initial.real.dtype, jnp.float64)
-    )
+    dt = jnp.asarray(plan.time_step, dtype=inexact_result_type(initial.real.dtype))
     for step in range(plan.step_count):
         time = jnp.asarray(step, dtype=dt.dtype) * dt
         k1 = jnp.asarray(vector_field(parameters, time))

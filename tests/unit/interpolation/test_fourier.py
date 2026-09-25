@@ -221,7 +221,8 @@ def test_chunked_nonuniform_fourier_defines_empty_point_results():
 
 
 def test_nonuniform_fourier_preserves_complex_phase_for_real_inputs():
-    points = jnp.asarray([[0.25]])
+    # Coordinates are angular phases: each mode k contributes exp(i k x).
+    points = jnp.asarray([[0.5 * jnp.pi]])
 
     type2 = PreparedNonuniformFourier(NonuniformFourierPlan((3,), 2))
     evaluated = type2.type2(points, jnp.asarray([0.0, 1.0, 0.0]))

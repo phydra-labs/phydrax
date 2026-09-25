@@ -19,6 +19,7 @@ from .._interpolation import (
     local_cubic_slope,
     NearestTiePolicy,
 )
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ._sampled import SampledSeries
 from ._types import (
@@ -188,7 +189,7 @@ class SampledSeriesReconstruction(StrictModule):
         /,
     ) -> tuple[Any, ...]:
         coordinates = self.series.support.broadcast_coordinates()
-        dtype = jnp.result_type(coordinates.dtype, jnp.asarray(query).dtype, jnp.float64)
+        dtype = inexact_result_type(coordinates.dtype, jnp.asarray(query).dtype)
         query_ = jnp.asarray(query, dtype=dtype)
         query_ = eqx.error_if(
             query_, jnp.any(~jnp.isfinite(query_)), "Series queries must be finite."
@@ -462,11 +463,8 @@ class SampledSeriesReconstruction(StrictModule):
     ) -> tuple[Array, Array]:
         """Return fixed-capacity interior coordinates and their validity mask."""
         coordinates = self.series.support.coordinates_for(series_index)
-        dtype = jnp.result_type(
-            coordinates.dtype,
-            jnp.asarray(lower).dtype,
-            jnp.asarray(upper).dtype,
-            jnp.float64,
+        dtype = inexact_result_type(
+            coordinates.dtype, jnp.asarray(lower).dtype, jnp.asarray(upper).dtype
         )
         lower_ = jnp.asarray(lower, dtype=dtype)
         upper_ = jnp.asarray(upper, dtype=dtype)

@@ -83,7 +83,7 @@ def test_ters_off_hamann_refuses_negative_ldos_and_closes_current_integral():
         current_scale=2.0,
         position_capacity=1,
         closure_tolerance=2.0e-3,
-    ).evaluate(ldos, units.VOLT, units.ONE)
+    ).evaluate(ldos, units.ELECTRONVOLT, units.ONE)
 
     assert bool(result.evidence.successful)
     zero = bias.size // 2

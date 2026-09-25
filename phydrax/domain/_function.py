@@ -31,6 +31,7 @@ from ._derivative import (
     DerivativeBasis,
     DerivativeMode,
     DerivativeRule,
+    DerivativeRuleProvider,
 )
 from ._domain import Domain
 from ._evaluation import BatchEvaluator, evaluate_domain_function
@@ -160,7 +161,7 @@ class _ExpectationFieldOp(StrictModule, NonTrainableState):
         return ein.contract("...c,c->...", probabilities_, self.class_values)
 
 
-class SwapAxesFieldEvaluator(StrictModule):
+class SwapAxesFieldEvaluator(StrictModule, DerivativeRuleProvider):
     func: Callable
     axis1: int
     axis2: int
@@ -173,14 +174,44 @@ class SwapAxesFieldEvaluator(StrictModule):
     def __call__(self, *args, key=None, **kwargs):
         return jnp.swapaxes(self.func(*args, key=key, **kwargs), self.axis1, self.axis2)
 
+    def derivative_rule_for(self, function: "DomainFunction", /) -> DerivativeRule | None:
+        operand = DomainFunction(
+            domain=function.domain,
+            deps=function.deps,
+            func=self.func,
+            metadata=function.metadata,
+        )
+        rule = operand.derivative_rule
+        if rule is None:
+            return None
+        return _SwapAxesDerivativeRule(rule, self.axis1, self.axis2)
 
-class BinaryFieldEvaluator(StrictModule, BatchEvaluator):
+
+_DIFFERENTIABLE_BINARY_OPS = (
+    operator.add,
+    operator.sub,
+    operator.mul,
+    operator.matmul,
+    operator.truediv,
+)
+
+
+class BinaryFieldEvaluator(StrictModule, BatchEvaluator, DerivativeRuleProvider):
+    """Pointwise binary operation of two domain functions.
+
+    Its derivative rule is derived from the operands `a` and `b` on demand. With
+    `operand_derivatives=False` the rule defers to generic lowering whenever an
+    operand holds trainable arrays; `True` always differentiates the operands
+    separately, so their own derivative rules apply.
+    """
+
     a: "DomainFunction"
     b: "DomainFunction"
     op: Callable[[Any, Any], Any]
     a_pos: tuple[int, ...]
     b_pos: tuple[int, ...]
     reverse: bool
+    operand_derivatives: bool
 
     def __init__(
         self,
@@ -191,6 +222,7 @@ class BinaryFieldEvaluator(StrictModule, BatchEvaluator):
         a_pos: tuple[int, ...],
         b_pos: tuple[int, ...],
         reverse: bool,
+        operand_derivatives: bool = False,
     ):
         self.a = a
         self.b = b
@@ -198,6 +230,19 @@ class BinaryFieldEvaluator(StrictModule, BatchEvaluator):
         self.a_pos = tuple(a_pos)
         self.b_pos = tuple(b_pos)
         self.reverse = bool(reverse)
+        self.operand_derivatives = bool(operand_derivatives)
+
+    def derivative_rule_for(self, function: "DomainFunction", /) -> DerivativeRule | None:
+        del function
+        if self.op not in _DIFFERENTIABLE_BINARY_OPS:
+            return None
+        left, right = (self.b, self.a) if self.reverse else (self.a, self.b)
+        return _BinaryDerivativeRule(
+            op=self.op,
+            left=left,
+            right=right,
+            operand_derivatives=self.operand_derivatives,
+        )
 
     def __call_batch__(
         self,
@@ -237,8 +282,10 @@ class BinaryFieldEvaluator(StrictModule, BatchEvaluator):
 
 
 @dataclass(frozen=True, slots=True, eq=False)
-class _TransposeDerivativeRule(DerivativeRule):
+class _SwapAxesDerivativeRule(DerivativeRule):
     source: DerivativeRule
+    axis1: int
+    axis2: int
 
     def derive(
         self,
@@ -260,7 +307,24 @@ class _TransposeDerivativeRule(DerivativeRule):
             basis=basis,
             periodic=periodic,
         )
-        return None if out is None else out.T
+        return None if out is None else _swap_axes(out, self.axis1, self.axis2)
+
+
+def _swap_axes(function: "DomainFunction", axis1: int, axis2: int, /) -> "DomainFunction":
+    # An explicit rule is wrapped; an evaluator-derived rule is re-derived by the
+    # swap evaluator from its operand.
+    explicit = function.explicit_derivative_rule
+    return DomainFunction(
+        domain=function.domain,
+        deps=function.deps,
+        func=SwapAxesFieldEvaluator(function.func, axis1, axis2),
+        metadata=_drop_model_construction_certificates(function.metadata),
+        derivative_rule=(
+            None
+            if explicit is None
+            else _SwapAxesDerivativeRule(explicit, int(axis1), int(axis2))
+        ),
+    )
 
 
 def _has_trainable_arrays(function: "DomainFunction", /) -> bool:
@@ -338,10 +402,12 @@ def _join_field_domains(left: Domain, right: Domain, /) -> Domain:
 
 @dataclass(frozen=True, slots=True, eq=False)
 class _BinaryDerivativeRule(DerivativeRule):
+    # Built on demand by `BinaryFieldEvaluator.derivative_rule_for` from the
+    # evaluator's live operands; never stored on a DomainFunction.
     op: Callable[[Any, Any], Any]
     left: "DomainFunction"
     right: "DomainFunction"
-    operands_are_trainable: bool
+    operand_derivatives: bool
 
     def derive(
         self,
@@ -354,9 +420,11 @@ class _BinaryDerivativeRule(DerivativeRule):
         basis: DerivativeBasis,
         periodic: bool,
     ) -> "DomainFunction | None":
-        if self.operands_are_trainable:
-            return None
         if backend not in ("ad", "jet"):
+            return None
+        if not self.operand_derivatives and (
+            _has_trainable_arrays(self.left) or _has_trainable_arrays(self.right)
+        ):
             return None
 
         from ..operators.differential._domain_ops import partial_n
@@ -415,28 +483,29 @@ class _BinaryDerivativeRule(DerivativeRule):
         return None
 
 
-def _compose_binary_derivative_rule(
-    op: Callable[[Any, Any], Any],
-    /,
-    *,
-    left: "DomainFunction",
-    right: "DomainFunction",
-) -> DerivativeRule | None:
-    if op not in (
-        operator.add,
-        operator.sub,
-        operator.mul,
-        operator.matmul,
-        operator.truediv,
-    ):
-        return None
-    return _BinaryDerivativeRule(
-        op=op,
-        left=left,
-        right=right,
-        operands_are_trainable=(
-            _has_trainable_arrays(left) or _has_trainable_arrays(right)
+def differentiate_operands(function: "DomainFunction", /) -> "DomainFunction":
+    """Return a binary expression whose derivatives always split over its operands.
+
+    The derivative rule of the result differentiates both operands separately
+    (so their own derivative rules apply) even when they hold trainable arrays.
+    """
+    evaluator = function.func
+    if not isinstance(evaluator, BinaryFieldEvaluator):
+        raise TypeError("differentiate_operands requires a binary DomainFunction.")
+    return DomainFunction(
+        domain=function.domain,
+        deps=function.deps,
+        func=BinaryFieldEvaluator(
+            a=evaluator.a,
+            b=evaluator.b,
+            op=evaluator.op,
+            a_pos=evaluator.a_pos,
+            b_pos=evaluator.b_pos,
+            reverse=evaluator.reverse,
+            operand_derivatives=True,
         ),
+        metadata=function.metadata,
+        derivative_rule=function.explicit_derivative_rule,
     )
 
 
@@ -478,13 +547,18 @@ class DomainFunction(StrictModule):
       array sizes. A callable `func` that receives coordinate tuples from a
       `GridBatch` must return one leading axis per coordinate, in dependency order;
       wrap point-only callables in `PointwiseEvaluator`.
+    - `derivative_rule` is the explicit rule passed at construction or, without
+      one, the rule a `DerivativeRuleProvider` evaluator derives from its own
+      operands (for example the sum, product and quotient rules of arithmetic
+      expressions). Derived rules are rebuilt on each read, so they always see the
+      current operand arrays.
     """
 
     domain: Domain
     deps: tuple[str, ...]
     func: Callable
     metadata: frozendict[str, Any]
-    derivative_rule: DerivativeRule | None
+    explicit_derivative_rule: DerivativeRule | None
 
     def __init__(
         self,
@@ -519,7 +593,16 @@ class DomainFunction(StrictModule):
         self.func = func if callable(func) else _ConstCallable(func)
 
         self.metadata = frozendict({} if metadata is None else metadata)
-        self.derivative_rule = derivative_rule
+        self.explicit_derivative_rule = derivative_rule
+
+    @property
+    def derivative_rule(self) -> DerivativeRule | None:
+        """The explicit rule, else the rule derived by the evaluator, else `None`."""
+        if self.explicit_derivative_rule is not None:
+            return self.explicit_derivative_rule
+        if isinstance(self.func, DerivativeRuleProvider):
+            return self.func.derivative_rule_for(self)
+        return None
 
     def depends_on(self, var: str, /) -> bool:
         """Return whether this function depends on the labeled variable `var`."""
@@ -560,7 +643,7 @@ class DomainFunction(StrictModule):
             deps=self.deps,
             func=self.func,
             metadata=self.metadata,
-            derivative_rule=self.derivative_rule,
+            derivative_rule=self.explicit_derivative_rule,
         )
 
     def with_metadata(self, **metadata: Any) -> "DomainFunction":
@@ -572,7 +655,7 @@ class DomainFunction(StrictModule):
             deps=self.deps,
             func=self.func,
             metadata=merged,
-            derivative_rule=self.derivative_rule,
+            derivative_rule=self.explicit_derivative_rule,
         )
 
     def with_derivative_rule(
@@ -580,7 +663,10 @@ class DomainFunction(StrictModule):
         rule: DerivativeRule | None,
         /,
     ) -> "DomainFunction":
-        """Return a copy using an explicit derivative strategy."""
+        """Return a copy using an explicit derivative strategy.
+
+        `None` removes the explicit rule; an evaluator-derived rule still applies.
+        """
         return DomainFunction(
             domain=self.domain,
             deps=self.deps,
@@ -627,14 +713,6 @@ class DomainFunction(StrictModule):
             meta = frozendict({})
         meta = _drop_model_construction_certificates(meta)
 
-        left = b if reverse else a
-        right = a if reverse else b
-        derivative_rule = _compose_binary_derivative_rule(
-            op,
-            left=left,
-            right=right,
-        )
-
         return DomainFunction(
             domain=joined,
             deps=deps,
@@ -642,7 +720,6 @@ class DomainFunction(StrictModule):
                 a=a, b=b, op=op, a_pos=a_pos, b_pos=b_pos, reverse=reverse
             ),
             metadata=meta,
-            derivative_rule=derivative_rule,
         )
 
     def __add__(self, other: "DomainFunction | ArrayLike | None") -> "DomainFunction":
@@ -700,17 +777,7 @@ class DomainFunction(StrictModule):
 
         If $u(z)\in\mathbb{R}^{m\times n}$ then $(u^T)(z)=u(z)^T$.
         """
-        return DomainFunction(
-            domain=self.domain,
-            deps=self.deps,
-            func=SwapAxesFieldEvaluator(self.func, -2, -1),
-            metadata=_drop_model_construction_certificates(self.metadata),
-            derivative_rule=(
-                None
-                if self.derivative_rule is None
-                else _TransposeDerivativeRule(self.derivative_rule)
-            ),
-        )
+        return _swap_axes(self, -2, -1)
 
     def __call__(
         self,

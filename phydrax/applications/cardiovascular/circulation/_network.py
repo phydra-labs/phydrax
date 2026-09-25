@@ -214,16 +214,13 @@ class ConsistentInitializationPlan(StrictModule):
         /,
         *,
         maximum_differentiations: int = 2,
-        maximum_tears: int = 128,
         absolute_residual: float = 1.0e-9,
         relative_residual: float = 1.0e-9,
         maximum_steps: int = 64,
     ) -> None:
-        structural = DAEStructuralPolicy(
-            maximum_differentiations,
-            maximum_tears,
-            tearing="automatic",
-        )
+        # Algebraic loops are solved monolithically by the nonlinear root; the
+        # canonical DAE compiler does not execute tearing.
+        structural = DAEStructuralPolicy(maximum_differentiations, 0)
         termination = NonlinearTermination(
             absolute_residual=absolute_residual,
             relative_residual=relative_residual,

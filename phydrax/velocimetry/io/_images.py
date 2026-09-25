@@ -268,7 +268,7 @@ def _read_native_image(
             AdapterStatus.OPTIONAL_DEPENDENCY_UNAVAILABLE,
             "Reading non-NumPy image files requires optional dependency 'imageio'.",
         )
-    imageio = importlib.import_module("imageio.canonical")
+    imageio = importlib.import_module("imageio.v3")
     with TemporaryDirectory(prefix="phydrax-image-sequence-") as temporary:
         staged = Path(temporary) / source.name
         staged.write_bytes(resource.data)

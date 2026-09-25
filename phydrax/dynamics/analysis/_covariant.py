@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...linalg import inverse
 from .._evolution import AbstractDifferentiableEvolution
@@ -85,7 +86,7 @@ def _initial_basis(
         matrix = jax.random.normal(
             jax.random.PRNGKey(int(seed)),
             (dimension, rank),
-            dtype=jnp.result_type(state, jnp.float64),
+            dtype=inexact_result_type(state),
         )
     else:
         matrix = jnp.asarray(supplied)

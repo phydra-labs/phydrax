@@ -99,7 +99,7 @@ def test_array_minibatch_source_fingerprint_covers_data_and_configuration():
     assert baseline.configuration()["ordering"] == "feistel32"
     assert (
         baseline.fingerprint
-        == "5d8818b7363587c82a17a427ce6fe34590b45838611f64fdae8b2091f3e015ab"
+        == "f34f5cdd683240ee35417b73c9f42c14eb1ca3191e661b53c15a3ca6c71acfd2"
     )
 
 

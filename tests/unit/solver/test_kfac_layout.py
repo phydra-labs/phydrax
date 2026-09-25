@@ -120,7 +120,7 @@ def test_parameter_layout_rejects_shared_affine_parameters():
         model.layers[0].weight,
     )
 
-    with pytest.raises(ValueError, match="shared or reused affine parameters"):
+    with pytest.raises(ValueError, match="require one explicit sharing_group"):
         _layout({"u": domain.Model("x")(model)})
 
 
@@ -152,7 +152,7 @@ def test_parameter_layout_rejects_random_weight_factorization():
         key=jr.key(2),
     )
 
-    with pytest.raises(ValueError, match="disable rwf"):
+    with pytest.raises(ValueError, match="requires an exact coordinate_pullback"):
         _layout({"u": domain.Model("x")(model)})
 
 

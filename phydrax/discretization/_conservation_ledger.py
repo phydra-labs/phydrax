@@ -516,59 +516,31 @@ class ConservationStageLedger(StrictModule):
             block.route_id for block in selected
         ) != tuple(block.route_id for block in self.blocks):
             raise ValueError("Selected stage blocks must reuse exact ledger routes.")
-        source = jnp.asarray(source_rate)
-        if source.shape != self.source_rate.shape:
+        if jnp.shape(source_rate) != self.source_rate.shape:
             raise ValueError("Selected source rate changed shape.")
-        factors = tuple(jnp.asarray(value) for value in blend_factors)
+        factors = tuple(blend_factors)
         if len(factors) != len(selected):
             raise ValueError("Selected ledger needs one factor block per route block.")
-        differentiability = str(differentiability_policy_id)
-        ledger_id = canonical_fingerprint(
-            {
-                "kind": "conservation-stage-ledger",
-                "geometry_family_id": self.geometry_family_id,
-                "geometry_layout_id": self.geometry_layout_id,
-                "topology_epoch_id": self.topology_epoch_id,
-                "evidence_policy_id": self.evidence_policy_id,
-                "block_rate_ids": [block.rate_block_id for block in selected],
-                "high_order_rate_ids": [
-                    block.rate_block_id for block in self.high_order_blocks
-                ],
-                "low_order_rate_ids": [
-                    block.rate_block_id for block in self.low_order_blocks
-                ],
-                "blend_factor_shapes": [list(value.shape) for value in factors],
-                "differentiability_policy_id": differentiability,
-                "cell_count": self.cell_count,
-                "component_shape": list(self.component_shape),
-                "active_cell_policy": "exact-boolean-source-zero-active-routes",
-                "block_units": _STAGE_RATE_UNITS,
-                "source_units": _STAGE_RATE_UNITS,
-                "units": _STAGE_RATE_UNITS,
-            }
-        )
-        return eqx.tree_at(
-            lambda ledger: (
-                ledger.blocks,
-                ledger.blend_factors,
-                ledger.troubled_cell_mask,
-                ledger.correction_level,
-                ledger.accepted,
-                ledger.source_rate,
-                ledger.differentiability_policy_id,
-                ledger.ledger_id,
-            ),
-            self,
-            (
-                selected,
-                factors,
-                jnp.asarray(troubled_cell_mask),
-                jnp.asarray(correction_level),
-                jnp.asarray(accepted),
-                source,
-                differentiability,
-                ledger_id,
-            ),
+        # Identity and differentiability ids are static fields, so the selected ledger
+        # is rebuilt through the validating constructor rather than `eqx.tree_at`.
+        return type(self)(
+            selected,
+            source_rate,
+            self.active_cell_mask,
+            geometry_family_id=self.geometry_family_id,
+            geometry_layout_id=self.geometry_layout_id,
+            geometry_version=self.geometry_version,
+            evidence_policy_id=self.evidence_policy_id,
+            evidence_version=self.evidence_version,
+            topology_epoch_id=self.topology_epoch_id,
+            high_order_blocks=self.high_order_blocks,
+            low_order_blocks=self.low_order_blocks,
+            blend_factors=factors,
+            entropy_production=self.entropy_production,
+            troubled_cell_mask=troubled_cell_mask,
+            correction_level=correction_level,
+            accepted=accepted,
+            differentiability_policy_id=differentiability_policy_id,
         )
 
     def scatter_content_rate(self) -> Array:

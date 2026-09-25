@@ -308,8 +308,11 @@ def _etkf_case(
     )
     forecast_flat = forecast.reshape((count, state_size))
     forecast_mean = jnp.mean(forecast_flat, axis=0)
-    state_anomalies = (forecast_flat - forecast_mean[None, :]) * inflation
-    inflated_forecast = forecast_mean[None, :] + state_anomalies
+    centered = forecast_flat - forecast_mean[None, :]
+    state_anomalies = centered * inflation
+    # Inflate as a correction to each member so unit inflation reproduces the
+    # forecast bit-for-bit instead of re-rounding it through the ensemble mean.
+    inflated_forecast = forecast_flat + (inflation - 1.0) * centered
     forecast_observations = jax.vmap(
         lambda member: problem.model.observation.location(
             member.reshape(problem.model.state_shape),

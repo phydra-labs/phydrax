@@ -15,6 +15,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._interpolation import bspline_evaluate, BSplineGrid
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState, parameter_field
 
@@ -43,7 +44,7 @@ def _support_array(value: ArrayLike, /) -> Array:
     support_host = np.asarray(support_raw, dtype=np.float64)
     if not np.all(np.isfinite(support_host)) or not support_host[1] > support_host[0]:
         raise ValueError("Driving-path support must be finite and strictly increasing.")
-    return support_raw.astype(jnp.result_type(support_raw, jnp.float64))
+    return support_raw.astype(inexact_result_type(support_raw))
 
 
 def _value_shape(value: tuple[int, ...], /) -> tuple[int, ...]:
@@ -76,7 +77,7 @@ def _breakpoint_schedule(
         raise ValueError("breakpoint_mask must have the same shape as breakpoints.")
     if jnp.issubdtype(points_raw.dtype, jnp.complexfloating):
         raise TypeError("Driving-path breakpoints must be real-valued.")
-    points = points_raw.astype(jnp.result_type(points_raw, support, jnp.float64))
+    points = points_raw.astype(inexact_result_type(points_raw, support))
     points_host = np.asarray(points, dtype=np.float64)
     mask_host = np.asarray(mask, dtype=np.bool_)
     active = points_host[mask_host]
@@ -163,8 +164,8 @@ def _validated_samples(
     if not np.all(np.isfinite(values_host)):
         raise ValueError("Valid sampled driving-path values must be finite.")
 
-    times_ = times_raw.astype(jnp.result_type(times_raw, jnp.float64))
-    values_ = values_raw.astype(jnp.result_type(values_raw, jnp.float64))
+    times_ = times_raw.astype(inexact_result_type(times_raw))
+    values_ = values_raw.astype(inexact_result_type(values_raw))
     return (
         times_,
         values_,
@@ -692,7 +693,7 @@ class FixedBSplineDrivingPath(AbstractDifferentiableDrivingPath):
         ):
             raise TypeError("B-spline path coefficients must be numeric.")
         value_shape = _value_shape(tuple(coefficients_.shape[1:]))
-        coefficients_ = coefficients_.astype(jnp.result_type(coefficients_, jnp.float64))
+        coefficients_ = coefficients_.astype(inexact_result_type(coefficients_))
         coefficients_ = eqx.error_if(
             coefficients_,
             jnp.any(~jnp.isfinite(coefficients_)),

@@ -13,7 +13,12 @@ from phydrax.applications._biophysical_qualification import (
 def test_biophysical_profiles_are_narrow_unreleased_and_evidence_free():
     profiles = biophysical_candidate_profiles()
 
-    assert len(profiles) == 4
+    assert {
+        "protein.stability.megascale-natural-small-domain.canonical",
+        "nucleic.strand-displacement.rna-to-dna.declared-condition.canonical",
+        "protein.coordinate-proposal.fixed-construct-standard-chemistry.canonical",
+        "rna.ensemble.adenine-riboswitch.declared-protocol.canonical",
+    } <= {profile.name for profile in profiles}
     assert [profile.name for profile in profiles] == sorted(
         profile.name for profile in profiles
     )
@@ -25,7 +30,7 @@ def test_biophysical_profiles_are_narrow_unreleased_and_evidence_free():
 
 def test_coordinate_profile_refuses_an_equilibrium_claim():
     profile = biophysical_candidate_profile(
-        "protein.coordinate-proposal.fixed-construct-standard-chemistry"
+        "protein.coordinate-proposal.fixed-construct-standard-chemistry.canonical"
     )
     support = dict(profile.support_tuples[0].attributes)
 

@@ -179,8 +179,8 @@ def test_quantile_fixed_sparse_and_native_qp_have_explicit_gradient_policies():
         0.5,
         solver="dense-qp",
         l2_strength=0.1,
-        max_iterations=40,
-        tolerance=1e-4,
+        max_iterations=100,
+        tolerance=1e-10,
     )
     qp_result = qp.fit_batch(
         MLBatch(
@@ -204,8 +204,13 @@ def test_quantile_fixed_sparse_and_native_qp_have_explicit_gradient_policies():
         ).as_trainable()
         return jnp.sum(jnp.square(fitted(features[:2])))
 
+    # The clean targets are exactly affine, so the unperturbed fit interpolates
+    # eight samples with three parameters: the active set violates LICQ and the
+    # implicit derivative is refused.  A generic perturbation restores a
+    # regular, strictly complementary active set.
+    generic_targets = scalar_targets + 0.1 * jnp.cos(1.7 * jnp.arange(10.0))
     qp_gradients = jax.grad(qp_loss, argnums=(0, 1, 2, 3))(
-        features, scalar_targets, weights, qp.quantile
+        features, generic_targets, weights, qp.quantile
     )
     assert all(jnp.all(jnp.isfinite(value)) for value in qp_gradients)
     with pytest.raises(TypeError, match="requires dense features"):

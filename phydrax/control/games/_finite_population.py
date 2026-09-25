@@ -17,6 +17,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...stochastic import EmpiricalMeanField
 from ._mean_field_fixed_point import (
@@ -601,7 +602,7 @@ def evaluate_finite_population_continuation(
         raise ValueError("plan and problem IDs must match.")
 
     size = problem.population_size
-    dtype = jnp.result_type(problem.fixed_point_result.flow.particles, jnp.float64)
+    dtype = inexact_result_type(problem.fixed_point_result.flow.particles)
     nan_players = jnp.full((size,), jnp.nan, dtype=dtype)
     false_players = jnp.zeros((size,), dtype=jnp.bool_)
     zero_counts = jnp.zeros((size,), dtype=jnp.int32)

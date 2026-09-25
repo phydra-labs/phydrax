@@ -1621,8 +1621,7 @@ def _lsmr_raw(
             normal_residual = jnp.abs(zeta_bar)
             next_iteration_index = value.iteration + 1
             converged = (residual_norm <= absolute + relative * norm_b) | (
-                normal_residual
-                <= absolute + relative * norm_a * jnp.maximum(residual_norm, 1.0)
+                normal_residual <= absolute + relative * norm_a * residual_norm
             )
             condition_limited = condition >= condition_limit
             finite = (

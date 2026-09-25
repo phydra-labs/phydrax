@@ -25,6 +25,7 @@ from ._classification import (
     soft_ordinal_cross_entropy_from_cumulative_logits,
 )
 from ._exponential_family import AbstractExponentialFamily, CategoricalFamily
+from ._precision import inexact_result_type
 from ._strict import StrictModule
 
 
@@ -1051,7 +1052,7 @@ def _real_location(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError("Real observation likelihoods do not accept complex values.")
-    return array.astype(jnp.result_type(array.dtype, jnp.float64))
+    return array.astype(inexact_result_type(array.dtype))
 
 
 def _real_location_target(

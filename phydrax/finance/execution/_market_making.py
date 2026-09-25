@@ -12,6 +12,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics._grid import TimeGrid
 
@@ -42,7 +43,7 @@ def _inventory_grid(value: ArrayLike, bound: float, /) -> Array:
         raise ValueError("inventory_grid must be a nonempty rank-one vector.")
     if jnp.issubdtype(grid.dtype, jnp.complexfloating):
         raise TypeError("inventory_grid must be real-valued.")
-    grid = grid.astype(jnp.result_type(grid, jnp.float64))
+    grid = grid.astype(inexact_result_type(grid))
     if not bool(jnp.all(jnp.isfinite(grid))):
         raise ValueError("inventory_grid must be finite.")
     if bool(jnp.any(jnp.diff(grid) <= 0.0)):

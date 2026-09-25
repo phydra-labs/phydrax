@@ -25,6 +25,10 @@ from phydrax.applications.battery._protocol import (
     CurrentStepPlan,
     RestStepPlan,
 )
+from phydrax.applications.battery._qualification import (
+    ISOTHERMAL_SPM_CANDIDATE,
+    ISOTHERMAL_SPM_SUPPORT,
+)
 from phydrax.applications.battery._results import BatteryRunStatus
 from phydrax.applications.battery._spm import (
     _stable_asinh_ratio,
@@ -35,7 +39,6 @@ from phydrax.applications.battery._spm import (
     SpmParameters,
     SpmState,
 )
-from phydrax.qualification import CapabilityProfile, SupportTuple
 
 
 FARADAY = 96485.33212
@@ -630,17 +633,8 @@ def test_protocol_orchestration_conserves_lithium_charge_and_current():
         (CurrentStepPlan(2.0), RestStepPlan(1.0), CurrentStepPlan(2.0))
     )
     values = BatteryProtocolValues(protocol, jnp.asarray((5.0, -2.0)))
-    support = SupportTuple(
-        "battery.simulation",
-        {"model": "spm", "control": "prescribed-current", "thermal": False},
-    )
-    profile = CapabilityProfile(
-        "battery.spm-test-candidate",
-        "phydrax-tests",
-        "candidate",
-        (support,),
-        released=False,
-    )
+    support = ISOTHERMAL_SPM_SUPPORT
+    profile = ISOTHERMAL_SPM_CANDIDATE
     save_times = jnp.asarray((0.0, 1.0, 2.0, 3.0, 4.0, 5.0))
     experiment = BatteryExperimentPlan(
         adapter,

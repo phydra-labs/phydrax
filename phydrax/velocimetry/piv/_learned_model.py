@@ -17,6 +17,7 @@ from phydrax.ein import contract
 
 from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
+from ..._model import register_artifact_value
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
 from ...imaging import image_coordinates
@@ -515,6 +516,19 @@ class CorrelationPyramidPIV(AbstractDensePIVModel):
             valid_pyramid=tuple(validity),
             architecture_id=self.architecture_id,
         )
+
+
+for _artifact_value in (
+    _ChannelLastConv2D,
+    _SharedFeaturePyramid,
+    _SharedResidualRefinement,
+):
+    register_artifact_value(
+        f"phydrax.velocimetry.piv:{_artifact_value.__name__}",
+        _artifact_value,
+    )
+
+del _artifact_value
 
 
 __all__ = [

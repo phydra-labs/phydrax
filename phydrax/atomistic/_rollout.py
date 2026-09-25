@@ -145,6 +145,7 @@ class AtomisticRolloutPlan(StrictModule):
     observers: tuple[AbstractAtomisticObserverPlan, ...]
     barostat: IsotropicMonteCarloBarostatPlan | None
     barostat_interval: int | None = eqx.field(static=True)
+    replay_identity_id: str = eqx.field(static=True)
     rollout_id: str = eqx.field(static=True)
 
     def __init__(
@@ -201,16 +202,24 @@ class AtomisticRolloutPlan(StrictModule):
         self.observers = observers_
         self.barostat = barostat
         self.barostat_interval = interval
+        # Replay identity names the forward path only; the checkpoint policy
+        # changes reverse-mode rematerialization, never the propagated states.
+        forward_path = {
+            "dynamics": dynamics.prepared_id,
+            "thermodynamic": thermodynamic.table_id,
+            "trajectory": trajectory.plan_id,
+            "observers": tuple(value.observer_id for value in observers_),
+            "barostat": None if barostat is None else barostat.plan_id,
+            "barostat_interval": interval,
+        }
+        self.replay_identity_id = canonical_fingerprint(
+            {"kind": "atomistic-replay", **forward_path}
+        )
         self.rollout_id = canonical_fingerprint(
             {
                 "kind": "atomistic-rollout-plan",
-                "dynamics": dynamics.prepared_id,
-                "thermodynamic": thermodynamic.table_id,
-                "trajectory": trajectory.plan_id,
+                **forward_path,
                 "replay": replay_.policy_id,
-                "observers": tuple(value.observer_id for value in observers_),
-                "barostat": None if barostat is None else barostat.plan_id,
-                "barostat_interval": interval,
             }
         )
 
@@ -523,9 +532,7 @@ class AtomisticRolloutPlan(StrictModule):
             image_digest=final[13],
             stochastic_digest=final[14],
             successful=successful,
-            replay_id=canonical_fingerprint(
-                {"kind": "atomistic-replay", "rollout": self.rollout_id}
-            ),
+            replay_id=self.replay_identity_id,
         )
         observations = tuple(
             observer.finalize(observer_state)

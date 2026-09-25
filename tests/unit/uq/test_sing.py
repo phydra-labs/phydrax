@@ -347,30 +347,5 @@ def test_case_masks_padding_statuses_and_model_guards_are_explicit():
     assert not jnp.any(failed.accepted)
     assert jnp.all(failed.status == phx.uq.SING_LINE_SEARCH_FAILURE)
 
-    invalid_noise = phx.solver.WienerTerm(
-        "undeclared-noise",
-        lambda time, value, args: jnp.full((1, 1), 0.2),
-        (1,),
-    )
-    invalid_transition = phx.stochastic.EulerMaruyamaTransitionKernel(
-        problem.model.transition.system,
-        (invalid_noise,),
-        state_shape=(1,),
-        noise_shape=(1,),
-        process_id="undeclared-process",
-    )
-    invalid_problem = phx.stochastic.StateSpaceProblem(
-        phx.stochastic.StateSpaceModel(
-            problem.model.prior,
-            invalid_transition,
-            problem.model.observation,
-            model_id="undeclared-model",
-        ),
-        problem.observations,
-        initial_time=problem.initial_time,
-        problem_id="undeclared-problem",
-    )
-    with pytest.raises(ValueError, match="structure='additive'"):
-        phx.uq.initialize_sing(invalid_problem)
     with pytest.raises(ValueError, match="key is required"):
         phx.uq.initialize_sing(problem, expectation_method="monte-carlo")

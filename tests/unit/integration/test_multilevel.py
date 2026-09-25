@@ -306,23 +306,19 @@ def test_mlmc_resume_at_max_rounds_performs_no_extra_sampling():
         max_rounds=1,
         estimand="limit",
     )
-    realization = phx.integration.materialize(
+    materialized = phx.integration.materialize(
         _target(),
         plan,
         key=jr.key(31),
-    ).batch
+    )
     observable = lambda samples, level: samples
     partial = phx.integration.advance_multilevel(
         observable,
-        realization,
+        materialized.batch,
         num_rounds=1,
     )
 
-    estimate = phx.integration.integrate_multilevel(
-        observable,
-        realization,
-        state=partial,
-    )
+    estimate = phx.integration.reduce(observable, materialized, state=partial)
 
     assert estimate.status == int(
         phx.integration.IntegrationStatus.MAXIMUM_ROUNDS_REACHED

@@ -81,7 +81,7 @@ def test_affine_lattice_reciprocal_vectors_and_bloch_phase_are_consistent():
         jnp.exp(1j * alpha @ (index @ lattice)),
     )
     partially_periodic = PeriodicCell(jnp.eye(3), periodic_axes=(True, True, False))
-    with pytest.raises(ValueError, match="fully periodic 3D"):
+    with pytest.raises(ValueError, match="fully periodic rank-3 PeriodicCell"):
         periodic_reciprocal_vectors_3d(partially_periodic)
 
 

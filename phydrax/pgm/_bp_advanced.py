@@ -6,11 +6,11 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import numpy as np
 from jaxtyping import Array
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from ..graph import segment_sum
 from ..linalg import GMRES, LinearSolvePolicy, TolerancePolicy
 from ..nonlinear import (
     AndersonAcceleration,
@@ -179,10 +179,12 @@ def _infeasible_support(
     messages: Array,
     /,
 ) -> Array:
-    infeasible = jnp.asarray(False)
-    offsets = np.asarray(prepared.graph.variable_state_offsets)
-    for start, stop in zip(offsets[:-1], offsets[1:]):
-        infeasible = infeasible | jnp.all(jnp.isneginf(evidence[int(start) : int(stop)]))
+    supported_states = segment_sum(
+        (~jnp.isneginf(evidence)).astype(jnp.int32),
+        prepared.state_variable_indices,
+        prepared.graph.num_variables,
+    )
+    infeasible = jnp.any(supported_states == 0)
     for table in prepared.factor_tables:
         axes = tuple(range(1, table.ndim))
         infeasible = infeasible | jnp.any(jnp.all(jnp.isneginf(table), axis=axes))
@@ -301,9 +303,12 @@ def run_implicit_belief_propagation(
         evidence,
         nonlinear.state,
     )
+    # Underflowed messages are exact zeros; the log argument is guarded so the
+    # unselected branch's infinite derivative cannot turn a zero cotangent into NaN.
+    supported = final_probabilities > 0.0
     final_messages = jnp.where(
-        final_probabilities > 0.0,
-        jnp.log(final_probabilities),
+        supported,
+        jnp.log(jnp.where(supported, final_probabilities, 1.0)),
         -jnp.inf,
     )
     final_state = BeliefPropagationState(

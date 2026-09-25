@@ -422,12 +422,16 @@ class _SparseStoragePlan(StrictModule):
         largest = max(edge.source_size, edge.target_size, number_groups)
         index_dtype = jnp.int32 if largest < np.iinfo(np.int32).max else jnp.int64
         counts = np.bincount(canonical_target, minlength=edge.target_size)
-        self.positions = jnp.asarray(positions)
-        self.groups = jnp.asarray(groups)
-        self.indices = jnp.asarray(canonical_source, dtype=index_dtype)
-        self.indptr = jnp.asarray(
-            np.concatenate((np.asarray([0]), np.cumsum(counts))), dtype=index_dtype
-        )
+        # Host pattern data stays concrete even when planned under a trace, so
+        # pattern validation can read it while coefficients remain traced.
+        with jax.ensure_compile_time_eval():
+            self.positions = jnp.asarray(positions)
+            self.groups = jnp.asarray(groups)
+            self.indices = jnp.asarray(canonical_source, dtype=index_dtype)
+            self.indptr = jnp.asarray(
+                np.concatenate((np.asarray([0]), np.cumsum(counts))),
+                dtype=index_dtype,
+            )
         self.source_indices = edge.source_indices
         self.target_indices = edge.target_indices
         self.valid = edge.valid

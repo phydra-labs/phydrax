@@ -11,6 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._precision import inexact_result_type
 from ._stencil import apply_gather_stencil, GatherStencil
 from ._types import (
     BoundsMode,
@@ -66,7 +67,7 @@ def _nodes_and_query(nodes: ArrayLike, query: ArrayLike, /) -> tuple[Array, Arra
         jnp.complexfloating,
     ):
         raise TypeError("Piecewise interpolation coordinates must be real-valued.")
-    dtype = jnp.result_type(nodes_raw, query_raw, jnp.float64)
+    dtype = inexact_result_type(nodes_raw, query_raw)
     nodes_ = nodes_raw.astype(dtype)
     query_ = query_raw.astype(dtype)
     if nodes_.ndim != 1 or nodes_.shape[0] <= 0:

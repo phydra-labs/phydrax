@@ -16,7 +16,11 @@ class _BoundedLeaves(phx.optim.AbstractBranchAndBoundProblem):
         return node
 
     def evaluate(self, node):
-        bound = {"root": 0.0, "candidate": 1.0, "sibling": self.sibling_bound}[node]
+        bound = {
+            "root": self.sibling_bound,
+            "candidate": 1.0,
+            "sibling": self.sibling_bound,
+        }[node]
         lower = phx.optim.BranchBoundEvidence(
             bound,
             certified=True,
@@ -58,6 +62,7 @@ def test_positive_gap_retains_unresolved_competitor_and_is_not_exact():
     assert result.objective == 2.0
     assert result.global_lower_bound == 1.5
     assert result.absolute_gap == 0.5
+    assert int(result.frontier_size) == 1
 
 
 class _FailedSibling(phx.optim.AbstractBranchAndBoundProblem):

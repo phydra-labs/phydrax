@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics import TimeGrid
 from .._lqr import (
@@ -309,11 +310,8 @@ def finite_horizon_lqg_state_feedback(
         process_noise_covariances,
         covariance_tolerance,
     )
-    dtype = jnp.result_type(
-        jnp.asarray(dynamics_matrices),
-        factors,
-        driving_covariances,
-        jnp.float64,
+    dtype = inexact_result_type(
+        jnp.asarray(dynamics_matrices), factors, driving_covariances
     )
     (
         resolved_initial_mean,

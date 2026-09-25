@@ -16,6 +16,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
 from ...control import (
@@ -741,7 +742,7 @@ class PreparedBatteryCurrentControl(StrictModule):
             parameters=current.coefficients,
             sampled_loss=sampled_loss,
             feasibility=feasibility,
-            result_id=f"control-result:{self.control_problem.problem_id}",
+            result_namespace=f"control-result:{self.control_problem.problem_id}",
             method_id=trajectory.method_id,
         )
 
@@ -758,9 +759,7 @@ def prepare_battery_current_control(
         raise TypeError("plan must be BatteryCurrentControlPlan.")
     experiment = plan.experiment
     protocol = experiment.plan.protocol
-    dtype = jnp.result_type(
-        protocol.boundary_times_s, plan.terminal_target.value, jnp.float64
-    )
+    dtype = inexact_result_type(protocol.boundary_times_s, plan.terminal_target.value)
     zero_values = BatteryProtocolValues(
         protocol,
         jnp.zeros((protocol.current_step_count,), dtype=dtype),

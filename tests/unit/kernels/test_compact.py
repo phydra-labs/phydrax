@@ -4,6 +4,7 @@
 
 import math
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -137,7 +138,7 @@ def test_sphere_kernel_binds_spherical_discretization_radius_and_bandlimit():
     assert jnp.allclose(jnp.diag(matrix), 1.0)
     assert f"radius={space.radius}" in kernel.kernel_id
     _assert_psd(matrix)
-    with pytest.raises(ValueError, match="declared round sphere"):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="declared round sphere"):
         kernel.matrix(points / 2.0, points)
 
 

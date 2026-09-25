@@ -15,6 +15,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..nuclear._provenance import NuclearDataProvenance
@@ -209,7 +210,7 @@ class DiagnosticPhotonCoefficientTable(StrictModule, NonTrainableState):
         query_raw = jnp.asarray(energy_j)
         if jnp.issubdtype(query_raw.dtype, jnp.complexfloating):
             raise TypeError("Photon energy queries must be real-valued.")
-        query = query_raw.astype(jnp.result_type(query_raw, jnp.float64))
+        query = query_raw.astype(inexact_result_type(query_raw))
         grid = self.energy_grid.energy_j.astype(query.dtype)
         finite_positive = jnp.isfinite(query) & (query > 0.0)
         supported = finite_positive & (query >= grid[0]) & (query <= grid[-1])

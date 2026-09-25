@@ -207,7 +207,7 @@ def test_invalid_candidates_are_counted_without_hiding_valid_rollouts():
         result.objective_evaluations - result.invalid_candidates
     )
     assert jnp.isfinite(result.objective)
-    assert result.termination_reason != "no_finite_candidates"
+    assert result.termination_reason != "no_valid_candidates"
 
     invalid = phx.control.ControlProblem(
         dynamics,
@@ -225,7 +225,7 @@ def test_invalid_candidates_are_counted_without_hiding_valid_rollouts():
     )
     assert invalid_result.invalid_candidates == 4
     assert invalid_result.valid_evaluations == 0
-    assert invalid_result.termination_reason == "no_finite_candidates"
+    assert invalid_result.termination_reason == "no_valid_candidates"
     assert jnp.isnan(invalid_result.objective)
     assert jnp.all(jnp.isinf(invalid_result.population_objectives))
 

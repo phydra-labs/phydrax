@@ -12,6 +12,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
@@ -218,6 +219,21 @@ def precision_itemsize(value: Any, /) -> int:
             "Microscaling formats have fractional payload widths; use storage_bytes."
         )
     return jnp.dtype(precision_dtype_name(value)).itemsize
+
+
+def inexact_result_type(*values: Any) -> np.dtype:
+    """Return the JAX result dtype of ``values``, promoted to an inexact dtype.
+
+    Floating and complex inputs keep their precision (``float32`` stays
+    ``float32``); integer, boolean, and empty inputs use JAX's canonical default
+    floating dtype. Equivalent to ``jnp.result_type(*values, float)``, where the
+    weakly typed Python ``float`` never widens an inexact input.
+    """
+    if values:
+        dtype = jnp.result_type(*values)
+        if jnp.issubdtype(dtype, jnp.inexact):
+            return dtype
+    return jax.dtypes.canonicalize_dtype(jnp.float64)
 
 
 def _identifier(name: str, value: Any, /) -> str:

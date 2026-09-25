@@ -252,7 +252,12 @@ def test_rational_realization_noise_metrology_and_identifiability():
     assert bool(fit.evidence.accepted)
     descriptor = phx.circuit.realize_rational_model(fit.model)
     descriptor_response = phx.control.descriptor_frequency_response(descriptor, omega)
-    assert jnp.allclose(descriptor_response.response, samples, rtol=1e-8, atol=1e-8)
+    assert jnp.allclose(
+        descriptor_response.response,
+        fit.model.evaluate_s(1j * omega),
+        rtol=1e-8,
+        atol=1e-8,
+    )
     reduced = phx.circuit.reduce_rational_model(model, 1)
     assert reduced.model.poles.size == 1
     assert not reduced.passivity_preserved
@@ -273,6 +278,7 @@ def test_rational_realization_noise_metrology_and_identifiability():
         omega,
         phx.circuit.NoiseSpectralFactor(jnp.ones((1, 1))),
     )
+    assert jnp.allclose(noise.transfer, samples, rtol=1e-8, atol=1e-8)
     assert jnp.all(noise.diagnostics.positive_semidefinite)
 
     references = (

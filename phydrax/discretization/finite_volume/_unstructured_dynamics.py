@@ -295,8 +295,10 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             ):
                 raise ValueError(
                     "Moving unstructured finite-volume reconstruction requires "
-                    "piecewise constant or stage-refreshable degree-one WLSQ "
-                    f"(coupling={coupling_.prepared_id}, method={method.method_id})."
+                    "piecewise constant or stage-refreshable degree-one/two "
+                    "cell-polynomial or WENO-Z reconstruction "
+                    f"(coupling={coupling_.prepared_id}, method={method.method_id}, "
+                    f"reconstruction={type(reconstruction).__name__})."
                 )
         if (
             coupling_.motion is not None or coupling_.overset is not None

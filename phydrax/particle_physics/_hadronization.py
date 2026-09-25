@@ -413,6 +413,10 @@ class DarkClusterFissionResult(StrictModule, NonTrainableState):
     frame_realization_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @property
+    def successful(self) -> Array:
+        return self.status == int(DarkHadronizationStatus.SUCCESS)
+
 
 def _species_arrays(table: ParticleSpeciesTable, channels):
     ids = np.asarray(table.pdg_ids)

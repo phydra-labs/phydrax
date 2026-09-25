@@ -25,6 +25,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._interpolation import bspline_stencil, linear_interpolate
+from ..._precision import inexact_result_type
 from ..._trainable import fixed_field, NonTrainableState
 from ...sparse import EdgeRelation, SparseLinearMap
 from .._batch import MLBatch, WeightPolicy
@@ -391,7 +392,7 @@ class SplineTransformer(AbstractRecipe):
         quantiles = _weighted_quantiles(x, weights, probabilities)
         lower, upper = quantiles[..., 0], quantiles[..., -1]
         constant = upper <= lower
-        radius = jnp.sqrt(jnp.finfo(jnp.result_type(x, jnp.float64)).eps) * jnp.maximum(
+        radius = jnp.sqrt(jnp.finfo(inexact_result_type(x)).eps) * jnp.maximum(
             jnp.abs(lower), 1.0
         )
         safe_lower = jnp.where(constant, lower - radius, lower)
@@ -585,7 +586,7 @@ class FourierFeatures(AbstractRecipe):
             raise TypeError(
                 "Complex Fourier features require explicit real periods and origins."
             )
-        real_x = x.real.astype(jnp.result_type(x.real, jnp.float64))
+        real_x = x.real.astype(inexact_result_type(x.real))
         minimum = jnp.min(jnp.where(weights > 0.0, real_x, jnp.inf), axis=-2)
         maximum = jnp.max(jnp.where(weights > 0.0, real_x, -jnp.inf), axis=-2)
         minimum = jnp.where(mass > 0.0, minimum, jnp.zeros_like(minimum))
@@ -1219,7 +1220,7 @@ class FittedPowerTransformer(AbstractFittedModel):
         values = _check_features(x, self.in_size)
         if jnp.issubdtype(values.dtype, jnp.complexfloating):
             raise TypeError("PowerTransformer requires real-valued features.")
-        values = values.astype(jnp.result_type(values, jnp.float64))
+        values = values.astype(inexact_result_type(values))
         lambdas = _align_parameter(self.lambdas, values, self.case_shape)
         if self.method == "box-cox":
             values = eqx.error_if(
@@ -1236,7 +1237,7 @@ class FittedPowerTransformer(AbstractFittedModel):
     def inverse_transform(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         values = _check_features(x, self.out_size)
-        values = values.astype(jnp.result_type(values, jnp.float64))
+        values = values.astype(inexact_result_type(values))
         lambdas = _align_parameter(self.lambdas, values, self.case_shape)
         if self.method == "box-cox":
             domain = (jnp.abs(lambdas) <= 1e-7) | (1.0 + lambdas * values > 0.0)
@@ -1298,7 +1299,7 @@ class PowerTransformer(AbstractRecipe):
         )
         if jnp.issubdtype(x.dtype, jnp.complexfloating):
             raise TypeError("PowerTransformer requires real-valued features.")
-        x = x.astype(jnp.result_type(x, jnp.float64))
+        x = x.astype(inexact_result_type(x))
         positive = jnp.all((x > 0.0) | (weights == 0.0), axis=-2)
         if self.method == "box-cox":
             positive_case = jnp.all(positive, axis=-1)
@@ -1313,7 +1314,7 @@ class PowerTransformer(AbstractRecipe):
             self.lambda_range[0],
             self.lambda_range[1],
             self.n_lambdas,
-            dtype=jnp.result_type(x, jnp.float64),
+            dtype=inexact_result_type(x),
         )
         expanded = safe_x[..., None]
         lambda_bank = lambdas.reshape((1,) * x.ndim + (self.n_lambdas,))

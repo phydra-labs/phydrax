@@ -19,6 +19,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..dynamics import DiscreteStepContext, StateLayout, TimeGrid
@@ -194,7 +195,7 @@ class ILQRPolicy(AbstractControlParameterization, NonTrainableState):
         query = jnp.asarray(time)
         if jnp.issubdtype(query.dtype, jnp.complexfloating):
             raise TypeError("ILQRPolicy evaluation times must be real-valued.")
-        query = query.astype(jnp.result_type(query, jnp.float64))
+        query = query.astype(inexact_result_type(query))
         query = eqx.error_if(
             query,
             jnp.any(~jnp.isfinite(query))

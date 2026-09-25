@@ -422,6 +422,15 @@ def _bias_diagnostics(
     return bias, order
 
 
+def _exhaustion_status(counts: tuple[int, ...], /) -> int:
+    status = (
+        IntegrationStatus.NO_VALID_SAMPLES
+        if any(count < 2 for count in counts)
+        else IntegrationStatus.MAXIMUM_EVALUATIONS_REACHED
+    )
+    return int(status)
+
+
 def _allocation(
     realization: MultilevelRealization,
     state: MultilevelEstimatorState,
@@ -429,11 +438,21 @@ def _allocation(
 ) -> tuple[tuple[int, ...], int | None]:
     counts = _sample_counts(state)
     if realization.fixed_samples is not None:
-        if all(
-            count >= target
-            for count, target in zip(counts, realization.fixed_samples, strict=True)
-        ):
+        unmet = tuple(
+            index
+            for index, (count, target) in enumerate(
+                zip(counts, realization.fixed_samples, strict=True)
+            )
+            if count < target
+        )
+        if not unmet:
             return realization.fixed_samples, int(IntegrationStatus.CONVERGED)
+        if all(
+            _host_float(state.attempted_counts[index])
+            >= realization.maximum_samples[index]
+            for index in unmet
+        ):
+            return realization.fixed_samples, _exhaustion_status(counts)
         return realization.fixed_samples, None
     if any(count < target for count, target in zip(counts, realization.initial_samples)):
         return realization.initial_samples, None
@@ -492,12 +511,7 @@ def _allocation(
         _host_float(state.attempted_counts[index]) >= realization.maximum_samples[index]
         for index in range(len(counts))
     ):
-        terminal = (
-            IntegrationStatus.NO_VALID_SAMPLES
-            if any(count < 2 for count in counts)
-            else IntegrationStatus.MAXIMUM_EVALUATIONS_REACHED
-        )
-        return desired, int(terminal)
+        return desired, _exhaustion_status(counts)
     return desired, None
 
 
@@ -642,13 +656,11 @@ def advance_multilevel(
         if terminal is not None:
             return _replace_state(current, finished=True, status=terminal)
         if not sampled:
-            counts = _sample_counts(current)
-            status = (
-                IntegrationStatus.NO_VALID_SAMPLES
-                if any(count < 2 for count in counts)
-                else IntegrationStatus.MAXIMUM_EVALUATIONS_REACHED
+            return _replace_state(
+                current,
+                finished=True,
+                status=_exhaustion_status(_sample_counts(current)),
             )
-            return _replace_state(current, finished=True, status=int(status))
     return current
 
 

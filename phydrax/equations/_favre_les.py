@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._les_closures import (
@@ -196,7 +197,7 @@ class FavreLESInputs(StrictModule):
             raise TypeError("fields must be a FavreLESFieldContract.")
         density_ = jnp.asarray(density)
         if not jnp.issubdtype(density_.dtype, jnp.inexact):
-            density_ = density_.astype(jnp.result_type(density_, jnp.float64))
+            density_ = density_.astype(inexact_result_type(density_))
         temperature_ = jnp.asarray(temperature, dtype=density_.dtype)
         velocity = jnp.asarray(favre_velocity, dtype=density_.dtype)
         velocity_gradient = jnp.asarray(favre_velocity_gradient, dtype=density_.dtype)

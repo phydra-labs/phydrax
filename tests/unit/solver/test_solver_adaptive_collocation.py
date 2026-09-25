@@ -74,7 +74,7 @@ def test_solver_returns_updated_collocation_state_after_training():
     )
 
 
-def test_solver_logs_adaptive_population_diagnostics(capsys):
+def test_solver_logs_adaptive_population_diagnostics(phydrax_events):
     solver = _trainable_interval_solver(
         PeriodicCollocation(refresh_every=1, sampler="uniform")
     )
@@ -87,10 +87,13 @@ def test_solver_logs_adaptive_population_diagnostics(capsys):
         log_every=1,
         log_terms=True,
     )
-    output = capsys.readouterr().out
-    assert "refresh_count=" in output
-    assert "point_count=" in output
-    assert "effective_sample_size=" in output
+    event = phydrax_events.records("training.step.completed")[-1]
+    metric_names = {metric["name"] for metric in event["fields"]["metrics"]}
+    for metric in ("refresh_count", "point_count", "effective_sample_size"):
+        assert any(
+            name.startswith("train/terms/000_") and name.endswith(f"/{metric}")
+            for name in metric_names
+        )
 
 
 def test_solver_records_controlled_collocation_evaluation_budgets():

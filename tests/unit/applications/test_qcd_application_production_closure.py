@@ -473,7 +473,7 @@ def test_small_volume_dynamical_recipes_lower_to_native_contracts():
         )
 
     decomposition = LatticeDecompositionPlan((3, 3), (1, 1), periodic=(False, False))
-    with pytest.raises(ValueError, match="fermion routes"):
+    with pytest.raises(ValueError, match="fermion boundary topology disagree"):
         _su3_square_geometry(decomposition=decomposition, shape=(3, 3))
     clover = WilsonCloverNf2Recipe(
         geometry,

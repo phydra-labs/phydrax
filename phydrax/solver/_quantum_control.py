@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..control._parameterization import AbstractControlParameterization
@@ -271,7 +272,7 @@ def sample_quantum_control_schedule(
         raise ValueError("time_grid must have shape (interval_count + 1,).")
     if jnp.issubdtype(times.dtype, jnp.complexfloating):
         raise TypeError("time_grid must be real.")
-    times = times.astype(jnp.result_type(times, jnp.float64))
+    times = times.astype(inexact_result_type(times))
     intervals = jnp.diff(times)
     positive = jnp.all(intervals > 0.0)
     sample_times = 0.5 * (times[:-1] + times[1:])

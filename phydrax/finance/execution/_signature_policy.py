@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...stochastic._signature_features import (
     LogSignatureFeatures,
@@ -153,7 +154,7 @@ class SignaturePolicySampleSet(StrictModule):
             )
         if jnp.issubdtype(history.dtype, jnp.complexfloating):
             raise TypeError("histories must be real-valued.")
-        history = history.astype(jnp.result_type(history, jnp.float64))
+        history = history.astype(inexact_result_type(history))
         num_paths, max_knots, dimension = map(int, history.shape)
         time_values = jnp.asarray(times)
         if time_values.shape == (max_knots,):
@@ -164,7 +165,7 @@ class SignaturePolicySampleSet(StrictModule):
             )
         if jnp.issubdtype(time_values.dtype, jnp.complexfloating):
             raise TypeError("times must be real-valued.")
-        time_values = time_values.astype(jnp.result_type(time_values, jnp.float64))
+        time_values = time_values.astype(inexact_result_type(time_values))
         length_values = jnp.asarray(lengths)
         if length_values.shape != (num_paths,) or not jnp.issubdtype(
             length_values.dtype, jnp.integer
@@ -263,10 +264,10 @@ class CausalSignaturePolicy(StrictModule):
         if bool(jnp.any(lower > upper)):
             raise ValueError("action lower bounds cannot exceed upper bounds.")
         self.prepared = prepared
-        self.weights = matrix.astype(jnp.result_type(matrix, jnp.float64))
-        self.bias = offset.astype(jnp.result_type(offset, jnp.float64))
-        self.action_lower_bounds = lower.astype(jnp.result_type(lower, jnp.float64))
-        self.action_upper_bounds = upper.astype(jnp.result_type(upper, jnp.float64))
+        self.weights = matrix.astype(inexact_result_type(matrix))
+        self.bias = offset.astype(inexact_result_type(offset))
+        self.action_lower_bounds = lower.astype(inexact_result_type(lower))
+        self.action_upper_bounds = upper.astype(inexact_result_type(upper))
         self.training_independence_labels = tuple(
             np.asarray(training_sample.independence_labels)
         )

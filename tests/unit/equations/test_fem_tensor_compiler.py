@@ -447,11 +447,13 @@ def test_tensor_interior_facet_resolves_neighbor_across_mesh_blocks():
                 "left",
                 "quadrilateral",
                 jnp.asarray(((0, 1, 4, 3),), dtype=jnp.int32),
+                global_ids=jnp.asarray((0,), dtype=jnp.int64),
             ),
             phx.discretization.CellBlock(
                 "right",
                 "quadrilateral",
                 jnp.asarray(((1, 2, 5, 4),), dtype=jnp.int32),
+                global_ids=jnp.asarray((1,), dtype=jnp.int64),
             ),
         ),
     )

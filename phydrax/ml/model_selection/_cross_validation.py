@@ -15,6 +15,7 @@ import jax.random as jr
 from ..._differentiation import (
     DerivativeContract,
 )
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from .._batch import MLBatch
 from .._contracts import (
@@ -112,9 +113,7 @@ def _score_leaf(value: Any, raw: Any, /) -> ScoreRecord:
         array,
         valid=valid,
         status=jnp.where(valid, ML_SUCCESS, ML_NONFINITE).astype(jnp.int32),
-        effective_weight=jnp.ones_like(
-            array, dtype=jnp.result_type(array.real, jnp.float64)
-        ),
+        effective_weight=jnp.ones_like(array, dtype=inexact_result_type(array.real)),
         raw=raw,
     )
 

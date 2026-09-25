@@ -476,6 +476,7 @@ class PreparedGeneralForceFieldTerm(AbstractPreparedAtomisticEnergyTerm):
     plan: GeneralForceFieldTerm
     system: PreparedAtomisticSystem
     name: str = eqx.field(static=True)
+    force_group: int = eqx.field(static=True)
     term_id: str = eqx.field(static=True)
     site_anchor: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)

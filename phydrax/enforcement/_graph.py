@@ -36,14 +36,20 @@ from phydrax.domain.graph import (
     GRAPH_ENTITY_OFFSET_KEY,
     GRAPH_GRAPH_INDEX_KEY,
     GraphBatch,
+    GraphDatasetDomain,
+    GraphDomain,
+    GraphTrajectoryDatasetDomain,
     has_cochain_field_spec,
     Nodes,
     NodeType,
+    with_cochain_field_spec,
 )
 
 from .._doc import DOC_KEY0
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import fixed_field
+from ..domain._function import _drop_model_construction_certificates
 
 
 def _graph_label_for_component(
@@ -69,6 +75,15 @@ def _graph_label_for_component(
             "Could not infer a unique graph-domain label; pass graph_label explicitly."
         )
     return labels[0]
+
+
+def _graph_family(factor: Any, /) -> tuple[Any, ...]:
+    """Return the fixed graph cases one graph-domain factor samples from."""
+    if isinstance(factor, GraphDomain):
+        return (factor.graph,)
+    if isinstance(factor, (GraphDatasetDomain, GraphTrajectoryDatasetDomain)):
+        return factor.graphs
+    raise TypeError(f"Unsupported graph-domain factor {type(factor).__name__}.")
 
 
 def _entity_indices(batch: GraphBatch, /) -> Array:
@@ -228,7 +243,7 @@ class GraphRestrictionEvidence(StrictModule):
 
 class _GraphRestrictedField(StrictModule, BatchEvaluator):
     value: DomainFunction
-    component: DomainComponent
+    component: DomainComponent = fixed_field()
     graph_label: str = eqx.field(static=True)
 
     def __call_batch__(
@@ -291,15 +306,19 @@ class GraphRestriction(AbstractConditionOperator):
         selector = component.spec.selection_for(label)
         graph_component_kind(selector)
         factor = component.domain.factor(label)
-        graph = factor.graph
         topology_id = canonical_fingerprint(
             {
                 "kind": "graph-topology",
-                "nodes": int(graph.num_nodes),
-                "edges": int(graph.num_edges),
-                "graphs": int(graph.num_graphs),
-                "senders": array_tree_fingerprint(graph.senders),
-                "receivers": array_tree_fingerprint(graph.receivers),
+                "cases": [
+                    {
+                        "nodes": int(graph.num_nodes),
+                        "edges": int(graph.num_edges),
+                        "graphs": int(graph.num_graphs),
+                        "senders": array_tree_fingerprint(graph.senders),
+                        "receivers": array_tree_fingerprint(graph.receivers),
+                    }
+                    for graph in _graph_family(factor)
+                ],
             }
         )
         orientation_id = None
@@ -499,10 +518,12 @@ class CochainAction(AbstractConditionOperator):
         return self.restriction.linearize(values, key=key, **kwargs)
 
 
-class _GraphResidualScatter(StrictModule, BatchEvaluator):
+class _GraphValueOverwrite(StrictModule, BatchEvaluator):
+    # Holds the base field once: `base + (target - base)` on the selected subset
+    # would give the enforced field two independent copies of its parameters.
     base: DomainFunction
     target: DomainFunction
-    component: DomainComponent
+    component: DomainComponent = fixed_field()
     graph_label: str = eqx.field(static=True)
 
     def __call_batch__(
@@ -514,25 +535,25 @@ class _GraphResidualScatter(StrictModule, BatchEvaluator):
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch):
-            raise TypeError("Graph correction requires GraphBatch evaluation.")
+            raise TypeError("Graph enforcement requires GraphBatch evaluation.")
         if batch.graph_label != self.graph_label:
             raise ValueError(
-                f"Graph correction expects label {self.graph_label!r}, got {batch.graph_label!r}."
+                f"Graph enforcement expects label {self.graph_label!r}, got {batch.graph_label!r}."
             )
         base = self.base(batch, key=key, **kwargs)
         target = self.target(batch, key=key, **kwargs)
         if not isinstance(base, cx.AxisArray) or not isinstance(target, cx.AxisArray):
-            raise TypeError("Graph correction expects phydrax.axes.AxisArray outputs.")
+            raise TypeError("Graph enforcement expects phydrax.axes.AxisArray outputs.")
         axis = batch.structure.axis_for(batch.graph_label)
         if axis is None or axis not in base.named_dims or axis not in target.named_dims:
             raise ValueError(
-                "Graph correction fields are missing the graph sampling axis."
+                "Graph enforcement fields are missing the graph sampling axis."
             )
         axis_pos = base.dims.index(axis)
         data = jnp.moveaxis(jnp.asarray(base.data), axis_pos, 0)
         if data.shape[0] != _entity_indices(batch).shape[0]:
             raise ValueError(
-                "Graph correction output size does not match the finite graph batch."
+                "Graph enforcement output size does not match the finite graph batch."
             )
         target_data = jnp.moveaxis(
             jnp.asarray(target.data),
@@ -542,12 +563,8 @@ class _GraphResidualScatter(StrictModule, BatchEvaluator):
         target_data = _broadcast_to_data(target_data, data)
         mask = _component_mask(batch, self.component, self.graph_label)
         mask = mask.reshape(mask.shape + (1,) * (data.ndim - 1))
-        correction = jnp.where(
-            mask,
-            target_data - data,
-            jnp.zeros((), dtype=data.dtype),
-        )
-        return cx.AxisArray(jnp.moveaxis(correction, 0, axis_pos), dims=base.dims)
+        enforced = jnp.where(mask, target_data, data)
+        return cx.AxisArray(jnp.moveaxis(enforced, 0, axis_pos), dims=base.dims)
 
 
 class GraphRestrictionCorrectionAction(StrictModule):
@@ -600,18 +617,19 @@ class GraphRestrictionCorrectionAction(StrictModule):
 
     __call__ = lift
 
-    def correction(
+    def overwrite(
         self,
         base: DomainFunction,
         target: DomainFunction,
         /,
     ) -> DomainFunction:
+        """Return `base` with its values on the restricted subset replaced by `target`."""
         if not base.domain.same_support(self.restriction.component.domain):
             raise ValueError(
-                "Graph correction base must share the restriction component support."
+                "Graph enforcement base must share the restriction component support."
             )
         if not target.domain.same_support(base.domain):
-            raise ValueError("Graph correction target must share the base support.")
+            raise ValueError("Graph enforcement target must share the base support.")
         deps = tuple(
             label
             for label in base.domain.labels
@@ -620,17 +638,13 @@ class GraphRestrictionCorrectionAction(StrictModule):
         return DomainFunction(
             domain=base.domain,
             deps=deps,
-            func=_GraphResidualScatter(
+            func=_GraphValueOverwrite(
                 base,
                 target,
                 self.restriction.component,
                 self.restriction.graph_label,
             ),
-            metadata={
-                "graph_restriction_correction": True,
-                "provider_id": self.provider_id,
-                "exact_scope": self.evidence.restriction_scope,
-            },
+            metadata=_drop_model_construction_certificates(base.metadata),
         )
 
 
@@ -738,8 +752,12 @@ def enforce_graph_values(
         correction_action = GraphRestrictionCorrectionProvider(
             restriction
         ).candidate_action()
-    correction = correction_action.correction(u, target_fn)
-    return u + correction
+    enforced = correction_action.overwrite(u, target_fn)
+    if isinstance(selector, CochainCells):
+        # The overwrite only rewrites selected cells of the same cochain, so the
+        # enforced field keeps the base field's declared cochain semantics.
+        return with_cochain_field_spec(enforced, field_spec)
+    return enforced
 
 
 def enforce_cochain_values(

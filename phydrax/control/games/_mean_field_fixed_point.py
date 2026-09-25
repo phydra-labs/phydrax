@@ -16,6 +16,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...stochastic import EmpiricalMeanField
 from ._mean_field import (
@@ -413,7 +414,7 @@ def solve_mean_field_game_fixed_point(
         raise ValueError("law_mixture and law_mixture_id are required when damping < 1.")
 
     capacity = plan.maximum_iterations
-    dtype = jnp.result_type(problem.initial_flow.particles, jnp.float64)
+    dtype = inexact_result_type(problem.initial_flow.particles)
     distance_history = jnp.full((capacity,), jnp.nan, dtype=dtype)
     current_ess_history = jnp.full((capacity,), jnp.nan, dtype=dtype)
     induced_ess_history = jnp.full((capacity,), jnp.nan, dtype=dtype)

@@ -670,8 +670,14 @@ class _NeuralGalerkinVectorField(StrictModule):
         )
         accepted = result.successful & finite
         if self.adjoint_policy.mode == "certified_backsolve":
+            # The implicit adjoint differentiates the damped normal-equation
+            # stationarity J^T(J rate - target) + damping rate = 0, so that residual
+            # (not the least-squares residual, nonzero at the exact minimizer)
+            # certifies the primal tangent.
+            damping = jnp.asarray(self.policy.damping, dtype=parameters.real.dtype)
+            stationarity = jnp.asarray(jacobian.adjoint_mv(defect)) + damping * rate
             accepted = accepted & (
-                diagnostics.residual_norm <= self.adjoint_policy.maximum_primal_residual
+                _norm(stationarity) <= self.adjoint_policy.maximum_primal_residual
             )
         if self.policy.maximum_relative_defect is not None:
             accepted = accepted & (relative_defect <= self.policy.maximum_relative_defect)

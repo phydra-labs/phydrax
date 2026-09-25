@@ -944,7 +944,7 @@ def nested_cross_validate(
         )
         validation_batch = batch.take_samples(nested_fold.outer_fold.validation_indices)
         predictions = _predict(
-            search_result.best_fit, validation_batch, key=prediction_key
+            search_result.best_fit, validation_batch, scorer, key=prediction_key
         )
         score = _call_scorer(scorer, predictions, validation_batch)
         outer_evaluation = FoldEvaluation(

@@ -13,6 +13,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics import (
     affine_exponential_step,
@@ -33,7 +34,7 @@ def _text(value: str, owner: str) -> str:
 
 
 def _scalar(value: ArrayLike, owner: str, *, positive: bool = False) -> Array:
-    x = jnp.asarray(value, dtype=jnp.result_type(value, jnp.float64))
+    x = jnp.asarray(value, dtype=inexact_result_type(value))
     if x.shape != ():
         raise ValueError(f"{owner} must be scalar.")
     return eqx.error_if(

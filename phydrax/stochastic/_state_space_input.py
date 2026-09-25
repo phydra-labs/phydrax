@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 from .._interpolation._bspline import bspline_stencil
 from .._interpolation._bspline_grid import BSplineGrid
 from .._interpolation._stencil import apply_gather_stencil
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
 
@@ -145,8 +146,8 @@ class SampledStateSpaceInput(AbstractStateSpaceInput):
         )
         if valid.shape != times_raw.shape:
             raise ValueError("knot_valid must have the same shape as times.")
-        times_ = times_raw.astype(jnp.result_type(times_raw, jnp.float64))
-        values_ = values_raw.astype(jnp.result_type(values_raw, jnp.float64))
+        times_ = times_raw.astype(inexact_result_type(times_raw))
+        values_ = values_raw.astype(inexact_result_type(values_raw))
         times_ = eqx.error_if(
             times_,
             jnp.any(jnp.sum(valid, axis=-1) < minimum_knots),
@@ -250,7 +251,7 @@ class BSplineStateSpaceInput(AbstractStateSpaceInput):
 
         self.grid = grid
         coefficients_array = coefficients_raw.astype(
-            jnp.result_type(coefficients_raw, jnp.float64)
+            inexact_result_type(coefficients_raw)
         )
         self.coefficients = eqx.error_if(
             coefficients_array,

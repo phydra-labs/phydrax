@@ -179,8 +179,11 @@ def run_stochastic_heat_convergence_benchmark(
             deterministic,
             save_times=jnp.asarray([0.2]),
             dt=0.2,
+            # The semilinear step applies one augmented exponential/phi action,
+            # which is not self-adjoint; its dimension is the grid plus one
+            # phi coordinate, so this Arnoldi projection is exact.
             matrix_function_policy=phx.linalg.MatrixFunctionPolicy(
-                "lanczos", max_dimension=size
+                "arnoldi", max_dimension=size + 1
             ),
         ).states[-1]
         exact = jnp.exp(-0.03 * (2.0 * jnp.pi) ** 2 * 0.2) * initial
@@ -295,7 +298,7 @@ def run_stochastic_heat_convergence_benchmark(
         realization=stationary_realization,
         dt=8.0,
         matrix_function_policy=phx.linalg.MatrixFunctionPolicy(
-            "lanczos", max_dimension=spatial.num_points
+            "arnoldi", max_dimension=spatial.num_points + 1
         ),
     )
     stationary_coefficients = _modal_coefficients(

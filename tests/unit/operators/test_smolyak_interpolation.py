@@ -227,7 +227,7 @@ def test_interpolation_rejects_invalid_domains_rules_and_source_values():
         phx.uq.EmpiricalDistribution(jnp.asarray([0.0, 1.0])),
         label="e",
     )
-    with pytest.raises(ValueError, match="no canonical reference transform"):
+    with pytest.raises(ValueError, match="no declared exact reference transport"):
         phx.operators.interpolate_smolyak(
             empirical.Function("e")(lambda e: e),
             phx.operators.SmolyakInterpolationPlan(1, 2),

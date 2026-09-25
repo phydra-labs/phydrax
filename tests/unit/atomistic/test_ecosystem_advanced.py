@@ -26,7 +26,7 @@ def _runtime(*, units=None, topology=None, charges=None, cell=None):
         cell=cell,
     )
     system = system_plan.prepare()
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(3).prepare(
+    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(3, box=cell).prepare(
         system.particles
     )
     potential = phx.atomistic.AtomisticPotentialProgram(
@@ -168,7 +168,7 @@ def test_force_field_term_families_and_settle():
         phx.atomistic.LennardJonesDispersionCorrection(0.1),
     )
     potential = phx.atomistic.AtomisticPotentialProgram(terms).prepare(system)
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(6).prepare(
+    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(6, box=cell).prepare(
         system.particles
     )
     evaluation = potential.evaluate(positions, neighborhood.build(positions))
@@ -341,13 +341,14 @@ def test_openmm_fourier_components_preserve_energy_and_force_through_roundtrip()
         del context, integrator
 
 
-def test_openmm_import_export_energy_force_parity():
-    openmm = pytest.importorskip("openmm")
+def _openmm_pair_source(openmm, method):
     source = openmm.System()
     source.addParticle(12.0 * openmm.unit.dalton)
     source.addParticle(16.0 * openmm.unit.dalton)
     nonbonded = openmm.NonbondedForce()
-    nonbonded.setNonbondedMethod(openmm.NonbondedForce.NoCutoff)
+    nonbonded.setNonbondedMethod(method)
+    if method != openmm.NonbondedForce.NoCutoff:
+        nonbonded.setCutoffDistance(10.0 * openmm.unit.angstrom)
     nonbonded.addParticle(
         0.1 * openmm.unit.elementary_charge,
         1.1 * openmm.unit.angstrom,
@@ -374,6 +375,12 @@ def test_openmm_import_export_energy_force_parity():
     )
     source.addForce(nonbonded)
     source.addForce(bond)
+    return source
+
+
+def test_openmm_import_export_energy_force_parity():
+    openmm = pytest.importorskip("openmm")
+    source = _openmm_pair_source(openmm, openmm.NonbondedForce.NoCutoff)
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     bundle = phx.atomistic.interchange.from_openmm_system(
         source, units, atomic_numbers=[6, 8], cutoff=10.0
@@ -421,6 +428,19 @@ def test_openmm_import_export_energy_force_parity():
     np.testing.assert_allclose(
         native.forces, reference_forces, rtol=1.0e-10, atol=1.0e-10
     )
+    # The imported LJ is bounded by the adapter cutoff while direct Coulomb is
+    # uncut; one OpenMM NonbondedForce cannot represent both, so export refuses.
+    with pytest.raises(
+        phx.atomistic.interchange.UnsupportedAtomisticContentError,
+        match="finite-cutoff Lennard-Jones",
+    ):
+        phx.atomistic.interchange.to_openmm_system(bundle)
+
+    source = _openmm_pair_source(openmm, openmm.NonbondedForce.CutoffNonPeriodic)
+    bundle = phx.atomistic.interchange.from_openmm_system(
+        source, units, atomic_numbers=[6, 8], cutoff=10.0
+    )
+    reference_energy, reference_forces = openmm_evaluation(source)
     exported, exported_topology, report = phx.atomistic.interchange.to_openmm_system(
         bundle
     )

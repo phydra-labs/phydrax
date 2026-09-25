@@ -345,7 +345,7 @@ def test_array_discrete_system_adapter_has_legacy_transition_parity():
         reset.accepted_state.payload,
     )
     checkpoint = plant.checkpoint(legacy_reset.accepted_state)
-    assert checkpoint.state_digest
+    assert plant.verify_checkpoint(checkpoint)
     commands = jnp.asarray([2.0, 1.0], dtype=jnp.float32)
     context = PlantStepContext(0.0, 0.5, 0)
     adapted = plant.step(context, reset.accepted_state, commands, parameters)

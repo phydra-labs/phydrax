@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
@@ -57,7 +58,7 @@ def test_held_input_policy_has_explicit_node_convention_and_derivatives():
         )(0.5, jnp.zeros(2))
     )(values)
     assert jnp.allclose(derivative[0, :, 0], jnp.asarray((1.0, 0.0)))
-    with pytest.raises(ValueError, match="outside its time grid"):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="outside its time grid"):
         left(2.1, jnp.zeros(2))
 
 

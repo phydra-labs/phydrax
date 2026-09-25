@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...combinatorial import (
@@ -282,7 +283,7 @@ def associate_two_view(
         raise ValueError("View-a rays must have shape (capacity_a, 3).")
     if ob.shape != (db, 3) or rb.shape != (db, 3):
         raise ValueError("View-b rays must have shape (capacity_b, 3).")
-    dtype = jnp.result_type(oa, ra, ob, rb, jnp.float64)
+    dtype = inexact_result_type(oa, ra, ob, rb)
     oa, ra, ob, rb = (jnp.asarray(value, dtype=dtype) for value in (oa, ra, ob, rb))
     distance, geometry_valid = _ray_distance(oa, ra, ob, rb, plan.parallel_tolerance)
     variance = 1.0 + plan.covariance_scale * (

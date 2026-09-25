@@ -234,7 +234,7 @@ class GeneralizedPencilStabilityAnalyzer(AbstractStabilityAnalyzer):
             policy=self.policy,
         )
         values = result.eigenvalues
-        mask = result.finite_mask & result.diagnostics.mode_mask
+        mask = result.finite_mask
         real_parts = jnp.where(mask, jnp.real(values), -jnp.inf)
         leading_index = jnp.argmax(real_parts)
         leading = values[leading_index]

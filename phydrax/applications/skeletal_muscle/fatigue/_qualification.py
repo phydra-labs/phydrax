@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
+from ...._precision import inexact_result_type
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ._liu_brown_yue_2002 import PreparedLiuBrownYue2002
@@ -79,7 +80,7 @@ class LiuBrownYue2002QualificationPlan(StrictModule, NonTrainableState):
             raise ValueError("sustained_compartments must have shape (steps>=2, 3).")
         if recovery.ndim != 2 or recovery.shape[1] != 3 or recovery.shape[0] < 2:
             raise ValueError("recovery_compartments must have shape (steps>=2, 3).")
-        dtype = jnp.result_type(sustained, recovery, jnp.float64)
+        dtype = inexact_result_type(sustained, recovery)
         sustained = sustained.astype(dtype)
         recovery = recovery.astype(dtype)
         sustained_total = jnp.sum(sustained, axis=1)

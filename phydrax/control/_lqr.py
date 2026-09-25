@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..dynamics import TimeGrid
@@ -234,7 +235,7 @@ class QuadraticValueFunction(StrictModule):
             raise ValueError(
                 f"Value constants must have shape {prefix}; got {scalar.shape}."
             )
-        dtype = jnp.result_type(matrix, vector, scalar, jnp.float64)
+        dtype = inexact_result_type(matrix, vector, scalar)
         self.matrices = matrix.astype(dtype)
         self.linear = vector.astype(dtype)
         self.constants = scalar.astype(dtype)
@@ -388,7 +389,7 @@ def _finite_inputs(
         jnp.any(~finite_required),
         "Finite-horizon LQR required inputs must be finite.",
     )
-    dtype = jnp.result_type(a, b, q, r, q_terminal, jnp.float64)
+    dtype = inexact_result_type(a, b, q, r, q_terminal)
     zeros = lambda shape: jnp.zeros(shape, dtype=dtype)
     c = (
         zeros(case_shape + (horizon, n))

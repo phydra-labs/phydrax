@@ -724,7 +724,9 @@ class OperatorClassificationSpec(StrictModule):
 
     @property
     def target_channel_shape(self) -> tuple[int, ...]:
-        if self.kind == "multilabel" or self.target == "soft":
+        if self.kind == "multilabel" or (
+            self.target == "soft" and self.kind in ("multiclass", "ordinal")
+        ):
             return (self.class_count,)
         return ()
 

@@ -124,23 +124,23 @@ def test_epoch_order_matches_jax_mapping_and_preserves_golden_vector():
     assert not jnp.array_equal(host, other_epoch)
     assert jnp.array_equal(jnp.sort(compiled), positions)
     assert tuple(StatelessIndexPermutation(17, 23, 6)(index) for index in range(17)) == (
-        10,
-        4,
-        2,
-        7,
         15,
-        9,
-        0,
-        8,
-        11,
         12,
-        14,
+        8,
         1,
-        16,
-        6,
+        7,
         13,
+        0,
         3,
+        11,
+        2,
+        4,
+        6,
+        10,
+        9,
         5,
+        14,
+        16,
     )
 
 

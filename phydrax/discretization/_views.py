@@ -43,6 +43,7 @@ from .._validation import canonical_identifier
 
 if TYPE_CHECKING:
     from ..domain import DomainFunction, GeometryDomain
+    from ..domain._derivative import DerivativeRule
     from ..domain._domain import Domain
     from ..geometry import CompiledGeometry
 
@@ -819,6 +820,17 @@ class DiscreteFieldEvaluator(StrictModule, NonTrainableState):
             derivative=derivative,
         )
 
+    def derivative_rule_for(self, function: DomainFunction, /) -> DerivativeRule | None:
+        # A structural `DerivativeRuleProvider`: the exact view rule is rebuilt
+        # from this evaluator, so the field holds its reconstruction data once.
+        from ..domain import CallbackDerivativeRule
+
+        if len(function.deps) != 1:
+            return None
+        return CallbackDerivativeRule(
+            _FieldViewDerivative(self, function.domain, function.deps[0])
+        )
+
     def __call__(self, x: Any, /, *, key: Any = None, **kwargs: Any) -> Array:
         del key, kwargs
         dimension = self.reconstruction.physical_dimension
@@ -916,16 +928,9 @@ class _FieldViewDerivative(StrictModule):
 def _view_function(
     evaluator: DiscreteFieldEvaluator, domain: Domain, variable: str, /
 ) -> DomainFunction:
-    from ..domain import CallbackDerivativeRule, DomainFunction
+    from ..domain import DomainFunction
 
-    return DomainFunction(
-        domain=domain,
-        deps=(variable,),
-        func=evaluator,
-        derivative_rule=CallbackDerivativeRule(
-            _FieldViewDerivative(evaluator, domain, variable)
-        ),
-    )
+    return DomainFunction(domain=domain, deps=(variable,), func=evaluator)
 
 
 @final

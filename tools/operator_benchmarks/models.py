@@ -568,7 +568,7 @@ class OperatorArchitecture:
 
 
 def _primary_source(scenario: OperatorBenchmarkScenario):
-    name = next(iter(scenario.train_batch.inputs))
+    name = scenario.primary_source_key
     return name, scenario.train_batch.input(name)
 
 
@@ -2079,11 +2079,12 @@ def _conservative_geometry_compatible(
 
 
 def _matching_coordinate_dimensions(scenario: OperatorBenchmarkScenario, /) -> bool:
+    source_name, _ = _primary_source(scenario)
     batches = (scenario.train_batch,) + tuple(
         evaluation.batch for evaluation in scenario.evaluations
     )
     return all(
-        _coordinate_dimension(batch.input(next(iter(batch.inputs))))
+        _coordinate_dimension(batch.input(source_name))
         == _coordinate_dimension(batch.require_single_query())
         for batch in batches
     )

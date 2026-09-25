@@ -532,12 +532,15 @@ class _StageJacobian(StrictModule):
 
 def _dae_stage_method(problem, structure, time):
     system, initial = problem.system, problem.initial_state
+    # Stage unknowns are increments about the reference state; the sparse
+    # derivative spaces must be the solver's increment/residual spaces.
+    increment = jnp.zeros_like(initial)
     arguments = ImplicitStageArguments(
         rate_reference=initial,
         time=time,
         shift=jnp.max(system.state_rate_scale),
-        rate_offset=-jnp.max(system.state_rate_scale) * initial,
-        explicit_value=jnp.zeros_like(initial),
+        rate_offset=increment,
+        explicit_value=increment,
         fallback_state=initial,
         active=True,
         model_args=problem.args,
@@ -546,7 +549,7 @@ def _dae_stage_method(problem, structure, time):
         initial.shape,
         initial.dtype,
         system.state_scale,
-        space_id=f"{system.system_id}:implicit-state",
+        space_id=f"{system.system_id}:implicit-increment",
     )
     target = _scaled_space(
         initial.shape,
@@ -556,7 +559,7 @@ def _dae_stage_method(problem, structure, time):
     )
     derivative = compile_sparse_jacobian(
         ImplicitStageResidual(system, problem.input_policy),
-        initial,
+        increment,
         source=source,
         target=target,
         sample_args=arguments,
@@ -564,7 +567,7 @@ def _dae_stage_method(problem, structure, time):
         compiler="native",
         mode="fwd",
     )
-    operator = derivative.operator(initial, arguments)
+    operator = derivative.operator(increment, arguments)
     coordinates = ArraySpace(initial.shape, dtype=initial.dtype)
     setup = SparseCoordinateOperator(
         operator.relation, operator.coefficients, source=coordinates, target=coordinates

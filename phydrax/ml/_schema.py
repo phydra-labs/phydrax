@@ -420,7 +420,6 @@ class AbstractFittedModel(AbstractArrayModel):
                 field.name,
                 changes.get(field.name, object.__getattribute__(self, field.name)),
             )
-        object.__setattr__(bound, "_strict_initialized", True)
         return bound
 
     def output_ports(self) -> tuple[ValuePort, ...]:

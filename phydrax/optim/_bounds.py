@@ -14,6 +14,7 @@ import numpy as np
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
+from .._precision import inexact_result_type
 from .._tree_math import (
     tree_add_scaled as _tree_add_scaled,
     tree_allfinite as _tree_allfinite,
@@ -1576,10 +1577,8 @@ def _solve_bound_constrained(
         return problem.value(candidate, args)[0]
 
     abstract_value = jax.eval_shape(value_function, parameters)
-    scalar_dtype = jnp.result_type(
-        abstract_value.dtype,
-        *(leaf.dtype for leaf in jax.tree.leaves(parameters)),
-        jnp.float64,
+    scalar_dtype = inexact_result_type(
+        abstract_value.dtype, *(leaf.dtype for leaf in jax.tree.leaves(parameters))
     )
     initial_state = _initial_bound_state(
         parameters,

@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 from phydrax.operators.interpolation import (
@@ -9,12 +10,13 @@ from phydrax.operators.interpolation import (
 )
 
 
-def test_cid09_type1_is_algebraic_transpose_of_type2():
+@pytest.mark.parametrize("query_chunk_size", (None, 3))
+def test_cid09_type1_is_algebraic_transpose_of_type2(query_chunk_size):
     phases = jnp.asarray([[-1.1], [-0.2], [0.4], [1.7]])
     coefficients = jnp.asarray([1.0 + 0.2j, -0.3j, 0.7, 0.1 + 0.5j])
     values = jnp.asarray([0.5 - 0.1j, 0.2, -0.7j, 1.1])
-    forward = fourier_type2(phases, coefficients, method="direct", tolerance=1e-12)
-    transpose = fourier_type1(phases, values, (4,), method="direct", tolerance=1e-12)
+    forward = fourier_type2(phases, coefficients, query_chunk_size=query_chunk_size)
+    transpose = fourier_type1(phases, values, (4,), query_chunk_size=query_chunk_size)
     assert jnp.allclose(
         jnp.dot(forward, values), jnp.vdot(coefficients.conj(), transpose)
     )

@@ -11,6 +11,7 @@ from math import prod
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -928,7 +929,8 @@ class MatrixFreeKernelCorrectionPlan(_BaseKernelCorrectionPlan):
             ~jnp.all(probe.successful),
             "Matrix-free kernel Gram preparation did not converge.",
         )
-        defect = jnp.max(jnp.abs(operator.mv(inverse) - identity), initial=0.0)
+        applied = jax.vmap(operator.mv, in_axes=-1, out_axes=-1)(inverse)
+        defect = jnp.max(jnp.abs(applied - identity), initial=0.0)
         diagonal = self.metric.functional_gram(self.functional).matrix.diagonal()
         return self._prepared(
             assembly=assembly,

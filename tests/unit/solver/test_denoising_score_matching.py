@@ -118,7 +118,9 @@ def test_denoising_masks_invalid_samples_and_rejects_empty_mass():
         process,
         phx.terms.UniformTimeSamplingPolicy(0.05, 0.8),
     )
-    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="no valid"):
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError), match="no finite positive mass"
+    ):
         empty.loss({"score": score}, key=jr.key(6))
 
 

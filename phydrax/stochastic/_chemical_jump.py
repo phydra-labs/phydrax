@@ -61,6 +61,7 @@ class ChemicalJumpProcess(AbstractJumpProcess):
     channel_normalization: Array
     maximum_order: int = eqx.field(static=True)
     channel_count: int = eqx.field(static=True)
+    process_id: str = eqx.field(static=True)
 
     def __init__(
         self,

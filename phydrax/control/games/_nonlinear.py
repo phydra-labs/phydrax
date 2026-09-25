@@ -20,6 +20,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics import (
     AbstractInputPolicy,
@@ -305,7 +306,7 @@ class ILQGameScaling(StrictModule):
         state = _positive_real_vector(state_scales, "state_scales")
         control = _positive_real_vector(control_scales, "control_scales")
         cost = _positive_real_vector(cost_scales, "cost_scales")
-        dtype = jnp.result_type(state, control, cost, jnp.float64)
+        dtype = inexact_result_type(state, control, cost)
         state = state.astype(dtype)
         control = control.astype(dtype)
         cost = cost.astype(dtype)
@@ -486,6 +487,36 @@ def _first_false(values: Array, /) -> Array:
     return jnp.argmax(~values, axis=-1).astype(jnp.int32)
 
 
+def _evaluate_active_cases(
+    evaluate: Callable[..., Any],
+    inactive: Callable[..., Any],
+    active: Array,
+    /,
+    *operands: Array,
+) -> Any:
+    """Evaluate per-case callbacks only for active cases.
+
+    A vmapped ``lax.cond`` with a batched predicate lowers to ``select`` and runs
+    both branches, so the batch-level branch is what actually skips user callbacks
+    once every case has stopped.
+    """
+
+    def evaluate_case(flag, *values):
+        return jax.lax.cond(
+            flag,
+            lambda _: evaluate(*values),
+            lambda _: inactive(*values),
+            operand=None,
+        )
+
+    return jax.lax.cond(
+        jnp.any(active),
+        lambda _: jax.vmap(evaluate_case)(active, *operands),
+        lambda _: jax.vmap(inactive)(*operands),
+        operand=None,
+    )
+
+
 def _validate_policy(
     problem: DeterministicFeedbackGameProblem,
     policy: AbstractInputPolicy,
@@ -583,15 +614,12 @@ def evaluate_game_policy(
             jnp.zeros_like(state),
         )
 
-        def evaluate_control(case_state, active):
-            return jax.lax.cond(
-                active,
-                lambda _: policy.evaluate_step(context, case_state, problem.args),
-                lambda _: jnp.zeros((control_size,), dtype=case_state.dtype),
-                operand=None,
-            )
-
-        raw_control = jax.vmap(evaluate_control)(safe_state, trajectory_active)
+        raw_control = _evaluate_active_cases(
+            lambda case_state: policy.evaluate_step(context, case_state, problem.args),
+            lambda case_state: jnp.zeros((control_size,), dtype=case_state.dtype),
+            trajectory_active,
+            safe_state,
+        )
         if raw_control.shape != (count, control_size):
             raise ValueError(
                 "policy.evaluate_step must return the complete joint control shape."
@@ -604,18 +632,16 @@ def evaluate_game_policy(
             jnp.zeros_like(raw_control),
         )
 
-        def evaluate_stage(case_state, case_control, active):
-            return jax.lax.cond(
-                active,
-                lambda _: _stage_cost_vector(problem, context, case_state, case_control),
-                lambda _: jnp.zeros((players,), dtype=case_state.dtype),
-                operand=None,
-            )
-
-        raw_stage = jax.vmap(evaluate_stage)(
+        raw_stage = _evaluate_active_cases(
+            lambda case_state, case_control: _stage_cost_vector(
+                problem, context, case_state, case_control
+            ),
+            lambda case_state, case_control: jnp.zeros(
+                (players,), dtype=case_state.dtype
+            ),
+            attempted,
             safe_state,
             safe_control,
-            attempted,
         )
         stage = jnp.where(
             attempted[:, None],
@@ -624,36 +650,34 @@ def evaluate_game_policy(
         )
         stage_finite = attempted[:, None] & jnp.isfinite(raw_stage)
 
-        def evaluate_transition(case_state, case_control, active):
-            def run(_):
-                result = problem.dynamics.system.evaluate_result(
-                    context,
-                    case_state,
-                    problem.args,
-                    inputs=case_control,
-                )
-                return (
-                    result.candidate_state,
-                    result.accepted_state,
-                    result.successful,
-                    result.status,
-                )
+        def evaluate_transition(case_state, case_control):
+            result = problem.dynamics.system.evaluate_result(
+                context,
+                case_state,
+                problem.args,
+                inputs=case_control,
+            )
+            return (
+                result.candidate_state,
+                result.accepted_state,
+                result.successful,
+                result.status,
+            )
 
-            return jax.lax.cond(
-                active,
-                run,
-                lambda _: (
+        candidate, accepted, transition_successful, transition_status = (
+            _evaluate_active_cases(
+                evaluate_transition,
+                lambda case_state, case_control: (
                     jnp.full_like(case_state, jnp.nan),
                     case_state,
                     jnp.asarray(False),
                     jnp.asarray(0, dtype=jnp.int32),
                 ),
-                operand=None,
+                attempted,
+                safe_state,
+                safe_control,
             )
-
-        candidate, accepted, transition_successful, transition_status = jax.vmap(
-            evaluate_transition
-        )(safe_state, safe_control, attempted)
+        )
         if accepted.shape != (count, state_size):
             raise ValueError("dynamics returned the wrong case/state shape.")
         transition_finite = jnp.all(jnp.isfinite(accepted), axis=-1)
@@ -757,15 +781,12 @@ def evaluate_game_policy(
         transition_status_time_major,
     ) = scan_output
 
-    def evaluate_terminal(case_state, active):
-        return jax.lax.cond(
-            active,
-            lambda _: _terminal_cost_vector(problem, case_state),
-            lambda _: jnp.zeros((players,), dtype=case_state.dtype),
-            operand=None,
-        )
-
-    raw_terminal = jax.vmap(evaluate_terminal)(final_state, final_active)
+    raw_terminal = _evaluate_active_cases(
+        lambda case_state: _terminal_cost_vector(problem, case_state),
+        lambda case_state: jnp.zeros((players,), dtype=case_state.dtype),
+        final_active,
+        final_state,
+    )
     terminal = jnp.where(
         final_active[:, None],
         raw_terminal,

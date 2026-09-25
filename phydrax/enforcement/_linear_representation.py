@@ -917,8 +917,8 @@ class ProductLinearRepresentation(AbstractLinearRepresentation, NonTrainableStat
         blocks = self.coefficient_space.validate(coefficients)
         for child, block in zip(self.representations, blocks, strict=True):
             result = _mapping(child.replace(result, block), "replacement result")
-        if tuple(result) != tuple(values):
-            raise ValueError("Replacement must preserve the input mapping key order.")
+        if set(result) != set(values):
+            raise ValueError("Replacement must preserve the input mapping keys.")
         return frozendict(result)
 
     def synthesize(self, coefficients: Any, /):

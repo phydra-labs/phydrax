@@ -17,6 +17,7 @@ from phydrax.domain import DatasetDomain, DomainComponent, DomainFunction, Point
 
 from .._doc import DOC_KEY0
 from .._likelihoods import AbstractLikelihood
+from .._precision import inexact_result_type
 from .._term import AbstractSamplingTerm
 from ._data_metrics import (
     case_sample_count,
@@ -224,7 +225,7 @@ class _AbstractSupervisedDatasetObservationTerm(AbstractSamplingTerm):
         batch_value = self.sample(key=key) if batch is None else batch
 
         def zero_loss() -> Array:
-            return jnp.zeros((), dtype=jnp.result_type(self.weight, jnp.float64))
+            return jnp.zeros((), dtype=inexact_result_type(self.weight))
 
         def active_loss() -> Array:
             per_case = self.per_case_loss(

@@ -320,6 +320,13 @@ class _PreparedConstantPowerPeriodicMethod(AbstractFixedStepMethod, NonTrainable
             }
         )
 
+    @property
+    def coordinates(self) -> HermitianSpectralCoordinates:
+        coordinates = self.base_method.coordinates
+        if coordinates is None:
+            raise RuntimeError("Constant-power ETDRK lost its Hermitian coordinates.")
+        return coordinates
+
     def step(
         self,
         step_index: Array,

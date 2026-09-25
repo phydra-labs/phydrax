@@ -629,23 +629,30 @@ def _tag_level(
         ),
     )
     sensor_shift_policy = dict(scenario.metadata).get("sensor_shift_policy", "enabled")
+    declared_shifts = {evaluation.shift for evaluation in scenario.evaluations}
     if scenario.symmetry is None and sensor_shift_policy == "enabled":
-        scenario = add_sensor_corruption_shift(
-            scenario,
-            corruption_fraction=0.1 if difficulty == "easy" else 0.3,
-            seed=int.from_bytes(
-                hashlib.sha256(f"{ladder}:{difficulty}:corruption".encode()).digest()[:4],
-                "big",
-            ),
-        )
-        scenario = add_sensor_dropout_shift(
-            scenario,
-            drop_fraction=0.1 if difficulty == "easy" else 0.3,
-            seed=int.from_bytes(
-                hashlib.sha256(f"{ladder}:{difficulty}:dropout".encode()).digest()[:4],
-                "big",
-            ),
-        )
+        if "sensor_corruption" not in declared_shifts:
+            scenario = add_sensor_corruption_shift(
+                scenario,
+                corruption_fraction=0.1 if difficulty == "easy" else 0.3,
+                seed=int.from_bytes(
+                    hashlib.sha256(f"{ladder}:{difficulty}:corruption".encode()).digest()[
+                        :4
+                    ],
+                    "big",
+                ),
+            )
+        if "sensor_dropout" not in declared_shifts:
+            scenario = add_sensor_dropout_shift(
+                scenario,
+                drop_fraction=0.1 if difficulty == "easy" else 0.3,
+                seed=int.from_bytes(
+                    hashlib.sha256(f"{ladder}:{difficulty}:dropout".encode()).digest()[
+                        :4
+                    ],
+                    "big",
+                ),
+            )
     tagged_name = f"{scenario.name}__{ladder}__{difficulty}"
     return replace(
         scenario,
@@ -733,7 +740,7 @@ def standard_operator_benchmark_ladders(
                 num_cases=cases,
                 viscosity=2e-2,
                 dt=1e-3,
-                target_steps=max(2, easy_horizon),
+                target_steps=max(4, easy_horizon),
                 rollout_steps=1 if resolved_profile == "smoke" else 3,
                 initial_condition="shock",
                 maximum_frequency=6,
@@ -886,7 +893,7 @@ def standard_operator_benchmark_ladders(
                 viscosity=5e-3,
                 dt=1e-3,
                 rollout_steps=8,
-                target_steps=max(4, hard_horizon),
+                target_steps=max(8, hard_horizon),
                 maximum_frequency=8,
                 seed=1616,
             ),

@@ -326,8 +326,8 @@ def read_open_system_artifact(
     if missing:
         raise ValueError(f"Open-system artifact is missing fields: {sorted(missing)}")
     record = _record_from_manifest(manifest["record"], arrays)
-    if set(manifest) != _REQUIRED_FIELDS:
-        unexpected = sorted(set(manifest) - _REQUIRED_FIELDS)
+    if set(manifest) != _REQUIRED_FIELDS | {"arrays"}:
+        unexpected = sorted(set(manifest) - _REQUIRED_FIELDS - {"arrays"})
         raise ValueError(f"Open-system artifact contains unexpected fields: {unexpected}")
     if expected_campaign_id is not None and record.campaign_id != expected_campaign_id:
         raise ValueError("Open-system campaign identity mismatch.")

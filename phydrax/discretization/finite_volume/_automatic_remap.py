@@ -637,7 +637,7 @@ def build_unstructured_conservative_remap(
                 }:
                     continue
                 elif artifact.status is IntersectionStatus.UNCERTAIN_PREDICATE:
-                    predicate_uncertain += max(1, int(evidence.uncertain_count))
+                    predicate_uncertain += 1
                     continue
                 else:
                     narrow_failure = (

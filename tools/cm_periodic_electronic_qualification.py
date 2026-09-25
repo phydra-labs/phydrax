@@ -38,18 +38,18 @@ def _manifest(source_id: str):
 
 def _spin_case(reference_kind: str, smearing: float, magnetization: float):
     cell = _cell()
-    basis = periodic.PeriodicOrbitalBasisPlan(
+    basis = phx.operators.periodic.PeriodicOrbitalBasisPlan(
         cell,
         ("lower", "upper"),
         [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0]],
         phx.units.ANGSTROM,
-        periodic.PeriodicBlochGauge("lattice"),
+        phx.operators.periodic.PeriodicBlochGauge("lattice"),
     )
     blocks = np.asarray([np.diag([-1.0, 0.8])]).reshape((1, 2, 1, 2, 1))
     family = phx.operators.periodic.periodic_translation_family_from_dense_blocks(
         [[0, 0, 0]], blocks
     )
-    pencil = periodic.PeriodicOrbitalPencilPlan.orthonormal(
+    pencil = phx.operators.periodic.PeriodicOrbitalPencilPlan.orthonormal(
         basis,
         family.plan,
         family.state,

@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import hashlib
+
 import meshio
 import numpy as np
 import pytest
@@ -248,6 +250,9 @@ def test_bounded_surface_interop_preserves_source_identity_and_noop_repair(tmp_p
         file_format=SurfaceFileFormat.VTU,
     )
     assert destination.is_file()
-    assert exported.artifact_digest
+    assert (
+        exported.report.artifact_digest
+        == hashlib.sha256(destination.read_bytes()).hexdigest()
+    )
     with pytest.raises(ValueError, match="maximum_file_bytes"):
         SurfaceExportPolicy(METER, maximum_file_bytes=0)

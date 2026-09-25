@@ -545,6 +545,7 @@ class FeasibleParameterization(AbstractFeasibilityMap):
     transform: AbstractParameterTransform
     parameterization: ParameterizationKind = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
+    scope: FeasibilityScope = eqx.field(static=True, default="global")
     topology: FeasibleSetTopology = eqx.field(static=True)
     kind: FeasibilityKind = eqx.field(static=True, default="parameterization")
 

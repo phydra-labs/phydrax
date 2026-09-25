@@ -10,7 +10,7 @@ import phydrax as phx
 
 
 def _design(points, functional, name):
-    return phx.uq.FunctionalDesign.from_points(points, functional, name=name)
+    return phx.uq.FunctionalDesign.from_inputs(points, functional, name=name)
 
 
 def test_squared_exponential_functional_covariances_match_closed_forms():

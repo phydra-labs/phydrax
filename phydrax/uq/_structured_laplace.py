@@ -268,7 +268,9 @@ def fit_structured_laplace(
     if likelihood_curvature not in ("hessian", "ggn"):
         raise ValueError("likelihood_curvature must be 'hessian' or 'ggn'.")
     if likelihood_curvature == "ggn" and problem.gauss_newton_residual_fn is None:
-        raise ValueError("GGN curvature requires an explicit residual callback.")
+        raise ValueError(
+            "GGN curvature requires an explicit Gauss-Newton residual callback."
+        )
     whitening = None
     if prior_precision is None:
         whitening = GaussianPriorWhitening.from_parameter_space(problem.parameter_space)

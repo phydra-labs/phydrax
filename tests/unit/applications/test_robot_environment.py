@@ -733,12 +733,13 @@ def _mixed_environment(*, semantic_tag="mixed", reset_successful=True):
 
 def test_environment_reset_retains_failed_plant_disposition():
     environment = _mixed_environment(reset_successful=False)
-    reset = environment.reset(jax.random.key(59))
+    keys = jax.random.split(jax.random.key(59), 2)
+    reset = environment.reset(keys, case_shape=(2,))
 
-    assert bool(reset.attempted)
-    assert not bool(reset.successful)
-    assert int(reset.status) == 7
-    assert int(reset.backend_status) == 17
+    assert jnp.array_equal(reset.attempted, jnp.asarray([True, True]))
+    assert jnp.array_equal(reset.successful, jnp.asarray([False, False]))
+    assert jnp.array_equal(reset.status, jnp.asarray([7, 7]))
+    assert jnp.array_equal(reset.backend_status, jnp.asarray([17, 17]))
     assert reset.evidence == ()
 
 
@@ -813,7 +814,7 @@ def test_mixed_pytree_cases_never_expose_failed_candidate_and_roll_back_all_leav
 
 def test_same_shape_stale_plant_provenance_is_rejected_before_transition():
     environment = _mixed_environment()
-    stale_environment = _mixed_environment(semantic_tag="mixed")
+    stale_environment = _mixed_environment(semantic_tag="stale-mixed")
     keys = jax.random.split(jax.random.key(61), 2)
     state = environment.reset(keys, case_shape=(2,)).state
     stale = PlantRuntimeState(

@@ -100,7 +100,9 @@ def propagate_descriptor_noise(
         raise TypeError("source_factor must be NoiseSpectralFactor.")
     if source_factor.factor.shape[-2] != system.input_size:
         raise ValueError("Noise factor rows must match descriptor input size.")
-    response = descriptor_frequency_response(system, angular_frequency)
+    # Circuits use exp(-i omega t): s = -i omega is the control resolvent at -omega.
+    omega = jnp.asarray(angular_frequency, dtype=jnp.float64)
+    response = descriptor_frequency_response(system, -omega)
     factor = response.response @ source_factor.factor
     covariance = factor @ jnp.swapaxes(jnp.conj(factor), -1, -2)
     hermitian = covariance - jnp.swapaxes(jnp.conj(covariance), -1, -2)

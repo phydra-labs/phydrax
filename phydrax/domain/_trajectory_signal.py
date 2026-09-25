@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import equinox as eqx
@@ -17,7 +18,13 @@ from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
-from ._derivative import CallbackDerivativeRule
+from ._derivative import (
+    DerivativeBackend,
+    DerivativeBasis,
+    DerivativeMode,
+    DerivativeRule,
+    DerivativeRuleProvider,
+)
 from ._evaluation import BatchEvaluator
 from ._function import DomainFunction
 from ._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
@@ -76,7 +83,59 @@ def _trajectory_series(
     )
 
 
-class _SeriesTrajectorySignal(StrictModule, BatchEvaluator, NonTrainableState):
+@dataclass(frozen=True, slots=True, eq=False)
+class _TrajectorySignalDerivativeRule(DerivativeRule):
+    # Built on demand from the live evaluator of `function`.
+    function: DomainFunction
+
+    def derive(
+        self,
+        *,
+        var: str,
+        axis: int | None,
+        order: int,
+        mode: DerivativeMode,
+        backend: DerivativeBackend,
+        basis: DerivativeBasis,
+        periodic: bool,
+    ) -> DomainFunction | None:
+        del mode, basis, periodic
+        signal = self.function.func
+        domain = signal.domain
+        reconstruction = signal.reconstruction
+        if reconstruction.interpolation == "nearest":
+            if var != domain.time_label or axis is not None:
+                return None
+            if int(order) == 0:
+                return self.function
+            raise ValueError(
+                "TrajectorySignal with interpolation='nearest' is not differentiable; "
+                "use interpolation='linear' or 'cubic_hermite' for time derivatives."
+            )
+        if backend not in ("ad", "jet"):
+            return None
+        if var != domain.time_label or axis is not None:
+            return None
+        derivative_order = signal.derivative_order + int(order)
+        limit = reconstruction.capabilities.maximum_explicit_derivative_order
+        if derivative_order > limit:
+            if isinstance(domain, IrregularTrajectoryDatasetDomain):
+                raise ValueError(
+                    "Irregular TrajectorySignal with interpolation='linear' supports "
+                    "time derivatives only up to order 1."
+                )
+            raise ValueError(
+                f"interpolation={reconstruction.interpolation!r} supports trajectory "
+                f"signal time derivatives only up to order {limit}."
+            )
+        if int(order) == 0:
+            return self.function
+        return _signal_function(domain, reconstruction, derivative_order=derivative_order)
+
+
+class _SeriesTrajectorySignal(
+    StrictModule, BatchEvaluator, NonTrainableState, DerivativeRuleProvider
+):
     domain: TrajectoryDatasetDomain | IrregularTrajectoryDatasetDomain
     reconstruction: SampledSeriesReconstruction
     derivative_order: int = eqx.field(static=True)
@@ -133,6 +192,9 @@ class _SeriesTrajectorySignal(StrictModule, BatchEvaluator, NonTrainableState):
         out = jnp.asarray(evaluation.values)
         dims = time_field.dims + (None,) * max(out.ndim - len(time_field.dims), 0)
         return cx.AxisArray(out, dims=dims)
+
+    def derivative_rule_for(self, function: DomainFunction, /) -> DerivativeRule:
+        return _TrajectorySignalDerivativeRule(function)
 
 
 def _signal_function(
@@ -203,76 +265,8 @@ def TrajectorySignal(
         nearest_tie_policy=tie_policy,
         snap_tolerance=float(snap_tol),
     )
-    base = _signal_function(domain, reconstruction, derivative_order=0)
-
-    if interpolation_ == "nearest":
-
-        def _nearest_hook(
-            *,
-            var: str,
-            axis: int | None,
-            order: int,
-            mode,
-            backend,
-            basis,
-            periodic: bool,
-        ) -> DomainFunction | None:
-            del mode, backend, basis, periodic
-            if var != domain.time_label or axis is not None:
-                return None
-            if int(order) == 0:
-                return base.with_derivative_rule(CallbackDerivativeRule(_nearest_hook))
-            raise ValueError(
-                "TrajectorySignal with interpolation='nearest' is not differentiable; "
-                "use interpolation='linear' or 'cubic_hermite' for time derivatives."
-            )
-
-        return base.with_derivative_rule(CallbackDerivativeRule(_nearest_hook))
-
-    def _make_hook(offset: int, /):
-        def _hook(
-            *,
-            var: str,
-            axis: int | None,
-            order: int,
-            mode,
-            backend,
-            basis,
-            periodic: bool,
-        ) -> DomainFunction | None:
-            del mode, basis, periodic
-            if backend not in ("ad", "jet"):
-                return None
-            if var != domain.time_label or axis is not None:
-                return None
-            derivative_order = int(offset) + int(order)
-            limit = reconstruction.capabilities.maximum_explicit_derivative_order
-            if derivative_order > limit:
-                if isinstance(domain, IrregularTrajectoryDatasetDomain):
-                    raise ValueError(
-                        "Irregular TrajectorySignal with interpolation='linear' supports "
-                        "time derivatives only up to order 1."
-                    )
-                raise ValueError(
-                    f"interpolation={reconstruction.interpolation!r} supports trajectory "
-                    f"signal time derivatives only up to order {limit}."
-                )
-            result = (
-                base
-                if derivative_order == 0
-                else _signal_function(
-                    domain,
-                    reconstruction,
-                    derivative_order=derivative_order,
-                )
-            )
-            return result.with_derivative_rule(
-                CallbackDerivativeRule(_make_hook(derivative_order))
-            )
-
-        return _hook
-
-    return base.with_derivative_rule(CallbackDerivativeRule(_make_hook(0)))
+    # The signal evaluator derives its time derivatives from its reconstruction.
+    return _signal_function(domain, reconstruction, derivative_order=0)
 
 
 __all__ = ["TrajectorySignalInterpolation"]

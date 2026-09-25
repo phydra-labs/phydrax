@@ -136,7 +136,7 @@ def propagate_charged_tracks(
         finite = (
             jnp.all(jnp.isfinite(candidate_position), axis=-1)
             & jnp.all(jnp.isfinite(candidate_proper), axis=-1)
-            & pushed.accepted
+            & pushed.successful
         )
         commit = alive & finite
         next_alive = commit & (reduced_magnitude > 0.0)

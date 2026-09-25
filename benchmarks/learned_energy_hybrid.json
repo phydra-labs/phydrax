@@ -287,7 +287,7 @@
       "path": "benchmarks/learned_energy_spatial.json",
       "prepared_binding_id": "ab49b6a07cdac9a5fc7ec9fbf8f8feff1cdb48e5dc1b461e3a32c941c013a89f",
       "prepared_runtime_id": "f73b1407688dd9342745c0b80c1bdd335b8dc57cd5eb268565a217131429cf90",
-      "qualification_id": "8eb2640b5c8dce4239f6d2069dc59211522584ad309bd2d139c8dd1575e2fe63",
+      "qualification_id": "987e0043500a2af0af319ff56a8a97ffec8988fd3af7fd2d4e37d2bd87f1e8b3",
       "transport_plan_id": "aabc5ec81f6596a837ff8089761d1de8d026beada59c9d6585f0f98224e8821e"
     },
     "stage_two": {
@@ -304,7 +304,7 @@
     }
   },
   "passed": true,
-  "qualification_id": "f6e0133cd0093bd521601a2c533de1b3d14253f6abae95a15f7a9cfc7074241b",
+  "qualification_id": "567c35a57d7723a06bda787aabbb07e25646adb4b9692dd8c084c13199332b15",
   "riemann_comparison": {
     "case": "low-amplitude Riemann-style discontinuity",
     "claim": "FV-owned low-amplitude fixed-region comparison only",

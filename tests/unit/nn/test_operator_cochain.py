@@ -294,7 +294,7 @@ def test_cochain_operator_is_multi_output_batched_jittable_and_differentiable():
 
     gradient = jax.grad(objective)(batch.input("edge_source").values)
 
-    assert tuple(prediction.fields) == ("vertex", "edge")
+    assert tuple(prediction.fields) == ("edge", "vertex")
     assert prediction.field("vertex").values.shape == (2, 4)
     assert prediction.field("edge").values.shape == (2, 5)
     assert jnp.allclose(
@@ -529,7 +529,7 @@ def test_multi_field_training_and_checkpoint_resume_are_exact(tmp_path):
     assert first.progress.update_step == 1
     assert resumed.resumed_from_step == 1
     assert resumed.progress.update_step == 2
-    assert tuple(resumed_prediction.fields) == ("vertex", "edge")
+    assert tuple(resumed_prediction.fields) == ("edge", "vertex")
     for name in ("vertex", "edge"):
         assert jnp.array_equal(
             resumed_prediction.field(name).values,

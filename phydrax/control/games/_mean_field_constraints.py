@@ -18,6 +18,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...stochastic import EmpiricalMeanField
 from ._constraints import (
@@ -987,9 +988,7 @@ def solve_constrained_mean_field_game(
         raise ValueError("plan and problem IDs must match.")
 
     capacity = plan.maximum_iterations
-    dtype = jnp.result_type(
-        problem.fixed_point_problem.initial_flow.particles, jnp.float64
-    )
+    dtype = inexact_result_type(problem.fixed_point_problem.initial_flow.particles)
     nan_history = lambda: jnp.full((capacity,), jnp.nan, dtype=dtype)
     law_distance_history = nan_history()
     current_ess_history = nan_history()

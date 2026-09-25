@@ -28,6 +28,7 @@ from jax.flatten_util import ravel_pytree
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._iteration import IterationSession
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._training import (
     emit_training_signal_stop as _emit_training_signal_stop,
@@ -149,7 +150,7 @@ def _armijo_search(
         minimum_rate=minimum_rate,
     )
     value_dtype = jnp.asarray(initial_loss).dtype
-    rate_dtype = jnp.result_type(initial_loss, directional_derivative, jnp.float64)
+    rate_dtype = inexact_result_type(initial_loss, directional_derivative)
 
     def no_search(_):
         return (

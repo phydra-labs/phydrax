@@ -38,8 +38,13 @@ def test_many_particle_phoresis_includes_hydrodynamic_interactions():
         0.1,
     )
     assert bool(step.successful)
-    assert step.minimum_surface_separation_m == 2.0
-    assert step.velocity_m_s[1, 0] > 0
+    # Stokes drag on the forced sphere and Oseen drift of its neighbour.
+    assert jnp.isclose(step.velocity_m_s[0, 0], 1.0 / (3.0 * jnp.pi), rtol=1e-12)
+    assert jnp.isclose(step.velocity_m_s[1, 0], 1.0 / (12.0 * jnp.pi), rtol=1e-12)
+    # The reported separation belongs to the accepted post-step configuration.
+    assert jnp.array_equal(step.position_m, step.candidate_position_m)
+    expected_gap = 2.0 + 0.1 * (step.velocity_m_s[1, 0] - step.velocity_m_s[0, 0])
+    assert jnp.isclose(step.minimum_surface_separation_m, expected_gap, rtol=1e-12)
     assert step.force_power_w > 0
 
 

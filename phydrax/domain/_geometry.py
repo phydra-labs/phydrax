@@ -37,7 +37,6 @@ class GeometryDomain(AbstractGeometry):
 
     geometry: CompiledGeometry
     _label: str
-    adf: Callable[[Array], Array]
 
     def __init__(self, geometry: CompiledGeometry, *, label: str = "x"):
         if not isinstance(geometry, CompiledGeometry):

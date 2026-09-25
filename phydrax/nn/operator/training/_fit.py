@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
-from math import ceil, log
+from math import ceil, inf, isfinite, isnan, log, nan
 from pathlib import Path
 from typing import Any, ClassVar, final, Literal, NamedTuple
 
@@ -303,6 +303,32 @@ def _canonical_hash(value: Any, /) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+_NONFINITE_METRICS = {"nan": nan, "inf": inf, "-inf": -inf}
+
+
+def _encode_metrics(metrics: Mapping[str, float], /) -> dict[str, Any]:
+    """Encode one metric record for JSON checkpoints, tagging nonfinite values.
+
+    Overflowed (discarded) updates record nonfinite losses; resume must restore
+    the identical history, so nonfinite values are kept rather than dropped.
+    """
+    return {
+        name: value
+        if isfinite(value)
+        else {"nonfinite": "nan" if isnan(value) else ("inf" if value > 0 else "-inf")}
+        for name, value in metrics.items()
+    }
+
+
+def _decode_metrics(metrics: Mapping[str, Any], /) -> dict[str, float]:
+    return {
+        name: _NONFINITE_METRICS[value["nonfinite"]]
+        if isinstance(value, dict)
+        else float(value)
+        for name, value in metrics.items()
+    }
 
 
 def _raw_loader(
@@ -2595,10 +2621,12 @@ def fit_operator(
         )
         control.best_payload = best_model
         train_steps = [int(value) for value in metadata["train_steps"]]
-        train_history = [dict(values) for values in metadata["train_metrics"]]
+        train_history = [_decode_metrics(values) for values in metadata["train_metrics"]]
         validation_steps = [int(value) for value in metadata["validation_steps"]]
-        validation_history = [dict(values) for values in metadata["validation_metrics"]]
-        initial_metrics = dict(metadata["initial_metrics"])
+        validation_history = [
+            _decode_metrics(values) for values in metadata["validation_metrics"]
+        ]
+        initial_metrics = _decode_metrics(metadata["initial_metrics"])
         prior_training_seconds = float(metadata["training_seconds"])
         resumed_from_step = progress.update_step
         evaluation_model = evaluation_model_of(kernel_state)
@@ -2665,11 +2693,13 @@ def fit_operator(
                 "schema": schema,
                 "progress": asdict(control.progress),
                 "privacy_classification": expected_privacy_classification,
-                "initial_metrics": initial_metrics,
+                "initial_metrics": _encode_metrics(initial_metrics),
                 "train_steps": train_steps,
-                "train_metrics": train_history,
+                "train_metrics": [_encode_metrics(values) for values in train_history],
                 "validation_steps": validation_steps,
-                "validation_metrics": validation_history,
+                "validation_metrics": [
+                    _encode_metrics(values) for values in validation_history
+                ],
                 "training_seconds": float(training_seconds),
             },
         )

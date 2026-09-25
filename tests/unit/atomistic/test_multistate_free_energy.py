@@ -386,7 +386,7 @@ def test_r_and_k_are_distinct_and_failed_segment_padding_is_canonical(
     )
     np.testing.assert_array_equal(restored.segment.sample_active, result.sample_active)
 
-    with pytest.raises(ValueError, match="predecessor identity"):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="predecessor identity"):
         segment_plan.run(restored.state)
 
 

@@ -80,7 +80,7 @@ def _strict_breaks(name: str, values: Sequence[float], /) -> tuple[float, ...]:
     breaks = tuple(float(value) for value in values)
     if len(breaks) < 2 or not all(isfinite(value) for value in breaks):
         raise ValueError(f"{name} must contain at least two finite values.")
-    if any(right <= left for left, right in zip(breaks, breaks[1:], strict=True)):
+    if any(right <= left for left, right in zip(breaks[:-1], breaks[1:], strict=True)):
         raise ValueError(f"{name} must be strictly increasing.")
     return breaks
 
@@ -91,7 +91,7 @@ def _knot_tuple(name: str, values: Sequence[float], /) -> tuple[float, ...]:
         raise ValueError(f"{name} must contain exactly five knots for a cubic basis.")
     if not all(isfinite(value) for value in knots):
         raise ValueError(f"{name} must contain finite knots.")
-    if any(right < left for left, right in zip(knots, knots[1:], strict=True)):
+    if any(right < left for left, right in zip(knots[:-1], knots[1:], strict=True)):
         raise ValueError(f"{name} must be nondecreasing.")
     if not knots[0] < knots[-1]:
         raise ValueError(f"{name} must have nonzero support.")
@@ -534,7 +534,7 @@ def _build_topology(
                     <= upper
                 )
             )
-            for first, second in zip(on_side, on_side[1:], strict=True):
+            for first, second in zip(on_side[:-1], on_side[1:], strict=True):
                 p0 = (first, fixed) if axis == "u" else (fixed, first)
                 p1 = (second, fixed) if axis == "u" else (fixed, second)
                 key = tuple(sorted((vertex_by_coordinate[p0], vertex_by_coordinate[p1])))

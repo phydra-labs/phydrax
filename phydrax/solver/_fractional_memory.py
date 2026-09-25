@@ -15,6 +15,7 @@ import jax.scipy as jsp
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ._memory import _solution_valid, _time_grid, MemoryEquationSolution
 
@@ -57,7 +58,7 @@ class CaputoFractionalProblem(StrictModule):
         if not callable(vector_field):
             raise TypeError("vector_field must be callable.")
         state = jnp.asarray(initial_state)
-        state = state.astype(jnp.result_type(state, jnp.float64))
+        state = state.astype(inexact_result_type(state))
         state_shape = tuple(state.shape)
         if not state_shape or any(size <= 0 for size in state_shape):
             raise ValueError("initial_state must have a non-empty positive shape.")

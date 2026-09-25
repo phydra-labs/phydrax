@@ -13,6 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import DifferentialProblem
@@ -477,7 +478,7 @@ class SpmState(StrictModule):
             positive.dtype, jnp.complexfloating
         ):
             raise TypeError("SPM amount states must be real-valued.")
-        dtype = jnp.result_type(negative, positive, jnp.float64)
+        dtype = inexact_result_type(negative, positive)
         self.negative_amount_mol = negative.astype(dtype)
         self.positive_amount_mol = positive.astype(dtype)
 

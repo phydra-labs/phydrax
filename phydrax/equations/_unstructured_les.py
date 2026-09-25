@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.finite_volume._unstructured_incompressible import (
@@ -1132,7 +1133,7 @@ def _inexact(value: ArrayLike, /) -> Array:
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError("Low-Mach density must be real.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(jnp.result_type(array, jnp.float64))
+        array = array.astype(inexact_result_type(array))
     return array
 
 

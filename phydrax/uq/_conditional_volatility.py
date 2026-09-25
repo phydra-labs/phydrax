@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._numerics import solve_weighted_least_squares
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..optim import minimize, NewtonTrustRegion, OptimizationTermination
 
@@ -70,7 +71,7 @@ class GARCHModel(StrictModule):
     ):
         if kind not in ("garch", "gjr-garch", "egarch"):
             raise ValueError("kind must be 'garch', 'gjr-garch', or 'egarch'.")
-        dtype = jnp.result_type(omega, alpha, beta, gamma, jnp.float64)
+        dtype = inexact_result_type(omega, alpha, beta, gamma)
         omega_ = jnp.asarray(omega, dtype=dtype)
         alpha_ = jnp.asarray(alpha, dtype=dtype)
         beta_ = jnp.asarray(beta, dtype=dtype)

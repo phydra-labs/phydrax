@@ -25,11 +25,14 @@ from ..domain import (
     GridBatch,
     PointBatch,
 )
+from ..domain._derivative import DerivativeRuleProvider
 from ..terms import ResidualPenalty
 from ._functional_solver import FunctionalSolver
 
 
-class _FrozenFieldEvaluator(StrictModule, BatchEvaluator, ExplicitFreeze):
+class _FrozenFieldEvaluator(
+    StrictModule, BatchEvaluator, ExplicitFreeze, DerivativeRuleProvider
+):
     field: DomainFunction
 
     def __init__(self, field: DomainFunction, /):
@@ -49,6 +52,10 @@ class _FrozenFieldEvaluator(StrictModule, BatchEvaluator, ExplicitFreeze):
 
     def __call__(self, *args: Any, key=None, **kwargs: Any):
         return self.field.func(*args, key=key, **kwargs)
+
+    def derivative_rule_for(self, function: DomainFunction, /) -> DerivativeRule:
+        del function
+        return _FrozenDerivativeRule(self.field)
 
 
 class _FrozenDerivativeRule(StrictModule, DerivativeRule, ExplicitFreeze):
@@ -106,15 +113,15 @@ class _FrozenDerivativeRule(StrictModule, DerivativeRule, ExplicitFreeze):
 def freeze_domain_function(field: DomainFunction, /) -> DomainFunction:
     """Return an equivalent field whose complete evaluator is intentionally frozen.
 
-    The evaluator and derivative rule are `ExplicitFreeze` holders: every array of
-    `field`, including trained model parameters, is FIXED in the returned field.
+    The evaluator is an `ExplicitFreeze` holder: every array of `field`, including
+    trained model parameters, is FIXED in the returned field. Its derivative rule
+    is derived from the frozen evaluator, so derivatives stay frozen too.
     """
     return DomainFunction(
         domain=field.domain,
         deps=field.deps,
         func=_FrozenFieldEvaluator(field),
         metadata=field.metadata,
-        derivative_rule=_FrozenDerivativeRule(field),
     )
 
 

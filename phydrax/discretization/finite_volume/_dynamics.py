@@ -262,15 +262,20 @@ def reconstruct_cartesian_ghosted_axis(
     array_axis: int,
     /,
     *,
+    reconstruction: FiniteVolumeReconstruction,
     interior_cell_count: int,
     ghost_depth: int,
     periodic: bool,
     axis_coordinates: ArrayLike,
 ) -> tuple[Array, Array]:
-    """Apply the canonical FV reconstruction kernel to prepared ghost cells."""
+    """Apply the canonical FV reconstruction kernel to prepared ghost cells.
+
+    `reconstruction` is the axis-prepared plan (for nonuniform WENO, the plan
+    whose edges include this axis's ghost cells); `method` supplies positivity.
+    """
     values = precision.reconstruction(ghosted_state)
     left, right = reconstruct_ghosted_axis(
-        method.reconstruction,
+        reconstruction,
         values,
         array_axis,
         interior_cell_count=interior_cell_count,
@@ -654,6 +659,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             self.precision,
             ghosted.values,
             axis,
+            reconstruction=self.axis_reconstructions[axis],
             interior_cell_count=self.discretization.cell_shape[axis],
             ghost_depth=ghosted.depth,
             periodic=periodic,

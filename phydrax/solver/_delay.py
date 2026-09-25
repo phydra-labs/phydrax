@@ -17,6 +17,7 @@ from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from .._frozendict import frozendict
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..integration import (
     GaussLegendreRule,
@@ -107,7 +108,7 @@ class DelayHistoryWindow(StrictModule):
         values = jnp.asarray(lags)
         if jnp.iscomplexobj(values):
             raise TypeError("Functional delay lags must be real.")
-        values = values.astype(jnp.result_type(self.time, jnp.float64))
+        values = values.astype(inexact_result_type(self.time))
         return eqx.error_if(
             values,
             ~jnp.all(jnp.isfinite(values))
@@ -663,7 +664,7 @@ def _invalid_geometry_tangent(
         raise ValueError(
             "State geometry retraction differential changed the tangent shape."
         )
-    comparison_dtype = jnp.result_type(tangent_value, reconstructed, jnp.float64)
+    comparison_dtype = inexact_result_type(tangent_value, reconstructed)
     tangent_value = tangent_value.astype(comparison_dtype)
     reconstructed = reconstructed.astype(comparison_dtype)
     scale = jnp.maximum(
@@ -1137,9 +1138,7 @@ class DelayDifferentialProblem(StrictModule):
                     tangent_shape,
                     "DelayDifferentialProblem history_derivative at t0 must be tangent to state_geometry.",
                 )
-            comparison_dtype = jnp.result_type(
-                initial_left_derivative, drift_value, jnp.float64
-            )
+            comparison_dtype = inexact_result_type(initial_left_derivative, drift_value)
             residual = drift_value.astype(
                 comparison_dtype
             ) - initial_left_derivative.astype(comparison_dtype)

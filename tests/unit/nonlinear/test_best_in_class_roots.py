@@ -60,8 +60,9 @@ def test_dynamic_budget_and_fail_fast_nested_evidence_are_jittable():
     assert int(result.components[0].diagnostics.work.residual_evaluations) == 2
     assert int(result.components[1].diagnostics.work.residual_evaluations) == 0
     assert bool(result.components[1].evidence.skipped)
-    assert exhausted.status == int(nl.NonlinearUpdateStatus.INNER_FAILURE)
-    assert int(exhausted.diagnostics.work.residual_evaluations) == 2
+    assert exhausted.status == int(nl.NonlinearUpdateStatus.BUDGET_EXHAUSTED)
+    assert int(exhausted.diagnostics.work.residual_evaluations) == 0
+    assert jnp.array_equal(exhausted.state, jnp.asarray([0.0]))
 
 
 def test_canonical_prepared_newton_step_retains_iteration_state():
@@ -854,9 +855,12 @@ def test_picard_certification_uses_declared_residual_geometry():
 def test_steffensen_exit_reuses_cached_mapping_under_evaluation_limit():
     calls = 0
 
-    def mapping(state, args):
+    def count():
         nonlocal calls
         calls += 1
+
+    def mapping(state, args):
+        jax.debug.callback(count)
         return state + 1.0
 
     result = nl.SteffensenIteration().solve(
@@ -869,6 +873,7 @@ def test_steffensen_exit_reuses_cached_mapping_under_evaluation_limit():
             maximum_evaluations=1,
         ),
     )
+    jax.effects_barrier()
 
     assert calls == 1
     assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED)
@@ -897,9 +902,12 @@ def test_quasi_newton_reserves_final_certification_evaluation(method):
 def test_safeguarded_derivative_root_reserves_certification_budget():
     calls = 0
 
-    def residual(value, target):
+    def count():
         nonlocal calls
         calls += 1
+
+    def residual(value, target):
+        jax.debug.callback(count)
         return value * value - target
 
     problem = nl.ScalarRootProblem(residual, bracket=(0.0, 2.0))
@@ -912,6 +920,7 @@ def test_safeguarded_derivative_root_reserves_certification_budget():
         ),
         args=2.0,
     )
+    jax.effects_barrier()
 
     assert calls == 3
     assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED)

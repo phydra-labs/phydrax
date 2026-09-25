@@ -258,8 +258,18 @@ def save_training_checkpoint(
 def read_training_checkpoint_metadata(
     path: str | Path, /, *, format: str
 ) -> dict[str, Any]:
-    """Read and validate the manifest envelope; return the frontend metadata."""
-    return _read_kernel_envelope(Path(path), _checkpoint_format(format))["metadata"]
+    """Read the manifest envelope after verifying the state checksum.
+
+    Resume paths consult this metadata before touching training data, so a
+    corrupt state file must fail closed here rather than after data reads.
+    """
+    directory = Path(path)
+    manifest = _read_kernel_envelope(directory, _checkpoint_format(format))
+    with _open_verified_state(
+        directory, manifest["state_file"], manifest["state_sha256"]
+    ):
+        pass
+    return manifest["metadata"]
 
 
 def _read_kernel_envelope(directory: Path, format: str, /) -> dict[str, Any]:

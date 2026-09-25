@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._precision import inexact_result_type
 from ._stencil import GatherStencil
 from ._types import InterpolationCapabilities, InterpolationResourcePolicy
 
@@ -142,7 +143,7 @@ def rectilinear_stencil(
     query = jnp.asarray(coordinates)
     if jnp.issubdtype(query.dtype, jnp.complexfloating):
         raise TypeError("Rectilinear query coordinates must be real-valued.")
-    dtype = jnp.result_type(query.dtype, jnp.float64)
+    dtype = inexact_result_type(query.dtype)
     query = query.astype(dtype)
     if query.ndim < len(batch) + 1 or query.shape[-1] != dimensions:
         raise ValueError(

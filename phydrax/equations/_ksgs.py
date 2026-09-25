@@ -46,6 +46,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._les_closures import (
@@ -537,7 +538,7 @@ def replace_ksgs_kinetic_energy(
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(jnp.result_type(array, jnp.float64))
+        array = array.astype(inexact_result_type(array))
     return array
 
 

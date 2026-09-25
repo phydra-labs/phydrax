@@ -509,7 +509,8 @@ def test_stage_embedded_plic_uses_oblique_fluid_polygons_and_open_segments():
         lambda points, args: points[:, 0] + points[:, 1] - 1.25,
         field_id="oblique-effective-plic",
     ).prepare()
-    alpha = jnp.full((discretization.cell_count,), 0.5)
+    # Inactive (solid) stage cells must carry exactly zero volume fraction.
+    alpha = jnp.where(embedded.active_fluid_cells, 0.5, 0.0)
 
     def reconstruct(value):
         return vof.reconstruct_stage(

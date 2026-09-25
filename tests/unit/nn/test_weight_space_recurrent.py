@@ -244,8 +244,10 @@ def test_weight_space_operator_decodes_final_state_on_independent_queries():
         mismatched(batch)
 
 
-def test_weight_space_model_rejects_complex_selected_root_parameters():
+def test_weight_space_model_rejects_mixed_real_and_complex_recurrence():
     root = _ComplexRoot(jnp.array([1.0 + 1.0j]))
     subspace = ParameterSubspace(root, eqx.is_inexact_array)
-    with pytest.raises(TypeError, match="real selected parameters"):
-        WeightSpaceRecurrentModel(subspace, 1, 1)
+    model = WeightSpaceRecurrentModel(subspace, 1, 1, key=jr.key(9))
+    batch = RecurrentBatch(jnp.ones((3, 1)), jnp.ones((3,), dtype="bool"))
+    with pytest.raises(TypeError, match="homogeneous real or complex"):
+        model.parameter_trajectory(batch)

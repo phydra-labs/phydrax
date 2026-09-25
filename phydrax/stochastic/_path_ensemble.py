@@ -315,6 +315,10 @@ class StochasticPathEnsemblePlan(StrictModule):
     stepsize_controller_fingerprint: str = eqx.field(static=True)
     adjoint_fingerprint: str = eqx.field(static=True)
     event_fingerprint: str = eqx.field(static=True)
+    solver_id: str | None = eqx.field(static=True)
+    stepsize_controller_id: str | None = eqx.field(static=True)
+    adjoint_id: str | None = eqx.field(static=True)
+    event_id: str | None = eqx.field(static=True)
     path_count: int = eqx.field(static=True)
     max_steps: int = eqx.field(static=True)
     rtol: float = eqx.field(static=True)
@@ -415,6 +419,10 @@ class StochasticPathEnsemblePlan(StrictModule):
         self.stepsize_controller_fingerprint = controller_fingerprint
         self.adjoint_fingerprint = adjoint_fingerprint
         self.event_fingerprint = event_fingerprint
+        self.solver_id = solver_id
+        self.stepsize_controller_id = stepsize_controller_id
+        self.adjoint_id = adjoint_id
+        self.event_id = event_id
         self.path_count = count
         self.max_steps = maximum
         self.rtol = relative
@@ -425,6 +433,33 @@ class StochasticPathEnsemblePlan(StrictModule):
         self.throw = bool(throw)
         self.configuration_id = configuration_id
         self.plan_id = resolved_id
+
+    def with_time_grid(self, time_grid: TimeGrid, /) -> StochasticPathEnsemblePlan:
+        """Return the same solve configuration on another output mesh.
+
+        The configuration and plan identities are recomputed canonically for the
+        new mesh; the plan identity is the new configuration identity.
+        """
+        return StochasticPathEnsemblePlan(
+            time_grid,
+            path_count=self.path_count,
+            dt0=self.dt0,
+            solver=self.solver,
+            solver_id=self.solver_id,
+            stepsize_controller=self.stepsize_controller,
+            stepsize_controller_id=self.stepsize_controller_id,
+            adjoint=self.adjoint,
+            adjoint_id=self.adjoint_id,
+            event=self.event,
+            event_id=self.event_id,
+            max_steps=self.max_steps,
+            rtol=self.rtol,
+            atol=self.atol,
+            wiener_tolerance=self.wiener_tolerance,
+            levy_area=self.levy_area,
+            dense=self.dense,
+            throw=self.throw,
+        )
 
 
 class PreparedStochasticPathEnsemble(StrictModule):

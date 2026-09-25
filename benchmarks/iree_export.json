@@ -1,6 +1,6 @@
 {
   "artifact_bytes": 10197,
-  "compile_seconds": 0.5432160420168657,
+  "compile_seconds": 0.44229745800839737,
   "compiler_version": "3.11.0",
   "maximum_absolute_error": 0.0,
   "maximum_relative_error": 0.0,
@@ -8,5 +8,5 @@
   "runtime_version": "3.11.0",
   "target_backend": "llvm-cpu",
   "validation_ok": true,
-  "warm_seconds": 0.0003288750012870878
+  "warm_seconds": 9.579202742315829e-05
 }

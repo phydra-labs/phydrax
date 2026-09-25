@@ -31,6 +31,7 @@ from .._classification import (
 )
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..integration._lowering import _coord_weights, component_factor_fields
@@ -586,9 +587,11 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
             for axis in batch.site_axes:
                 measure = measure * weights_by_axis[axis]
         combined = geometry_mask * modifier * measure
-        combined_data = jnp.asarray(
-            combined.broadcast_like(reference).data, dtype=jnp.float64
+        # `broadcast_like` keeps the operand's axes first; restore the case/site order.
+        aligned = combined.broadcast_like(reference).order_as(
+            *reference.layout.named_axes
         )
+        combined_data = jnp.asarray(aligned.data, dtype=jnp.float64)
         observed = jnp.broadcast_to(target_observed, reference.shape)
         active = observed & (combined_data != 0.0)
         return jnp.where(active, combined_data, 0.0)
@@ -778,7 +781,7 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         batch_ = self.sample(key=key) if batch is None else batch
 
         def zero_loss() -> Array:
-            return jnp.zeros((), dtype=jnp.result_type(self.weight, jnp.float64))
+            return jnp.zeros((), dtype=inexact_result_type(self.weight))
 
         def active_loss() -> Array:
             per_case, case_support = self._per_case_loss_and_support(
@@ -1047,7 +1050,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
         batch_ = self.sample(key=key) if batch is None else batch
 
         def zero_loss() -> Array:
-            return jnp.zeros((), dtype=jnp.result_type(self.weight, jnp.float64))
+            return jnp.zeros((), dtype=inexact_result_type(self.weight))
 
         def active_loss() -> Array:
             per_case_score, case_support = self._per_case_score_and_support(

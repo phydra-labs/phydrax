@@ -22,6 +22,7 @@ def _robot_plan():
     return phx.discretization.CollisionSurfacePlan(
         jnp.asarray((0,), dtype=jnp.int64),
         ambient_dimension=2,
+        allow_isolated_vertices=True,
         participant_ids=0,
         body_ids=0,
         material_ids=0,
@@ -196,7 +197,7 @@ def test_delassus_composition_matches_dense_g_minv_g_dual_transpose():
     wrong_inverse_mass = phx.linalg.DenseLinearOperator(
         jnp.eye(3, dtype=jnp.float64), source=wrong_space, target=wrong_space
     )
-    with pytest.raises(ValueError, match="contact tangent space"):
+    with pytest.raises(ValueError, match="contact tangent dual to its tangent"):
         build_delassus_operator(velocity_operator, wrong_inverse_mass)
 
 
@@ -344,7 +345,7 @@ def test_indefinite_delassus_is_spectrally_rejected_and_rolls_back():
     participant, configuration, free, kinematics, materials, _ = _articulated_case()
     inverse_mass = phx.linalg.DenseLinearOperator(
         jnp.asarray(((-0.5, 0.0), (0.0, 0.0)), dtype=jnp.float64),
-        source=participant.tangent_space,
+        source=phx.linalg.DualSpace(participant.tangent_space),
         target=participant.tangent_space,
     )
     prepared = prepare_articulated_contact(

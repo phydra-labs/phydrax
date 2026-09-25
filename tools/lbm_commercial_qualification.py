@@ -252,7 +252,7 @@ def build_lbm_candidate(
             else scientific_gaps
         )
         destination.extend(f"claim:{claim.value}:{reason}" for reason in reasons)
-    if not bool(np.asarray(admission.admitted)):
+    if not np.all(np.asarray(admission.header.eligible)):
         operational_failures.extend(
             f"envelope:{name}" for name in admission.failed_checks()
         )
@@ -350,7 +350,7 @@ def build_lbm_candidate(
         "operating_point": _point_record(point),
         "envelope": {
             "envelope_id": profile.envelope.envelope_id,
-            "admitted": bool(np.asarray(admission.admitted)),
+            "admitted": bool(np.all(np.asarray(admission.header.eligible))),
             "failed_checks": list(admission.failed_checks()),
         },
         "resources": {

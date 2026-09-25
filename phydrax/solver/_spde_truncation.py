@@ -11,7 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
 from ..stochastic._path_ensemble import (
@@ -159,25 +159,7 @@ def prepare_spde_approximation(
         raise TypeError("ensemble_plan must be a StochasticPathEnsemblePlan.")
     ensembles = []
     for level in family.levels:
-        mesh_id = canonical_fingerprint(
-            {
-                "kind": "spde-level-ensemble-plan",
-                "base_configuration": ensemble_plan.configuration_id,
-                "time_grid": {
-                    "identity": level.temporal_mesh.time_id,
-                    "content": array_tree_fingerprint(level.temporal_mesh.times),
-                },
-            }
-        )
-        level_plan = eqx.tree_at(
-            lambda value: (
-                value.time_grid,
-                value.configuration_id,
-                value.plan_id,
-            ),
-            ensemble_plan,
-            (level.temporal_mesh, mesh_id, mesh_id),
-        )
+        level_plan = ensemble_plan.with_time_grid(level.temporal_mesh)
         realization = level.spde.wiener_realization(
             key,
             sample_shape=(level_plan.path_count,),

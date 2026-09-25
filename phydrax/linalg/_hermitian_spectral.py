@@ -321,11 +321,12 @@ class TracelessHermitianSpace(StrictModule):
 
     def project(self, value: ArrayLike, /) -> Array:
         matrix = jnp.asarray(value)
-        if matrix.shape != self.shape:
-            raise ValueError(f"Matrix must have shape {self.shape}.")
+        if matrix.shape[-2:] != self.shape:
+            raise ValueError(f"Matrix must have trailing shape {self.shape}.")
         hermitian = 0.5 * (matrix + _adjoint(matrix))
-        trace = jnp.trace(hermitian) / float(self.dimension)
-        return hermitian - trace * jnp.eye(self.dimension, dtype=hermitian.dtype)
+        trace = jnp.trace(hermitian, axis1=-2, axis2=-1) / float(self.dimension)
+        identity = jnp.eye(self.dimension, dtype=hermitian.dtype)
+        return hermitian - trace[..., None, None] * identity
 
     def inner(self, left: ArrayLike, right: ArrayLike, /) -> Array:
         return jnp.real(jnp.vdot(self.project(left), self.project(right)))

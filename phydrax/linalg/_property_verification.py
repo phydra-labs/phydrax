@@ -73,7 +73,7 @@ def verify_dense_properties(
     defect = jnp.max(jnp.abs(value - adjoint), axis=(-2, -1), initial=0.0)
     symmetric = 0.5 * (value + adjoint)
     eigenvalues = jnp.linalg.eigvalsh(symmetric)
-    scale = jnp.maximum(jnp.max(jnp.abs(eigenvalues), axis=-1), 1.0)
+    scale = jnp.max(jnp.abs(eigenvalues), axis=-1, initial=0.0)
     tolerance = policy_.absolute_tolerance + (
         policy_.relative_tolerance * jnp.finfo(jnp.real(value).dtype).eps * scale
     )

@@ -367,6 +367,22 @@ class ChemicalConditionalAffineOperator(AbstractOperatorModel):
             midpoint_coordinates,
         )
 
+    def _compute_view(self, dtype: jnp.dtype, /) -> ChemicalConditionalAffineOperator:
+        """View every floating array in the dtype of the execution inputs.
+
+        Operator dtype policies cast only the parameter lane, so the fixed
+        chemistry, scaling, and rate runtime keep their stored precision; the
+        transition evaluates them in the compute dtype of its inputs.
+        """
+        return jax.tree_util.tree_map(
+            lambda leaf: (
+                leaf.astype(dtype)
+                if eqx.is_array(leaf) and jnp.issubdtype(leaf.dtype, jnp.floating)
+                else leaf
+            ),
+            self,
+        )
+
     def predict_drivers(
         self,
         batch: OperatorBatch,
@@ -375,10 +391,11 @@ class ChemicalConditionalAffineOperator(AbstractOperatorModel):
         key: EvalKey = None,
     ) -> Array:
         state = self._source_state(batch)
+        model = self._compute_view(state.dtype)
         duration, _ = self._query_duration(batch)
-        driver_batch = self._driver_batch(batch, state, duration)
+        driver_batch = model._driver_batch(batch, state, duration)
         raw = jnp.asarray(
-            self.driver_model.__call_operator_batch__(driver_batch, key=key)
+            model.driver_model.__call_operator_batch__(driver_batch, key=key)
         )
         expected = (
             batch.case_shape
@@ -389,7 +406,7 @@ class ChemicalConditionalAffineOperator(AbstractOperatorModel):
             raise ValueError(
                 f"driver_model must return shape {expected}; got {raw.shape}."
             )
-        return self.scaling.physical_drivers(raw)
+        return model.scaling.physical_drivers(raw)
 
     def transition_with_drivers(
         self,
@@ -400,6 +417,7 @@ class ChemicalConditionalAffineOperator(AbstractOperatorModel):
         key: EvalKey = None,
     ) -> ChemicalConditionalAffineResult:
         state = self._source_state(batch)
+        model = self._compute_view(state.dtype)
         temperature = self._scalar_source(batch, self.temperature_name)
         pressure = self._scalar_source(batch, self.pressure_name)
         duration, _ = self._query_duration(batch)
@@ -426,18 +444,18 @@ class ChemicalConditionalAffineOperator(AbstractOperatorModel):
             driver_values,
             expanded_temperature,
             expanded_pressure,
-            runtime=self.runtime,
+            runtime=model.runtime,
         )
         reaction_multiplier = None
-        if self.rate_correction is not None:
-            scaled_state = self.scaling.scale_state(expanded_state)
-            scaled_duration = self.scaling.scale_duration(duration)
-            reaction_multiplier = self.rate_correction(
+        if model.rate_correction is not None:
+            scaled_state = model.scaling.scale_state(expanded_state)
+            scaled_duration = model.scaling.scale_duration(duration)
+            reaction_multiplier = model.rate_correction(
                 scaled_state,
                 scaled_duration,
                 key=key,
             )
-        return self.chemistry.advance(
+        return model.chemistry.advance(
             expanded_state,
             physical_drivers,
             duration,

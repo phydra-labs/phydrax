@@ -904,7 +904,10 @@ def _native_solution(
     backend_event = state_adapter.wrap_event(event)
     if state_adapter.active:
         _validate_real_backend_tree((terms, backend_state, backend_args))
-    return dfx.diffeqsolve(
+    # BacksolveAdjoint admits a single SubSaveAt, so requested and terminal saves
+    # share one record there and are split afterwards.
+    single_record = isinstance(adjoint, dfx.BacksolveAdjoint)
+    native = dfx.diffeqsolve(
         terms,
         solver,
         t0=start,
@@ -912,18 +915,52 @@ def _native_solution(
         dt0=resolved_dt0,
         y0=backend_state,
         args=backend_args,
-        saveat=dfx.SaveAt(
-            subs={
-                "requested": dfx.SubSaveAt(ts=save_times),
-                "terminal": dfx.SubSaveAt(t1=True),
-            },
-            dense=dense,
+        saveat=(
+            dfx.SaveAt(ts=save_times, t1=True, dense=dense)
+            if single_record
+            else dfx.SaveAt(
+                subs={
+                    "requested": dfx.SubSaveAt(ts=save_times),
+                    "terminal": dfx.SubSaveAt(t1=True),
+                },
+                dense=dense,
+            )
         ),
         stepsize_controller=stepsize_controller,
         adjoint=adjoint,
         event=backend_event,
         max_steps=max_steps,
         throw=bool(throw),
+    )
+    if single_record:
+        return _split_terminal_record(native, save_times.shape[0])
+    return native
+
+
+def _split_terminal_record(native: Any, count: int, /) -> Any:
+    """Restore requested and terminal saves from one ``SaveAt(ts=..., t1=True)``.
+
+    Diffrax writes the terminal save directly after the last saved requested time,
+    so a solve that stops early leaves it ahead of unfilled infinite-time slots.
+    """
+    times = jnp.asarray(native.ts)
+    terminal = jnp.sum(jnp.isfinite(times)) - 1
+    requested = jnp.arange(count) < terminal
+
+    def requested_values(leaf):
+        mask = requested.reshape((count,) + (1,) * (leaf.ndim - 1))
+        return jnp.where(mask, leaf[:count], jnp.inf)
+
+    return eqx.tree_at(
+        lambda solution: (solution.ts, solution.ys),
+        native,
+        (
+            {"requested": requested_values(times), "terminal": times[terminal][None]},
+            {
+                "requested": jax.tree.map(requested_values, native.ys),
+                "terminal": jax.tree.map(lambda leaf: leaf[terminal][None], native.ys),
+            },
+        ),
     )
 
 

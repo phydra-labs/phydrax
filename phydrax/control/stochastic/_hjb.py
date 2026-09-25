@@ -17,6 +17,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._interpolation import linear_interpolate
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import TimeGrid
@@ -155,7 +156,7 @@ class DiscreteHJBProblem(StrictModule, NonTrainableState):
                 "Terminal values and final-time boundary data are incompatible at the interval corners."
             )
 
-        dtype = jnp.result_type(action_array, terminal, boundary, jnp.float64)
+        dtype = inexact_result_type(action_array, terminal, boundary)
         self.spatial_grid = spatial_grid
         self.time_grid = time_grid
         self.actions = jnp.asarray(action_array, dtype=dtype)

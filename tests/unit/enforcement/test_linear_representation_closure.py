@@ -65,7 +65,7 @@ def test_replacement_preserves_unrepresented_fields_and_composes_disjoint_childr
         (jnp.asarray([3.0]), jnp.asarray([4.0])),
     )
 
-    assert tuple(replaced) == ("u", "aux", "v")
+    assert set(replaced) == {"u", "aux", "v"}
     assert jnp.array_equal(replaced["u"], jnp.asarray([3.0]))
     assert jnp.array_equal(replaced["aux"], values["aux"])
     assert jnp.array_equal(replaced["v"], jnp.asarray([4.0]))

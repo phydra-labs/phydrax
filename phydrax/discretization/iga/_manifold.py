@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import BoundaryAtlas, BoundaryFrame
@@ -86,7 +87,7 @@ class ParametricBasisPayload(StrictModule):
             for value in (values_, gradients_, hessians_)
         ):
             raise TypeError("Manifold basis payloads must be real.")
-        dtype = jnp.result_type(values_, gradients_, hessians_, jnp.float64)
+        dtype = inexact_result_type(values_, gradients_, hessians_)
         self.values = values_.astype(dtype)
         self.gradients = gradients_.astype(dtype)
         self.hessians = hessians_.astype(dtype)

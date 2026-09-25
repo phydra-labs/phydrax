@@ -20,6 +20,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._hyperbolic_systems import AbstractAdmissibleSystem
@@ -268,9 +269,9 @@ class TwoMaterialVOFSystem(AbstractAdmissibleSystem, NonTrainableState):
         alpha = jnp.asarray(alpha_face)
         flux = jnp.asarray(volume_flux)
         if not jnp.issubdtype(alpha.dtype, jnp.inexact):
-            alpha = alpha.astype(jnp.result_type(alpha, flux, jnp.float64))
+            alpha = alpha.astype(inexact_result_type(alpha, flux))
         if not jnp.issubdtype(flux.dtype, jnp.inexact):
-            flux = flux.astype(jnp.result_type(alpha, flux, jnp.float64))
+            flux = flux.astype(inexact_result_type(alpha, flux))
         if alpha.shape != flux.shape:
             raise ValueError(
                 f"alpha_face and volume_flux must have matching shapes; got {alpha.shape} and {flux.shape}."
@@ -351,9 +352,7 @@ class TwoMaterialVOFSystem(AbstractAdmissibleSystem, NonTrainableState):
     ) -> tuple[Array, Array]:
         del args
         axis_ = self._axis(axis)
-        basis = jnp.eye(self.dimension, dtype=jnp.result_type(left, right, jnp.float64))[
-            axis_
-        ]
+        basis = jnp.eye(self.dimension, dtype=inexact_result_type(left, right))[axis_]
         return self.normal_signal_bounds(left, right, basis)
 
     def max_wave_speed(

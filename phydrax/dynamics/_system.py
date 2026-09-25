@@ -367,8 +367,8 @@ class DiscreteSystem(StrictModule):
         if not isinstance(context, DiscreteStepContext):
             raise TypeError("DiscreteSystem evaluation requires DiscreteStepContext.")
         duration = context.duration
-        duration_valid = jnp.isfinite(context.source) & jnp.isfinite(context.target)
-        duration_valid = duration_valid & (duration > 0.0)
+        finite_interval = jnp.isfinite(context.source) & jnp.isfinite(context.target)
+        duration_valid = finite_interval & (duration > 0.0)
         if self.step_size is not None:
             duration_valid = duration_valid & jnp.isclose(
                 duration,
@@ -380,10 +380,14 @@ class DiscreteSystem(StrictModule):
             duration_valid = duration_valid & (duration >= self.minimum_step_size)
         if self.maximum_step_size is not None:
             duration_valid = duration_valid & (duration <= self.maximum_step_size)
-        checked_source = eqx.error_if(
+        checked_source = eqx.branched_error_if(
             context.source,
             ~duration_valid,
-            "Discrete step interval is invalid for the declared step_size or system bounds.",
+            jnp.where(finite_interval, 1, 0),
+            (
+                "Discrete step interval endpoints must be finite.",
+                "Discrete step interval is invalid for the declared step_size or system bounds.",
+            ),
         )
         context = DiscreteStepContext(
             checked_source,

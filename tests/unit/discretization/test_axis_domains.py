@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -27,17 +28,22 @@ def test_axis_domains_encode_finite_and_unbounded_support():
 
 
 @pytest.mark.parametrize(
-    ("factory", "message"),
+    ("factory", "error", "message"),
     (
-        (lambda: phx.discretization.AxisDomain.interval(1.0, 0.0), "increasing"),
+        (
+            lambda: phx.discretization.AxisDomain.interval(1.0, 0.0),
+            eqx.EquinoxRuntimeError,
+            "increasing",
+        ),
         (
             lambda: phx.discretization.AxisDomain.half_line(0.0, direction="bad"),
+            ValueError,
             "direction",
         ),
     ),
 )
-def test_axis_domains_reject_invalid_support(factory, message):
-    with pytest.raises(ValueError, match=message):
+def test_axis_domains_reject_invalid_support(factory, error, message):
+    with pytest.raises(error, match=message):
         factory()
 
 

@@ -293,10 +293,7 @@ def test_production_device_resident_execution_preserves_state_and_default(
 
 
 class _AlwaysReject(phx.solver.AbstractAcceptedStepTransform):
-    transform_id = "always-reject"
-
-    def __init__(self):
-        self.transform_id = "always-reject"
+    transform_id: str = "always-reject"
 
     def apply(self, step_index, time, previous_state, candidate_state, args, /):
         del step_index, time, previous_state, args
@@ -783,17 +780,17 @@ def test_configuration_migration_commits_lineage_and_rollback_selects_parent(tmp
     )
     repository, _, _, _, _, _ = _artifact_bindings(tmp_path / "configuration", method)
     edge = MigrationEdge(
-        "configuration",
-        "configuration",
+        "source-configuration",
+        "current-configuration",
         lambda record: {"coefficient": record["coefficient"], "scheme": "current"},
-        migration_id="configuration-to",
+        migration_id="configuration-upgrade",
     )
-    registry = CompatibilityRegistry("configuration", (edge,))
+    registry = CompatibilityRegistry("current-configuration", (edge,))
     artifact = migrate_configuration(
         repository,
         registry,
         {"coefficient": 2},
-        source_format_id="configuration",
+        source_format_id="source-configuration",
         writer_id="configuration-writer",
     )
     assert artifact.manifest.artifact_id == artifact.report.output_digest
@@ -809,15 +806,15 @@ def test_runtime_configuration_migration_requires_lineage_and_commits_child(tmp_
         lambda time, state, args: jnp.ones_like(state)
     )
     edge = MigrationEdge(
-        "runtime-configuration",
-        "runtime-configuration",
+        "source-runtime-configuration",
+        "current-runtime-configuration",
         lambda record: {"coefficient": record["coefficient"], "current": True},
         migration_id="runtime-configuration-upgrade",
     )
-    registry = CompatibilityRegistry("runtime-configuration", (edge,))
+    registry = CompatibilityRegistry("current-runtime-configuration", (edge,))
     report = registry.resolve(
         {"coefficient": 3},
-        source_format_id="runtime-configuration",
+        source_format_id="source-runtime-configuration",
     )
     repository, source_manifest, source_store, source_spec, _, repository_policy = (
         _artifact_bindings(

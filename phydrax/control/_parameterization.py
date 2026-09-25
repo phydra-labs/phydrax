@@ -27,6 +27,7 @@ from .._model import (
     bind_component,
     ComponentContract,
 )
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..dynamics import TimeGrid
@@ -61,7 +62,7 @@ def _query(value: ArrayLike, /) -> Array:
     query = jnp.asarray(value)
     if jnp.issubdtype(query.dtype, jnp.complexfloating):
         raise TypeError("Control evaluation times must be real-valued.")
-    return query.astype(jnp.result_type(query, jnp.float64))
+    return query.astype(inexact_result_type(query))
 
 
 class AbstractControlParameterization(AbstractComponentSlot):

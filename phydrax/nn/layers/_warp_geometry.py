@@ -20,6 +20,7 @@ from ..._interpolation import (
     InterpolationResourcePolicy,
     rectilinear_stencil,
 )
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...linalg import inverse as matrix_inverse
 from ...metrix import DENSITY_TENSOR, SCALAR_TENSOR, TensorType
@@ -254,7 +255,7 @@ def sample_rectilinear_grid(
     spatial_shape = tuple(array.shape[-dimensions - 1 : -1])
     if any(size < 2 for size in spatial_shape):
         raise ValueError("Every warped spatial axis must contain at least two nodes.")
-    dtype = jnp.result_type(array.dtype, jnp.float64)
+    dtype = inexact_result_type(array.dtype)
     nodes = _prepare_axis_nodes(axis_nodes, spatial_shape, modes, dtype)
 
     query = jnp.asarray(coordinates, dtype=dtype)
@@ -357,7 +358,7 @@ def warp_jacobian(
         axis_nodes,
         spatial_shape,
         modes,
-        jnp.result_type(field.dtype, jnp.float64),
+        inexact_result_type(field.dtype),
     )
     case_ndim = field.ndim - dimensions - 1
     columns = []
@@ -450,7 +451,7 @@ def warp_field(
         axis_nodes,
         spatial_shape,
         modes,
-        jnp.result_type(field.dtype, delta.dtype, jnp.float64),
+        inexact_result_type(field.dtype, delta.dtype),
     )
     tensor_shape = (dimensions,) * len(field_spec.variance)
     expected = case_shape + spatial_shape + tensor_shape

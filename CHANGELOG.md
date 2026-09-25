@@ -398,6 +398,52 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Fixed
+- The environment now matches the declared `equinox==0.13.8` pin. Declared
+  `eqx.AbstractVar` fields are enforced as abstract, strict modules no longer
+  carry an undeclared initialization flag in their pytree state, and domain
+  geometries no longer declare phantom `adf` fields; `error_if` failures now
+  surface as `EquinoxRuntimeError` in eager and compiled calls.
+- JAX dtype promotion that the style refactor changed from weak `float` to
+  strong `float64` again preserves single-precision and complex-single inputs.
+- Frozen-dict leaves are addressed by mapping key in pytree paths; empty
+  frozen dicts keep their layout through structural updates.
+- Corrected latent defects across finite-volume, finite-element, IGA, DEM,
+  compatible systems, Bayesian quadrature, circuit small-signal convention,
+  dense classification, tribology saturation, native LSMR stopping, variational
+  inequality and higher-order root linear budgets, filter IPM budgets,
+  optimistix integration, ArviZ export, property verification tolerances,
+  multigrid coarse precision, chaos RQA validity, unitary propagation tangents,
+  graph value enforcement, operator benchmark primary sources, broken pairwise
+  iteration, and the `imageio.v3` import; stale tests and benchmark evidence
+  were updated to the current contracts.
+- Discrete-velocity pull offsets are integers, and the learned-energy and IREE
+  export evidence is regenerated against current artifacts.
+- The training-boundary check for hidden arrays inspects dataclass fields and
+  declared slots.
+- Composite derivative rules no longer hold copies of their operand fields.
+  Arithmetic expressions, transposes, gated and weighted boundary blends,
+  interior anchor corrections, ragged time-series ansätze and corrections,
+  trajectory signals, discrete field views, fiber projections, and frozen
+  correction fields now derive their rule on demand from their evaluator's own
+  operands (`DomainFunction.derivative_rule` returns the explicit rule, else the
+  evaluator-derived one; the stored rule is `explicit_derivative_rule`).
+  Derivatives therefore use the current parameters after a training update
+  instead of stale construction-time copies, each parameter is a single visible
+  leaf, and such fields pass `require_parameter_roles`.
+- `eqx.AbstractVar[...]` / `eqx.AbstractClassVar[...]` declarations on strict
+  modules are now actually abstract. Under `from __future__ import annotations`
+  Equinox silently treated them as concrete dataclass fields, so abstract
+  attributes were never enforced and every subclass implementing one with a
+  property carried a phantom field that broke flatten/unflatten round trips
+  (filter specs, parameter subspaces). Four concrete classes that never
+  implemented a declared attribute now do: `IntegrationAxisSpec.n`,
+  `FeasibleParameterization.scope`, `PreparedGeneralForceFieldTerm.force_group`,
+  and `ChemicalJumpProcess.process_id`.
+- Strict modules no longer store a freeze flag in their instance dictionary.
+  Equinox flattened it as wrapper metadata, so every unflattened copy gained
+  `__name__`/`__qualname__` set to a sentinel and `eqx.filter_jit` of
+  `eqx.filter_vmap(module)` failed with "__name__ must be set to a string
+  object". Deleting a strict module attribute still raises.
 - Mapped finite-volume dynamics and wave-propagation plans now refuse a face
   closure at preparation instead of silently ignoring it.
 - DEM and reactive checkpointed replay VJPs invalidate the returned cotangent

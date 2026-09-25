@@ -233,12 +233,15 @@ def _run_adaptive_raw(
         precision=precision,
     )
     endpoints = precision.accumulation(jnp.asarray((factor.start, factor.end)))
-    prototype = callback.field(0.5 * (endpoints[0] + endpoints[-1]))
     raw = adaptive_interval_callable(
         jax.vmap(callback),
         endpoints,
         plan,
         precision=precision,
+    )
+    prototype = eqx.filter_eval_shape(
+        callback.field,
+        0.5 * (endpoints[0] + endpoints[-1]),
     )
     return IntegrationEstimate(
         cx.AxisArray(raw.value, dims=prototype.dims),

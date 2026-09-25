@@ -18,7 +18,6 @@ from phydrax.domain import (
     AbstractGeometry,
     AbstractScalarDomain,
     Boundary,
-    CallbackDerivativeRule,
     ComponentSum,
     Domain,
     DomainComponent,
@@ -35,18 +34,14 @@ from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
 from .._model import TRIAL_SPACE_CERTIFICATE_KEY
 from .._strict import StrictModule
+from ..domain._function import differentiate_operands
 from ..operators.differential._domain_ops import (
     cauchy_stress,
     directional_derivative,
     dt,
     grad,
-    partial_n,
 )
-from ..operators.differential._hooks import (
-    blend_with_gate,
-    nth_quotient_rule,
-    with_derivative_rule,
-)
+from ..operators.differential._hooks import blend_with_gate
 from ..operators.linalg import einsum
 
 
@@ -1108,39 +1103,6 @@ def enforce_blend(
             numerator = numerator + w_rem * u
             denominator = denominator + w_rem
 
-    blended = numerator / denominator
-
-    def _hook(
-        *,
-        var: str,
-        axis: int | None,
-        order: int,
-        mode: Literal["reverse", "forward"],
-        backend: Literal["ad", "jet", "fd", "basis"],
-        basis: Literal["poly", "fourier", "sine", "cosine"],
-        periodic: bool,
-    ) -> DomainFunction | None:
-        if backend not in ("ad", "jet"):
-            return None
-
-        def _derive(fn: DomainFunction, k: int, /) -> DomainFunction:
-            return partial_n(
-                fn,
-                var=var,
-                axis=axis,
-                order=int(k),
-                mode=mode,
-                backend=backend,
-                basis=basis,
-                periodic=periodic,
-            )
-
-        return nth_quotient_rule(
-            numerator,
-            denominator,
-            var=var,
-            order=int(order),
-            derive=_derive,
-        )
-
-    return with_derivative_rule(blended, CallbackDerivativeRule(_hook))
+    # The quotient rule over numerator and denominator applies even to trainable
+    # pieces, so each piece's own derivative rule is preserved.
+    return differentiate_operands(numerator / denominator)

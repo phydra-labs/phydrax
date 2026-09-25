@@ -783,6 +783,7 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule):
                 self.plan.precision,
                 values,
                 array_axis,
+                reconstruction=self.plan.method.reconstruction,
                 interior_cell_count=size,
                 ghost_depth=width,
                 periodic=False,

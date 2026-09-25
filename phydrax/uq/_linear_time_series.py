@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._numerics import solve_weighted_least_squares
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..linalg._dense_inverse import dense_inverse
 
@@ -108,7 +109,7 @@ class ARIMAModel(StrictModule):
         ma = jnp.asarray(moving_average)
         if ar.ndim != 1 or ma.ndim != 1:
             raise ValueError("autoregressive and moving_average must be vectors.")
-        dtype = jnp.result_type(ar, ma, intercept, innovation_variance, jnp.float64)
+        dtype = inexact_result_type(ar, ma, intercept, innovation_variance)
         ar = ar.astype(dtype)
         ma = ma.astype(dtype)
         intercept_ = jnp.asarray(intercept, dtype=dtype)
@@ -469,7 +470,7 @@ class VARModel(StrictModule):
             raise ValueError("VAR requires at least one lag.")
         if covariance.shape != (dimension, dimension):
             raise ValueError("innovation_covariance must be square over variables.")
-        dtype = jnp.result_type(intercept_, matrices, covariance, jnp.float64)
+        dtype = inexact_result_type(intercept_, matrices, covariance)
         intercept_ = intercept_.astype(dtype)
         matrices = matrices.astype(dtype)
         covariance = covariance.astype(dtype)

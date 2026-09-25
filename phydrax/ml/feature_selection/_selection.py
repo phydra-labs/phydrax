@@ -24,6 +24,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._model import AbstractArrayModel, ModelBinding
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
 from .._batch import MLBatch
@@ -246,7 +247,7 @@ def _gate_hyperparameter(value: Any, name: str, /) -> Array:
         raise ValueError(f"{name} must be a scalar.")
     if jnp.issubdtype(scalar.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
-    return scalar.astype(jnp.result_type(scalar.dtype, jnp.float64))
+    return scalar.astype(inexact_result_type(scalar.dtype))
 
 
 def _selection(scores: Array, eligible: Array, capacity: int) -> ExactSelection:

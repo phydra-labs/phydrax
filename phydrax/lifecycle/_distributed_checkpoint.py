@@ -25,6 +25,7 @@ from .._array_archive import (
 )
 from .._fingerprint import canonical_fingerprint, canonical_json
 from ._chunk_repository import (
+    _MAX_METADATA_VALUE_BYTES,
     ArtifactManifest,
     ArtifactRepository,
     ChunkEncoding,
@@ -73,7 +74,10 @@ def _unique_json_object(pairs: list[tuple[str, Any]], /) -> dict[str, Any]:
 
 
 def _metadata_json(value: str, /) -> Any:
-    if not isinstance(value, str) or len(value.encode("utf-8")) > 1024 * 1024:
+    if (
+        not isinstance(value, str)
+        or len(value.encode("utf-8")) > _MAX_METADATA_VALUE_BYTES
+    ):
         raise RepositoryCorruptionError("Checkpoint metadata exceeds its byte limit.")
     depth = 0
     in_string = False

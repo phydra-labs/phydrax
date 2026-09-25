@@ -188,16 +188,21 @@ def validate_model_coverage(
     return tuple(layouts)
 
 
-def _flat_leaf_slices(params: PyTree[Any], /) -> tuple[dict[int, tuple[int, ...]], int]:
+def _flat_leaf_slices(
+    params: PyTree[Any], /
+) -> tuple[dict[int, tuple[int, ...]], frozenset[int], int]:
     leaves = jax.tree_util.tree_leaves(params)
     offset = 0
     slices: dict[int, tuple[int, ...]] = {}
+    complex_indices: set[int] = set()
     for leaf in leaves:
         array = jnp.asarray(leaf)
         size = array.size
         slices[id(leaf)] = tuple(range(offset, offset + size))
+        if jnp.iscomplexobj(array):
+            complex_indices.update(slices[id(leaf)])
         offset += size
-    return slices, offset
+    return slices, frozenset(complex_indices), offset
 
 
 def discover_parameter_layout(
@@ -216,7 +221,7 @@ def discover_parameter_layout(
         raise ValueError("uncovered must be either 'error' or 'diagonal'.")
 
     layouts = validate_model_coverage(functions)
-    leaf_slices, parameter_count = _flat_leaf_slices(params)
+    leaf_slices, complex_indices, parameter_count = _flat_leaf_slices(params)
     covered: set[int] = set()
     blocks: list[AffineBlockSpec] = []
     for field_name, affine_blocks in layouts:
@@ -279,6 +284,15 @@ def discover_parameter_layout(
     remaining = tuple(index for index in range(parameter_count) if index not in covered)
     uncovered_block: UncoveredBlockSpec | None = None
     if remaining:
+        # Uncovered curvature is assembled in real coordinates (J^T J and its
+        # diagonal); complex scalars need a declared complex-cartesian block.
+        complex_remaining = complex_indices.intersection(remaining)
+        if complex_remaining:
+            raise ValueError(
+                "KFAC uncovered curvature requires real trainable parameters; "
+                f"{len(complex_remaining)} complex scalars lie outside declared "
+                "complex-cartesian affine blocks."
+            )
         if len(remaining) <= int(exact_block_max_size):
             approximation: Literal["exact", "diagonal"] = "exact"
         elif uncovered == "diagonal":

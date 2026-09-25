@@ -358,7 +358,7 @@ def bind_option_marginals_to_martingale_bridge(
         isinstance(value, NumeraireOptionMarginal) for value in values
     ):
         raise TypeError("marginals must contain exactly two endpoint option marginals.")
-    for left, right in zip(values, values[1:], strict=True):
+    for left, right in zip(values[:-1], values[1:], strict=True):
         _same_pricing_semantics(left, right)
     grid = jnp.asarray(times, dtype=jnp.float64)
     if grid.shape != (len(values),):

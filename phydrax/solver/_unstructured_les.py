@@ -13,6 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
@@ -1075,7 +1076,7 @@ def _real_inexact(value: ArrayLike, name: str, /) -> Array:
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(jnp.result_type(array, jnp.float64))
+        array = array.astype(inexact_result_type(array))
     return array
 
 

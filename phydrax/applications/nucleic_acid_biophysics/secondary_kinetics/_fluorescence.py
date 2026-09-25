@@ -844,7 +844,9 @@ class MechanisticDisplacementRateModel(StrictModule, NonTrainableState):
         nonnegative_time = jnp.maximum(trace.time_seconds, 0.0)
 
         def occupancy(time):
-            action = la.matrix_exponential_action(generator.T, initial, time)
+            action = la.matrix_exponential_action(
+                la.DenseLinearOperator(generator.T), initial, time
+            )
             probabilities = eqx.error_if(
                 jnp.asarray(action.value),
                 ~action.successful,
@@ -1033,16 +1035,18 @@ def trace_log_probability(
             + low_rank.T @ low_rank / variance
         )
         factorization = la.factorize(
-            correction,
-            la.FactorizationPolicy("cholesky"),
-            properties=la.OperatorProperties(
-                self_adjoint=True,
-                positive_definite=True,
-                evidence={
-                    "self_adjoint": "construction",
-                    "positive_definite": "construction",
-                },
+            la.DenseLinearOperator(
+                correction,
+                properties=la.OperatorProperties(
+                    self_adjoint=True,
+                    positive_definite=True,
+                    evidence={
+                        "self_adjoint": "construction",
+                        "positive_definite": "construction",
+                    },
+                ),
             ),
+            la.FactorizationPolicy("cholesky"),
         )
         centered = trace.intensity - mean
         projected = low_rank.T @ centered
@@ -1481,7 +1485,9 @@ class PreparedMechanisticDisplacementInference(StrictModule, NonTrainableState):
         time = jnp.maximum(trace.time_seconds, 0.0)
 
         def occupancy(value):
-            action = la.matrix_exponential_action(generator.T, initial, value)
+            action = la.matrix_exponential_action(
+                la.DenseLinearOperator(generator.T), initial, value
+            )
             probabilities = eqx.error_if(
                 jnp.asarray(action.value),
                 ~action.successful,

@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.ein as ein
 
+from .._precision import inexact_result_type
 from .._trainable import fixed_field
 from ._operators import (
     _array_value,
@@ -305,7 +306,7 @@ class TridiagonalLinearOperator(AbstractLinearOperator):
             or upper_.shape != (diagonal_.size - 1,)
         ):
             raise ValueError("Tridiagonal storage must have lengths n-1, n, n-1.")
-        dtype = jnp.result_type(lower_, diagonal_, upper_, jnp.float64)
+        dtype = inexact_result_type(lower_, diagonal_, upper_)
         lower_, diagonal_, upper_ = (
             value.astype(dtype) for value in (lower_, diagonal_, upper_)
         )
@@ -800,7 +801,7 @@ class LowRankLinearOperator(AbstractLinearOperator):
         left_, right_ = jnp.asarray(left_factor), jnp.asarray(right_factor)
         if left_.ndim != 2 or right_.ndim != 2 or left_.shape[1] != right_.shape[1]:
             raise ValueError("factors must have shapes (m, r) and (n, r).")
-        dtype = jnp.result_type(left_, right_, jnp.float64)
+        dtype = inexact_result_type(left_, right_)
         left_, right_ = left_.astype(dtype), right_.astype(dtype)
         target_ = _space(left_.shape[0], dtype, target)
         source_ = _space(right_.shape[0], dtype, source)
@@ -1235,7 +1236,7 @@ class DiagonalPlusLowRankLinearOperator(AbstractLinearOperator):
             raise ValueError("Expected diagonal (n,) and factors (n, r).")
         if left_.shape[0] != diagonal_.size:
             raise ValueError("Factor rows must match diagonal length.")
-        dtype = jnp.result_type(diagonal_, left_, right_, jnp.float64)
+        dtype = inexact_result_type(diagonal_, left_, right_)
         diagonal_, left_, right_ = (
             value.astype(dtype) for value in (diagonal_, left_, right_)
         )

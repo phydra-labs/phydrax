@@ -524,8 +524,8 @@ def test_abupt_predicts_named_fields_on_distinct_queries():
 
     prediction = model.evaluate(batch)
 
-    assert tuple(prediction.fields) == ("state", "flux")
-    assert tuple(prediction.queries) == ("spatial", "sensors")
+    assert tuple(prediction.fields) == ("flux", "state")
+    assert tuple(prediction.queries) == ("sensors", "spatial")
     assert prediction.field("state").values.shape == (3,)
     assert prediction.field("flux").values.shape == (2, 2)
     assert prediction.field("flux").spec.component_names == ("x", "y")

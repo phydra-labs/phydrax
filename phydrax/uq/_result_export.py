@@ -283,12 +283,14 @@ def to_arviz(result: MCMCResult | FlowNUTSResult | SGMCMCResult, /):
                 separators=(",", ":"),
             )
     return az.from_dict(
-        posterior=posterior,
-        sample_stats=sample_stats,
+        {
+            "posterior": posterior,
+            "sample_stats": sample_stats,
+        },
         sample_dims=("chain", "draw"),
         dims=dimensions,
         coords=coordinates,
-        posterior_attrs=posterior_attributes,
+        attrs={"posterior": posterior_attributes},
     )
 
 

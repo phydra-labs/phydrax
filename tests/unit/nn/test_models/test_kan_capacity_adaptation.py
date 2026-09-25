@@ -123,7 +123,7 @@ def test_identical_hidden_block_layouts_preserve_scan_and_gradients():
 
 def test_capacity_adaptation_validation_and_tolerance_are_explicit():
     model = _model()
-    with pytest.raises(ValueError, match="one value per positive span"):
+    with pytest.raises(ValueError, match="one value per span"):
         phx.nn.models.refine_kan_edges(
             model,
             {(0, 0, 0): jnp.ones(3)},

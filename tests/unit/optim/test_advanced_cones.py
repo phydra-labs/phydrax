@@ -409,7 +409,7 @@ def test_advanced_cone_topology_validation_and_identity():
     assert phx.optim.PowerCone(0.25).cone_id != phx.optim.PowerCone(0.75).cone_id
     capabilities = phx.optim.ClarabelInteriorPoint().capabilities
     assert capabilities.dense
-    assert not capabilities.sparse
+    assert capabilities.sparse
     assert not capabilities.matrix_free
     assert not capabilities.implicit_differentiation
     assert not capabilities.algorithmic_differentiation

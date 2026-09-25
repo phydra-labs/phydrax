@@ -440,6 +440,8 @@ def test_native_fit_heldout_and_archive_do_not_turn_synthetic_recovery_into_foun
             replay_id=prepared.campaign.numerical_configuration,
             criteria_ids=(criterion,),
             raw_artifact_ids=(f"synthetic-{criterion}",),
+            campaign_start_record_ids=(),
+            campaign_observation_record_ids=(),
             reviewer_id="synthetic-test-reviewer",
             issued_at=0,
             expires_at=200,

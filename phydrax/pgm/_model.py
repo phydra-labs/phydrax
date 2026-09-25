@@ -536,6 +536,7 @@ class DiscreteFactorGraph(StrictModule):
     topology: HypergraphBipartiteGraph
     group_offsets: tuple[tuple[str, int, int], ...] = eqx.field(static=True)
     structure_id: str = eqx.field(static=True)
+    factor_signatures: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     parameter_signature: tuple[tuple[tuple[int, ...], str], ...] = eqx.field(static=True)
 
     def __init__(
@@ -588,6 +589,7 @@ class DiscreteFactorGraph(StrictModule):
         cardinalities_host = np.asarray(cardinalities, dtype=np.int32)
 
         scopes: list[Array] = []
+        signatures: list[tuple[int, ...]] = []
         factor_payloads: list[dict[str, Any]] = []
         factor_node_parts: list[np.ndarray] = []
         factor_index_parts: list[np.ndarray] = []
@@ -627,6 +629,7 @@ class DiscreteFactorGraph(StrictModule):
                     )
             _validate_factor_signature(group, signature)
             scopes.append(scope)
+            signatures.append(signature)
             count = factor_count(group)
             if count:
                 factor_node_parts.append(scope_host.reshape((-1,)))
@@ -683,6 +686,7 @@ class DiscreteFactorGraph(StrictModule):
         self.variable_groups = variables
         self.factor_groups = factors
         self.factor_scopes = tuple(scopes)
+        self.factor_signatures = tuple(signatures)
         self.cardinalities = cardinalities
         self.variable_state_offsets = jnp.asarray(state_offsets, dtype=jnp.int32)
         self.topology = topology
@@ -769,14 +773,7 @@ def factor_group_cardinality_signature(
     group_index: int,
     /,
 ) -> tuple[int, ...]:
-    scope = np.asarray(graph.factor_scopes[group_index])
-    group = graph.factor_groups[group_index]
-    if scope.shape[0]:
-        cards = np.asarray(graph.cardinalities)
-        return tuple(int(cards[scope[0, position]]) for position in range(scope.shape[1]))
-    return tuple(
-        _empty_scope_cardinality(group, position) for position in range(scope.shape[1])
-    )
+    return graph.factor_signatures[group_index]
 
 
 def factor_group_dense_tables(

@@ -142,9 +142,13 @@ def test_runtime_initialization_binds_static_content_and_round_trips_averages():
     assert journal.epoch_table == (runtime.initial_topology_epoch,)
     assert journal.current_epoch_id == state.content_state.topology_epoch_id
     assert journal.current_epoch_id == runtime.topology_epoch_id
-    assert runtime.initial_topology_epoch.parent_epoch_id is None
+    assert runtime.initial_topology_epoch.index == 0
     assert (
-        runtime.initial_topology_epoch.prepared_id
+        runtime.initial_topology_artifacts.epoch_id
+        == runtime.initial_topology_epoch.epoch_id
+    )
+    assert (
+        runtime.initial_topology_artifacts.prepared_id
         == runtime.dynamics.discretization.prepared_id
     )
 

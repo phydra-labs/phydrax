@@ -177,7 +177,7 @@ def test_material_commit_rejects_a_stale_source_state_without_mutation():
     np.testing.assert_array_equal(first.source_state_id, material.state.state_id)
     np.testing.assert_array_equal(first.source_activation, material.state.activation)
     assert advanced.state.state_id != material.state.state_id
-    with pytest.raises(ValueError, match="stale or different source state"):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="stale or different source state"):
         advanced.with_commit(stale)
 
     np.testing.assert_array_equal(advanced.state.activation, 0.5)
@@ -191,7 +191,7 @@ def test_material_commit_rejects_a_source_mismatched_sibling_state():
     left_commit = left.propose_activation(0.9).commit()
 
     np.testing.assert_array_equal(left_commit.source_state_id, right.state.state_id)
-    with pytest.raises(ValueError, match="stale or different source state"):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="stale or different source state"):
         right.with_commit(left_commit)
 
     np.testing.assert_array_equal(right.state.activation, 0.75)

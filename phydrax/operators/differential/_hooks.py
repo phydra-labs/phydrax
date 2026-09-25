@@ -5,25 +5,26 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from math import comb
 from typing import Any
 
 import jax.numpy as jnp
 
 from phydrax.domain import (
-    CallbackDerivativeRule,
     DerivativeBackend,
     DerivativeBasis,
     DerivativeMode,
     DerivativeRule,
     DomainFunction,
 )
+from phydrax.domain._derivative import DerivativeRuleProvider
 
 from ..._strict import StrictModule
 
 
 def get_derivative_rule(u: DomainFunction, /) -> DerivativeRule | None:
-    """Return the explicit derivative strategy attached to ``u``."""
+    """Return the derivative strategy of ``u``: explicit, else evaluator-derived."""
     return u.derivative_rule
 
 
@@ -36,7 +37,52 @@ def with_derivative_rule(
     return u.with_derivative_rule(rule)
 
 
-class _BlendWithGateCallable(StrictModule):
+@dataclass(frozen=True, slots=True, eq=False)
+class _BlendWithGateDerivativeRule(DerivativeRule):
+    # Built on demand from the live operands of `_BlendWithGateCallable`.
+    base: DomainFunction
+    overlay: DomainFunction
+    gate: DomainFunction
+
+    def derive(
+        self,
+        *,
+        var: str,
+        axis: int | None,
+        order: int,
+        mode: DerivativeMode,
+        backend: DerivativeBackend,
+        basis: DerivativeBasis,
+        periodic: bool,
+    ) -> DomainFunction | None:
+        if backend not in ("ad", "jet"):
+            return None
+
+        def _derive(fn: DomainFunction, k: int, /) -> DomainFunction:
+            from ._domain_ops import partial_n
+
+            return partial_n(
+                fn,
+                var=var,
+                axis=axis,
+                order=int(k),
+                mode=mode,
+                backend=backend,
+                basis=basis,
+                periodic=periodic,
+            )
+
+        n = int(order)
+        return _derive(self.base, n) + nth_product_rule(
+            self.gate,
+            self.overlay - self.base,
+            var=var,
+            order=n,
+            derive=_derive,
+        )
+
+
+class _BlendWithGateCallable(StrictModule, DerivativeRuleProvider):
     base: DomainFunction
     overlay: DomainFunction
     gate: DomainFunction
@@ -116,6 +162,10 @@ class _BlendWithGateCallable(StrictModule):
         gated_delta = _mul_aligned(gate_val, delta)
         return _add_aligned(base_val, gated_delta)
 
+    def derivative_rule_for(self, function: DomainFunction, /) -> DerivativeRule:
+        del function
+        return _BlendWithGateDerivativeRule(self.base, self.overlay, self.gate)
+
 
 def blend_with_gate(
     base: DomainFunction,
@@ -125,7 +175,7 @@ def blend_with_gate(
 ) -> DomainFunction:
     r"""Blend `base` toward `overlay` using gate `g`: ``base + g * (overlay - base)``.
 
-    The returned function carries an optimized derivative hook:
+    The returned function derives an optimized derivative rule from its operands:
 
     ``d^n(base) + d^n(g * (overlay - base))``
 
@@ -142,8 +192,7 @@ def blend_with_gate(
     overlay_p = overlay.promote(joined)
     gate_p = gate.promote(joined)
 
-    delta = overlay_p - base_p
-    blended_expr = base_p + gate_p * delta
+    blended_expr = base_p + gate_p * (overlay_p - base_p)
 
     deps = tuple(
         lbl
@@ -155,7 +204,7 @@ def blend_with_gate(
     overlay_pos = tuple(dep_index[lbl] for lbl in overlay_p.deps)
     gate_pos = tuple(dep_index[lbl] for lbl in gate_p.deps)
 
-    blended = DomainFunction(
+    return DomainFunction(
         domain=joined,
         deps=deps,
         func=_BlendWithGateCallable(
@@ -168,44 +217,6 @@ def blend_with_gate(
         ),
         metadata=blended_expr.metadata,
     )
-
-    def _hook(
-        *,
-        var: str,
-        axis: int | None,
-        order: int,
-        mode: DerivativeMode,
-        backend: DerivativeBackend,
-        basis: DerivativeBasis,
-        periodic: bool,
-    ) -> DomainFunction | None:
-        if backend not in ("ad", "jet"):
-            return None
-
-        def _derive(fn: DomainFunction, k: int, /) -> DomainFunction:
-            from ._domain_ops import partial_n
-
-            return partial_n(
-                fn,
-                var=var,
-                axis=axis,
-                order=int(k),
-                mode=mode,
-                backend=backend,
-                basis=basis,
-                periodic=periodic,
-            )
-
-        n = int(order)
-        return _derive(base_p, n) + nth_product_rule(
-            gate_p,
-            delta,
-            var=var,
-            order=n,
-            derive=_derive,
-        )
-
-    return with_derivative_rule(blended, CallbackDerivativeRule(_hook))
 
 
 def nth_product_rule(

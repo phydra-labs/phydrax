@@ -577,13 +577,21 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         )
         maximum_interaction_radius = 2.0 * float(np.max(interaction_extents))
         cohesion = method.contact.cohesion
-        isinstance(cohesion, BagheriCapillaryBridgePlan) or (
+        bagheri_present = isinstance(cohesion, BagheriCapillaryBridgePlan) or (
             isinstance(cohesion, CompositeDEMCohesionPlan)
             and any(
                 isinstance(component, BagheriCapillaryBridgePlan)
                 for component in cohesion.components
             )
         )
+        # Wall bridges need an explicit sphere/surface capillary binding, which
+        # only the conserved liquid process supplies (validated below).
+        if bagheri_present and barriers_ and method.liquid_process is None:
+            raise ValueError(
+                "Bagheri capillary bridges currently support sphere pairs only; "
+                "implicit barriers require DEMBarrierCapillaryPlan bindings through "
+                "a conserved liquid process."
+            )
         periodic_cell = None
         if method.periodic_cell_control is not None:
             if not isinstance(neighborhood.box, PeriodicCell):

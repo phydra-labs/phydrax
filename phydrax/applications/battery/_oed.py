@@ -16,6 +16,7 @@ from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...optim import Bounds, FiniteAxis, FiniteProductSpace, MinimizationProblem
@@ -606,7 +607,7 @@ class PreparedBatteryOED(StrictModule):
             raise ValueError(
                 "Battery OED amplitudes must match the fixed current-step count."
             )
-        values = values.astype(jnp.result_type(values, jnp.float64))
+        values = values.astype(inexact_result_type(values))
         finite = jnp.all(jnp.isfinite(values))
         safe = jnp.where(jnp.isfinite(values), values, 0.0)
         supported = (

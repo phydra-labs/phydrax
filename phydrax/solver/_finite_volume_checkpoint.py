@@ -154,31 +154,13 @@ def _validate_array_inventory(
     expected_names: set[str],
     /,
 ) -> None:
+    # ``read_array_archive`` owns per-record member, checksum, shape, dtype,
+    # and layout validation; the checkpoint owns only the exact name inventory.
     inventory = manifest.get("arrays")
     if not isinstance(inventory, dict) or set(inventory) != expected_names:
         raise ValueError("Finite-volume checkpoint array inventory changed.")
     if set(arrays) != expected_names:
         raise ValueError("Finite-volume checkpoint array payload changed.")
-    for index, name in enumerate(sorted(expected_names)):
-        record = inventory[name]
-        array = np.asarray(arrays[name])
-        expected_record_fields = {"member", "shape", "dtype", "sha256"}
-        if not isinstance(record, dict) or set(record) != expected_record_fields:
-            raise ValueError(
-                f"Finite-volume checkpoint inventory record {name!r} changed."
-            )
-        checksum = record["sha256"]
-        if (
-            record["member"] != f"arrays/{index:06d}.npy"
-            or record["shape"] != list(array.shape)
-            or record["dtype"] != array.dtype.str
-            or not isinstance(checksum, str)
-            or len(checksum) != 64
-            or any(character not in "0123456789abcdef" for character in checksum)
-        ):
-            raise ValueError(
-                f"Finite-volume checkpoint inventory identity {name!r} changed."
-            )
 
 
 def _expected_content_shape(plan: FiniteVolumeCheckpointPlan, /) -> tuple[int, ...]:

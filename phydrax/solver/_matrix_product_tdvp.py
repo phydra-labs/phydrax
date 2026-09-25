@@ -451,9 +451,9 @@ def _one_site_step(state, hamiltonian, policy):
             policy,
             f"finite-tdvp-site-{site}",
         )
-        errors.append(evolved.error_estimate)
-        residuals.append(evolved.residual_estimate)
-        converged.append(evolved.converged)
+        errors.append(evolved.diagnostics.error_estimate)
+        residuals.append(evolved.diagnostics.residual_estimate)
+        converged.append(evolved.successful)
         matrix = precision.factorization(evolved.value).reshape(
             (-1, evolved.value.shape[-1])
         )
@@ -476,9 +476,9 @@ def _one_site_step(state, hamiltonian, policy):
             policy,
             f"finite-tdvp-bond-{site}",
         )
-        errors.append(bond_evolved.error_estimate)
-        residuals.append(bond_evolved.residual_estimate)
-        converged.append(bond_evolved.converged)
+        errors.append(bond_evolved.diagnostics.error_estimate)
+        residuals.append(bond_evolved.diagnostics.residual_estimate)
+        converged.append(bond_evolved.successful)
         tensors[site] = precision.storage(left_core)
         tensors[site + 1] = precision.storage(
             ein.contract(
@@ -500,9 +500,9 @@ def _one_site_step(state, hamiltonian, policy):
         f"finite-tdvp-site-{last}",
     )
     tensors[last] = precision.storage(evolved.value)
-    errors.append(evolved.error_estimate)
-    residuals.append(evolved.residual_estimate)
-    converged.append(evolved.converged)
+    errors.append(evolved.diagnostics.error_estimate)
+    residuals.append(evolved.diagnostics.residual_estimate)
+    converged.append(evolved.successful)
     state = MatrixProductState(tuple(tensors), precision=precision)
     environments = prepare_chain_environments(state, hamiltonian, state)
     left_envs = environments.left
@@ -521,9 +521,9 @@ def _one_site_step(state, hamiltonian, policy):
             policy,
             f"finite-tdvp-site-{site}",
         )
-        errors.append(evolved.error_estimate)
-        residuals.append(evolved.residual_estimate)
-        converged.append(evolved.converged)
+        errors.append(evolved.diagnostics.error_estimate)
+        residuals.append(evolved.diagnostics.residual_estimate)
+        converged.append(evolved.successful)
         matrix = precision.factorization(evolved.value).reshape(
             (evolved.value.shape[0], -1)
         )
@@ -547,9 +547,9 @@ def _one_site_step(state, hamiltonian, policy):
             policy,
             f"finite-tdvp-bond-{site - 1}",
         )
-        errors.append(bond_evolved.error_estimate)
-        residuals.append(bond_evolved.residual_estimate)
-        converged.append(bond_evolved.converged)
+        errors.append(bond_evolved.diagnostics.error_estimate)
+        residuals.append(bond_evolved.diagnostics.residual_estimate)
+        converged.append(bond_evolved.successful)
         tensors[site] = precision.storage(right_core)
         tensors[site - 1] = precision.storage(
             ein.contract(
@@ -570,9 +570,9 @@ def _one_site_step(state, hamiltonian, policy):
         "finite-tdvp-site-0",
     )
     tensors[0] = precision.storage(evolved.value)
-    errors.append(evolved.error_estimate)
-    residuals.append(evolved.residual_estimate)
-    converged.append(evolved.converged)
+    errors.append(evolved.diagnostics.error_estimate)
+    residuals.append(evolved.diagnostics.residual_estimate)
+    converged.append(evolved.successful)
     count = 4 * state.site_count - 2
     return (
         MatrixProductState(tuple(tensors), precision=precision),
@@ -636,9 +636,9 @@ def _two_site_step(state, hamiltonian, policy):
                 (retained, evolved.value.shape[2], evolved.value.shape[3])
             )
             state = MatrixProductState(tuple(tensors), precision=precision)
-            errors.append(evolved.error_estimate)
-            residuals.append(evolved.residual_estimate)
-            converged.append(evolved.converged)
+            errors.append(evolved.diagnostics.error_estimate)
+            residuals.append(evolved.diagnostics.residual_estimate)
+            converged.append(evolved.successful)
             discarded.append(truncation.discarded_weight)
             environments = prepare_chain_environments(state, hamiltonian, state)
     return (

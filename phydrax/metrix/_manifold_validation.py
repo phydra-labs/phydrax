@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ._manifold import AbstractRiemannianManifold
 from ._state_geometry import AbstractStateGeometry
@@ -22,9 +23,7 @@ def _relative_residual(value: ArrayLike, reference: ArrayLike, /) -> Array:
     value_array = jnp.asarray(value)
     reference_array = jnp.asarray(reference)
     scale = jnp.maximum(
-        jnp.asarray(
-            1.0, dtype=jnp.result_type(value_array, reference_array, jnp.float64)
-        ),
+        jnp.asarray(1.0, dtype=inexact_result_type(value_array, reference_array)),
         _maximum_absolute(reference_array),
     )
     return _maximum_absolute(value_array - reference_array) / scale

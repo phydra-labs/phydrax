@@ -199,9 +199,9 @@ def test_multihead_warp_eager_jit_and_value_parameter_gradients_are_finite(dtype
 
 
 def test_multihead_warp_validation_rejects_ambiguous_or_unsupported_contracts():
-    with pytest.raises(ValueError, match="one, two, or three"):
+    with pytest.raises(ValueError, match="spatial_ndim must be positive"):
         phx.nn.layers.MultiheadWarp(
-            spatial_ndim=4,
+            spatial_ndim=0,
             in_channels=1,
             out_channels=1,
             num_heads=1,

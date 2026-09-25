@@ -164,7 +164,7 @@ def test_native_scalar_solver_gates_success_on_line_of_sight_error():
         prepared,
         prepared.conformal_times.at[1].set(jnp.nan),
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="must be finite"):
         nonfinite.solve(primordial)
 
 

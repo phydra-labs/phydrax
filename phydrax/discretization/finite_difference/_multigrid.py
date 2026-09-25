@@ -442,10 +442,18 @@ def _point_interpolation(source: np.ndarray, target: np.ndarray, /) -> np.ndarra
 
 
 class _DenseCoarsePreconditioner(AbstractPreconditioner, NonTrainableState):
-    inverse: Array
+    """Coarse-level pseudoinverse factorized and applied in accumulation precision."""
 
-    def __init__(self, operator: AbstractLinearOperator, /):
-        matrix = operator._materialize()
+    inverse: Array
+    precision: FDExecutionPrecisionPolicy
+
+    def __init__(
+        self,
+        operator: AbstractLinearOperator,
+        precision: FDExecutionPrecisionPolicy,
+        /,
+    ):
+        matrix = precision.accumulation(operator._materialize())
         inverse_result = pseudoinverse(
             matrix,
             FactorizationPolicy(
@@ -469,9 +477,11 @@ class _DenseCoarsePreconditioner(AbstractPreconditioner, NonTrainableState):
             {
                 "kind": "structured-dense-coarse-solve",
                 "operator": operator.operator_id,
+                "precision": precision.policy_id,
             }
         )
         self.inverse = inverse
+        self.precision = precision
 
     def apply(
         self,
@@ -481,8 +491,10 @@ class _DenseCoarsePreconditioner(AbstractPreconditioner, NonTrainableState):
         iteration: ArrayLike | None = None,
     ):
         del iteration
-        coordinates = self.space.flatten(self.space.validate(residual))
-        return self.space.unflatten(self.inverse @ coordinates)
+        coordinates = self.precision.accumulation(
+            self.space.flatten(self.space.validate(residual))
+        )
+        return self.space.unflatten(self.precision.field(self.inverse @ coordinates))
 
 
 class StructuredMultigridResult(StrictModule, NonTrainableState):
@@ -906,7 +918,7 @@ class PreparedStructuredMultigrid(StrictModule):
         levels = []
         for index, operator in enumerate(level_operators):
             if index == len(level_operators) - 1:
-                smoother = _DenseCoarsePreconditioner(operator)
+                smoother = _DenseCoarsePreconditioner(operator, plan.precision)
                 restriction = None
                 prolongation = None
             else:

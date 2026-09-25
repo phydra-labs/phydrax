@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax.numpy as jnp
 import pytest
 
@@ -101,7 +102,7 @@ def test_cross_and_completion_reject_nonfinite_observations_and_policy():
         max_local_unknowns=4,
     )
     indices = jnp.asarray([[0, 0], [1, 1]], dtype=jnp.int32)
-    with pytest.raises(ValueError, match="finite"):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="values must be finite"):
         tt.weighted_tensor_completion(
             completion_plan,
             indices,

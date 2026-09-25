@@ -97,7 +97,7 @@ def _controlled():
     ).prepare(), neighborhood
 
 
-def _runtime(controlled, neighborhood):
+def _runtime(controlled, neighborhood, *, temperature=1.0):
     dynamics = AtomisticDynamicsPlan(
         controlled.system,
         controlled,
@@ -109,7 +109,7 @@ def _runtime(controlled, neighborhood):
         AtomisticThermodynamicStatePlan(
             measure,
             ensemble="nvt",
-            temperature=1.0,
+            temperature=temperature,
             controls=controls,
             control_ids=controlled.control_ids,
             state_id=state_id,
@@ -430,6 +430,21 @@ def test_protocol_signs_and_covariance_are_explicit():
     np.testing.assert_allclose(result.variance, 0.12)
     np.testing.assert_array_equal(result.weights, [1.0, -1.0, 1.0])
     assert result.formula == "solvation = D_vac - D_solv + C"
+
+    mapped_solvent = solvent_plan.project(
+        *_analysis(solvent_plan, 2.0, 0.09, "mapped-solvent", mapping_id="map")
+    )
+    with pytest.raises(ValueError, match="mapping"):
+        plan.evaluate(vacuum, mapped_solvent, (correction,), covariance)
+    _, hot = _runtime(controlled, neighborhood, temperature=2.0)
+    hot_solvent_plan = _leg(controlled, hot, "solvent")
+    hot_solvent = hot_solvent_plan.project(
+        *_analysis(hot_solvent_plan, 2.0, 0.09, "hot-solvent")
+    )
+    with pytest.raises(ValueError, match="inverse temperature"):
+        NeutralAbsoluteSolvationPlan(
+            vacuum_plan, hot_solvent_plan, corrections=(correction_plan,)
+        ).evaluate(vacuum, hot_solvent, (correction,), covariance)
 
 
 def test_absolute_and_mapped_protocol_formulas_are_oriented():

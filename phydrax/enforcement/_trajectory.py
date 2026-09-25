@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from math import comb, isfinite
 from typing import Any, Literal
 
@@ -20,7 +21,10 @@ from phydrax.conditions._ir import (
 )
 from phydrax.domain import (
     BatchEvaluator,
-    CallbackDerivativeRule,
+    DerivativeBackend,
+    DerivativeBasis,
+    DerivativeMode,
+    DerivativeRule,
     DomainFunction,
     GridBatch,
     PointBatch,
@@ -30,11 +34,11 @@ from phydrax.domain import (
 from .._doc import DOC_KEY0
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..domain._derivative import DerivativeRuleProvider
 from ..domain._trajectory_interpolation import (
     _broadcast_like,
     _RaggedTimeSeriesTable,
 )
-from ..operators.differential._hooks import with_derivative_rule
 
 
 RaggedTimeSeriesHardInterpolation = Literal["linear", "cubic_hermite"]
@@ -260,7 +264,49 @@ def _trajectory_field_dims(
     return time_field.dims + (None,) * trailing
 
 
-class _RaggedCardinalCorrectionEvaluator(StrictModule, BatchEvaluator):
+@dataclass(frozen=True, slots=True, eq=False)
+class _RaggedCardinalCorrectionDerivativeRule(DerivativeRule):
+    # Built on demand from the live evaluator of `function`.
+    function: DomainFunction
+
+    def derive(
+        self,
+        *,
+        var: str,
+        axis: int | None,
+        order: int,
+        mode: DerivativeMode,
+        backend: DerivativeBackend,
+        basis: DerivativeBasis,
+        periodic: bool,
+    ) -> DomainFunction | None:
+        del mode, basis, periodic
+        evaluator = self.function.func
+        table = evaluator.table
+        if backend not in ("ad", "jet"):
+            return None
+        if var != table.domain.time_label or axis is not None:
+            return None
+        requested = evaluator.derivative_order + int(order)
+        limit = table.max_derivative_order()
+        if requested > limit:
+            raise ValueError(
+                f"interpolation={table.interpolation!r} supports correction "
+                f"derivatives only up to order {limit}."
+            )
+        return DomainFunction(
+            domain=self.function.domain,
+            deps=self.function.deps,
+            func=_RaggedCardinalCorrectionEvaluator(
+                table, evaluator.components, evaluator.output_width, requested
+            ),
+            metadata=self.function.metadata,
+        )
+
+
+class _RaggedCardinalCorrectionEvaluator(
+    StrictModule, BatchEvaluator, DerivativeRuleProvider
+):
     table: _RaggedTimeSeriesTable
     components: tuple[int, ...] | None = eqx.field(static=True)
     output_width: int | None = eqx.field(static=True)
@@ -303,6 +349,9 @@ class _RaggedCardinalCorrectionEvaluator(StrictModule, BatchEvaluator):
             out,
             dims=_trajectory_field_dims(batch, out, self.table.domain),
         )
+
+    def derivative_rule_for(self, function: DomainFunction, /) -> DerivativeRule:
+        return _RaggedCardinalCorrectionDerivativeRule(function)
 
 
 class RaggedTimeSeriesCorrectionAction(StrictModule):
@@ -407,39 +456,8 @@ class RaggedTimeSeriesCorrectionAction(StrictModule):
                 f"{residual_array.shape}."
             )
 
-        def _make(derivative_order: int, /) -> DomainFunction:
-            base = self._field(
-                residual_array,
-                derivative_order=derivative_order,
-            )
-
-            def _hook(
-                *,
-                var: str,
-                axis: int | None,
-                order: int,
-                mode,
-                backend,
-                basis,
-                periodic: bool,
-            ) -> DomainFunction | None:
-                del mode, basis, periodic
-                if backend not in ("ad", "jet"):
-                    return None
-                if var != self.observation.domain.time_label or axis is not None:
-                    return None
-                requested = derivative_order + int(order)
-                if requested > self.evidence.maximum_derivative_order:
-                    raise ValueError(
-                        f"interpolation={self.interpolation!r} supports correction "
-                        f"derivatives only up to order "
-                        f"{self.evidence.maximum_derivative_order}."
-                    )
-                return _make(requested)
-
-            return with_derivative_rule(base, CallbackDerivativeRule(_hook))
-
-        return (_make(0),)
+        # The evaluator derives its time derivatives from its own table.
+        return (self._field(residual_array, derivative_order=0),)
 
     __call__ = lift
 
@@ -550,7 +568,70 @@ def _blend_components(
     return free_arr + mask * (hard_arr - free_arr)
 
 
-class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchEvaluator):
+@dataclass(frozen=True, slots=True, eq=False)
+class _RaggedHardAnsatzDerivativeRule(DerivativeRule):
+    # Built on demand from the live operands of a hard-ansatz evaluator; `offset`
+    # is the time-derivative order `function` already represents.
+    function: DomainFunction
+    u_free: DomainFunction
+    table: _RaggedTimeSeriesTable
+    components: tuple[int, ...] | None
+    offset: int
+
+    def derive(
+        self,
+        *,
+        var: str,
+        axis: int | None,
+        order: int,
+        mode: DerivativeMode,
+        backend: DerivativeBackend,
+        basis: DerivativeBasis,
+        periodic: bool,
+    ) -> DomainFunction | None:
+        if backend not in ("ad", "jet"):
+            return None
+        if var != self.table.domain.time_label or axis is not None:
+            return None
+        if int(order) == 0:
+            return self.function
+        n = self.offset + int(order)
+        limit = self.table.max_derivative_order()
+        if n > limit:
+            raise ValueError(
+                f"interpolation={self.table.interpolation!r} supports hard time "
+                f"derivatives only up to order {limit}."
+            )
+
+        from ..operators.differential._domain_ops import partial_n
+
+        u_free_derivatives = tuple(
+            partial_n(
+                self.u_free,
+                var=var,
+                axis=None,
+                order=k,
+                mode=mode,
+                backend=backend,
+                basis=basis,
+                periodic=periodic,
+            )
+            for k in range(n + 1)
+        )
+        return DomainFunction(
+            domain=self.u_free.domain,
+            deps=self.u_free.deps,
+            func=_RaggedTimeSeriesHardAnsatzDerivative(
+                order=n,
+                u_free_derivatives=u_free_derivatives,
+                table=self.table,
+                components=self.components,
+            ),
+            metadata={},
+        )
+
+
+class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchEvaluator, DerivativeRuleProvider):
     u_free: DomainFunction
     table: _RaggedTimeSeriesTable
     components: tuple[int, ...] | None
@@ -593,8 +674,17 @@ class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchEvaluator):
         out = _blend_components(free_arr, hard, self.components)
         return cx.AxisArray(out, dims=free.dims)
 
+    def derivative_rule_for(self, function: DomainFunction, /) -> DerivativeRule:
+        return _RaggedHardAnsatzDerivativeRule(
+            function, self.u_free, self.table, self.components, 0
+        )
 
-class _RaggedTimeSeriesHardAnsatzDerivative(StrictModule, BatchEvaluator):
+
+class _RaggedTimeSeriesHardAnsatzDerivative(
+    StrictModule, BatchEvaluator, DerivativeRuleProvider
+):
+    # `u_free_derivatives[k]` is the k-th time derivative of the free field;
+    # entry 0 is the free field itself.
     order: int
     u_free_derivatives: tuple[DomainFunction, ...]
     table: _RaggedTimeSeriesTable
@@ -649,6 +739,15 @@ class _RaggedTimeSeriesHardAnsatzDerivative(StrictModule, BatchEvaluator):
         out = _blend_components(free_arrays[self.order], hard, self.components)
         return cx.AxisArray(out, dims=free_fields[self.order].dims)
 
+    def derivative_rule_for(self, function: DomainFunction, /) -> DerivativeRule:
+        return _RaggedHardAnsatzDerivativeRule(
+            function,
+            self.u_free_derivatives[0],
+            self.table,
+            self.components,
+            self.order,
+        )
+
 
 def enforce_ragged_time_series(
     u_free: DomainFunction,
@@ -691,7 +790,7 @@ def enforce_ragged_time_series(
         snap_tol=float(snap_tol),
     )
 
-    base = DomainFunction(
+    return DomainFunction(
         domain=u_free.domain,
         deps=u_free.deps,
         func=_RaggedTimeSeriesHardAnsatz(
@@ -701,84 +800,6 @@ def enforce_ragged_time_series(
         ),
         metadata={},
     )
-
-    def _make_hook(offset: int, /):
-        def _hook(
-            *,
-            var: str,
-            axis: int | None,
-            order: int,
-            mode,
-            backend,
-            basis,
-            periodic: bool,
-        ) -> DomainFunction | None:
-            if backend not in ("ad", "jet"):
-                return None
-            if var != domain.time_label:
-                return None
-            if axis is not None:
-                return None
-            n = int(offset) + int(order)
-            return _make_derivative(
-                n,
-                mode=mode,
-                backend=backend,
-                basis=basis,
-                periodic=periodic,
-            )
-
-        return _hook
-
-    def _make_derivative(
-        order: int,
-        /,
-        *,
-        mode,
-        backend,
-        basis,
-        periodic: bool,
-    ) -> DomainFunction:
-        n = int(order)
-        if n < 0:
-            raise ValueError("order must be non-negative.")
-        if n == 0:
-            return with_derivative_rule(base, CallbackDerivativeRule(_make_hook(0)))
-        limit = table.max_derivative_order()
-        if n > limit:
-            raise ValueError(
-                f"interpolation={table.interpolation!r} supports hard time derivatives only up to order {limit}."
-            )
-
-        from ..operators.differential._domain_ops import partial_n
-
-        u_free_derivatives = tuple(
-            partial_n(
-                u_free,
-                var=domain.time_label,
-                axis=None,
-                order=k,
-                mode=mode,
-                backend=backend,
-                basis=basis,
-                periodic=periodic,
-            )
-            for k in range(n + 1)
-        )
-        out = DomainFunction(
-            domain=u_free.domain,
-            deps=u_free.deps,
-            func=_RaggedTimeSeriesHardAnsatzDerivative(
-                order=n,
-                u_free_derivatives=u_free_derivatives,
-                table=table,
-                components=components_,
-            ),
-            metadata={},
-        )
-        return with_derivative_rule(out, CallbackDerivativeRule(_make_hook(n)))
-
-    return with_derivative_rule(base, CallbackDerivativeRule(_make_hook(0)))
 
 
 __all__ = [

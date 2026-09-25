@@ -112,11 +112,19 @@ def test_nontrivial_gauge_flow_reports_jacobian_and_uses_exact_mh_ratio():
     expected_first_log_ratio = (
         0.5 * (first_proposal / scale) ** 2 - 0.5 * first_proposal**2
     )
+    # The float32 MH log-ratio adds four stored log-densities whose shared
+    # log|det| terms cancel; each summand and partial sum is bounded by
+    # log(scale) + y^2 / 2, so three stored roundings and three additions give
+    # at most about 5 eps of that magnitude (8 eps covers the float32 reference).
+    # A relative tolerance on the cancelled value is not attainable in float32.
+    summand_magnitude = jnp.log(scale) + 0.5 * first_proposal**2
+    log_ratio_tolerance = 8 * jnp.finfo(jnp.float32).eps * summand_magnitude
 
     assert jnp.allclose(result.forward_log_abs_det_jacobian, jnp.log(scale), rtol=1e-6)
     assert jnp.allclose(result.inverse_log_abs_det_jacobian, -jnp.log(scale), rtol=1e-6)
-    assert jnp.allclose(
-        result.log_acceptance_ratio[:, 0], expected_first_log_ratio, rtol=1e-6
+    assert jnp.all(
+        jnp.abs(result.log_acceptance_ratio[:, 0] - expected_first_log_ratio)
+        <= log_ratio_tolerance
     )
     assert jnp.allclose(
         result.acceptance_probability[:, 0],

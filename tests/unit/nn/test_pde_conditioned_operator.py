@@ -128,7 +128,7 @@ def test_pde_conditioned_operator_composes_canonical_tasks_and_contracts():
     assert conditioned_capability.minimum_sources == wrapped_capability.minimum_sources
     assert conditioned_capability.maximum_sources == wrapped_capability.maximum_sources
     assert conditioned_capability.global_condition_sources == ("pde",)
-    assert model.operator_contract.validate(conditioned).compatible
+    assert model.operator_contract.validate(conditioned).accepted
     length_encoder = phx.nn.operator.architectures.PDEConditionEncoder(
         width=4,
         depth=1,

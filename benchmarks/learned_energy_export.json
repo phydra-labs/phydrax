@@ -2533,7 +2533,7 @@
     "model_numeric_revision": "0b0eb11145c8ff78e5c95d489cd9e349ce9b779170190cd6e0fc9f89ade4b5f4",
     "model_semantic": "6099df26a77c314633b3756b8e278386e79b7607b96b70533eef00c5ef1149d5",
     "normalizer": "af380d4ebba3c9e63fe5ad9683ae69147aaeda00f159af8d4b20c49463d39663",
-    "parent_spatial_qualification": "8eb2640b5c8dce4239f6d2069dc59211522584ad309bd2d139c8dd1575e2fe63",
+    "parent_spatial_qualification": "987e0043500a2af0af319ff56a8a97ffec8988fd3af7fd2d4e37d2bd87f1e8b3",
     "prepared_binding": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
     "prepared_spatial": "f73b1407688dd9342745c0b80c1bdd335b8dc57cd5eb268565a217131429cf90",
     "quadrature": "e98e367a69a4a752157e9b59c0ed86a14962bab97bb018bdfe919b7492ef05bf",
@@ -2546,11 +2546,11 @@
     "parent_spatial_path": "benchmarks/learned_energy_spatial.json",
     "sha256_after": {
       "model_artifact": "55727704a035be1d1392081329ad314f45cc0cb52826c4aeb788fa339cd0813a",
-      "parent_spatial": "a016442d151ac86ef6b0330a95f2425b455f9e06e88e715ca7afc62aed77cae5"
+      "parent_spatial": "47b494960dd234b859e0d5aa8d2e34454b8ee49f8c29290b0907503f13dbcc2c"
     },
     "sha256_before": {
       "model_artifact": "55727704a035be1d1392081329ad314f45cc0cb52826c4aeb788fa339cd0813a",
-      "parent_spatial": "a016442d151ac86ef6b0330a95f2425b455f9e06e88e715ca7afc62aed77cae5"
+      "parent_spatial": "47b494960dd234b859e0d5aa8d2e34454b8ee49f8c29290b0907503f13dbcc2c"
     },
     "unchanged": true
   },
@@ -2907,7 +2907,7 @@
   "parent_spatial": {
     "passed": true,
     "path": "benchmarks/learned_energy_spatial.json",
-    "qualification_id": "8eb2640b5c8dce4239f6d2069dc59211522584ad309bd2d139c8dd1575e2fe63"
+    "qualification_id": "987e0043500a2af0af319ff56a8a97ffec8988fd3af7fd2d4e37d2bd87f1e8b3"
   },
   "passed": true,
   "prepared_contracts": {
@@ -3157,7 +3157,7 @@
       "topology_id": "aabc5ec81f6596a837ff8089761d1de8d026beada59c9d6585f0f98224e8821e"
     }
   },
-  "qualification_id": "d031ee80ad3ff921d3835d93ba4dd5320840a4bfe98bed227798bafc6179386e",
+  "qualification_id": "e7a77899a1606e48f0377e77971db178f2f4b5711e944ee17c22b8f159206118",
   "qualification_status": "qualified",
   "scope": {
     "claim": "frozen fixed-shape periodic D2V17 forward IREE deployment only",

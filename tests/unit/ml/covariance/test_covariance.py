@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
@@ -317,5 +318,5 @@ def test_covariance_configuration_fails_closed():
         FactorCovariance(0)
     with pytest.raises(ValueError):
         WeightedCovariance(weight_policy="none")
-    with pytest.raises(ValueError):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="finite and positive"):
         GraphicalLasso(regularization=0.0)

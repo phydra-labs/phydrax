@@ -387,6 +387,33 @@ def _evaluate_domain_value(
     return jnp.asarray(value.func(*local_args, key=key))
 
 
+def _realization_aligned(
+    values: tuple[Array, ...],
+    randomized: tuple[bool, ...],
+    /,
+) -> tuple[Array, ...]:
+    """Give every operand a leading realization axis and a common event rank.
+
+    Randomized operands carry realizations on axis 0 and deterministic operands
+    carry only their event shape. Event shapes broadcast right-aligned, so
+    singleton axes are inserted between the realization axis and each event
+    shape; deterministic operands get a singleton realization axis.
+    """
+    events = tuple(
+        value.shape[1:] if is_randomized else value.shape
+        for value, is_randomized in zip(values, randomized, strict=True)
+    )
+    rank = max(len(event) for event in events)
+    return tuple(
+        value.reshape(
+            (value.shape[:1] if is_randomized else (1,))
+            + (1,) * (rank - len(event))
+            + event
+        )
+        for value, is_randomized, event in zip(values, randomized, events, strict=True)
+    )
+
+
 class _RandomizedPointCallable(StrictModule):
     fields: Mapping[str, DomainFunction]
     parameters: Mapping[str, Any]
@@ -535,33 +562,19 @@ class _RandomizedPointCallable(StrictModule):
             self._evaluate(argument, f"{path}.args[{index}]", args, key)
             for index, argument in enumerate(node.args)
         )
-        values = tuple(item[0] for item in evaluated)
-        randomized = tuple(item[1] for item in evaluated)
+        values = _realization_aligned(
+            tuple(item[0] for item in evaluated),
+            tuple(item[1] for item in evaluated),
+        )
         if node.op == "add":
             result = values[0]
             for value in values[1:]:
                 result = result + value
             return result, True
         if node.op == "multiply":
-            event_shapes = tuple(
-                value.shape[1:] if is_randomized else value.shape
-                for value, is_randomized in zip(values, randomized, strict=True)
-            )
-            event_shape = jnp.broadcast_shapes(*event_shapes)
-            result = jnp.ones(
-                (self.plan.num_realizations,) + event_shape,
-                dtype=jnp.result_type(*values),
-            )
-            for value, is_randomized in zip(values, randomized, strict=True):
-                target_shape = (
-                    (self.plan.num_realizations,) + event_shape
-                    if is_randomized
-                    else event_shape
-                )
-                aligned = jnp.broadcast_to(value, target_shape)
-                if not is_randomized:
-                    aligned = aligned[None, ...]
-                result = result * aligned
+            result = values[0]
+            for value in values[1:]:
+                result = result * value
             return result, True
         if node.op == "divide":
             return values[0] / values[1], True
@@ -572,10 +585,6 @@ class _RandomizedPointCallable(StrictModule):
             return values[0][..., node.axis], True
         if node.op == "dot":
             left, right = values
-            if randomized[0] and not randomized[1]:
-                right = right[None, ...]
-            elif randomized[1] and not randomized[0]:
-                left = left[None, ...]
             return jnp.sum(left * right, axis=-1), True
         raise RuntimeError(
             f"Unsupported randomized expression node {node.op!r} at {path}."

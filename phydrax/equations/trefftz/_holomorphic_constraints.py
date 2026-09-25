@@ -29,6 +29,7 @@ from ..._holomorphic_linear import (
     HolomorphicMultiJet,
     MultivariableHolomorphicPotentialProvider,
 )
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState, ParameterOwner
 from ...linalg import DenseLinearOperator, RankPolicy, SolveResourcePolicy
@@ -296,7 +297,7 @@ class HolomorphicPointFunctional(StrictModule, NonTrainableState):
                 raise TypeError("Scalar functional provider lacks holomorphic jets.")
             maximum = max(sum(term.derivative_multi_index) for term in self.terms)
             jet = provider.jet(self.coordinate[0], maximum)
-            result = jnp.asarray(0.0, dtype=jnp.result_type(jet.value.real, jnp.float64))
+            result = jnp.asarray(0.0, dtype=inexact_result_type(jet.value.real))
             for term in self.terms:
                 derivative = jet.derivative(term.derivative_multi_index[0])
                 result = result + jnp.real(term.weight * derivative[term.output_index])
@@ -319,7 +320,7 @@ class HolomorphicPointFunctional(StrictModule, NonTrainableState):
             require_downward_closed=True,
         )
         jet = provider.multi_jet(self.coordinate, index_set)
-        result = jnp.asarray(0.0, dtype=jnp.result_type(jet.value.real, jnp.float64))
+        result = jnp.asarray(0.0, dtype=inexact_result_type(jet.value.real))
         for term in self.terms:
             derivative = jet.derivative(term.derivative_multi_index)
             result = result + jnp.real(term.weight * derivative[term.output_index])

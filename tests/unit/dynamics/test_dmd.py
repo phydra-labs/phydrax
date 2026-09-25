@@ -52,7 +52,9 @@ def test_exact_dmd_recovers_linear_map_and_executes_as_system():
         np.asarray(result.state_matrix), expected, rtol=1e-11, atol=1e-11
     )
     system = result.to_system()
-    prediction = system.evaluate(jnp.asarray(0), jnp.asarray([0.4, -0.3]), None)
+    prediction = system.evaluate(
+        phx.dynamics.DiscreteStepContext(0.0, 1.0, 0), jnp.asarray([0.4, -0.3]), None
+    )
     np.testing.assert_allclose(
         np.asarray(prediction), expected @ np.asarray([0.4, -0.3]), atol=1e-11
     )
@@ -71,7 +73,7 @@ def test_controlled_dmd_recovers_state_and_input_matrices():
         np.asarray(result.input_matrix), expected_input, rtol=1e-11, atol=1e-11
     )
     predicted = result.to_system().evaluate(
-        jnp.asarray(0),
+        phx.dynamics.DiscreteStepContext(0.0, 1.0, 0),
         jnp.asarray([0.2, 0.7]),
         None,
         inputs=jnp.asarray([-0.4]),

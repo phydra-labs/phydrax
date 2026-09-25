@@ -328,14 +328,19 @@ def _bind_for_template(
         raise ValueError("Numerical binding cannot change symbolic problem structure.")
     stop_arrays = selected_plan.policy.differentiation.mode in ("rhs-only", "none")
     execution_problem = _stop_problem_arrays(problem) if stop_arrays else problem
-    preparation_plan = (
-        jax.tree.map(
-            lambda value: jax.lax.stop_gradient(value) if eqx.is_array(value) else value,
-            selected_plan,
+    # Concrete plan arrays carry no tangent; evaluating stop_gradient eagerly
+    # keeps host symbolic data (sparse setup patterns) readable under traces.
+    with jax.ensure_compile_time_eval():
+        preparation_plan = (
+            jax.tree.map(
+                lambda value: (
+                    jax.lax.stop_gradient(value) if eqx.is_array(value) else value
+                ),
+                selected_plan,
+            )
+            if stop_arrays
+            else selected_plan
         )
-        if stop_arrays
-        else selected_plan
-    )
     preconditioning_state = prepare_preconditioner(
         preparation_plan.preconditioner_plan,
         execution_problem.operator,

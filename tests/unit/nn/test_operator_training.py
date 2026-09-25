@@ -330,7 +330,7 @@ def test_dataset_preserves_named_multi_query_target_contracts():
     )
     dataset = phx.nn.operator.training.OperatorDataset(batch, targets)
     selected = dataset.take(jnp.array([1]))
-    assert tuple(selected.targets.fields) == ("state", "flux")
+    assert tuple(selected.targets.fields) == ("flux", "state")
     assert selected.targets.field("state").values.shape == (1, 3)
     assert selected.targets.field("flux").values.shape == (1, 4, 2)
     assert selected.targets.field("flux").query_name == "flux-query"
@@ -377,8 +377,8 @@ def test_named_normalization_and_dtype_preserve_complex_fields(tmp_path):
     )
     normalized = policy.normalize_targets(targets)
     restored = policy.denormalize_targets(normalized)
-    assert tuple(policy.targets) == ("wave", "sensor")
-    assert tuple(policy.query_coordinates) == ("wave-query", "sensor-query")
+    assert tuple(policy.targets) == ("sensor", "wave")
+    assert tuple(policy.query_coordinates) == ("sensor-query", "wave-query")
     assert jnp.allclose(
         restored.field("wave").values,
         targets.field("wave").values,
@@ -567,7 +567,9 @@ def test_checkpoint_binding_separates_dynamic_and_static_weights(tmp_path):
         dynamic["binding"]["executable_signature_id"]
         == base["binding"]["executable_signature_id"]
     )
-    assert static["binding"]["numeric_revision_id"] == base["binding"]["numeric_revision_id"]
+    assert (
+        static["binding"]["numeric_revision_id"] == base["binding"]["numeric_revision_id"]
+    )
     assert (
         static["binding"]["executable_signature_id"]
         != base["binding"]["executable_signature_id"]

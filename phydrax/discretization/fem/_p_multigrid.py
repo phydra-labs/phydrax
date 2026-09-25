@@ -160,7 +160,7 @@ class FiniteElementPMultigridPolicy(StrictModule, NonTrainableState):
                             for left_axis, right_axis in zip(left, right, strict=True)
                         )
                         or left == right
-                        for left, right in zip(orders, orders[1:], strict=True)
+                        for left, right in zip(orders[:-1], orders[1:], strict=True)
                         if isinstance(left, tuple) and isinstance(right, tuple)
                     )
                 ):

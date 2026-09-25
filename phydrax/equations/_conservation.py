@@ -42,11 +42,9 @@ from ..discretization.finite_volume import (
     NoSlipAdiabaticWallBoundary,
     NoSlipIsothermalWallBoundary,
     PiecewiseConstantReconstruction,
-    PreparedCellPolynomialReconstruction,
     PreparedFiniteVolumeDynamics,
     PreparedTriangleFiniteVolumeDynamics,
     PreparedUnstructuredFiniteVolumeDynamics,
-    PreparedUnstructuredWENOZReconstruction,
     PrescribedHeatFluxWallBoundary,
     RoeFluxPlan,
     ShallowWaterHydrostaticHLLPlan,
@@ -638,24 +636,6 @@ def _compile_unstructured_conservation(
         raise TypeError("coupling must be UnstructuredFiniteVolumeCouplingPlan or None.")
     prepared_coupling = coupling_plan.prepare(discretization)
     coupling_plan.validate_execution_support()
-    if prepared_coupling.motion is not None:
-        moving_polynomial = isinstance(
-            method.reconstruction,
-            PreparedCellPolynomialReconstruction,
-        ) and method.reconstruction.basis.degree in (1, 2)
-        moving_weno = isinstance(
-            method.reconstruction,
-            PreparedUnstructuredWENOZReconstruction,
-        ) and method.reconstruction.optimal.basis.degree in (1, 2)
-        if (
-            type(method.reconstruction) is not PiecewiseConstantReconstruction
-            and not moving_polynomial
-            and not moving_weno
-        ):
-            raise ValueError(
-                "Moving unstructured finite-volume reconstruction requires "
-                "piecewise constant, moving WLSQ, or qualified moving WENO."
-            )
     if isinstance(problem.system, TwoMaterialVOFSystem) and prepared_coupling.vof is None:
         raise ValueError(
             "TwoMaterialVOFSystem requires prepared unstructured VOF coupling "

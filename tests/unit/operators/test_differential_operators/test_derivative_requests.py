@@ -76,7 +76,8 @@ def test_trace_derivative_requests_retains_high_order_for_generic_planning():
     )
     requests = trace_derivative_requests(condition.residual, {"u": u})
 
-    assert tuple(request.order for request in requests) == (1, 2, 3)
+    assert tuple(request.order for request in requests) == (3,)
+    assert requests[0].axes == (0, 0, 0)
     assert plan_derivative_execution(requests).strategy == "jvp"
 
 

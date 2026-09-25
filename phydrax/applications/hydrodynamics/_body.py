@@ -358,7 +358,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
 
         probe = tuple(jnp.ones_like(component) for component in velocity)
         multiplier = jnp.ones_like(normal_velocity)
-        spread = jax.linear_transpose(gather, velocity)(multiplier)[0]
+        spread = la.prepare_linearization(gather, velocity).vjp(multiplier)
         adjoint = jnp.real(jnp.vdot(gather(probe), multiplier)) - sum(
             jnp.real(jnp.vdot(component, covector))
             for component, covector in zip(probe, spread, strict=True)
@@ -407,8 +407,10 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
             )
             return jnp.sum(sampled * normals, axis=-1)
 
-        def spread(multiplier):
-            return jax.linear_transpose(gather, velocity)(multiplier)[0]
+        # The chunked marker interpolation scans over cells; its transpose comes
+        # from the JVP-derived linearization because direct linear_transpose
+        # tracing leaves scan linearity flags unset.
+        gather_linearization = la.prepare_linearization(gather, velocity)
 
         body_map = jnp.concatenate((normals, jnp.cross(arms, normals)), axis=-1)
         if not self.moving:
@@ -428,10 +430,10 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
             @ jnp.concatenate((body.rigid.linear_velocity, body.rigid.angular_velocity))
             + self.modal_basis @ body.modal_velocity
         )
-        slip = gather(velocity) - body_normal_velocity
+        slip = gather_linearization.primal - body_normal_velocity
 
         def fluid_response(multiplier):
-            covector = spread(multiplier)
+            covector = gather_linearization.vjp(multiplier)
             inverse = hydrodynamics.surface.inverse_hodge(geometry, covector)
             return gather(inverse.velocity)
 
@@ -478,7 +480,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
             initial_guess=jnp.zeros_like(slip),
         )
         multiplier = jnp.asarray(linear_result.value)
-        fluid_covector = spread(multiplier)
+        fluid_covector = gather_linearization.vjp(multiplier)
         corrected_momentum = tuple(
             value - correction
             for value, correction in zip(momentum, fluid_covector, strict=True)

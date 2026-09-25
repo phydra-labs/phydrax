@@ -22,6 +22,7 @@ from ..._fingerprint import (
     array_tree_fingerprint,
     canonical_fingerprint,
 )
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import DiscreteStepContext, DiscreteTransitionEvidence
@@ -1392,12 +1393,11 @@ def solve_prepared_ilq_feedback_game(
     incumbent_controls = initial_evaluation.trajectory.controls
     incumbent_gain = gain
     zero_bias = jnp.zeros_like(incumbent_controls)
-    dtype = jnp.result_type(
+    dtype = inexact_result_type(
         incumbent_states,
         incumbent_controls,
         plan.scaling.state_scales,
         plan.scaling.control_scales,
-        jnp.float64,
     )
     cases = problem.case_shape
     initial_active = initial_evaluation.successful

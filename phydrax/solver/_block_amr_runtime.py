@@ -895,7 +895,8 @@ class PreparedBlockAMRRuntime(StrictModule):
             nonlocal working, maximum_rate
             interval_initial = working
             initial_values = interval_initial.levels[level].safe_values()
-            accepted_id = level_steps[level] + jnp.asarray(1, dtype=jnp.int32)
+            start_evidence_version = level_steps[level]
+            accepted_id = start_evidence_version + jnp.asarray(1, dtype=jnp.int32)
             level_steps[level] = accepted_id
             local_ok = jnp.asarray(True)
             stage_ledgers: list[ConservationStageLedger] = []
@@ -933,7 +934,7 @@ class PreparedBlockAMRRuntime(StrictModule):
                     fill,
                     args,
                     geometry_version=self.dynamics.topology.epoch.index,
-                    evidence_version=accepted_id,
+                    evidence_version=start_evidence_version,
                 )
                 level_ledger = self._level_stage_ledger(result.ledger, level)
                 ledger_ok = jnp.asarray(level_ledger.accepted, dtype=jnp.bool_).reshape(
@@ -1018,7 +1019,7 @@ class PreparedBlockAMRRuntime(StrictModule):
                 interval_dt,
                 start_geometry_version=self.dynamics.topology.epoch.index,
                 end_geometry_version=self.dynamics.topology.epoch.index,
-                start_evidence_version=accepted_id,
+                start_evidence_version=start_evidence_version,
                 end_evidence_version=accepted_id,
                 start_topology_epoch_id=self.dynamics.topology.epoch.epoch_id,
                 end_topology_epoch_id=self.dynamics.topology.epoch.epoch_id,

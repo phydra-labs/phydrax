@@ -60,8 +60,14 @@ def test_practical_threshold_boundary_is_not_a_regression():
     assert result.regressed is False
 
 
-def test_zero_baseline_requires_or_uses_absolute_tolerance():
+def test_zero_baseline_uses_absolute_tolerance_but_never_drops_declared_relative():
     absolute = compare_performance(
+        _constant(0.0),
+        _constant(0.2),
+        PerformancePolicy(objective="minimize", absolute_tolerance=0.1),
+        comparison_id="zero-absolute",
+    )
+    declared_relative = compare_performance(
         _constant(0.0),
         _constant(0.2),
         PerformancePolicy(
@@ -69,19 +75,13 @@ def test_zero_baseline_requires_or_uses_absolute_tolerance():
             relative_tolerance=0.1,
             absolute_tolerance=0.1,
         ),
-        comparison_id="zero-absolute",
-    )
-    relative_only = compare_performance(
-        _constant(0.0),
-        _constant(0.2),
-        PerformancePolicy(objective="minimize", relative_tolerance=0.1),
         comparison_id="zero-relative",
     )
 
     assert absolute.relative_degradation is None
     assert absolute.regressed is True
-    assert relative_only.regressed is None
-    assert "absolute" in relative_only.reason
+    assert declared_relative.regressed is None
+    assert "relative criterion is unavailable" in declared_relative.reason
 
 
 def test_insufficient_samples_return_no_decision():

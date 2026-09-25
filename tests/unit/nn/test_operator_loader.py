@@ -361,7 +361,7 @@ def test_loader_fingerprint_and_public_epoch_plan_contract_are_stable():
 
     assert (
         loader.fingerprint
-        == "a4f52f4c52fc978f134d7253f984518e5bf04e2edab1c8939749143b867bc395"
+        == "7a81e9736fb2800590b2a217d517755d313046680b13f2f27b08ce6d7ae2d367"
     )
     assert type(positional) is phx.nn.operator.training.OperatorEpochPlan
     assert positional == keyword

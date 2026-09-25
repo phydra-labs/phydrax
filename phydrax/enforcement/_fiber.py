@@ -25,6 +25,7 @@ from ..domain._derivative import (
     DerivativeBasis,
     DerivativeMode,
     DerivativeRule,
+    DerivativeRuleProvider,
 )
 from ..domain._evaluation import BatchEvaluator
 from ..linalg._constraint_operators import PreparedConstraintOperator
@@ -748,19 +749,30 @@ class FiberProjectionState(StrictModule):
         return _add(base, updates)
 
 
-class _FiberProjectedEvaluator(StrictModule, BatchEvaluator):
+class _FiberProjectedEvaluator(StrictModule, BatchEvaluator, DerivativeRuleProvider):
     fields: frozendict[str, Any]
     state: FiberProjectionState
     context: Any
+    derivative_action: FiberDerivativeAction | None
     field_name: str = eqx.field(static=True)
 
-    def __init__(self, fields, state, context, field_name, /):
+    def __init__(self, fields, state, context, field_name, derivative_action, /):
         self.fields, self.state, self.context, self.field_name = (
             frozendict(fields),
             state,
             context,
             str(field_name),
         )
+        # A dynamic child, so a module-valued action's arrays stay visible leaves.
+        self.derivative_action = derivative_action
+
+    def derivative_rule_for(
+        self, function: DomainFunction, /
+    ) -> FiberProjectionDerivativeRule | None:
+        del function
+        if self.derivative_action is None:
+            return None
+        return FiberProjectionDerivativeRule(self.derivative_action, self.field_name)
 
     def __call_batch__(self, batch, /, *, key=None, **kwargs):
         value = self.state.project_batch(
@@ -788,17 +800,13 @@ def realized_fiber_functions(
             source = fields[name]
             if not isinstance(source, DomainFunction):
                 raise TypeError("Realized fiber fields must be DomainFunctions.")
-            rule = (
-                None
-                if name not in derivative_actions
-                else FiberProjectionDerivativeRule(derivative_actions[name], name)
-            )
             out[name] = DomainFunction(
                 domain=source.domain,
                 deps=source.deps,
-                func=_FiberProjectedEvaluator(fields, state, context, name),
+                func=_FiberProjectedEvaluator(
+                    fields, state, context, name, derivative_actions.get(name)
+                ),
                 metadata=source.metadata,
-                derivative_rule=rule,
             )
     return frozendict(out)
 

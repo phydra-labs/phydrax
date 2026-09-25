@@ -357,11 +357,20 @@ class ConservativeTwoPhaseRemeshPlan(StrictModule, NonTrainableState):
             )
         )
         alpha = liquid_content / target_volume
+        target_geometry = self.target.geometry
         candidate = TwoPhaseVOFState(
             liquid_content=liquid_content,
             momentum=momentum,
             phase_scalar_content=scalars,
             level_set=self.target.level_set_from_alpha(alpha),
+            geometry_epoch=(
+                jnp.asarray(-1, dtype=jnp.int32)
+                if target_geometry is None
+                else target_geometry.epoch
+            ),
+            geometry_id=(
+                "" if target_geometry is None else target_geometry.realization_id
+            ),
         )
         scalar_defect = {
             name: jnp.sum(scalars[name]) - jnp.sum(value)
