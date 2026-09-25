@@ -3,7 +3,7 @@
 #
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
@@ -31,7 +31,7 @@ class _AbstractGraphSubset(Selection):
     indices: Array
     name: str | None
 
-    def __init__(self, indices: ArrayLike, *, name: str | None = None):
+    def __init__(self, indices: ArrayLike, *, name: str | None = None) -> None:
         self.indices = _entity_indices(indices)
         self.name = None if name is None else str(name)
 
@@ -68,7 +68,7 @@ class _AbstractGraphTypeSubset(Selection):
         *,
         type_key: str = "type",
         name: str | None = None,
-    ):
+    ) -> None:
         self.type_ids = _type_ids(type_ids)
         self.type_key = str(type_key)
         self.name = None if name is None else str(name)
@@ -85,21 +85,21 @@ class _AbstractEdgeTypeSubset(_AbstractGraphTypeSubset):
 class Nodes(Selection):
     """Marker selecting all valid nodes of each sampled graph."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Create a node component marker."""
 
 
 class Edges(Selection):
     """Marker selecting all valid edges of each sampled graph."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Create an edge component marker."""
 
 
 class Globals(Selection):
     """Marker selecting graph-level entries of each sampled graph."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Create a graph-global component marker."""
 
 
@@ -115,7 +115,7 @@ class CochainCells(Selection):
         /,
         *,
         region: CochainCellRegion = "all",
-    ):
+    ) -> None:
         resolved_degree = int(degree)
         if resolved_degree < 0:
             raise ValueError("Cochain cell degree must be non-negative.")
@@ -134,6 +134,9 @@ class NodeSet(_AbstractNodeSubset):
     every sampled graph case.
     """
 
+    if TYPE_CHECKING:
+        __init__ = _AbstractGraphSubset.__init__
+
 
 class EdgeSet(_AbstractEdgeSubset):
     """Marker selecting explicit local edge indices.
@@ -141,6 +144,9 @@ class EdgeSet(_AbstractEdgeSubset):
     In a graph dataset, the same local edge indices are applied independently to
     every sampled graph case.
     """
+
+    if TYPE_CHECKING:
+        __init__ = _AbstractGraphSubset.__init__
 
 
 class NodeType(_AbstractNodeTypeSubset):
@@ -150,6 +156,9 @@ class NodeType(_AbstractNodeTypeSubset):
     default `graph.nodes["type"]`.
     """
 
+    if TYPE_CHECKING:
+        __init__ = _AbstractGraphTypeSubset.__init__
+
 
 class EdgeType(_AbstractEdgeTypeSubset):
     """Marker selecting edges whose integer type id is in `type_ids`.
@@ -158,21 +167,36 @@ class EdgeType(_AbstractEdgeTypeSubset):
     default `graph.edges["type"]`.
     """
 
+    if TYPE_CHECKING:
+        __init__ = _AbstractGraphTypeSubset.__init__
+
 
 class BoundaryNodes(_AbstractNodeSubset):
     """Marker selecting explicit local nodes treated as a boundary set."""
+
+    if TYPE_CHECKING:
+        __init__ = _AbstractGraphSubset.__init__
 
 
 class InteriorNodes(_AbstractNodeSubset):
     """Marker selecting explicit local nodes treated as an interior set."""
 
+    if TYPE_CHECKING:
+        __init__ = _AbstractGraphSubset.__init__
+
 
 class BoundaryEdges(_AbstractEdgeSubset):
     """Marker selecting explicit local edges treated as a boundary set."""
 
+    if TYPE_CHECKING:
+        __init__ = _AbstractGraphSubset.__init__
+
 
 class InterfaceEdges(_AbstractEdgeSubset):
     """Marker selecting explicit local edges treated as an interface set."""
+
+    if TYPE_CHECKING:
+        __init__ = _AbstractGraphSubset.__init__
 
 
 def graph_component_kind(component: Selection, /) -> GraphComponentKind:

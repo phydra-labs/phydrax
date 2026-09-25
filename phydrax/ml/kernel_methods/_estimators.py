@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -98,7 +98,7 @@ class AbstractKernelLinearModel(AbstractFittedModel):
         output_shape: tuple[int, ...],
         case_shape: tuple[int, ...],
         method: str,
-    ):
+    ) -> None:
         self.support = support
         self.coefficients = coefficients
         self.intercept = intercept
@@ -140,11 +140,17 @@ class AbstractKernelLinearModel(AbstractFittedModel):
 class KernelRidgeModel(AbstractKernelLinearModel):
     """Fitted kernel-ridge expansion."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractKernelLinearModel.__init__
+
 
 class LeastSquaresSVMModel(AbstractKernelLinearModel):
     """Least-squares SVM decision function with explicit hard/smooth views."""
 
     _hard_outputs: ClassVar[tuple[str, ...]] = ("predict",)
+
+    if TYPE_CHECKING:
+        __init__ = AbstractKernelLinearModel.__init__
 
     def decision_function(self, x: ArrayLike, /) -> Array:
         return self(x)
@@ -162,6 +168,9 @@ class SupportVectorClassifierModel(AbstractKernelLinearModel):
 
     _hard_outputs: ClassVar[tuple[str, ...]] = ("predict",)
 
+    if TYPE_CHECKING:
+        __init__ = AbstractKernelLinearModel.__init__
+
     def decision_function(self, x: ArrayLike, /) -> Array:
         return self(x)
 
@@ -176,11 +185,17 @@ class SupportVectorClassifierModel(AbstractKernelLinearModel):
 class SupportVectorRegressorModel(AbstractKernelLinearModel):
     """Kernel epsilon-insensitive regression expansion."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractKernelLinearModel.__init__
+
 
 class OneClassSVMModel(AbstractKernelLinearModel):
     """Smooth one-class score; ``predict`` exposes the hard inlier decision."""
 
     _hard_outputs: ClassVar[tuple[str, ...]] = ("predict",)
+
+    if TYPE_CHECKING:
+        __init__ = AbstractKernelLinearModel.__init__
 
     def score_samples(self, x: ArrayLike, /) -> Array:
         return self(x)
@@ -208,7 +223,7 @@ class KernelRidgeRecipe(AbstractRecipe):
         alpha: ArrayLike = 1.0,
         fit_intercept: bool = True,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.kernel = validate_kernel(kernel)
         alpha_ = jnp.asarray(alpha, dtype=jnp.float64)
         if alpha_.ndim != 0:
@@ -311,7 +326,7 @@ class LeastSquaresSVMRecipe(AbstractRecipe):
         alpha: ArrayLike = 1.0,
         fit_intercept: bool = True,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         configured = KernelRidgeRecipe(
             kernel,
             alpha=alpha,
@@ -349,7 +364,7 @@ class LeastSquaresSVMRecipe(AbstractRecipe):
             fit_intercept=self.fit_intercept,
             weight_policy=self.weight_policy,
         ).fit_batch(binary, key=key)
-        raw = result.as_trainable()
+        raw = result.as_trainable(KernelRidgeModel)
         if jnp.iscomplexobj(raw.coefficients) or jnp.iscomplexobj(raw.intercept):
             raise TypeError("Least-squares SVM requires a real-valued kernel expansion.")
         model = LeastSquaresSVMModel(
@@ -429,7 +444,7 @@ class SupportVectorClassifierRecipe(AbstractRecipe):
         iterations: int = 200,
         learning_rate: ArrayLike = 0.05,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.kernel = validate_kernel(kernel)
         self.c = jnp.asarray(c, dtype=jnp.float64)
         self.learning_rate = jnp.asarray(learning_rate, dtype=jnp.float64)
@@ -463,11 +478,11 @@ class SupportVectorClassifierRecipe(AbstractRecipe):
         c = self.c
         lr = self.learning_rate
 
-        def solve_one(ki, yi, wi):
+        def solve_one(ki: Array, yi: Array, wi: Array) -> tuple[Array, Array, Array]:
             cap = c * wi
             q = (yi[:, None] * ki) * yi[None, :]
 
-            def step(_, alpha):
+            def step(_: Array, alpha: Array) -> Array:
                 proposal = jnp.clip(alpha + lr * (wi - q @ alpha), 0.0, cap)
                 denom = jnp.sum(wi) + jnp.finfo(wi.dtype).tiny
                 proposal = jnp.clip(
@@ -561,7 +576,7 @@ class SupportVectorRegressorRecipe(AbstractRecipe):
         iterations: int = 200,
         learning_rate: ArrayLike = 0.02,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.kernel = validate_kernel(kernel)
         self.c = jnp.asarray(c, dtype=jnp.float64)
         self.epsilon = jnp.asarray(epsilon, dtype=jnp.float64)
@@ -606,12 +621,12 @@ class SupportVectorRegressorRecipe(AbstractRecipe):
         y = target.reshape((cases, batch.sample_count))
         w = weights.reshape((cases, batch.sample_count))
 
-        def solve_one(ki, yi, wi):
+        def solve_one(ki: Array, yi: Array, wi: Array) -> tuple[Array, Array, Array]:
             denom = jnp.sum(wi) + jnp.finfo(wi.dtype).tiny
             mean = jnp.sum(wi * yi) / denom
             beta0 = jnp.zeros_like(yi)
 
-            def step(_, state):
+            def step(_: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
                 beta, intercept = state
                 residual = ki @ beta + intercept - yi
                 loss_grad = (
@@ -710,7 +725,7 @@ class OneClassSVMRecipe(AbstractRecipe):
         iterations: int = 200,
         learning_rate: ArrayLike = 0.05,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.kernel = validate_kernel(kernel)
         self.nu = jnp.asarray(nu, dtype=jnp.float64)
         self.learning_rate = jnp.asarray(learning_rate, dtype=jnp.float64)
@@ -738,13 +753,13 @@ class OneClassSVMRecipe(AbstractRecipe):
         k = gram.reshape((cases, batch.sample_count, batch.sample_count))
         w = weights.reshape((cases, batch.sample_count))
 
-        def solve_one(ki, wi):
+        def solve_one(ki: Array, wi: Array) -> tuple[Array, Array, Array]:
             total = jnp.sum(wi)
             normalized = wi / jnp.maximum(total, jnp.finfo(wi.dtype).tiny)
             cap = normalized / self.nu
             alpha0 = normalized
 
-            def project(v):
+            def project(v: Array) -> Array:
                 clipped = jnp.clip(v, 0.0, cap)
                 return clipped / jnp.maximum(jnp.sum(clipped), jnp.finfo(v.dtype).tiny)
 

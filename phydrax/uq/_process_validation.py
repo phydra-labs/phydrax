@@ -578,7 +578,7 @@ class ProcessValidationSplit(StrictModule):
         calibration_case_ids: Sequence[str],
         test_case_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         train = _case_ids(train_case_ids, name="train_case_ids")
         calibration = _case_ids(calibration_case_ids, name="calibration_case_ids")
         test = _case_ids(test_case_ids, name="test_case_ids")
@@ -593,7 +593,7 @@ class ProcessValidationSplit(StrictModule):
 
     def require_case_count(
         self, count: int, /, *, partition: Literal["calibration", "test"]
-    ):
+    ) -> None:
         expected = (
             len(self.calibration_case_ids)
             if partition == "calibration"
@@ -725,7 +725,7 @@ class HorizonScaleCalibrator(StrictModule):
         scale_multiplier: ArrayLike,
         horizons: ArrayLike,
         split: ProcessValidationSplit,
-    ):
+    ) -> None:
         multiplier = jnp.asarray(scale_multiplier, dtype=jnp.float64)
         horizon_values = jnp.asarray(horizons, dtype=jnp.float64)
         if multiplier.ndim != 1 or multiplier.shape != horizon_values.shape:
@@ -767,7 +767,7 @@ class ProcessConformalCalibrator(StrictModule):
         *,
         kind: ProcessConformalKind,
         observable_name: str | None,
-    ):
+    ) -> None:
         if not isinstance(
             calibrator, (FunctionalConformal, NormalizedConformal, SplitConformal)
         ):
@@ -1286,11 +1286,12 @@ def process_shift_evaluation_matrix(
         ),
         paired_reference_excess=paired_excess,
         scenario_names=names,
-        shift_kinds=kinds,  # type: ignore[arg-type]
+        # Validated above: every kind is in ``valid_kinds``; the filter only narrows.
+        shift_kinds=tuple(kind for kind in kinds if kind in valid_kinds),
         seeds=seed_values,
         baseline_index=baseline,
         nominal_coverage=nominal,
-        required_shifts=required,  # type: ignore[arg-type]
+        required_shifts=tuple(kind for kind in required if kind in valid_kinds),
     )
 
 
@@ -1313,7 +1314,7 @@ class ProcessRetentionThresholds(StrictModule):
         max_calibrated_coverage_error_upper: float = 0.1,
         max_shift_score_degradation_upper: float = 0.25,
         max_variance_remainder_ratio: float = 1e-6,
-    ):
+    ) -> None:
         values = {
             "max_mean_relative_error": max_mean_relative_error,
             "max_covariance_relative_error": max_covariance_relative_error,

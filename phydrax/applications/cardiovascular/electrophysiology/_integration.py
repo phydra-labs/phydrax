@@ -44,6 +44,7 @@ from ....linalg import (
     PreparedLinearSolve,
     solve as solve_linear_system,
 )
+from ....linalg._spaces import _coordinate_dtype
 from ._reaction import PreparedReaction
 from ._regional_assignment import PreparedRegionalAssignment
 
@@ -65,7 +66,7 @@ class LieSplit(StrictModule, NonTrainableState):
 
     split_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.split_id = "cardiovascular-lie-reaction-diffusion"
 
 
@@ -74,7 +75,7 @@ class StrangSplit(StrictModule, NonTrainableState):
 
     split_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.split_id = "cardiovascular-strang-diffusion-reaction"
 
 
@@ -87,7 +88,7 @@ class ExplicitReferenceDiffusion(StrictModule, NonTrainableState):
     maximum_step_ms: float = eqx.field(static=True)
     diffusion_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_step_ms: float, /):
+    def __init__(self, maximum_step_ms: float, /) -> None:
         if isinstance(maximum_step_ms, bool):
             raise TypeError("maximum_step_ms must be a real scalar, not bool.")
         maximum = float(maximum_step_ms)
@@ -109,7 +110,7 @@ class ImplicitThetaDiffusion(StrictModule, NonTrainableState):
     linear_policy: LinearSolvePolicy
     diffusion_id: str = eqx.field(static=True)
 
-    def __init__(self, theta: float, linear_policy: LinearSolvePolicy, /):
+    def __init__(self, theta: float, linear_policy: LinearSolvePolicy, /) -> None:
         if isinstance(theta, bool):
             raise TypeError("theta must be a real scalar, not bool.")
         theta_ = float(theta)
@@ -157,7 +158,7 @@ class EventAlignedMultirateSchedule(StrictModule, NonTrainableState):
         *,
         event_ticks: tuple[int, ...] = (0,),
         checkpoint_stride: int = 1,
-    ):
+    ) -> None:
         if isinstance(tick_dt_ms, bool):
             raise TypeError("tick_dt_ms must be a real scalar, not bool.")
         tick = float(tick_dt_ms)
@@ -226,7 +227,7 @@ class PublicDiffusionOperatorInput(StrictModule, NonTrainableState):
         /,
         *,
         input_id: str,
-    ):
+    ) -> None:
         _validate_diffusion_operator(operator)
         self.operator = operator
         self.regional_assignment_id = _identifier(
@@ -253,7 +254,7 @@ class TensorDiffusionOperatorInput(StrictModule, NonTrainableState):
         *,
         tensor_action_id: str | None = None,
         input_id: str,
-    ):
+    ) -> None:
         if not isinstance(tensor_diffusion_action, TensorDiffusionAction):
             raise TypeError("tensor_diffusion_action must be a TensorDiffusionAction.")
         _validate_diffusion_operator(operator)
@@ -319,7 +320,7 @@ class PhysicalMonodomainSpatialBinding(StrictModule, NonTrainableState):
         /,
         *,
         binding_id: str | None = None,
-    ):
+    ) -> None:
         volumes = jnp.asarray(node_volume_mm3)
         if volumes.ndim != 1:
             raise ValueError("node_volume_mm3 must be a vector.")
@@ -334,9 +335,9 @@ class PhysicalMonodomainSpatialBinding(StrictModule, NonTrainableState):
             diffusion, (PublicDiffusionOperatorInput, TensorDiffusionOperatorInput)
         ):
             raise TypeError("diffusion must be a supported diffusion operator input.")
-        if diffusion.operator.source.shape != volumes.shape:
+        if diffusion.operator.source.size != volumes.shape[0]:
             raise ValueError("Diffusion operator size must match node_volume_mm3.")
-        if np.dtype(diffusion.operator.source.dtype) != np.dtype(volumes.dtype):
+        if _coordinate_dtype(diffusion.operator.source) != np.dtype(volumes.dtype):
             raise TypeError("Diffusion operator and node volumes must use one dtype.")
         label = None if binding_id is None else _identifier(binding_id, "binding_id")
         tensor_payload = (
@@ -386,7 +387,7 @@ class PhysicalMonodomainPlan(StrictModule, NonTrainableState):
         *,
         residual_tolerance: float = 1.0e-7,
         checkpoint_capacity: int = 2,
-    ):
+    ) -> None:
         if not isinstance(node_count, int) or isinstance(node_count, bool):
             raise TypeError("node_count must be an integer.")
         if node_count <= 0:
@@ -1024,7 +1025,9 @@ def _reaction_advance(
 ) -> tuple[Array, tuple[Array, ...], Array]:
     dt = jnp.asarray(runtime.plan.schedule.tick_dt_ms, dtype=voltage_mV.dtype)
 
-    def tick_body(carry, stimulus):
+    def tick_body(
+        carry: tuple[Array, tuple[Array, ...]], stimulus: Array
+    ) -> tuple[tuple[Array, tuple[Array, ...]], None]:
         voltage, locals_ = carry
         updated_locals: list[Array] = []
         for local, workset in zip(locals_, runtime.worksets, strict=True):
@@ -1444,7 +1447,9 @@ def integrate_physical_monodomain(
         raise TypeError("Scheduled inputs must use the prepared runtime dtype.")
     stride = runtime.plan.schedule.reaction_ticks_per_macro
 
-    def body(current_state, macro_index):
+    def body(
+        current_state: PhysicalMonodomainState, macro_index: Array
+    ) -> tuple[PhysicalMonodomainState, tuple[Array, MonodomainStepEvidence]]:
         start = macro_index * stride
         macro_current = jax.lax.dynamic_slice(
             current,
@@ -1490,7 +1495,7 @@ def rollback_physical_monodomain(
     for stored, workset in zip(buffer.local_states, runtime.worksets, strict=True):
         local_finite = jnp.all(jnp.isfinite(stored), axis=tuple(range(1, stored.ndim)))
 
-        def admissible(voltage, local):
+        def admissible(voltage: Array, local: Array) -> Array:
             return jnp.all(
                 workset.reaction.admissible(voltage[workset.node_indices], local)
             )

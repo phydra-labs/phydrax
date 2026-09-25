@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -60,17 +60,29 @@ from ._least_squares import _normal_solve
 class HuberModel(AbstractLinearRegressorModel):
     """Fitted smooth-loss robust linear model without hard sample selection."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearRegressorModel.__init__
+
 
 class QuantileModel(AbstractLinearRegressorModel):
     """Fitted conditional-quantile linear model."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearRegressorModel.__init__
 
 
 class RANSACModel(AbstractLinearRegressorModel):
     """Fitted exact hard-consensus linear model."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearRegressorModel.__init__
+
 
 class TheilSenModel(AbstractLinearRegressorModel):
     """Fitted hard subset-median linear model."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearRegressorModel.__init__
 
 
 class RobustDiagnostics(StrictModule):
@@ -88,7 +100,7 @@ class RobustDiagnostics(StrictModule):
         inlier_mask: Array,
         selected_subset: Array,
         subset_scores: Array,
-    ):
+    ) -> None:
         self.common = common
         self.inlier_mask = jnp.asarray(inlier_mask, dtype=jnp.bool_)
         self.selected_subset = jnp.asarray(selected_subset, dtype=jnp.bool_)
@@ -138,14 +150,19 @@ def _scalar(value: ArrayLike, name: str, /, *, positive: bool = False) -> Array:
     return eqx.error_if(result, invalid, f"{name} must be {qualifier}.")
 
 
-def _fit_robust_loss(recipe, batch: MLBatch, /, *, family: str) -> FitResult:
+def _fit_robust_loss(
+    recipe: HuberRegressorRecipe | QuantileRegressorRecipe, batch: MLBatch, /
+) -> FitResult:
     prepared = prepare_supervised(
         batch, weight_policy=recipe.weight_policy, require_real=True
     )
     cases = prepared.targets.shape[0]
     features = prepared.design.features
     outputs = prepared.outputs
-    family_parameter = recipe.delta if family == "huber" else recipe.quantile
+    if isinstance(recipe, HuberRegressorRecipe):
+        family, family_parameter = "huber", recipe.delta
+    else:
+        family, family_parameter = "quantile", recipe.quantile
     dtype = jnp.result_type(
         parameter_dtype(prepared), family_parameter, recipe.l2_strength
     )
@@ -174,29 +191,29 @@ def _fit_robust_loss(recipe, batch: MLBatch, /, *, family: str) -> FitResult:
     else:
         learning_rate = recipe.learning_rate
 
-    def loss_derivative(residual):
+    def loss_derivative(residual: Array) -> tuple[Array, Array]:
         if family == "huber":
             magnitude = jnp.abs(residual)
             loss = jnp.where(
-                magnitude <= recipe.delta,
+                magnitude <= family_parameter,
                 0.5 * residual * residual,
-                recipe.delta * (magnitude - 0.5 * recipe.delta),
+                family_parameter * (magnitude - 0.5 * family_parameter),
             )
             derivative = jnp.where(
-                magnitude <= recipe.delta,
+                magnitude <= family_parameter,
                 residual,
-                recipe.delta * jnp.sign(residual),
+                family_parameter * jnp.sign(residual),
             )
             return loss, derivative
         loss = jnp.where(
             residual >= 0.0,
-            (1.0 - recipe.quantile) * residual,
-            -recipe.quantile * residual,
+            (1.0 - family_parameter) * residual,
+            -family_parameter * residual,
         )
-        derivative = jnp.where(residual >= 0.0, 1.0 - recipe.quantile, -recipe.quantile)
+        derivative = jnp.where(residual >= 0.0, 1.0 - family_parameter, -family_parameter)
         return loss, derivative
 
-    def objective(beta, bias):
+    def objective(beta: Array, bias: Array) -> Array:
         residual = (
             design_matmul(prepared.design, beta) + bias[:, None, :] - prepared.targets
         )
@@ -205,7 +222,9 @@ def _fit_robust_loss(recipe, batch: MLBatch, /, *, family: str) -> FitResult:
             prepared.weights * loss, axis=(1, 2)
         ) + 0.5 * recipe.l2_strength * jnp.sum(beta * beta, axis=(1, 2))
 
-    def step(state, iteration):
+    def step(
+        state: tuple[Array, Array], iteration: Array
+    ) -> tuple[tuple[Array, Array], Array, Array]:
         del iteration
         beta, bias = state
         residual = (
@@ -274,7 +293,7 @@ class HuberRegressorRecipe(AbstractRecipe):
         max_iterations: int = 500,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.delta = _scalar(delta, "delta", positive=True)
         self.l2_strength = _scalar(l2_strength, "l2_strength")
         self.learning_rate = (
@@ -289,7 +308,7 @@ class HuberRegressorRecipe(AbstractRecipe):
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         del key
-        return _fit_robust_loss(self, batch, family="huber")
+        return _fit_robust_loss(self, batch)
 
 
 class QuantileRegressorRecipe(AbstractRecipe):
@@ -317,7 +336,7 @@ class QuantileRegressorRecipe(AbstractRecipe):
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
         max_dense_dimension: int = 512,
-    ):
+    ) -> None:
         quantile_ = jnp.asarray(quantile)
         if quantile_.weak_type:
             quantile_ = quantile_.astype(jnp.float32)
@@ -349,7 +368,7 @@ class QuantileRegressorRecipe(AbstractRecipe):
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         del key
         if self.solver == "fixed-subgradient":
-            return _fit_robust_loss(self, batch, family="quantile")
+            return _fit_robust_loss(self, batch)
         return self._fit_qp(batch)
 
     def _fit_qp(self, batch: MLBatch) -> FitResult:
@@ -574,7 +593,7 @@ class RANSACRegressorRecipe(AbstractRecipe):
         num_trials: int = 64,
         fit_intercept: bool = True,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         threshold = float(residual_threshold)
         if not math.isfinite(threshold) or threshold <= 0.0:
             raise ValueError("residual_threshold must be finite and positive.")
@@ -713,7 +732,7 @@ class TheilSenRegressorRecipe(AbstractRecipe):
         num_subsets: int = 128,
         fit_intercept: bool = True,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(num_subsets) <= 0:
             raise ValueError("num_subsets must be positive.")
         self.subset_size = None if subset_size is None else int(subset_size)

@@ -66,7 +66,7 @@ class QuantumHallEnergyScale(StrictModule, NonTrainableState):
         joules_per_unit: float,
         label: str,
         /,
-    ):
+    ) -> None:
         value = float(joules_per_unit)
         label_ = str(label).strip()
         if not isinstance(unit, UnitDefinition):
@@ -110,7 +110,7 @@ class QuantumHallMaterialPlan(StrictModule, NonTrainableState):
         /,
         *,
         charge_magnitude_in_elementary_charges: float = 1.0,
-    ):
+    ) -> None:
         field = float(magnetic_field_tesla)
         density = float(carrier_density_per_square_meter)
         mass_ratio = float(effective_mass_in_electron_masses)
@@ -174,7 +174,7 @@ class HaldaneSpherePlan(StrictModule, NonTrainableState):
         filling: Fraction | None = None,
         shift: int | None = None,
         flux_offset: int = 0,
-    ):
+    ) -> None:
         particles = int(particle_count)
         statistics_ = str(statistics)
         offset = int(flux_offset)
@@ -189,7 +189,7 @@ class HaldaneSpherePlan(StrictModule, NonTrainableState):
         if (filling is None) != (shift is None):
             raise ValueError("filling and shift must be supplied together.")
         filling_record = None
-        if filling is not None:
+        if filling is not None and shift is not None:
             if not isinstance(filling, Fraction) or filling <= 0:
                 raise TypeError("filling must be a positive fractions.Fraction.")
             expected = Fraction(particles, 1) / filling - int(shift) + offset
@@ -203,7 +203,7 @@ class HaldaneSpherePlan(StrictModule, NonTrainableState):
             filling_record = (filling.numerator, filling.denominator)
         self.particle_count = particles
         self.manifold = manifold
-        self.statistics = statistics_  # type: ignore[assignment]
+        self.statistics = statistics_
         self.filling = filling_record
         self.shift = None if shift is None else int(shift)
         self.flux_offset = offset
@@ -250,7 +250,7 @@ class HaldanePseudopotentialPlan(StrictModule, NonTrainableState):
         relative_channels: Mapping[int, float],
         source_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(sphere, HaldaneSpherePlan):
             raise TypeError("sphere must be HaldaneSpherePlan.")
         channels = tuple(
@@ -416,7 +416,7 @@ class HaldaneSphereSpectrumPlan(StrictModule, NonTrainableState):
         *,
         maximum_steps: int = 200,
         random_seed: int = 0,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedHaldaneSphereHamiltonian):
             raise TypeError("prepared must be PreparedHaldaneSphereHamiltonian.")
         count = int(eigenpair_count)
@@ -528,7 +528,7 @@ def charge_gap(
     component_ids = {value.manifold.component.key_id for value in spheres}
     landau_levels = {value.manifold.landau_level for value in spheres}
     statistics = {value.statistics for value in spheres}
-    fluxes = tuple(value.twice_monopole_strength for value in spheres)
+    fluxes = tuple(value.twice_monopole_flux for value in spheres)
     if (
         len(particle_counts) != 1
         or len(energy_scales) != 1

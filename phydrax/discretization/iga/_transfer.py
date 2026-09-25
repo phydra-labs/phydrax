@@ -22,7 +22,14 @@ from ..._interpolation._bspline_grid import BSplineGrid
 from ..._interpolation._bspline_projection import BSplineGridTransfer
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import AbstractLinearOperator, FunctionLinearOperator, transpose
+from ...linalg import (
+    AbstractLinearOperator,
+    AlgebraArraySpace,
+    ArraySpace,
+    AxisArraySpace,
+    FunctionLinearOperator,
+    transpose,
+)
 from .._core import DiscretizationCapability, PreparationReport
 from .._spaces import DiscreteFieldSpace, TensorDofLayout
 from .._transfer import FieldTransfer, TransferProperties
@@ -30,6 +37,16 @@ from ._basis import SplineAxisPlan, TensorSplineBasisSpec
 
 
 TransferClass: TypeAlias = Literal["exact", "projected"]
+# Every vector space kind declaring an array `shape`.
+_SHAPED_SPACES = (ArraySpace, AlgebraArraySpace, AxisArraySpace)
+
+
+def _validated_transfer_class(value: str, /) -> TransferClass:
+    if value == "exact":
+        return "exact"
+    if value == "projected":
+        return "projected"
+    raise ValueError("transfer_class must be 'exact' or 'projected'.")
 
 
 class TransferEvidence(StrictModule, NonTrainableState):
@@ -61,7 +78,7 @@ class TransferEvidence(StrictModule, NonTrainableState):
         constant_residual: float,
         duality_residual: float,
         preserved: Sequence[str] = (),
-    ):
+    ) -> None:
         class_ = str(transfer_class)
         norm = float(operator_norm)
         quadrature = None if quadrature_id is None else str(quadrature_id)
@@ -72,8 +89,7 @@ class TransferEvidence(StrictModule, NonTrainableState):
         constant = float(constant_residual)
         duality = float(duality_residual)
         preserved_ = tuple(str(value) for value in preserved)
-        if class_ not in ("exact", "projected"):
-            raise ValueError("transfer_class must be 'exact' or 'projected'.")
+        transfer_class_ = _validated_transfer_class(class_)
         if quadrature is not None and not quadrature:
             raise ValueError("quadrature_id must be non-empty or None.")
         if class_ == "projected" and quadrature is None:
@@ -98,7 +114,7 @@ class TransferEvidence(StrictModule, NonTrainableState):
             preserved_
         ):
             raise ValueError("preserved entries must be unique non-empty strings.")
-        self.transfer_class = class_  # type: ignore[assignment]
+        self.transfer_class = transfer_class_
         self.operator_norm = norm
         self.quadrature_id = quadrature
         self.condition_estimate = condition
@@ -160,7 +176,7 @@ class TransferPlan(StrictModule, NonTrainableState):
         restriction_operator: AbstractLinearOperator | None = None,
         composition: Sequence[str] = (),
         archive_arrays: Mapping[str, ArrayLike] | Sequence[tuple[str, ArrayLike]] = (),
-    ):
+    ) -> None:
         if not isinstance(field_transfer, FieldTransfer):
             raise TypeError("field_transfer must be the generic FieldTransfer.")
         if not isinstance(evidence, TransferEvidence):
@@ -297,7 +313,11 @@ class TransferPlan(StrictModule, NonTrainableState):
         source = self.P.source
         target = self.P.target
         values = jnp.asarray(coefficients)
-        if not isinstance(source, type(target)) or not hasattr(source, "shape"):
+        if (
+            not isinstance(source, type(target))
+            or not isinstance(source, _SHAPED_SPACES)
+            or not isinstance(target, _SHAPED_SPACES)
+        ):
             raise TypeError(
                 "Payload transfer requires array-valued source/target spaces."
             )
@@ -445,7 +465,7 @@ def _is_nested_axis(source: SplineAxisPlan, target: SplineAxisPlan, /) -> bool:
 
 def _basis_matrix(axis: SplineAxisPlan, points: np.ndarray, /) -> np.ndarray:
     stencil = bspline_stencil(axis.knots, points, degree=axis.degree)
-    indices = np.asarray(stencil.source_indices)
+    indices = np.asarray(stencil.indices)
     weights = np.asarray(stencil.weights)
     matrix = np.zeros((points.size, axis.control_count), dtype=weights.dtype)
     rows = np.arange(points.size)[:, None]
@@ -577,9 +597,7 @@ def prepare_tensor_transfer(
         or target_field.layout.axis_shape != target_basis.control_shape
     ):
         raise ValueError("IGA transfer basis axes and field layouts must match exactly.")
-    class_ = str(transfer_class)
-    if class_ not in ("exact", "projected"):
-        raise ValueError("transfer_class must be 'exact' or 'projected'.")
+    class_ = _validated_transfer_class(str(transfer_class))
     limit = float(maximum_condition)
     if not isfinite(limit) or limit <= 1.0:
         raise ValueError("maximum_condition must be finite and greater than one.")
@@ -658,7 +676,7 @@ def prepare_tensor_transfer(
         dual_pullback_operator=transpose_operator,
         hilbert_adjoint_operator=transpose_operator,
         properties=TransferProperties(
-            constant_preserving=constant_residual <= preservation_tolerance,
+            constant_preserving=bool(constant_residual <= preservation_tolerance),
             nested=class_ == "exact",
             adjoint_paired=True,
             differentiable_geometry=True,
@@ -711,7 +729,7 @@ def prepare_tensor_transfer(
         float(np.linalg.norm(np.asarray(matrix), ord=2)) for matrix in factor_tuple
     )
     evidence = TransferEvidence(
-        class_,  # type: ignore[arg-type]
+        class_,
         operator_norm=operator_norm,
         quadrature_id=quadrature_id,
         condition_estimate=max(1.0, condition_estimate),

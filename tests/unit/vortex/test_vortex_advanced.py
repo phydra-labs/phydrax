@@ -237,3 +237,81 @@ def test_equilibrium_wall_closure_and_bounded_load_recovery_report_evidence():
     )
     assert bool(recovered.recoverable)
     assert jnp.allclose(recovered.estimate, jnp.asarray((1.0, 2.0)))
+
+
+def _unit_mass_flexible_coupling():
+    def residual(time, configuration, velocity, acceleration, args):
+        del time, configuration, velocity
+        return acceleration - (args["vortex_load"] + args["user_args"]["bias"])
+
+    system = phx.dynamics.SecondOrderDifferentialSystem(
+        residual,
+        state_shape=(1,),
+        system_id="unit-mass-structure",
+    )
+    return phx.applications.vortex_flow.VortexFlexibleCouplingPlan(system)
+
+
+def test_flexible_vortex_coupling_advances_structure_under_the_supplied_load():
+    plan = _unit_mass_flexible_coupling()
+    time, time_step = 0.25, 0.1
+    load = jnp.asarray((0.5,))
+    user_args = {"bias": jnp.asarray((0.25,)), "load": load}
+    rest = jnp.zeros((1,))
+
+    def fluid_step(fluid, configuration, dt, args):
+        work = -jnp.sum(args["load"] * (configuration - rest))
+        return {"circulation": fluid["circulation"] + dt * configuration[0]}, work
+
+    result = plan.step(
+        {"circulation": jnp.asarray(1.0)},
+        rest,
+        rest,
+        load + user_args["bias"],
+        time,
+        time_step,
+        load,
+        fluid_step,
+        user_args,
+    )
+
+    solution = result.structural_solution
+    constant_acceleration = load + user_args["bias"]
+    displacement = 0.5 * time_step**2 * constant_acceleration
+    np.testing.assert_allclose(solution.times, (time, time + time_step))
+    np.testing.assert_allclose(solution.accelerations[-1], constant_acceleration)
+    np.testing.assert_allclose(solution.velocities[-1], time_step * constant_acceleration)
+    np.testing.assert_allclose(solution.configurations[-1], displacement)
+    assert bool(jnp.all(jnp.isfinite(solution.configurations)))
+    assert bool(result.successful)
+    np.testing.assert_allclose(result.work_residual, 0.0, atol=1e-15)
+    np.testing.assert_allclose(
+        result.fluid_state["circulation"], 1.0 + time_step * displacement[0]
+    )
+
+
+def test_flexible_vortex_coupling_keeps_fluid_state_when_fluid_work_is_not_finite():
+    plan = _unit_mass_flexible_coupling()
+    load = jnp.asarray((0.5,))
+    user_args = {"bias": jnp.asarray((0.0,)), "load": load}
+    rest = jnp.zeros((1,))
+
+    def fluid_step(fluid, configuration, dt, args):
+        del args
+        return {"circulation": fluid["circulation"] + dt * configuration[0]}, jnp.nan
+
+    result = plan.step(
+        {"circulation": jnp.asarray(1.0)},
+        rest,
+        rest,
+        load,
+        0.0,
+        0.1,
+        load,
+        fluid_step,
+        user_args,
+    )
+
+    assert bool(result.structural_solution.successful)
+    assert not bool(result.successful)
+    np.testing.assert_allclose(result.fluid_state["circulation"], 1.0)

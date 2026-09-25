@@ -20,10 +20,11 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from email.message import Message
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal, Mapping, Protocol
+from typing import cast, IO, Literal, Mapping, Protocol
 from urllib.parse import quote, urlsplit
 
 from .._execution_resources import ResourceRequest
@@ -74,7 +75,7 @@ class SubprocessCommandExecutor:
         *,
         timeout_seconds: float = 30.0,
         maximum_response_bytes: int = 8 * 1024 * 1024,
-    ):
+    ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("Command timeout must be positive.")
         if type(maximum_response_bytes) is not int or maximum_response_bytes <= 0:
@@ -101,7 +102,7 @@ class SubprocessCommandExecutor:
         stderr: list[bytes] = []
         overflow = threading.Event()
 
-        def drain(stream, output: list[bytes]) -> None:
+        def drain(stream: IO[bytes], output: list[bytes]) -> None:
             retained = 0
             while True:
                 block = stream.read(64 * 1024)
@@ -123,11 +124,12 @@ class SubprocessCommandExecutor:
         writer = None
         if stdin is not None:
             assert process.stdin is not None
+            process_stdin = process.stdin
 
             def write_input() -> None:
                 try:
-                    process.stdin.write(stdin)
-                    process.stdin.close()
+                    process_stdin.write(stdin)
+                    process_stdin.close()
                 except BrokenPipeError:
                     pass
 
@@ -222,7 +224,7 @@ class IdempotencyLedger(Protocol):
 
 
 class LocalIdempotencyLedger:
-    def __init__(self):
+    def __init__(self) -> None:
         self._records: dict[tuple[str, str], tuple[str, str, str | None]] = {}
         self._lock = threading.Lock()
 
@@ -340,7 +342,7 @@ class SlurmScheduler:
         squeue_path: str = "squeue",
         sacct_path: str = "sacct",
         scancel_path: str = "scancel",
-    ):
+    ) -> None:
         tuple_id = provider_id if support_tuple_id is None else support_tuple_id
         if not provider_id or not tuple_id:
             raise ValueError("Slurm provider_id and support_tuple_id must be nonempty.")
@@ -570,7 +572,15 @@ class HTTPTransport(Protocol):
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, request, fp, code, msg, headers, newurl):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: Message,
+        newurl: str,
+    ) -> urllib.request.Request | None:
         return None
 
 
@@ -584,7 +594,7 @@ class UrllibHTTPTransport:
         *,
         timeout_seconds: float = 30.0,
         maximum_response_bytes: int = 8 * 1024 * 1024,
-    ):
+    ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("HTTPS timeout must be positive.")
         if type(maximum_response_bytes) is not int or maximum_response_bytes <= 0:
@@ -674,7 +684,7 @@ class KubernetesScheduler:
         provider_id: str = "kubernetes",
         support_tuple_id: str | None = None,
         maximum_response_bytes: int = 8 * 1024 * 1024,
-    ):
+    ) -> None:
         if type(maximum_response_bytes) is not int or maximum_response_bytes <= 0:
             raise ValueError("Kubernetes response bound must be a positive integer.")
         parsed_server = urlsplit(api_server)
@@ -766,7 +776,8 @@ class KubernetesScheduler:
                 return SchedulerStatus(
                     scheduler_job_id, SchedulerState.FAILED, reason, 1, version
                 )
-        if int(status.get("active", 0) or 0) > 0:
+        # Kubernetes JSON declares ``status.active`` an integer; ``int`` validates it.
+        if int(cast("int | float | str", status.get("active", 0) or 0)) > 0:
             state = SchedulerState.RUNNING
         else:
             state = SchedulerState.QUEUED
@@ -789,7 +800,9 @@ class KubernetesScheduler:
         name = scheduler_job_id
         digest = _kubernetes_spec_digest(spec)
         body = _kubernetes_job_body(spec, name, digest)
-        body["metadata"]["resourceVersion"] = expected_resource_version  # type: ignore[index]
+        _mapping(body["metadata"], "Kubernetes metadata")["resourceVersion"] = (
+            expected_resource_version
+        )
         response = self._request(
             "PUT", self._object_url(spec.namespace, name), body=_json_bytes(body)
         )
@@ -1100,7 +1113,7 @@ def _kubernetes_service_body(
 
 
 def _read_bounded_http_body(
-    stream: object,
+    stream: IO[bytes],
     headers: Mapping[str, str],
     maximum_response_bytes: int,
     /,
@@ -1116,7 +1129,7 @@ def _read_bounded_http_body(
             raise IntegrityError("HTTP Content-Length is invalid.") from error
         if declared < 0 or declared > maximum_response_bytes:
             raise IntegrityError("HTTP response exceeds its byte limit.")
-    body = stream.read(maximum_response_bytes + 1)  # type: ignore[attr-defined]
+    body = stream.read(maximum_response_bytes + 1)
     if len(body) > maximum_response_bytes:
         raise IntegrityError("HTTP response exceeds its byte limit.")
     return body

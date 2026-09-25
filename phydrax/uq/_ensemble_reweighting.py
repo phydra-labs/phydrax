@@ -92,7 +92,7 @@ def _lineages_overlap(
     return bool(set(first.lineage_ids) & set(second.lineage_ids))
 
 
-def _positive_float(value: float, name: str, /) -> float:
+def _positive_float(value: float | Array, name: str, /) -> float:
     normalized = float(value)
     if not isfinite(normalized) or normalized <= 0.0:
         raise ValueError(f"{name} must be positive and finite.")
@@ -144,7 +144,7 @@ class PhysicalEquilibriumSupportProvenance(StrictModule, NonTrainableState):
         converged: bool,
         rights_manifest_id: str,
         authorized_use_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(converged, bool):
             raise TypeError("converged must be boolean.")
         source = _identifier(source_id, "Source ID")
@@ -210,7 +210,7 @@ class EnsembleSupport(StrictModule, NonTrainableState):
         /,
         *,
         statistical_inefficiency: float = 1.0,
-    ):
+    ) -> None:
         values = _as_host_float_array(log_reference_weights, "Reference log weights")
         if values.ndim != 1 or values.size < 2:
             raise ValueError(
@@ -248,7 +248,7 @@ class EnsembleSupport(StrictModule, NonTrainableState):
         )
         self.log_reference_weights = normalized
         self.statistical_inefficiency = inefficiency_array
-        self.source_kind = kind  # type: ignore[assignment]
+        self.source_kind = kind
         self.source_id = identifier
         self.physical_provenance = physical_provenance
         self.support_id = canonical_fingerprint(
@@ -292,7 +292,7 @@ class EnsembleSupportPolicy(StrictModule, NonTrainableState):
         minimum_effective_sample_size: float,
         minimum_effective_sample_fraction: float,
         /,
-    ):
+    ) -> None:
         minimum_size = _positive_float(
             minimum_effective_sample_size, "Minimum effective sample size"
         )
@@ -309,8 +309,8 @@ class EnsembleSupportPolicy(StrictModule, NonTrainableState):
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "ensemble-support-policy",
-                "minimum_effective_sample_size": minimum_size.hex(),
-                "minimum_effective_sample_fraction": minimum_fraction.hex(),
+                "minimum_effective_sample_size": float(minimum_size).hex(),
+                "minimum_effective_sample_fraction": float(minimum_fraction).hex(),
                 "boundary": "less-than-or-equal-is-invalid",
             }
         )
@@ -350,7 +350,7 @@ class EnsembleObservablePlan(StrictModule, NonTrainableState):
         case_ids: Sequence[str],
         parent_ids: Sequence[str],
         usage: EnsembleObservationUsage = "calibration",
-    ):
+    ) -> None:
         if not isinstance(
             covariance, (CholeskyCovarianceAction, PrecisionCovarianceAction)
         ):
@@ -390,7 +390,7 @@ class EnsembleObservablePlan(StrictModule, NonTrainableState):
         self.source_ids = sources
         self.case_ids = cases
         self.parent_ids = parents
-        self.usage = usage_  # type: ignore[assignment]
+        self.usage = usage_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "ensemble-observable-plan",
@@ -518,7 +518,14 @@ def _dual_solve(
     gradient_norm = jnp.asarray(jnp.inf, dtype=dual.dtype)
     completed = 0
     if not _scalar_bool(finite):
-        return dual, gradient_norm, jnp.asarray(completed), converged, finite, jnp.inf
+        return (
+            dual,
+            gradient_norm,
+            jnp.asarray(completed),
+            converged,
+            finite,
+            jnp.asarray(jnp.inf, dtype=dual.dtype),
+        )
 
     objective = _dual_objective(log_reference, whitened_residuals, dual, regularization)
     for step_index in range(maximum_iterations + 1):
@@ -1017,7 +1024,7 @@ class TwoStateEquilibriumStateAssignment(StrictModule, NonTrainableState):
         sample_replica_ids: Sequence[str],
         assignment_evidence_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(support, EnsembleSupport):
             raise TypeError("support must be EnsembleSupport.")
         condition = _identifier(condition_id, "Condition ID")
@@ -1106,7 +1113,7 @@ class TwoStateEquilibriumRecord(StrictModule, NonTrainableState):
         replica_ids: Sequence[str],
         observation_id: str,
         source_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(result, EnsembleReweightingResult):
             raise TypeError("result must be EnsembleReweightingResult.")
         if not isinstance(assignment, TwoStateEquilibriumStateAssignment):
@@ -1254,7 +1261,7 @@ class TwoStateKineticRecord(StrictModule, NonTrainableState):
         source_ids: Sequence[str],
         forward_rate_unit: UnitDefinition,
         reverse_rate_unit: UnitDefinition,
-    ):
+    ) -> None:
         condition = _identifier(condition_id, "Condition ID")
         states = _identifiers(state_ids, "State IDs", minimum_size=2)
         if len(states) != 2:
@@ -1353,7 +1360,7 @@ class TwoStateThermodynamicClosurePlan(StrictModule, NonTrainableState):
         equivalence_margin: float,
         confidence_multiplier: float,
         maximum_combined_standard_error: float,
-    ):
+    ) -> None:
         condition = _identifier(condition_id, "Condition ID")
         states_ = _identifiers(state_ids, "State IDs", minimum_size=2)
         if len(states_) != 2:
@@ -1404,9 +1411,9 @@ class TwoStateThermodynamicClosurePlan(StrictModule, NonTrainableState):
                 "equilibrium_source_ids": list(equilibrium_sources),
                 "kinetic_source_ids": list(kinetic_sources),
                 "support_policy_id": policy,
-                "equivalence_margin": margin.hex(),
-                "confidence_multiplier": confidence.hex(),
-                "maximum_combined_standard_error": maximum_uncertainty.hex(),
+                "equivalence_margin": float(margin).hex(),
+                "confidence_multiplier": float(confidence).hex(),
+                "maximum_combined_standard_error": float(maximum_uncertainty).hex(),
                 "evidence_relation": "independent-p1-p0-equals-k01-k10",
             }
         )

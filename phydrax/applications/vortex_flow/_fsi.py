@@ -73,7 +73,7 @@ class VortexRigidCouplingPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-8,
         maximum_iterations: int = 12,
-    ):
+    ) -> None:
         if (
             not isinstance(bodies, PreparedRigidBodySet)
             or mode not in ("prescribed", "loose", "aitken", "strong")
@@ -174,7 +174,9 @@ class VortexRigidCouplingPlan(StrictModule, NonTrainableState):
                 current_load.torque + aitken * (fluid_load.torque - current_load.torque),
             )
 
-            def load_function(next_time, staged, inner_args):
+            def load_function(
+                next_time: Array, staged: RigidBodyKinematics, inner_args: Any
+            ) -> RigidBodyLoad:
                 del inner_args
                 _, staged_load, _ = coupler(
                     next_time,
@@ -289,7 +291,7 @@ class VortexFlexibleCouplingPlan(StrictModule, NonTrainableState):
         /,
         *,
         method: GeneralizedAlphaMethod | None = None,
-    ):
+    ) -> None:
         if not isinstance(structure, SecondOrderDifferentialSystem):
             raise TypeError("structure must be SecondOrderDifferentialSystem.")
         self.structure = structure
@@ -322,8 +324,6 @@ class VortexFlexibleCouplingPlan(StrictModule, NonTrainableState):
             configuration,
             velocity,
             initial_acceleration=acceleration,
-            t0=time_,
-            t1=time_ + dt,
             args={"vortex_load": load, "user_args": args},
             problem_id=f"{self.coupling_id}:structure",
         )

@@ -8,7 +8,7 @@ import abc
 from collections.abc import Mapping, Sequence
 from fractions import Fraction
 from operator import index
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 
@@ -16,7 +16,12 @@ from ..._fingerprint import canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._properties import AlgebraPropertyEvidence, audit_algebra_properties
+from ._properties import (
+    AlgebraClaimSource,
+    AlgebraClaimStatus,
+    AlgebraPropertyEvidence,
+    audit_algebra_properties,
+)
 from ._resources import AlgebraResourceBudget, AlgebraResourceEvidence
 from ._structure import (
     AlgebraRationalMap,
@@ -24,6 +29,10 @@ from ._structure import (
     AlgebraStructureTable,
     AlgebraTerm,
 )
+
+
+if TYPE_CHECKING:
+    from ._product import AlgebraProductPlan
 
 
 class AbstractFiniteRealAlgebraSpec(StrictModule, NonTrainableState):
@@ -58,9 +67,14 @@ class AbstractFiniteRealAlgebraSpec(StrictModule, NonTrainableState):
         *,
         scalar_basis_index: int = 0,
         convention: Mapping[str, Any] | None = None,
-        family_claims=None,
+        family_claims: Mapping[
+            str,
+            tuple[AlgebraClaimStatus, AlgebraClaimSource, Sequence[str]]
+            | tuple[AlgebraClaimStatus, AlgebraClaimSource, Sequence[str], int],
+        ]
+        | None = None,
         budget: AlgebraResourceBudget | None = None,
-    ):
+    ) -> None:
         family_ = str(family)
         labels = tuple(str(value) for value in basis_ids)
         if not family_ or not labels or any(not value for value in labels):
@@ -190,7 +204,7 @@ class AbstractFiniteRealAlgebraSpec(StrictModule, NonTrainableState):
     ) -> tuple[Fraction, ...]:
         return self.structure.associator(left, middle, right)
 
-    def prepare_product(self, **kwargs):
+    def prepare_product(self, **kwargs: Any) -> AlgebraProductPlan:
         from ._product import AlgebraProductPlan
 
         return AlgebraProductPlan(self, **kwargs)
@@ -228,6 +242,9 @@ class AbstractFiniteRealAlgebraSpec(StrictModule, NonTrainableState):
 
 class FiniteRealAlgebraSpec(AbstractFiniteRealAlgebraSpec):
     """Public exact sparse-table finite real algebra specification."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractFiniteRealAlgebraSpec.__init__
 
     def _family_marker(self) -> str:
         return self.family

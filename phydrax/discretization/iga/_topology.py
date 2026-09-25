@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import prod
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -16,6 +17,10 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._topology import TensorTopology
 from ._identity import BaseSpanId, InterfaceId
+
+
+if TYPE_CHECKING:
+    from ._basis import TensorSplineBasisSpec
 
 
 class SplineSpanTopology(StrictModule, NonTrainableState):
@@ -32,12 +37,12 @@ class SplineSpanTopology(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        axis_names: Sequence[str] | object,
+        axis_names: Sequence[str] | TensorSplineBasisSpec,
         span_indices: Sequence[ArrayLike] | None = None,
         /,
         *,
         patch_id: str = "patch",
-    ):
+    ) -> None:
         from ._basis import TensorSplineBasisSpec
 
         if isinstance(axis_names, TensorSplineBasisSpec):
@@ -49,7 +54,7 @@ class SplineSpanTopology(StrictModule, NonTrainableState):
                 raise TypeError(
                     "SplineSpanTopology requires axis names and positive span indices."
                 )
-            names = tuple(str(name) for name in axis_names)  # type: ignore[arg-type]
+            names = tuple(str(name) for name in axis_names)
             indices = tuple(np.asarray(value) for value in span_indices)
         patch = str(patch_id)
         if not patch:
@@ -112,7 +117,7 @@ class SplineSpanTopology(StrictModule, NonTrainableState):
 
     def span_route(self, row: int, /) -> tuple[int, ...]:
         self.span_id(row)
-        return tuple(np.unravel_index(int(row), self.axis_sizes))
+        return tuple(int(index) for index in np.unravel_index(int(row), self.axis_sizes))
 
 
 class PatchAtlas(StrictModule, NonTrainableState):
@@ -124,7 +129,7 @@ class PatchAtlas(StrictModule, NonTrainableState):
 
     def __init__(
         self, patches: Mapping[str, SplineSpanTopology] | Sequence[SplineSpanTopology], /
-    ):
+    ) -> None:
         if isinstance(patches, Mapping):
             items = tuple((str(name), topology) for name, topology in patches.items())
         else:
@@ -166,7 +171,9 @@ class CellComplex(StrictModule, NonTrainableState):
     interfaces: tuple[InterfaceId, ...]
     complex_id: str = eqx.field(static=True)
 
-    def __init__(self, atlas: PatchAtlas, interfaces: Sequence[InterfaceId] = (), /):
+    def __init__(
+        self, atlas: PatchAtlas, interfaces: Sequence[InterfaceId] = (), /
+    ) -> None:
         if not isinstance(atlas, PatchAtlas):
             raise TypeError("atlas must be a PatchAtlas.")
         interface_values = tuple(interfaces)

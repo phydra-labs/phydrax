@@ -55,7 +55,7 @@ def _formulation(value: str, /) -> NumericalRelativityFormulation:
     normalized = str(value)
     if normalized not in _FORMULATIONS:
         raise ValueError(f"Unknown numerical-relativity formulation {normalized!r}.")
-    return normalized  # type: ignore[return-value]
+    return normalized
 
 
 def formulation_field_names(
@@ -100,7 +100,7 @@ class NumericalRelativityOwnership(StrictModule, NonTrainableState):
         device_count: int,
         per_device_capacity: int,
         plan_id: str,
-    ):
+    ) -> None:
         owners = np.asarray(owner_indices, dtype=np.int32)
         local = np.asarray(local_indices, dtype=np.int32)
         mask = np.asarray(active, dtype=np.bool_)
@@ -166,7 +166,7 @@ class NumericalRelativityDistributedPlan(StrictModule, NonTrainableState):
         halo_width: int = 3,
         periodic: Sequence[bool] | None = None,
         grid_id: str,
-    ):
+    ) -> None:
         formulation_ = _formulation(formulation)
         identifier = str(grid_id).strip()
         if not identifier:
@@ -229,7 +229,7 @@ class PreparedNumericalRelativityDistributed(StrictModule, NonTrainableState):
         plan: NumericalRelativityDistributedPlan,
         decomposition: PreparedFiniteVolumeDecomposition,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, NumericalRelativityDistributedPlan) or not isinstance(
             decomposition, PreparedFiniteVolumeDecomposition
         ):
@@ -404,7 +404,7 @@ class NumericalRelativityAMRDistributionPlan(StrictModule, NonTrainableState):
         /,
         *,
         axis_name: str = "nr_blocks",
-    ):
+    ) -> None:
         formulation_ = _formulation(formulation)
         partition = BlockAMRPartitionPlan(
             hierarchy,
@@ -453,7 +453,7 @@ class PreparedNumericalRelativityAMRDistribution(StrictModule, NonTrainableState
         plan: NumericalRelativityAMRDistributionPlan,
         distribution: PreparedDistributedBlockAMRHierarchy,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, NumericalRelativityAMRDistributionPlan) or not isinstance(
             distribution, PreparedDistributedBlockAMRHierarchy
         ):

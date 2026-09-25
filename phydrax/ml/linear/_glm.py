@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -48,9 +48,15 @@ def _scalar(value: ArrayLike, name: str, /, *, positive: bool = False) -> Array:
 class PoissonModel(AbstractGeneralizedLinearModel):
     """Fitted log-link Poisson mean model."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractGeneralizedLinearModel.__init__
+
 
 class GammaModel(AbstractGeneralizedLinearModel):
     """Fitted log-link Gamma mean model."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractGeneralizedLinearModel.__init__
 
 
 class TweedieModel(AbstractGeneralizedLinearModel):
@@ -58,13 +64,13 @@ class TweedieModel(AbstractGeneralizedLinearModel):
 
     power: float = eqx.field(static=True)
 
-    def __init__(self, *args, power: float, **kwargs):
+    def __init__(self, *args: Any, power: float, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.power = float(power)
 
 
 def _fit_binary_logistic(
-    recipe,
+    recipe: LogisticRegressionRecipe,
     batch: MLBatch,
     /,
 ) -> FitResult:
@@ -104,7 +110,7 @@ def _fit_binary_logistic(
     else:
         learning_rate = recipe.learning_rate
 
-    def objective(beta, bias):
+    def objective(beta: Array, bias: Array) -> Array:
         scores = design_matmul(prepared.design, beta) + bias[:, None, :]
         natural = _BERNOULLI_FAMILY.natural(scores[..., None])
         loss = _BERNOULLI_FAMILY.canonical_loss(natural, targets)
@@ -112,7 +118,9 @@ def _fit_binary_logistic(
             prepared.weights * loss, axis=(1, 2)
         ) + 0.5 * recipe.l2_strength * jnp.sum(beta * beta, axis=(1, 2))
 
-    def step(state, iteration):
+    def step(
+        state: tuple[Array, Array], iteration: Array
+    ) -> tuple[tuple[Array, Array], Array, Array]:
         del iteration
         beta, bias = state
         scores = design_matmul(prepared.design, beta) + bias[:, None, :]
@@ -181,7 +189,7 @@ class LogisticRegressionRecipe(AbstractRecipe):
         max_iterations: int = 500,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.l2_strength = _scalar(l2_strength, "l2_strength")
         self.learning_rate = (
             None
@@ -219,7 +227,7 @@ class MultinomialLogisticRegressionRecipe(AbstractRecipe):
         max_iterations: int = 500,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.l2_strength = _scalar(l2_strength, "l2_strength")
         self.learning_rate = (
             None
@@ -264,7 +272,7 @@ class MultinomialLogisticRegressionRecipe(AbstractRecipe):
         else:
             learning_rate = self.learning_rate
 
-        def objective(beta, bias):
+        def objective(beta: Array, bias: Array) -> Array:
             scores = design_matmul(prepared.design, beta) + bias[:, None, :]
             loss = (
                 jax.nn.logsumexp(scores, axis=-1)
@@ -274,7 +282,9 @@ class MultinomialLogisticRegressionRecipe(AbstractRecipe):
                 sample_weight * loss, axis=1
             ) + 0.5 * self.l2_strength * jnp.sum(beta * beta, axis=(1, 2))
 
-        def step(state, iteration):
+        def step(
+            state: tuple[Array, Array], iteration: Array
+        ) -> tuple[tuple[Array, Array], Array, Array]:
             del iteration
             beta, bias = state
             scores = design_matmul(prepared.design, beta) + bias[:, None, :]
@@ -328,7 +338,14 @@ class MultinomialLogisticRegressionRecipe(AbstractRecipe):
         )
 
 
-def _fit_log_glm(recipe, batch: MLBatch, /, *, family: str, power: float) -> FitResult:
+def _fit_log_glm(
+    recipe: _AbstractLogGLMRecipe,
+    batch: MLBatch,
+    /,
+    *,
+    family: Literal["poisson", "gamma", "tweedie"],
+    power: float,
+) -> FitResult:
     prepared = prepare_supervised(
         batch, weight_policy=recipe.weight_policy, require_real=True
     )
@@ -365,7 +382,7 @@ def _fit_log_glm(recipe, batch: MLBatch, /, *, family: str, power: float) -> Fit
         family_targets = prepared.targets
     domain_valid = jnp.all(domain | (~active), axis=(1, 2))
 
-    def loss_and_derivative(eta):
+    def loss_and_derivative(eta: Array) -> tuple[Array, Array]:
         if family == "poisson":
             natural = _POISSON_FAMILY.natural(eta[..., None])
             loss = _POISSON_FAMILY.canonical_loss(natural, family_targets)
@@ -392,14 +409,16 @@ def _fit_log_glm(recipe, batch: MLBatch, /, *, family: str, power: float) -> Fit
         derivative = first - prepared.targets * second
         return loss, derivative
 
-    def objective(beta, bias):
+    def objective(beta: Array, bias: Array) -> Array:
         eta = design_matmul(prepared.design, beta) + bias[:, None, :]
         loss, _ = loss_and_derivative(eta)
         return jnp.sum(
             prepared.weights * loss, axis=(1, 2)
         ) + 0.5 * recipe.l2_strength * jnp.sum(beta * beta, axis=(1, 2))
 
-    def step(state, iteration):
+    def step(
+        state: tuple[Array, Array], iteration: Array
+    ) -> tuple[tuple[Array, Array], Array, Array]:
         del iteration
         beta, bias = state
         eta = design_matmul(prepared.design, beta) + bias[:, None, :]
@@ -426,17 +445,24 @@ def _fit_log_glm(recipe, batch: MLBatch, /, *, family: str, power: float) -> Fit
             residual,
         )
 
-    model_type = {"poisson": PoissonModel, "gamma": GammaModel}.get(family, TweedieModel)
-
-    def make_model(beta, bias):
-        kwargs = dict(
+    def make_model(beta: Array, bias: Array) -> AbstractGeneralizedLinearModel:
+        if family == "tweedie":
+            return TweedieModel(
+                beta,
+                bias,
+                power=power,
+                case_shape=prepared.case_shape,
+                target_shape=prepared.target_shape,
+                inverse_link="exp",
+            )
+        model_type = PoissonModel if family == "poisson" else GammaModel
+        return model_type(
+            beta,
+            bias,
             case_shape=prepared.case_shape,
             target_shape=prepared.target_shape,
             inverse_link="exp",
         )
-        if family == "tweedie":
-            return model_type(beta, bias, power=power, **kwargs)
-        return model_type(beta, bias, **kwargs)
 
     return iterative_fit(
         prepared,
@@ -468,7 +494,7 @@ class _AbstractLogGLMRecipe(AbstractRecipe):
         max_iterations: int,
         tolerance: float,
         weight_policy: WeightPolicy,
-    ):
+    ) -> None:
         self.l2_strength = _scalar(l2_strength, "l2_strength")
         self.learning_rate = _scalar(learning_rate, "learning_rate", positive=True)
         self.fit_intercept = bool(fit_intercept)
@@ -489,7 +515,7 @@ class PoissonRegressorRecipe(_AbstractLogGLMRecipe):
         max_iterations: int = 500,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         super().__init__(
             l2_strength=l2_strength,
             fit_intercept=fit_intercept,
@@ -516,7 +542,7 @@ class GammaRegressorRecipe(_AbstractLogGLMRecipe):
         max_iterations: int = 500,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         super().__init__(
             l2_strength=l2_strength,
             fit_intercept=fit_intercept,
@@ -546,7 +572,7 @@ class TweedieRegressorRecipe(_AbstractLogGLMRecipe):
         max_iterations: int = 500,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         power_ = float(power)
         if not 1.0 <= power_ <= 2.0:
             raise ValueError("This Tweedie implementation supports powers in [1, 2].")

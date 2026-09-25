@@ -105,7 +105,7 @@ def test_scalar_state_point_port_has_one_component_and_no_axes():
 
 def test_unknown_state_role_is_rejected():
     with pytest.raises(ValueError, match="role must be"):
-        _layout().value_port(role="velocity")  # type: ignore[arg-type]
+        _layout().value_port(role="velocity")  # ty: ignore[invalid-argument-type]
 
 
 def test_input_port_carries_layout_components_and_axes():

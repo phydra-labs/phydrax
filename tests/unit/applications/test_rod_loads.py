@@ -115,7 +115,7 @@ def test_spatial_load_rejects_world_or_quaternion_storage_moments():
             jnp.zeros((2, 3)),
             source_id="bad-frame",
             power_channel="external",
-            moment_frame="world",  # type: ignore[arg-type]
+            moment_frame="world",  # ty: ignore[invalid-argument-type]
         )
     with pytest.raises(ValueError, match="Rod moments"):
         RodLoad(

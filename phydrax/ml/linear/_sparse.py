@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -27,17 +27,29 @@ from ._base import (
 class LassoModel(AbstractLinearRegressorModel):
     """Fitted elementwise L1-regularized linear model."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearRegressorModel.__init__
+
 
 class ElasticNetModel(AbstractLinearRegressorModel):
     """Fitted combined L1/L2-regularized linear model."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearRegressorModel.__init__
 
 
 class GroupLassoModel(AbstractLinearRegressorModel):
     """Fitted non-overlapping feature-group lasso model."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearRegressorModel.__init__
+
 
 class SparseGroupLassoModel(AbstractLinearRegressorModel):
     """Fitted sparse-group lasso model."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearRegressorModel.__init__
 
 
 def _positive_scalar(value: ArrayLike, name: str, /, *, allow_zero: bool = True) -> Array:
@@ -126,7 +138,7 @@ def _fit_penalized(
     else:
         step_size = learning_rate
 
-    def objective(beta, bias):
+    def objective(beta: Array, bias: Array) -> Array:
         residual = (
             design_matmul(prepared.design, beta) + bias[:, None, :] - prepared.targets
         )
@@ -141,7 +153,9 @@ def _fit_penalized(
             value = value + group_strength * _group_penalty(beta, feature_groups)
         return value
 
-    def step(state, iteration):
+    def step(
+        state: tuple[Array, Array], iteration: Array
+    ) -> tuple[tuple[Array, Array], Array, Array]:
         del iteration
         beta, bias = state
         residual = (
@@ -204,7 +218,7 @@ class LassoRecipe(AbstractRecipe):
         max_iterations: int = 500,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.alpha = _positive_scalar(alpha, "alpha")
         self.learning_rate = (
             None
@@ -258,7 +272,7 @@ class ElasticNetRecipe(AbstractRecipe):
         max_iterations: int = 500,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         alpha_ = _positive_scalar(alpha, "alpha")
         ratio = jnp.asarray(l1_ratio)
         if ratio.weak_type:
@@ -323,7 +337,7 @@ class GroupLassoRecipe(AbstractRecipe):
         max_iterations: int = 500,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         groups = tuple(feature_groups)
         if not groups:
             raise ValueError("feature_groups cannot be empty.")
@@ -381,7 +395,7 @@ class SparseGroupLassoRecipe(AbstractRecipe):
         max_iterations: int = 500,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         groups = tuple(feature_groups)
         if not groups:
             raise ValueError("feature_groups cannot be empty.")

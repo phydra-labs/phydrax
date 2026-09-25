@@ -33,7 +33,7 @@ def validate_uncertainty_source(
     if source not in UNCERTAINTY_SOURCES:
         choices = ", ".join(repr(value) for value in UNCERTAINTY_SOURCES)
         raise ValueError(f"{owner} must be one of {choices}; got {source!r}.")
-    return source  # type: ignore[return-value]
+    return source
 
 
 __all__ = [

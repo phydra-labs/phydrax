@@ -23,6 +23,8 @@ if TYPE_CHECKING:
         RunRecord,
     )
 
+    from ._security import ScopedSecretHandle
+
 
 JSONScalar: TypeAlias = str | int | float | bool | None
 JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
@@ -376,7 +378,7 @@ class JobSubmission:
     profile_id: str
     parameters: Mapping[str, JSONValue]
     resources: ResourceRequest
-    secret_handles: tuple[SecretHandle, ...] = ()
+    secret_handles: tuple[SecretHandle | ScopedSecretHandle, ...] = ()
     retention_seconds: int = 86_400
     request_id: str = ""
     resolved_run_spec: ResolvedRunSpec | None = None

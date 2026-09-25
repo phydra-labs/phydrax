@@ -39,7 +39,7 @@ class PulseTimeSpace(StrictModule, NonTrainableState):
         /,
         *,
         topology: PulseTimeTopology,
-    ):
+    ) -> None:
         if not isinstance(temporal_grid, PreparedTensorGrid):
             raise TypeError("temporal_grid must be a PreparedTensorGrid.")
         if len(temporal_grid.shape) != 1:
@@ -85,7 +85,9 @@ class PulseTimeSpace(StrictModule, NonTrainableState):
 
     @property
     def shape(self) -> tuple[int]:
-        return self.temporal_grid.shape  # type: ignore[return-value]
+        # Construction validates an exactly one-dimensional temporal grid.
+        (count,) = self.temporal_grid.shape
+        return (count,)
 
     @property
     def size(self) -> int:

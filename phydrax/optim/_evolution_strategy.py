@@ -23,11 +23,11 @@ class AbstractDistributionEvolutionMethod(abc.ABC):
     population_size: int
 
     @abc.abstractmethod
-    def init(self, key: Key, mean: Any, /) -> Any:
+    def init(self, key: Key[Array, ""], mean: Any, /) -> Any:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def ask(self, key: Key, state: Any, /) -> tuple[Any, Any]:
+    def ask(self, key: Key[Array, ""], state: Any, /) -> tuple[Any, Any]:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -67,7 +67,7 @@ class OpenEvolutionStrategy(
         learning_rate: float = 0.05,
         standard_deviation_decay: float = 1.0,
         minimum_standard_deviation: float = 1.0e-6,
-    ):
+    ) -> None:
         population = int(population_size)
         deviation = float(initial_standard_deviation)
         rate = float(learning_rate)
@@ -91,7 +91,7 @@ class OpenEvolutionStrategy(
         self.standard_deviation_decay = decay
         self.minimum_standard_deviation = minimum
 
-    def init(self, key: Key, mean: Any, /) -> OpenEvolutionState:
+    def init(self, key: Key[Array, ""], mean: Any, /) -> OpenEvolutionState:
         del key
         leaves = jax.tree_util.tree_leaves(mean)
         if not leaves or any(not eqx.is_inexact_array(leaf) for leaf in leaves):
@@ -105,7 +105,7 @@ class OpenEvolutionStrategy(
 
     def ask(
         self,
-        key: Key,
+        key: Key[Array, ""],
         state: OpenEvolutionState,
         /,
     ) -> tuple[Any, OpenEvolutionState]:
@@ -144,7 +144,7 @@ class OpenEvolutionStrategy(
         normalizer = jnp.maximum(jnp.sum(jnp.abs(utilities)), 1.0)
         utilities = utilities / normalizer
 
-        def update(mean_leaf, population_leaf):
+        def update(mean_leaf: Array, population_leaf: Array) -> Array:
             noise = (population_leaf - mean_leaf[None, ...]) / state.standard_deviation
             direction = jnp.tensordot(utilities, noise, axes=((0,), (0,)))
             return mean_leaf + self.learning_rate * direction
@@ -216,7 +216,7 @@ class DistributionEvolutionUpdateRule(AbstractKernelUpdateRule):
         /,
         *,
         rule_id: str,
-    ):
+    ) -> None:
         if not isinstance(method, AbstractDistributionEvolutionMethod):
             raise TypeError("method must be an AbstractDistributionEvolutionMethod.")
         key_ = jnp.asarray(key)

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 import stat
 from collections.abc import Iterator
@@ -128,7 +129,7 @@ def open_parent_descriptor(
 
 
 @contextmanager
-def open_regular_file(path: str | os.PathLike[str], /) -> Iterator[BinaryIO]:
+def open_regular_file(path: str | os.PathLike[str], /) -> Iterator[io.BufferedReader]:
     """Open one regular file without following it or any parent link."""
 
     directory_descriptor, name = open_parent_descriptor(path, create=False)

@@ -3,6 +3,7 @@ from fractions import Fraction
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import pytest
 
 from phydrax.applications import quantum_hall as qh
 from phydrax.operators.quantum import (
@@ -88,6 +89,47 @@ def test_projected_sphere_uses_direct_lz_sector_and_matrix_free_operator():
     np.testing.assert_array_equal(prepared.many_body.twice_projections, 0)
     vector = jnp.asarray((1.0, -1.0j))
     assert prepared.many_body.operator.mv(vector).shape == vector.shape
+
+
+def _sphere_spectrum(twice_monopole_strength, ground_energy):
+    sphere = qh.HaldaneSpherePlan(
+        2,
+        qh.MonopoleLandauLevel(twice_monopole_strength, 0, qh.SPIN_POLARIZED_ELECTRON),
+        "fermion",
+        _energy_scale(),
+    )
+    prepared = qh.prepare_haldane_sphere_hamiltonian(
+        qh.coulomb_haldane_pseudopotentials(sphere)
+    )
+    return qh.HaldaneSphereSpectrumResult(
+        jnp.asarray((ground_energy,)),
+        jnp.zeros((prepared.many_body.dimension, 1)),
+        jnp.zeros((1,)),
+        jnp.zeros((1,)),
+        jnp.asarray(True),
+        prepared,
+        f"sphere-spectrum-{twice_monopole_strength}",
+    )
+
+
+def test_charge_gap_combines_adjacent_flux_sector_ground_energies():
+    result = qh.charge_gap(
+        _sphere_spectrum(2, 1.0),
+        _sphere_spectrum(3, 0.5),
+        _sphere_spectrum(4, 1.5),
+    )
+
+    assert result.kind == "charge"
+    np.testing.assert_allclose(result.gap, 1.5)
+    np.testing.assert_allclose(result.component_energies, (1.0, 0.5, 1.5))
+    assert bool(result.successful)
+
+    with pytest.raises(ValueError, match="adjacent flux sectors"):
+        qh.charge_gap(
+            _sphere_spectrum(2, 1.0),
+            _sphere_spectrum(4, 0.5),
+            _sphere_spectrum(3, 1.5),
+        )
 
 
 def test_laughlin_amplitude_is_antisymmetric_for_odd_exponent():

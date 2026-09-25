@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -28,6 +28,7 @@ from ._base import (
     _HARD_LABELS,
     _linear_contract,
     _SMOOTH,
+    AbstractLinearModel,
     AbstractLinearRegressorModel,
     AbstractLinearScoreClassifierModel,
     binary_targets,
@@ -44,9 +45,15 @@ from ._base import (
 class SGDRegressorModel(AbstractLinearRegressorModel):
     """Fitted sequential stochastic-gradient regressor."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearRegressorModel.__init__
+
 
 class PassiveAggressiveRegressorModel(AbstractLinearRegressorModel):
     """Fitted passive-aggressive online regressor."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearRegressorModel.__init__
 
 
 class AbstractOnlineClassifierModel(AbstractLinearScoreClassifierModel):
@@ -54,8 +61,24 @@ class AbstractOnlineClassifierModel(AbstractLinearScoreClassifierModel):
 
     probabilistic: bool = eqx.field(static=True)
 
-    def __init__(self, *args, probabilistic: bool = False, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        coefficients: Array,
+        intercept: Array,
+        labels: Array,
+        /,
+        *,
+        case_shape: tuple[int, ...],
+        target_shape: tuple[int, ...],
+        probabilistic: bool = False,
+    ) -> None:
+        super().__init__(
+            coefficients,
+            intercept,
+            labels,
+            case_shape=case_shape,
+            target_shape=target_shape,
+        )
         self.probabilistic = bool(probabilistic)
 
     def _prediction_contract(self) -> DerivativeContract:
@@ -87,17 +110,29 @@ class AbstractOnlineClassifierModel(AbstractLinearScoreClassifierModel):
 class OnlineClassifierModel(AbstractOnlineClassifierModel):
     """Generic online binary classifier."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractOnlineClassifierModel.__init__
+
 
 class SGDClassifierModel(AbstractOnlineClassifierModel):
     """Fitted logistic or hinge SGD classifier."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractOnlineClassifierModel.__init__
 
 
 class PerceptronModel(AbstractOnlineClassifierModel):
     """Fitted hard-mistake perceptron score model."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractOnlineClassifierModel.__init__
+
 
 class PassiveAggressiveClassifierModel(AbstractOnlineClassifierModel):
     """Fitted passive-aggressive margin classifier."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractOnlineClassifierModel.__init__
 
 
 def _scalar(value: ArrayLike, name: str, /, *, positive: bool = False) -> Array:
@@ -173,7 +208,9 @@ def _online_update(
     columns = design.indices[row, indices]
     valid = design.entry_valid[row, indices]
 
-    def one(current, values, positions, keep, update):
+    def one(
+        current: Array, values: Array, positions: Array, keep: Array, update: Array
+    ) -> Array:
         increments = jnp.where(keep[..., None], values[..., None] * update[None, :], 0)
         return current.at[positions].add(increments)
 
@@ -189,7 +226,7 @@ def _finish_online(
     objective: Array,
     passes: int,
     method: str,
-    model,
+    model: AbstractLinearModel,
     extra_valid: Array | bool = True,
     nonsmooth: bool = False,
     fit_targets: GradientLevel | None = None,
@@ -262,7 +299,7 @@ class SGDRegressorRecipe(AbstractRecipe):
         passes: int = 10,
         shuffle: bool = True,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(passes) <= 0:
             raise ValueError("passes must be positive.")
         self.learning_rate = _scalar(learning_rate, "learning_rate", positive=True)
@@ -289,7 +326,9 @@ class SGDRegressorRecipe(AbstractRecipe):
         ).reshape((-1, cases))
         row = jnp.arange(cases)
 
-        def transition(state, indices):
+        def transition(
+            state: tuple[Array, Array], indices: Array
+        ) -> tuple[tuple[Array, Array], None]:
             coefficients, intercept = state
             prediction = _online_score(prepared, coefficients, indices) + intercept
             target = prepared.targets[row, indices]
@@ -303,7 +342,7 @@ class SGDRegressorRecipe(AbstractRecipe):
                 prepared, coefficients, indices, -self.learning_rate * gradient
             )
 
-            def shrink(current):
+            def shrink(current: Array) -> Array:
                 magnitude = jnp.abs(current)
                 threshold = (
                     self.learning_rate * self.l1_strength * active_step[:, None, None]
@@ -379,7 +418,7 @@ class SGDClassifierRecipe(AbstractRecipe):
         passes: int = 10,
         shuffle: bool = True,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if loss not in {"logistic", "hinge"}:
             raise ValueError("loss must be 'logistic' or 'hinge'.")
         if int(passes) <= 0:
@@ -409,7 +448,9 @@ class SGDClassifierRecipe(AbstractRecipe):
         ).reshape((-1, cases))
         row = jnp.arange(cases)
 
-        def transition(state, indices):
+        def transition(
+            state: tuple[Array, Array], indices: Array
+        ) -> tuple[tuple[Array, Array], None]:
             coefficients, intercept = state
             score = _online_score(prepared, coefficients, indices) + intercept
             target01 = encoded[row, indices]
@@ -483,7 +524,7 @@ class PerceptronRecipe(AbstractRecipe):
         passes: int = 10,
         shuffle: bool = True,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(passes) <= 0:
             raise ValueError("passes must be positive.")
         self.learning_rate = _scalar(learning_rate, "learning_rate", positive=True)
@@ -507,7 +548,9 @@ class PerceptronRecipe(AbstractRecipe):
         ).reshape((-1, cases))
         row = jnp.arange(cases)
 
-        def transition(state, indices):
+        def transition(
+            state: tuple[Array, Array], indices: Array
+        ) -> tuple[tuple[Array, Array], None]:
             coefficients, intercept = state
             score = _online_score(prepared, coefficients, indices) + intercept
             target = signed[row, indices]
@@ -563,7 +606,7 @@ class _AbstractPassiveAggressiveRecipe(AbstractRecipe):
         passes: int,
         shuffle: bool,
         weight_policy: WeightPolicy,
-    ):
+    ) -> None:
         if variant not in {"pa1", "pa2"}:
             raise ValueError("variant must be 'pa1' or 'pa2'.")
         if int(passes) <= 0:
@@ -600,7 +643,7 @@ class PassiveAggressiveRegressorRecipe(_AbstractPassiveAggressiveRecipe):
         passes: int = 10,
         shuffle: bool = True,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         super().__init__(
             aggressiveness=aggressiveness,
             variant=variant,
@@ -628,7 +671,9 @@ class PassiveAggressiveRegressorRecipe(_AbstractPassiveAggressiveRecipe):
         ).reshape((-1, cases))
         row = jnp.arange(cases)
 
-        def transition(state, indices):
+        def transition(
+            state: tuple[Array, Array], indices: Array
+        ) -> tuple[tuple[Array, Array], None]:
             coefficients, intercept = state
             prediction = _online_score(prepared, coefficients, indices) + intercept
             target = prepared.targets[row, indices]
@@ -680,7 +725,7 @@ class PassiveAggressiveClassifierRecipe(_AbstractPassiveAggressiveRecipe):
         passes: int = 10,
         shuffle: bool = True,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         super().__init__(
             aggressiveness=aggressiveness,
             variant=variant,
@@ -705,7 +750,9 @@ class PassiveAggressiveClassifierRecipe(_AbstractPassiveAggressiveRecipe):
         ).reshape((-1, cases))
         row = jnp.arange(cases)
 
-        def transition(state, indices):
+        def transition(
+            state: tuple[Array, Array], indices: Array
+        ) -> tuple[tuple[Array, Array], None]:
             coefficients, intercept = state
             score = _online_score(prepared, coefficients, indices) + intercept
             target = signed[row, indices]

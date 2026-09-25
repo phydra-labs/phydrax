@@ -14,7 +14,7 @@ from phydrax.enforcement._geometry_support import (
     BoundaryPatch,
     BoundarySide,
 )
-from phydrax.linalg import AbstractLinearOperator
+from phydrax.linalg import AbstractLinearOperator, RankPolicy, SolveResourcePolicy
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -57,7 +57,7 @@ class OrientedInterfaceSupport(StrictModule, NonTrainableState):
         normal_opposition_error: float,
         normal_opposition_tolerance: float,
         stability_owner_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(cover, BoundaryCover) or len(cover.patches) != 2:
             raise ValueError(
                 "An oriented interface cover must contain exactly two patches."
@@ -144,7 +144,7 @@ class TwoSidedInterfaceCorrectionProvider(StrictModule, NonTrainableState):
         gauge: InterfaceGauge = "minimum_energy",
         gauge_certificate_id: str | None = None,
         preservation_operator: AbstractLinearOperator | None = None,
-    ):
+    ) -> None:
         if not isinstance(trace_operator, AbstractLinearOperator) or not isinstance(
             candidate_operator, AbstractLinearOperator
         ):
@@ -183,7 +183,7 @@ class TwoSidedInterfaceCorrectionProvider(StrictModule, NonTrainableState):
         self.candidate_operator = candidate_operator
         self.support = support
         self.preservation_operator = preservation_operator
-        self.gauge = gauge_  # type: ignore[assignment]
+        self.gauge = gauge_
         self.gauge_certificate_id = gauge_id
         self.construction_certificate_id = construction
         self.provider_id = canonical_fingerprint(
@@ -204,7 +204,12 @@ class TwoSidedInterfaceCorrectionProvider(StrictModule, NonTrainableState):
         )
 
     def prepare(
-        self, /, *, rank=None, resources=None, numeric_version=0
+        self,
+        /,
+        *,
+        rank: RankPolicy | None = None,
+        resources: SolveResourcePolicy | None = None,
+        numeric_version: int = 0,
     ) -> PreparedTraceExtension:
         preservation_id = (
             None

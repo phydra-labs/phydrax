@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -33,7 +34,7 @@ class XRayFormFactorRequest(StrictModule, NonTrainableState):
 
     def __init__(
         self, cartesian_q: ArrayLike, atom_ids: tuple[str, ...], structure_id: str, /
-    ):
+    ) -> None:
         q = jnp.asarray(cartesian_q, dtype=jnp.float64)
         atoms = tuple(str(atom).strip() for atom in atom_ids)
         structure = str(structure_id).strip()
@@ -77,7 +78,7 @@ class XRayFormFactorResult(StrictModule, NonTrainableState):
         source_hashes: tuple[str, ...],
         converged: ArrayLike,
         /,
-    ):
+    ) -> None:
         factors = jnp.asarray(form_factors, dtype=jnp.float64)
         provider = str(provider_id).strip()
         hashes = tuple(str(value).strip() for value in source_hashes)
@@ -133,7 +134,7 @@ class ElasticScatteringResult(StrictModule, NonTrainableState):
         factor_source_id: str,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         self.amplitudes = jnp.asarray(amplitudes)
         self.intensities = jnp.asarray(intensities)
         self.cartesian_q = jnp.asarray(cartesian_q)
@@ -174,7 +175,7 @@ class _AbstractElasticScatteringPlan(StrictModule, NonTrainableState):
         q_capacity: int,
         atom_capacity: int,
         symmetry_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         coordinate = jnp.asarray(positions, dtype=jnp.float64)
         displacement = jnp.asarray(debye_waller_tensors, dtype=jnp.float64)
         reverse = jnp.asarray(reverse_q, dtype=jnp.int64)
@@ -274,6 +275,9 @@ class _AbstractElasticScatteringPlan(StrictModule, NonTrainableState):
 
 
 class ElasticXRayScatteringPlan(_AbstractElasticScatteringPlan):
+    if TYPE_CHECKING:
+        __init__ = _AbstractElasticScatteringPlan.__init__
+
     def evaluate(self, factors: XRayFormFactorResult, /) -> ElasticScatteringResult:
         if not bool(factors.converged):
             raise ValueError("Unconverged X-ray form factors cannot enter scattering.")
@@ -288,6 +292,9 @@ class ElasticXRayScatteringPlan(_AbstractElasticScatteringPlan):
 
 
 class ElasticNeutronScatteringPlan(_AbstractElasticScatteringPlan):
+    if TYPE_CHECKING:
+        __init__ = _AbstractElasticScatteringPlan.__init__
+
     def evaluate(
         self,
         cartesian_q: ArrayLike,
@@ -350,7 +357,7 @@ class DynamicStructureFactorResult(StrictModule, NonTrainableState):
         evidence: DynamicStructureFactorEvidence,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         self.raw_response = raw_response
         self.transition_energies = jnp.asarray(transition_energies)
         self.transition_weights = jnp.asarray(transition_weights)
@@ -383,7 +390,7 @@ class DynamicStructureFactorPlan(StrictModule, NonTrainableState):
         q_capacity: int,
         transition_capacity: int,
         residual_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         beta_ = float(beta)
         tolerance = float(residual_tolerance)
         if (

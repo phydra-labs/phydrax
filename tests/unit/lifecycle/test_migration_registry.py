@@ -37,7 +37,7 @@ def _identity_copy(record: Mapping[str, object]) -> Mapping[str, object]:
 
 
 def _mutate_input(record: Mapping[str, object]) -> Mapping[str, object]:
-    record["mutated"] = True  # type: ignore[index]
+    record["mutated"] = True  # ty: ignore[invalid-assignment]
     return {"value": record["value"]}
 
 

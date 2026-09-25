@@ -236,3 +236,24 @@ def test_mapped_native_initialization_keeps_invalid_lane_outside_physics():
     assert result.domain_failures[0] == 1
     assert jnp.array_equal(result.state[:, 0], jnp.asarray([-1.0, 4.0]))
     assert jnp.allclose(result.state_rate[1, 0], -jnp.log(4.0), atol=1e-8)
+
+
+def test_trial_validity_receives_arrays_for_python_scalar_time():
+    def array_validity(time, state, rate, args, inputs):
+        return (time.shape == ()) & (rate.shape == state.shape) & jnp.all(state > time)
+
+    system = phx.dynamics.DifferentialAlgebraicSystem(
+        _positive_residual,
+        state_shape=(1,),
+        structure=phx.dynamics.DAEStructure(("differential",)),
+        trial_validity=array_validity,
+        trial_validity_id="array-dae-domain",
+        system_id="array-dae",
+    )
+    args = jnp.asarray([0.0])
+    assert system.trial_valid(0.5, jnp.ones(1), jnp.zeros(1), args)
+    assert not system.trial_valid(2.0, jnp.ones(1), jnp.zeros(1), args)
+    rejected = system.scaled_residual(2.0, jnp.ones(1), jnp.zeros(1), args)
+    assert jnp.array_equal(rejected, jnp.asarray([jnp.inf]))
+    accepted = system.scaled_residual(0.5, jnp.ones(1), jnp.zeros(1), args)
+    assert jnp.allclose(accepted, jnp.zeros(1))

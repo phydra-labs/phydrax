@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from enum import IntEnum
 from operator import index
-from typing import Any, Protocol
+from typing import Any, cast, Protocol
 
 import equinox as eqx
 import jax
@@ -120,7 +120,7 @@ class StochasticPolicyGameProblem(StrictModule):
         callback_id: str,
         feasible_set_id: str,
         problem_id: str,
-    ):
+    ) -> None:
         if not callable(path_cost_function):
             raise TypeError("path_cost_function must be callable.")
         if not isinstance(partition, PlayerControlPartition):
@@ -824,7 +824,7 @@ def refresh_stochastic_policy_game(
         prepared.training_weights
         if training_weights is _UNSET
         else _weights(
-            training_weights,  # type: ignore[arg-type]
+            cast("ArrayLike | None", training_weights),
             train.num_paths,
             parameters.dtype,
             "training_weights",
@@ -834,7 +834,7 @@ def refresh_stochastic_policy_game(
         prepared.holdout_weights
         if holdout_weights is _UNSET
         else _weights(
-            holdout_weights,  # type: ignore[arg-type]
+            cast("ArrayLike | None", holdout_weights),
             held.num_paths,
             parameters.dtype,
             "holdout_weights",

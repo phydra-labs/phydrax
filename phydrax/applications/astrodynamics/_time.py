@@ -59,7 +59,7 @@ class TimeScaleTransform(StrictModule, NonTrainableState):
         /,
         *,
         interpolation: TimeInterpolation,
-    ):
+    ) -> None:
         source = str(source_scale).upper()
         target = str(target_scale).upper()
         supported = ("UTC", "TAI", "GPS", "TT", "TCG", "TDB", "TCB", "UT1")
@@ -89,8 +89,8 @@ class TimeScaleTransform(StrictModule, NonTrainableState):
         self.nodes = jnp.asarray(nodes_host)
         self.offsets = jnp.asarray(offsets_host)
         self.provenance = provenance
-        self.source_scale = source  # type: ignore[assignment]
-        self.target_scale = target  # type: ignore[assignment]
+        self.source_scale = source
+        self.target_scale = target
         self.interpolation = interpolation
         self.transform_id = canonical_fingerprint(
             {
@@ -183,7 +183,7 @@ class LeapSecondTable(StrictModule, NonTrainableState):
         tai_minus_utc: ArrayLike,
         provenance: AstrodynamicsDataProvenance,
         /,
-    ):
+    ) -> None:
         transitions = np.asarray(transition_seconds, dtype=np.float64)
         offsets = np.asarray(tai_minus_utc, dtype=np.float64)
         if (
@@ -227,7 +227,7 @@ class PreparedTimeRoute(StrictModule, NonTrainableState):
     target_scale: TimeScaleName = eqx.field(static=True)
     route_id: str = eqx.field(static=True)
 
-    def __init__(self, transforms: tuple[TimeScaleTransform, ...], /):
+    def __init__(self, transforms: tuple[TimeScaleTransform, ...], /) -> None:
         items = tuple(transforms)
         if not items:
             raise ValueError("Prepared time route requires at least one transform.")

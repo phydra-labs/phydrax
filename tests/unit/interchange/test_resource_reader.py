@@ -45,7 +45,7 @@ def test_descriptor_relative_read_retains_exact_immutable_manifest(tmp_path: Pat
     assert accounted.manifest.observed_attributes == 5
     assert accounted.manifest.observed_losses == 1
     with pytest.raises(FrozenInstanceError):
-        accounted.manifest.size_bytes = 0  # type: ignore[misc]
+        accounted.manifest.size_bytes = 0  # ty: ignore[invalid-assignment]
 
 
 @pytest.mark.parametrize("path", ("../outside.bin", "nested/../../outside.bin"))

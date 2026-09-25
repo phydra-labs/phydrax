@@ -59,7 +59,7 @@ class LabeledTranscriptAssay:
         labeling_calibration: ReferenceArtifactManifest,
         count_calibration: ReferenceArtifactManifest,
         calibration_covariance: ArrayLike | None = None,
-    ):
+    ) -> None:
         capture = np.asarray(capture_probabilities, dtype=np.float64)
         background = np.asarray(background_rates, dtype=np.float64)
         confusion = np.asarray(label_confusion, dtype=np.float64)
@@ -176,7 +176,7 @@ class LabeledTranscriptAssay:
             observed_labels = jnp.asarray((0, 0, 1, 1))
             splice_states = jnp.asarray((0, 1, 0, 1))
 
-            def calibrated_mean(parameter_vector):
+            def calibrated_mean(parameter_vector: Array) -> Array:
                 capture = parameter_vector[:4]
                 background = parameter_vector[4:8]
                 confusion = parameter_vector[8:].reshape((2, 2))
@@ -196,7 +196,7 @@ class LabeledTranscriptAssay:
             )
         return mean, covariance
 
-    def sample(self, key: Key, latent_counts: ArrayLike, /) -> Array:
+    def sample(self, key: Key[Array, ""], latent_counts: ArrayLike, /) -> Array:
         """Sample exact mutually exclusive capture plus Poisson background."""
 
         raw = np.asarray(latent_counts)
@@ -274,7 +274,7 @@ class LabeledTranscriptCounts:
         source_parent_ids: tuple[str, ...],
         preprocessing_parent_ids: tuple[str, ...],
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(gene, GeneIdentity):
             raise TypeError("gene must be GeneIdentity.")
         ids = tuple(_identity(value, "cell_id") for value in cell_ids)
@@ -367,7 +367,7 @@ class LabeledTranscriptCounts:
 
 
 def observe_labeled_transcripts(
-    key: Key,
+    key: Key[Array, ""],
     latent_counts: ArrayLike,
     assay: LabeledTranscriptAssay,
     /,

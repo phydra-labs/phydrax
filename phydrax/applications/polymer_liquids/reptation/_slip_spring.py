@@ -36,7 +36,7 @@ class SlipSpringPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_extension: float = math.inf,
-    ):
+    ) -> None:
         if int(maximum_particles) <= 1 or int(maximum_springs) <= 0:
             raise ValueError(
                 "Slip-spring particle and spring capacities must be positive."
@@ -99,7 +99,9 @@ class SlipSpringEventResult(StrictModule):
     prepared_id: str = eqx.field(static=True)
 
 
-def _event_probabilities(active_count: Array, available_count: Array, capacity: int):
+def _event_probabilities(
+    active_count: Array, available_count: Array, capacity: int
+) -> tuple[Array, Array]:
     birth_possible = (available_count > 0) & (active_count < capacity)
     death_possible = active_count > 0
     both = birth_possible & death_possible
@@ -113,7 +115,7 @@ class PreparedSlipSpring(StrictModule, NonTrainableState):
     allowed_pairs: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: SlipSpringPlan, allowed_pairs: ArrayLike, /):
+    def __init__(self, plan: SlipSpringPlan, allowed_pairs: ArrayLike, /) -> None:
         if not isinstance(plan, SlipSpringPlan):
             raise TypeError("plan must be SlipSpringPlan.")
         pairs = np.asarray(allowed_pairs, dtype=np.int32)
@@ -140,7 +142,7 @@ class PreparedSlipSpring(StrictModule, NonTrainableState):
 
     def initialize(
         self,
-        key: Key,
+        key: Key[Array, ""],
         /,
         *,
         initial_pairs: ArrayLike | None = None,

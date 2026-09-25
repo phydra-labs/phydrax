@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from itertools import product
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -53,7 +54,7 @@ class GeophysicalObservationOperator(StrictModule, NonTrainableState):
         time: GeophysicalTimeSpec,
         temporal: TemporalSupport | None = None,
         kind: str = "station",
-    ):
+    ) -> None:
         if not isinstance(transfer, FieldTransfer):
             raise TypeError("transfer must be a native FieldTransfer.")
         if not isinstance(quantity, GeophysicalQuantity) or not isinstance(
@@ -98,6 +99,11 @@ class GeophysicalObservationOperator(StrictModule, NonTrainableState):
         return self.transfer.primal_operator.mv(values)
 
 
+def _observation_target_space(operator: GeophysicalObservationOperator, /) -> ArraySpace:
+    # GeophysicalObservationOperator.__init__ rejects non-ArraySpace target fields.
+    return cast(ArraySpace, operator.transfer.target.vector_space)
+
+
 def prepare_tensor_observation_operator(
     source: DiscreteFieldSpace,
     coordinates: Mapping[str, ArrayLike],
@@ -130,7 +136,8 @@ def prepare_tensor_observation_operator(
         raise ValueError("Source support identity does not match the coordinate support.")
     if source.representation != "point_value" or source.layout.component_shape:
         raise ValueError("Multilinear sampling requires scalar point-value fields.")
-    if not isinstance(source.vector_space, ArraySpace):
+    source_space = source.vector_space
+    if not isinstance(source_space, ArraySpace):
         raise TypeError("source must use an ArraySpace.")
     axes = source.layout.axis_names
     if set(coordinates) != set(axes) or set(points) != set(axes):
@@ -202,7 +209,7 @@ def prepare_tensor_observation_operator(
             weight *= fraction if side else 1.0 - fraction
         weights.append(weight)
     route = jnp.asarray(np.stack(routes, axis=1), dtype=jnp.int32)
-    weight = jnp.asarray(np.stack(weights, axis=1), dtype=source.vector_space.dtype)
+    weight = jnp.asarray(np.stack(weights, axis=1), dtype=source_space.dtype)
     identity = canonical_fingerprint(
         {
             "kind": "tensor-geophysical-sampling",
@@ -213,9 +220,7 @@ def prepare_tensor_observation_operator(
             "sampling": kind,
         }
     )
-    target_space = ArraySpace(
-        (count,), dtype=source.vector_space.dtype, space_id=identity
-    )
+    target_space = ArraySpace((count,), dtype=source_space.dtype, space_id=identity)
     target = DiscreteFieldSpace(
         quantity.name,
         identity,
@@ -224,20 +229,20 @@ def prepare_tensor_observation_operator(
         representation="point_value",
     )
 
-    def action(values):
+    def action(values: Array) -> Array:
         return jnp.sum(values.reshape(-1)[route] * weight, axis=-1)
 
-    def transpose(values):
-        flat = jnp.zeros((source.vector_space.size,), dtype=source.vector_space.dtype)
+    def transpose(values: Array) -> Array:
+        flat = jnp.zeros((source_space.size,), dtype=source_space.dtype)
         return (
             flat.at[route.reshape(-1)]
             .add((values[:, None] * weight).reshape(-1))
-            .reshape(source.vector_space.shape)
+            .reshape(source_space.shape)
         )
 
     operator = FunctionLinearOperator(
         action,
-        source=source.vector_space,
+        source=source_space,
         target=target_space,
         transpose_action=transpose,
         operator_id=identity,
@@ -269,7 +274,7 @@ class GeophysicalObservationPolicy(StrictModule, NonTrainableState):
 
     def __init__(
         self, *, nonfinite: str = "raise", bounds: tuple[float, float] | None = None
-    ):
+    ) -> None:
         if nonfinite not in ("raise", "mask"):
             raise ValueError("nonfinite must be raise or mask.")
         bounds_ = None if bounds is None else tuple(float(value) for value in bounds)
@@ -365,11 +370,11 @@ def prepare_geophysical_observations(
             "Observation times must be a finite, strictly increasing vector."
         )
     raw = np.asarray(values, dtype=np.float64)
-    shape = (len(time_values),) + operator.transfer.target.vector_space.shape
+    shape = (len(time_values),) + _observation_target_space(operator).shape
     if raw.shape != shape:
         raise ValueError(f"Observation values must have exact shape {shape}.")
 
-    def mask_array(value, name):
+    def mask_array(value: ArrayLike | None, name: str) -> np.ndarray:
         if value is None:
             return np.ones(shape, dtype=np.bool_)
         array = np.asarray(value)
@@ -391,7 +396,7 @@ def prepare_geophysical_observations(
         accepted &= (converted >= policy_.bounds[0]) & (converted <= policy_.bounds[1])
     mask = available & accepted
 
-    def errors(value, name, positive):
+    def errors(value: ArrayLike, name: str, positive: bool) -> np.ndarray:
         array = np.asarray(value, dtype=np.float64)
         if array.ndim == 0:
             array = np.broadcast_to(array, shape)
@@ -424,7 +429,7 @@ def prepare_geophysical_observations(
             ),
         }
     )
-    target_rank = len(operator.transfer.target.vector_space.shape)
+    target_rank = len(_observation_target_space(operator).shape)
     sequence = ObservationSequence(
         time_values,
         clean,

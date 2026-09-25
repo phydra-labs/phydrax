@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -167,7 +167,7 @@ class _AbstractSoftTree(AbstractFittedModel):
         objective_transform: ObjectiveTransform = "identity",
         case_shape: tuple[int, ...] = (),
         out_size: int | tuple[int, ...] | Literal["scalar"] | None = None,
-    ):
+    ) -> None:
         case_shape_ = tuple(case_shape)
         logits = jnp.asarray(feature_logits)
         if not jnp.issubdtype(logits.dtype, jnp.inexact):
@@ -436,13 +436,22 @@ class _AbstractSoftTree(AbstractFittedModel):
 class SoftDecisionTree(_AbstractSoftTree):
     """One differentiable decision tree with probabilistic routing gates."""
 
+    if TYPE_CHECKING:
+        __init__ = _AbstractSoftTree.__init__
+
 
 class SoftRandomForest(_AbstractSoftTree):
     """Averaged differentiable trees trained jointly from randomized initialization."""
 
+    if TYPE_CHECKING:
+        __init__ = _AbstractSoftTree.__init__
+
 
 class SoftGradientBoostedTrees(_AbstractSoftTree):
     """Differentiable additive soft-tree model with learned leaf increments."""
+
+    if TYPE_CHECKING:
+        __init__ = _AbstractSoftTree.__init__
 
 
 def _temperature_at(
@@ -541,7 +550,9 @@ def _fit_soft_case(
         jnp.sum(normalized_weight), jnp.finfo(normalized_weight.dtype).tiny
     )
 
-    def loss_function(params, temperature):
+    def loss_function(
+        params: tuple[Array, Array, Array, Array, Array], temperature: Array
+    ) -> Array:
         logits_, thresholds_, missing_, leaves_, base_ = params
         raw, _ = _soft_predict_case(
             x,
@@ -584,7 +595,9 @@ def _fit_soft_case(
         sparsity_penalty = jnp.mean(selection * (1.0 - selection))
         return data_loss + sparsity * sparsity_penalty
 
-    def update(params, step):
+    def update(
+        params: tuple[Array, Array, Array, Array, Array], step: Array
+    ) -> tuple[tuple[Array, Array, Array, Array, Array], Array]:
         temperature = _temperature_at(
             step,
             iterations,
@@ -631,7 +644,7 @@ class _AbstractSoftTreeRecipe(AbstractRecipe):
         sparsity: ArrayLike = 0.0,
         tree_learning_rate: ArrayLike = 0.1,
         num_classes: int | None = None,
-    ):
+    ) -> None:
         if tree_count <= 0 or depth <= 0 or iterations <= 0:
             raise ValueError("Soft tree count, depth, and iterations must be positive.")
         if isinstance(learning_rate, (int, float)) and learning_rate <= 0.0:
@@ -812,17 +825,17 @@ class _AbstractSoftTreeRecipe(AbstractRecipe):
 
 
 class SoftDecisionTreeRecipe(_AbstractSoftTreeRecipe):
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(tree_count=1, ensemble_kind="tree", **kwargs)
 
 
 class SoftRandomForestRecipe(_AbstractSoftTreeRecipe):
-    def __init__(self, *, n_estimators: int = 32, **kwargs):
+    def __init__(self, *, n_estimators: int = 32, **kwargs: Any) -> None:
         super().__init__(tree_count=n_estimators, ensemble_kind="forest", **kwargs)
 
 
 class SoftGradientBoostedTreesRecipe(_AbstractSoftTreeRecipe):
-    def __init__(self, *, n_estimators: int = 32, **kwargs):
+    def __init__(self, *, n_estimators: int = 32, **kwargs: Any) -> None:
         super().__init__(tree_count=n_estimators, ensemble_kind="boosted", **kwargs)
 
 

@@ -42,6 +42,7 @@ from ...equations._material_point import (
 from ._backend import (
     ROBOTICS_OPERATIONS,
     RoboticsBackendProfile,
+    RoboticsOperation,
     RoboticsOperationCapability,
     RoboticsOperationEvidence,
     RoboticsOperationStatus,
@@ -210,9 +211,11 @@ def _common_device(tree: Any, /) -> tuple[str, str]:
     return platform, exact[0]
 
 
-def _unsupported(operation: str, reason: str, /) -> RoboticsOperationCapability:
+def _unsupported(
+    operation: RoboticsOperation, reason: str, /
+) -> RoboticsOperationCapability:
     return RoboticsOperationCapability(
-        operation,  # type: ignore[arg-type]
+        operation,
         supported=False,
         implementation="MPMSoftPlant",
         reason=reason,
@@ -287,7 +290,7 @@ class MPMSoftFeatureManifest(StrictModule, NonTrainableState):
     supported: tuple[str, ...] = eqx.field(static=True)
     manifest_id: str = eqx.field(static=True)
 
-    def __init__(self, *, commanded_body_force: bool, fixed_body_force: bool):
+    def __init__(self, *, commanded_body_force: bool, fixed_body_force: bool) -> None:
         supported = [
             "fixed-topology",
             "particle-region-observation",
@@ -348,7 +351,7 @@ class MPMSoftResolutionRequirement(StrictModule, NonTrainableState):
         grid_shape: Sequence[int] | None = None,
         field_count: int | None = None,
         evidence_id: str | None = None,
-    ):
+    ) -> None:
         self.particle_capacity = (
             None
             if particle_capacity is None
@@ -386,7 +389,7 @@ class MPMSoftResolutionEvidence(StrictModule, NonTrainableState):
     preparation_evidence_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: PreparedMPMDynamics, /):
+    def __init__(self, dynamics: PreparedMPMDynamics, /) -> None:
         if not isinstance(dynamics, PreparedMPMDynamics):
             raise TypeError("dynamics must be PreparedMPMDynamics.")
         particle_capacity = int(dynamics.particles.capacity)
@@ -473,7 +476,7 @@ class MPMSoftObservationRequest(StrictModule, NonTrainableState):
         particle_mask: Any | None = None,
         grid_mask: Any | None = None,
         surface_normals: Any | None = None,
-    ):
+    ) -> None:
         if particle_mask is None and grid_mask is None:
             raise ValueError("An MPM observation must select a region or surface.")
         if (grid_mask is None) != (surface_normals is None):
@@ -568,7 +571,7 @@ class MPMSoftPlant(AbstractDiscretePlant):
         case_ndim: int = 0,
         required_resolution: MPMSoftResolutionRequirement | None = None,
         required_features: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(compiled, CompiledMaterialPointProblem):
             raise TypeError("compiled must be CompiledMaterialPointProblem.")
         if not isinstance(initial_runtime, MPMRuntimeState):

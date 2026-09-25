@@ -65,7 +65,7 @@ def test_duration_distribution_empty_and_invalid_contracts():
         with pytest.raises(ValueError, match="finite and nonnegative"):
             DurationDistribution(samples)
     with pytest.raises(ValueError, match="Duration unit"):
-        DurationDistribution((1.0,)).to_dict(unit="minutes")  # type: ignore[arg-type]
+        DurationDistribution((1.0,)).to_dict(unit="minutes")  # ty: ignore[invalid-argument-type]
 
 
 def test_measure_repeated_synchronizes_warmups_and_retains_every_sample():

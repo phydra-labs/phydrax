@@ -6,13 +6,13 @@ from __future__ import annotations
 
 import abc
 from math import isfinite
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
-from jaxtyping import PyTree
+from jaxtyping import Array, PyTree
 
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._tree_math import validate_real_inexact_tree
@@ -40,7 +40,7 @@ from ._iterative import (
 )
 
 
-def _coordinate_norm(value, precision: NonlinearPrecisionPolicy, /):
+def _coordinate_norm(value: Array, precision: NonlinearPrecisionPolicy, /) -> Array:
     return precision.decision(jnp.linalg.norm(precision.accumulation(value)))
 
 
@@ -68,7 +68,7 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
         maximum_dimension: int = 64,
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -147,7 +147,7 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
             else None
         )
 
-        def evaluate(coordinates):
+        def evaluate(coordinates: Array) -> tuple[Array, Array, Array, Array, Any]:
             coordinates = jnp.asarray(coordinates, dtype=coordinate_dtype)
             value = unflatten(coordinates)
             if problem.bounds is not None:
@@ -408,12 +408,18 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
 
 
 class BOBYQA(AbstractModelBasedTrustRegion):
+    if TYPE_CHECKING:
+        __init__ = AbstractModelBasedTrustRegion.__init__
+
     @property
     def kind(self) -> ModelBasedKind:
         return "bobyqa"
 
 
 class COBYQA(AbstractModelBasedTrustRegion):
+    if TYPE_CHECKING:
+        __init__ = AbstractModelBasedTrustRegion.__init__
+
     @property
     def kind(self) -> ModelBasedKind:
         return "cobyqa"

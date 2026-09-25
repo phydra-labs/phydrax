@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import builtins
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -68,7 +69,7 @@ class PortfolioPlan(StrictModule):
         integer_indices: tuple[int, ...],
         binary_indices: tuple[int, ...],
         structure_id: str,
-    ):
+    ) -> None:
         if canonical_kind not in ("lp", "qp", "conic", "mip"):
             raise ValueError("canonical_kind is invalid.")
         slices = tuple(
@@ -116,7 +117,7 @@ class PortfolioPlan(StrictModule):
         self.integer_indices, self.binary_indices = integers, binaries
         self.structure_id = identifier
 
-    def slice(self, name: str, /) -> slice:
+    def slice(self, name: str, /) -> builtins.slice:
         matches = tuple(
             (start, stop) for label, start, stop in self.variable_slices if label == name
         )
@@ -151,7 +152,7 @@ class PortfolioCompiled(StrictModule):
         problem_id: str,
         forecast_law_id: str,
         numeric_version: int = 0,
-    ):
+    ) -> None:
         if not isinstance(
             program, (LinearProgram, QuadraticProgram, ConicProgram, MixedIntegerProgram)
         ):
@@ -239,7 +240,7 @@ class PortfolioResult(StrictModule):
 
 
 class _Layout:
-    def __init__(self, weight_count: int):
+    def __init__(self, weight_count: int) -> None:
         self.cursor = 0
         self.slices: dict[str, slice] = {}
         self.add("weights", weight_count)
@@ -276,6 +277,8 @@ def _objective_auxiliaries(problem: PortfolioProblem, layout: _Layout) -> None:
         layout.add("spectral_excess", atoms * scenarios)
     elif isinstance(objective, DrawdownRiskObjective):
         returns = problem.forecast.scenario_returns
+        # PortfolioProblem requires rank-3 scenario paths for drawdown risk.
+        assert returns is not None
         entries = returns.shape[0] * returns.shape[1]
         layout.add("running_peak", entries)
         layout.add("drawdown", entries)
@@ -392,6 +395,8 @@ def _assemble_portfolio_objective(
                 )
     elif isinstance(objective, FiniteScenarioKellyObjective):
         logs = layout.slices["log_growth"]
+        # Scenario objectives require scenario_returns, so path_map is built.
+        assert path_map is not None
         probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
         linear[logs] = -probabilities
         for scenario in range(forecast.scenario_count):
@@ -406,6 +411,7 @@ def _assemble_portfolio_objective(
     elif isinstance(objective, CVaRObjective):
         eta = layout.slices["cvar_threshold"].start
         excess = layout.slices["cvar_excess"]
+        assert path_map is not None
         probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
         lower[excess] = 0.0
         linear[:weight_count] -= objective.return_weight * mean_map
@@ -423,6 +429,7 @@ def _assemble_portfolio_objective(
         eta = layout.slices["entropy_location"].start
         tau = layout.slices["entropy_scale"].start
         perspective = layout.slices["entropy_perspective"]
+        assert path_map is not None
         probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
         radius = (
             objective.relative_entropy_radius
@@ -448,6 +455,7 @@ def _assemble_portfolio_objective(
     elif isinstance(objective, SpectralRiskObjective):
         thresholds = layout.slices["spectral_thresholds"]
         excess = layout.slices["spectral_excess"]
+        assert path_map is not None
         lower[excess] = 0.0
         probabilities = np.asarray(forecast.scenario_probabilities, dtype=dtype)
         linear[:weight_count] -= objective.return_weight * mean_map
@@ -803,6 +811,8 @@ def compile_portfolio_problem(problem: PortfolioProblem, /) -> PortfolioCompiled
                         eq(row, 0.0)
 
     if gross is not None:
+        # gross is allocated exactly when gross_limit is set.
+        assert constraints.gross_limit is not None
         lower[gross] = 0.0
         for index in range(weight_count):
             for sign in (-1.0, 1.0):
@@ -863,6 +873,8 @@ def compile_portfolio_problem(problem: PortfolioProblem, /) -> PortfolioCompiled
             np.isfinite(upper_physical)
         ):
             raise ValueError("Cardinality constraints require finite weight bounds.")
+        # active is allocated exactly when maximum_cardinality is set.
+        assert constraints.maximum_cardinality is not None
         lower[active], upper[active] = 0.0, 1.0
         magnitude = np.maximum(np.abs(lower_physical), np.abs(upper_physical))
         for index in range(weight_count):
@@ -883,6 +895,8 @@ def compile_portfolio_problem(problem: PortfolioProblem, /) -> PortfolioCompiled
             np.isfinite(upper_physical)
         ):
             raise ValueError("Fixed fees require finite weight bounds.")
+        # fixed_fees forces the trade_absolute block (needs_trade).
+        assert trade_abs is not None
         lower[fee_active], upper[fee_active] = 0.0, 1.0
         stages = 1 if tree is None else tree.stage_count
         probabilities = (
@@ -990,7 +1004,9 @@ def refresh_portfolio_compilation(
     )
 
 
-def _relaxation(program: CanonicalPortfolioProgram, /):
+def _relaxation(
+    program: CanonicalPortfolioProgram, /
+) -> LinearProgram | QuadraticProgram | ConicProgram:
     return program.relaxation if isinstance(program, MixedIntegerProgram) else program
 
 

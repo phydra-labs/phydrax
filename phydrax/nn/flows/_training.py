@@ -3,11 +3,13 @@
 #
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, Key
+from jaxtyping import Array, Key, PyTree
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._fingerprint import canonical_fingerprint
@@ -19,6 +21,7 @@ from ..._training_kernel import (
     prepare_training_kernel,
     run_training_attempt,
     TrainingKernelSpec,
+    TrainingKeys,
     TrainingRejectionBudgetError,
 )
 from ..._training_objective import _ObjectiveContribution
@@ -30,11 +33,17 @@ _SPLIT_ADDRESS = SampleAddress("nn.flows.fit", "validation-split", role="split")
 _EPOCH_ADDRESS = SampleAddress("nn.flows.fit", "epoch-order", role="epoch")
 
 
-def _negative_log_likelihood(parameters, model_state, fixed, batch, keys):
+def _negative_log_likelihood(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    batch: Array,
+    keys: TrainingKeys,
+) -> tuple[_ObjectiveContribution, PyTree[Any], tuple[()]]:
     del keys
     model = combine_parameters(parameters, model_state, fixed)
     value = -jnp.mean(model.log_prob(batch))
-    return _ObjectiveContribution(value, 1.0), model_state, ()
+    return _ObjectiveContribution(value, jnp.ones((), dtype=value.dtype)), model_state, ()
 
 
 @eqx.filter_jit
@@ -43,7 +52,7 @@ def _validation_loss(flow: AbstractFlowDistribution, samples: Array) -> Array:
 
 
 def fit_flow_to_data(
-    key: Key,
+    key: Key[Array, ""],
     flow: AbstractFlowDistribution,
     data: Array,
     /,

@@ -111,7 +111,7 @@ class NumericalRelativityRestartPolicy(StrictModule, NonTrainableState):
         *,
         absolute_tolerance: float = 0.0,
         relative_tolerance: float = 0.0,
-    ):
+    ) -> None:
         relation_ = str(relation)
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
@@ -132,7 +132,7 @@ class NumericalRelativityRestartPolicy(StrictModule, NonTrainableState):
             maximum_absolute_tolerance=absolute,
             maximum_relative_tolerance=relative,
         )
-        self.relation = relation_  # type: ignore[assignment]
+        self.relation = relation_
         self.absolute_tolerance = absolute
         self.relative_tolerance = relative
         self.topology_policy = topology_policy
@@ -181,7 +181,7 @@ class NumericalRelativityRestartState(StrictModule):
         step_index: ArrayLike,
         fields: Sequence[Any],
         /,
-    ):
+    ) -> None:
         formulation_ = _formulation(formulation)
         runtime, geometry, topology = tuple(
             str(value).strip() for value in (runtime_id, geometry_id, topology_id)
@@ -425,7 +425,7 @@ class NumericalRelativityCheckpointPlan(StrictModule, NonTrainableState):
         state_template: NumericalRelativityRestartState,
         constrained_transport: GRMHDConstrainedTransportPlan | None = None,
         restart: NumericalRelativityRestartPolicy | None = None,
-    ):
+    ) -> None:
         formulation_ = _formulation(formulation)
         identifiers = tuple(
             str(value).strip()
@@ -707,7 +707,7 @@ class NumericalRelativityCheckpoint(StrictModule):
         plan_id: str,
         checkpoint_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(state, NumericalRelativityRestartState):
             raise TypeError("NR checkpoint requires a restart state.")
         plan = str(plan_id)

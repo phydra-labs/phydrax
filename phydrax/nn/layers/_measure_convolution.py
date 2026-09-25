@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -115,7 +115,7 @@ class _AbstractMeasureNormalizedConvND(StrictModule, ParameterOwner):
         epsilon: float = 1e-12,
         dtype: Any = jnp.float32,
         key: Key[Array, ""] = DOC_KEY0,
-    ):
+    ) -> None:
         ndim = int(spatial_ndim)
         _dimension_numbers(ndim)
         in_count = int(in_channels)
@@ -359,6 +359,9 @@ def _measure_dependency_support(
 
 class MeasureNormalizedConvND(_AbstractMeasureNormalizedConvND):
     """Public measure-normalized convolution layer."""
+
+    if TYPE_CHECKING:
+        __init__ = _AbstractMeasureNormalizedConvND.__init__
 
     def dependency_support(
         self,

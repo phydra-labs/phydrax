@@ -40,6 +40,7 @@ from ..solid_mechanics._fem_dynamics import (
 from ._backend import (
     ROBOTICS_OPERATIONS,
     RoboticsBackendProfile,
+    RoboticsOperation,
     RoboticsOperationCapability,
     RoboticsOperationStatus,
 )
@@ -115,9 +116,11 @@ def _common_dtype(arrays: Sequence[Array], owner: str, /) -> np.dtype:
     return dtype
 
 
-def _unsupported(operation: str, reason: str, /) -> RoboticsOperationCapability:
+def _unsupported(
+    operation: RoboticsOperation, reason: str, /
+) -> RoboticsOperationCapability:
     return RoboticsOperationCapability(
-        operation,  # type: ignore[arg-type]
+        operation,
         supported=False,
         implementation="FEMSoftPlant",
         reason=reason,
@@ -176,7 +179,7 @@ class FEMSoftLoadLayout(StrictModule, NonTrainableState):
         fiber_routes: Sequence[tuple[str, str]] = (),
         body_force_region_ids: Sequence[str] = (),
         spatial_dimension: int,
-    ):
+    ) -> None:
         pressure = _identifiers(pressure_region_ids, "pressure region ID")
         routes = tuple(
             (
@@ -237,7 +240,7 @@ class FEMSoftCommand(StrictModule, NonTrainableState):
         fiber_tension: ArrayLike,
         body_force: ArrayLike,
         /,
-    ):
+    ) -> None:
         pressure_ = jnp.asarray(pressure)
         fiber_ = jnp.asarray(fiber_tension)
         body_ = jnp.asarray(body_force)
@@ -253,7 +256,7 @@ class FEMSoftLoads(StrictModule, NonTrainableState):
     command: FEMSoftCommand
     layout: FEMSoftLoadLayout
 
-    def __init__(self, command: FEMSoftCommand, layout: FEMSoftLoadLayout, /):
+    def __init__(self, command: FEMSoftCommand, layout: FEMSoftLoadLayout, /) -> None:
         if not isinstance(command, FEMSoftCommand):
             raise TypeError("command must be FEMSoftCommand.")
         if not isinstance(layout, FEMSoftLoadLayout):
@@ -302,7 +305,7 @@ class FEMSoftParameters(StrictModule, NonTrainableState):
 
     values: Any
 
-    def __init__(self, values: Any = (), /):
+    def __init__(self, values: Any = (), /) -> None:
         self.values = values
 
 
@@ -330,7 +333,7 @@ class FEMSoftState(StrictModule, NonTrainableState):
         material_state: Sequence[ArrayLike],
         region_force: ArrayLike,
         /,
-    ):
+    ) -> None:
         displacement_ = jnp.asarray(displacement)
         velocity_ = jnp.asarray(velocity)
         acceleration_ = jnp.asarray(acceleration)
@@ -369,7 +372,7 @@ class FEMSoftSensorLayout(StrictModule, NonTrainableState):
         displacement_regions: Mapping[str, Sequence[int]]
         | Sequence[tuple[str, Sequence[int]]] = (),
         force_region_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         records = (
             tuple(sorted(displacement_regions.items()))
             if isinstance(displacement_regions, Mapping)
@@ -433,7 +436,7 @@ class FEMSoftCapabilityManifest(StrictModule, NonTrainableState):
     capability_ids: tuple[str, ...] = eqx.field(static=True)
     manifest_id: str = eqx.field(static=True)
 
-    def __init__(self, capability_ids: Sequence[str], /):
+    def __init__(self, capability_ids: Sequence[str], /) -> None:
         capabilities = tuple(sorted(_identifiers(capability_ids, "FEM capability ID")))
         self.capability_ids = capabilities
         self.manifest_id = canonical_fingerprint(
@@ -500,7 +503,7 @@ class FEMSoftPlant(AbstractDiscretePlant, NonTrainableState):
         initial_region_force: ArrayLike | None = None,
         region_force_evaluator: Callable | None = None,
         region_force_evaluator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics_plan, FiniteElementDynamicsPlan):
             raise TypeError("dynamics_plan must be FiniteElementDynamicsPlan.")
         if not isinstance(initial_state, FiniteElementDynamicsState):

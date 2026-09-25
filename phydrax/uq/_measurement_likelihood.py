@@ -67,7 +67,7 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
         stabilization: float = 0.0,
         max_output_dimension: int = 256,
         label: str = "measurement_error",
-    ):
+    ) -> None:
         if not callable(predict_case):
             raise TypeError("predict_case must be callable.")
         inputs = jax.tree_util.tree_map(jnp.asarray, measured_inputs)
@@ -272,7 +272,7 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
         flat_input, unravel_input = ravel_pytree(input_case)
         target = jnp.ravel(jnp.asarray(target_case))
 
-        def predict_flat(value):
+        def predict_flat(value: Array) -> Array:
             prediction = _field_data(self.predict_fn(parameters, unravel_input(value)))
             return jnp.ravel(prediction)
 
@@ -317,7 +317,7 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
             & (jnp.min(effective_eigenvalues) > effective_tolerance)
         )
 
-        def finite_log_prob(_):
+        def finite_log_prob(_: None) -> Array:
             cholesky = jnp.linalg.cholesky(effective_covariance)
             residual = target - prediction
             standardized = jsp.linalg.solve_triangular(
@@ -446,7 +446,7 @@ def _field_data(value: ArrayLike | cx.AxisArray, /) -> Array:
 def _validate_batching(value: str, /, *, owner: str) -> CovarianceBatching:
     if value not in ("shared", "per_case"):
         raise ValueError(f"{owner} must be 'shared' or 'per_case'.")
-    return value  # type: ignore[return-value]
+    return value
 
 
 def _label(value: str, /) -> str:

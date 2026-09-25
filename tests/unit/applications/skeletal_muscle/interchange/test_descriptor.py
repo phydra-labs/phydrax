@@ -135,7 +135,7 @@ def test_descriptor_is_immutable_and_force_owner_is_identity() -> None:
     native = _descriptor(force_owner="de-groote")
     assert provider.descriptor_id != native.descriptor_id
     with pytest.raises(AttributeError):
-        provider.force_owner = "de-groote"  # type: ignore[misc]
+        provider.force_owner = "de-groote"
     with pytest.raises(ValueError, match="atomic"):
         _descriptor(force_owner="provider-native+de-groote")
 

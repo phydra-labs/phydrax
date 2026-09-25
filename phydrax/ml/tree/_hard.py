@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Literal, TypeAlias
+from typing import Any, cast, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.core as jax_core
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array
 
 from ..._strict import StrictModule
@@ -27,6 +28,8 @@ from ._representation import (
     _HARD_CONTRACT,
     _traverse_one_tree,
     _weighted_median_case,
+    EnsembleAggregation,
+    ObjectiveTransform,
     TreeEnsemble,
 )
 
@@ -39,6 +42,9 @@ XGBObjective: TypeAlias = Literal[
     "softmax",
     "poisson",
     "pairwise_ranking",
+]
+_SplitCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
 ]
 
 
@@ -85,7 +91,7 @@ class TreeFitDiagnostics(StrictModule):
         converged: Any,
         method: str,
         split_search: str,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
@@ -145,7 +151,9 @@ def _validate_common(
     return depth, capacity
 
 
-def _feature_count(specification, feature_count: int) -> int:
+def _feature_count(
+    specification: int | float | Literal["sqrt", "log2"] | None, feature_count: int
+) -> int:
     if specification is None:
         return feature_count
     if specification == "sqrt":
@@ -162,8 +170,8 @@ def _empty_tree(
     output_count: int,
     category_capacity: int,
     *,
-    value_dtype,
-    threshold_dtype,
+    value_dtype: DTypeLike,
+    threshold_dtype: DTypeLike,
 ) -> dict[str, Array]:
     return {
         "feature_index": jnp.full((node_capacity,), -1, dtype=jnp.int32),
@@ -462,7 +470,9 @@ def _build_tree(
             defaults = jnp.asarray((False, True))
             monotonic = 0 if not monotonic_constraints else monotonic_constraints[feature]
 
-            def evaluate_candidate(carry, candidate):
+            def evaluate_candidate(
+                carry: _SplitCarry, candidate: tuple[Array, Array, Array, Array]
+            ) -> tuple[_SplitCarry, None]:
                 (
                     selected_gain,
                     selected_threshold,
@@ -539,7 +549,7 @@ def _build_tree(
                 local_gain = scores[local_index]
                 replace = local_gain > selected_gain
 
-                def choose(new, old):
+                def choose(new: Array, old: Array) -> Array:
                     return jnp.where(replace, new, old)
 
                 return (
@@ -663,7 +673,7 @@ def _tree_predict(tree: dict[str, Array], x: Array) -> Array:
             tree["leaf_mask"],
             tree["feature_index"].shape[0],
         )[0]
-    )(x)  # type: ignore[arg-type]
+    )(x)
 
 
 def _prepare_batch(
@@ -749,11 +759,11 @@ def _stack_model(
     node_capacity: int,
     category_capacity: int,
     output_count: int,
-    out_size,
+    out_size: int | tuple[int, ...] | Literal["scalar"],
     target_schema: TargetSchema,
-    objective_transform,
+    objective_transform: ObjectiveTransform,
     capacity_exhausted: list[bool],
-    aggregation="sum",
+    aggregation: EnsembleAggregation = "sum",
 ) -> TreeEnsemble:
     keys = (
         "feature_index",
@@ -877,7 +887,7 @@ def _finish_result(
 
 
 def _fit_bagged(
-    recipe,
+    recipe: _AbstractCARTRecipe,
     batch: MLBatch,
     *,
     key: Any,
@@ -1042,7 +1052,7 @@ class _AbstractCARTRecipe(AbstractRecipe):
         monotonic_constraints: tuple[int, ...] = (),
         interaction_constraints: tuple[tuple[int, ...], ...] = (),
         num_classes: int | None = None,
-    ):
+    ) -> None:
         depth, capacity = _validate_common(
             max_depth=max_depth,
             max_nodes=max_nodes,
@@ -1084,6 +1094,9 @@ class _AbstractCARTRecipe(AbstractRecipe):
 
 
 class DecisionTreeRegressor(_AbstractCARTRecipe):
+    if TYPE_CHECKING:
+        __init__ = _AbstractCARTRecipe.__init__
+
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         return _fit_bagged(
             self,
@@ -1098,6 +1111,9 @@ class DecisionTreeRegressor(_AbstractCARTRecipe):
 
 
 class DecisionTreeClassifier(_AbstractCARTRecipe):
+    if TYPE_CHECKING:
+        __init__ = _AbstractCARTRecipe.__init__
+
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         return _fit_bagged(
             self,
@@ -1112,6 +1128,9 @@ class DecisionTreeClassifier(_AbstractCARTRecipe):
 
 
 class RandomTreeRegressor(_AbstractCARTRecipe):
+    if TYPE_CHECKING:
+        __init__ = _AbstractCARTRecipe.__init__
+
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         return _fit_bagged(
             self,
@@ -1126,6 +1145,9 @@ class RandomTreeRegressor(_AbstractCARTRecipe):
 
 
 class RandomTreeClassifier(_AbstractCARTRecipe):
+    if TYPE_CHECKING:
+        __init__ = _AbstractCARTRecipe.__init__
+
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         return _fit_bagged(
             self,
@@ -1140,6 +1162,9 @@ class RandomTreeClassifier(_AbstractCARTRecipe):
 
 
 class ExtraTreeRegressor(_AbstractCARTRecipe):
+    if TYPE_CHECKING:
+        __init__ = _AbstractCARTRecipe.__init__
+
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         return _fit_bagged(
             self,
@@ -1154,6 +1179,9 @@ class ExtraTreeRegressor(_AbstractCARTRecipe):
 
 
 class ExtraTreeClassifier(_AbstractCARTRecipe):
+    if TYPE_CHECKING:
+        __init__ = _AbstractCARTRecipe.__init__
+
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         return _fit_bagged(
             self,
@@ -1167,7 +1195,16 @@ class ExtraTreeClassifier(_AbstractCARTRecipe):
         )
 
 
-def _init_forest(instance, *, n_estimators: int, bootstrap: bool, common: dict[str, Any]):
+def _init_forest(
+    instance: RandomForestRegressor
+    | RandomForestClassifier
+    | ExtraTreesRegressor
+    | ExtraTreesClassifier,
+    *,
+    n_estimators: int,
+    bootstrap: bool,
+    common: dict[str, Any],
+) -> None:
     _AbstractCARTRecipe.__init__(instance, **common)
     if n_estimators <= 0:
         raise ValueError("n_estimators must be positive.")
@@ -1179,7 +1216,9 @@ class RandomForestRegressor(_AbstractCARTRecipe):
     n_estimators: int = eqx.field(static=True)
     bootstrap: bool = eqx.field(static=True)
 
-    def __init__(self, *, n_estimators: int = 100, bootstrap: bool = True, **kwargs):
+    def __init__(
+        self, *, n_estimators: int = 100, bootstrap: bool = True, **kwargs: Any
+    ) -> None:
         _init_forest(self, n_estimators=n_estimators, bootstrap=bootstrap, common=kwargs)
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -1199,7 +1238,9 @@ class RandomForestClassifier(_AbstractCARTRecipe):
     n_estimators: int = eqx.field(static=True)
     bootstrap: bool = eqx.field(static=True)
 
-    def __init__(self, *, n_estimators: int = 100, bootstrap: bool = True, **kwargs):
+    def __init__(
+        self, *, n_estimators: int = 100, bootstrap: bool = True, **kwargs: Any
+    ) -> None:
         _init_forest(self, n_estimators=n_estimators, bootstrap=bootstrap, common=kwargs)
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -1219,7 +1260,9 @@ class ExtraTreesRegressor(_AbstractCARTRecipe):
     n_estimators: int = eqx.field(static=True)
     bootstrap: bool = eqx.field(static=True)
 
-    def __init__(self, *, n_estimators: int = 100, bootstrap: bool = False, **kwargs):
+    def __init__(
+        self, *, n_estimators: int = 100, bootstrap: bool = False, **kwargs: Any
+    ) -> None:
         _init_forest(self, n_estimators=n_estimators, bootstrap=bootstrap, common=kwargs)
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -1239,7 +1282,9 @@ class ExtraTreesClassifier(_AbstractCARTRecipe):
     n_estimators: int = eqx.field(static=True)
     bootstrap: bool = eqx.field(static=True)
 
-    def __init__(self, *, n_estimators: int = 100, bootstrap: bool = False, **kwargs):
+    def __init__(
+        self, *, n_estimators: int = 100, bootstrap: bool = False, **kwargs: Any
+    ) -> None:
         _init_forest(self, n_estimators=n_estimators, bootstrap=bootstrap, common=kwargs)
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -1265,8 +1310,8 @@ class AdaBoostClassifier(_AbstractCARTRecipe):
         n_estimators: int = 50,
         learning_rate: float = 1.0,
         max_depth: int = 1,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         super().__init__(max_depth=max_depth, **kwargs)
         if n_estimators <= 0 or learning_rate <= 0.0:
             raise ValueError("AdaBoost requires positive estimators and learning rate.")
@@ -1407,8 +1452,8 @@ class AdaBoostRegressor(_AbstractCARTRecipe):
         learning_rate: float = 1.0,
         loss: Literal["linear", "square", "exponential"] = "linear",
         max_depth: int = 3,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         super().__init__(max_depth=max_depth, **kwargs)
         if n_estimators <= 0 or learning_rate <= 0.0:
             raise ValueError(
@@ -1629,7 +1674,12 @@ def _initial_score(objective: XGBObjective, y: Array, weight: Array) -> Array:
 
 
 def _fit_boosted(
-    recipe, batch: MLBatch, *, key: Any, classical: bool, method: str
+    recipe: _AbstractBoostingRecipe,
+    batch: MLBatch,
+    *,
+    key: Any,
+    classical: bool,
+    method: str,
 ) -> FitResult:
     stochastic = (
         recipe.subsample < 1.0
@@ -1691,7 +1741,8 @@ def _fit_boosted(
             tree_key = all_keys[case * recipe.n_estimators + index]
             row_mask = sample_mask[case]
             if recipe.subsample < 1.0:
-                tree_key, row_key = jax.random.split(tree_key)
+                # subsample < 1.0 is stochastic, so a key was required above.
+                tree_key, row_key = jax.random.split(cast(Array, tree_key))
                 row_mask = row_mask & jax.random.bernoulli(
                     row_key, recipe.subsample, (batch.sample_count,)
                 )
@@ -1848,8 +1899,8 @@ class _AbstractBoostingRecipe(_AbstractCARTRecipe):
         gamma: float = 0.0,
         min_child_weight: float = 1.0,
         max_delta_step: float | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         if n_estimators <= 0 or learning_rate <= 0.0:
             raise ValueError("Boosting requires positive estimators and learning rate.")
@@ -1882,8 +1933,11 @@ class _AbstractBoostingRecipe(_AbstractCARTRecipe):
 
 class GradientBoostingRegressor(_AbstractBoostingRecipe):
     def __init__(
-        self, *, objective: Literal["squared_error"] = "squared_error", **kwargs
-    ):
+        self,
+        *,
+        objective: Literal["squared_error"] = "squared_error",
+        **kwargs: Any,
+    ) -> None:
         super().__init__(objective=objective, **kwargs)
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -1894,8 +1948,11 @@ class GradientBoostingRegressor(_AbstractBoostingRecipe):
 
 class GradientBoostingClassifier(_AbstractBoostingRecipe):
     def __init__(
-        self, *, objective: Literal["auto", "logistic", "softmax"] = "auto", **kwargs
-    ):
+        self,
+        *,
+        objective: Literal["auto", "logistic", "softmax"] = "auto",
+        **kwargs: Any,
+    ) -> None:
         super().__init__(objective=objective, **kwargs)
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -1905,7 +1962,7 @@ class GradientBoostingClassifier(_AbstractBoostingRecipe):
 
 
 class HistGradientBoostingRegressor(_AbstractBoostingRecipe):
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         kwargs["split_search"] = "histogram"
         super().__init__(objective="squared_error", **kwargs)
 
@@ -1924,8 +1981,8 @@ class HistGradientBoostingClassifier(_AbstractBoostingRecipe):
         self,
         *,
         objective: Literal["auto", "logistic", "softmax"] = "auto",
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         kwargs["split_search"] = "histogram"
         super().__init__(objective=objective, **kwargs)
 
@@ -1944,8 +2001,8 @@ class XGBoostRegressor(_AbstractBoostingRecipe):
         self,
         *,
         objective: Literal["squared_error", "poisson"] = "squared_error",
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         super().__init__(objective=objective, **kwargs)
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -1956,8 +2013,11 @@ class XGBoostRegressor(_AbstractBoostingRecipe):
 
 class XGBoostClassifier(_AbstractBoostingRecipe):
     def __init__(
-        self, *, objective: Literal["auto", "logistic", "softmax"] = "auto", **kwargs
-    ):
+        self,
+        *,
+        objective: Literal["auto", "logistic", "softmax"] = "auto",
+        **kwargs: Any,
+    ) -> None:
         super().__init__(objective=objective, **kwargs)
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -1967,7 +2027,7 @@ class XGBoostClassifier(_AbstractBoostingRecipe):
 
 
 class XGBoostRanker(_AbstractBoostingRecipe):
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(objective="pairwise_ranking", **kwargs)
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:

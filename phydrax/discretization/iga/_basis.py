@@ -31,7 +31,7 @@ class SplineAxisPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, name: str, knots: ArrayLike, /, *, degree: int, periodic: bool = False
-    ):
+    ) -> None:
         name_, degree_, knots_host = str(name), int(degree), np.asarray(knots)
         if not name_:
             raise ValueError("Spline axis name must be non-empty.")
@@ -109,7 +109,7 @@ class TensorSplineBasisSpec(StrictModule, NonTrainableState):
         /,
         *,
         axis_names: Sequence[str] | None = None,
-    ):
+    ) -> None:
         inputs = tuple(axes)
         if not 1 <= len(inputs) <= 3:
             raise TypeError(
@@ -130,7 +130,7 @@ class TensorSplineBasisSpec(StrictModule, NonTrainableState):
         elif all(isinstance(axis, SplineAxisPlan) for axis in inputs):
             if axis_names is not None:
                 raise ValueError("Named spline axes already define axis_names.")
-            axes_ = tuple(inputs)  # type: ignore[assignment]
+            axes_ = tuple(axis for axis in inputs if isinstance(axis, SplineAxisPlan))
         else:
             raise TypeError(
                 "Tensor spline axes must be all BSplineGrid or all SplineAxisPlan values."
@@ -215,7 +215,7 @@ class IsogeometricFieldSpec(StrictModule, NonTrainableState):
         mapping: str = "identity",
         weights: ArrayLike | None = None,
         weights_from_geometry: bool = False,
-    ):
+    ) -> None:
         name_, components, conformity_, mapping_ = (
             str(name),
             tuple(component_shape),
@@ -286,7 +286,7 @@ class IsogeometricQuadraturePolicy(StrictModule, NonTrainableState):
     points_per_axis: int | tuple[int, ...] = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, points_per_axis: int | Sequence[int], /):
+    def __init__(self, points_per_axis: int | Sequence[int], /) -> None:
         scalar = isinstance(points_per_axis, (int, np.integer))
         values = (int(points_per_axis),) if scalar else tuple(points_per_axis)
         if not values or len(values) > 3 or any(x <= 0 for x in values):

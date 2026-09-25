@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Callable, Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -68,7 +68,7 @@ class _AbstractSupervisedDatasetObservationTerm(AbstractSamplingTerm):
         reduction: Literal["mean", "sum"] = "mean",
         indices: ArrayLike | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         owner = type(self).__name__
         if not isinstance(component.domain, DatasetDomain):
             raise TypeError(f"{owner} requires a DatasetDomain component.")
@@ -270,7 +270,7 @@ class _AbstractSupervisedLikelihoodTerm(_AbstractSupervisedDatasetObservationTer
         reduction: Literal["mean", "sum"] = "mean",
         indices: ArrayLike | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(likelihood, AbstractLikelihood):
             raise TypeError("likelihood must implement AbstractLikelihood.")
         scale_name = None if scale_var is None else str(scale_var)
@@ -342,6 +342,9 @@ class _AbstractSupervisedLikelihoodTerm(_AbstractSupervisedDatasetObservationTer
 
 class SupervisedLikelihoodTerm(_AbstractSupervisedLikelihoodTerm):
     """Score direct or operator-transformed dataset observations by a likelihood."""
+
+    if TYPE_CHECKING:
+        __init__ = _AbstractSupervisedLikelihoodTerm.__init__
 
 
 __all__ = ["SupervisedLikelihoodTerm"]

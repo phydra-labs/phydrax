@@ -25,6 +25,7 @@ from ..linalg import (
     RHSLayout,
     solve,
 )
+from ..linalg._spaces import _coordinate_dtype
 from ..operators.integral._convolution_quadrature import (
     causal_prefix_fft,
     ConvolutionQuadratureContour,
@@ -82,7 +83,7 @@ class ConvolutionQuadratureDeclaration(StrictModule):
             "continuum certification",
             "physics-kernel construction",
         ),
-    ):
+    ) -> None:
         if isinstance(dimension, bool):
             raise TypeError("dimension must be an integer.")
         dimension_ = int(dimension)
@@ -142,7 +143,7 @@ class ConvolutionQuadratureResourceEvidence(StrictModule):
         retained_array_bytes: int,
         controller_workspace_upper_bound_bytes_per_rhs: int,
         node_right_hand_sides_per_external_rhs: int,
-    ):
+    ) -> None:
         counts = tuple(
             (
                 contour_node_count,
@@ -199,7 +200,7 @@ class ConvolutionQuadratureErrorEvidence(StrictModule):
         output_finite: ArrayLike,
         contour_radius: ArrayLike,
         contour_tolerance_target: ArrayLike,
-    ):
+    ) -> None:
         self.node_statuses = jnp.asarray(node_statuses, dtype=jnp.int32)
         self.node_relative_residuals = jnp.asarray(node_relative_residuals)
         self.input_finite = jnp.asarray(input_finite, dtype=jnp.bool_)
@@ -246,7 +247,7 @@ class PreparedConvolutionQuadrature(StrictModule):
         adjoint_nodes: tuple[PreparedLinearSolve, ...] | None,
         resource_evidence: ConvolutionQuadratureResourceEvidence,
         node_indices: tuple[int, ...],
-    ):
+    ) -> None:
         self.contour = contour
         self.declaration = declaration
         self.forward_nodes = forward_nodes
@@ -265,7 +266,7 @@ class PreparedConvolutionQuadrature(StrictModule):
         )
         self.node_providers = tuple(node.plan.backend for node in all_nodes)
         self.node_dtypes = tuple(
-            np.dtype(node.problem.operator.target.dtype).name for node in all_nodes
+            _coordinate_dtype(node.problem.operator.target).name for node in all_nodes
         )
 
     def apply(self, history: ArrayLike, /) -> "ConvolutionQuadratureResult":
@@ -317,7 +318,7 @@ class ConvolutionQuadratureResult(StrictModule):
         frequency_indices: tuple[int, ...],
         parameter_indices: tuple[int, ...],
         right_hand_side_count: int,
-    ):
+    ) -> None:
         self.value = value
         self.candidate = candidate
         self.status = jnp.asarray(status, dtype=jnp.int32)
@@ -398,8 +399,8 @@ def _workspace_upper_bound(
     /,
 ) -> int:
     itemsize = max(
-        np.dtype(node.problem.operator.source.dtype).itemsize,
-        np.dtype(node.problem.operator.target.dtype).itemsize,
+        _coordinate_dtype(node.problem.operator.source).itemsize,
+        _coordinate_dtype(node.problem.operator.target).itemsize,
     )
     transform_values = (
         4 * contour.fft_length * contour.history_length * declaration.dimension
@@ -442,7 +443,9 @@ def prepare_convolution_quadrature(
     )
     indices = contour.solved_node_indices
 
-    def prepare_action(action: ConvolutionQuadratureAction):
+    def prepare_action(
+        action: ConvolutionQuadratureAction,
+    ) -> tuple[PreparedLinearSolve, ...]:
         nodes = tuple(
             prepare_node(contour.parameters[index], action) for index in indices
         )

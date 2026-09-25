@@ -231,6 +231,22 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Static checkers now type every `StrictModule` construction through the concrete
+  class's generated or custom `__init__`. The runtime metaclass `__call__`, which
+  still performs the abstract/final refusal and the freeze transition, is hidden
+  from checkers because its `-> Any` signature erased every constructor call.
+  Concrete modules that inherit an abstract owner's custom constructor declare a
+  checker-only `__init__` alias, matching Equinox's runtime constructor choice.
+- Typing is gated by the pinned ty `0.0.84` through `tools/check_typing.py`
+  (`report`, `check`, `update-quarantine`, `touched`, `waves`). ty analyzes
+  Python 3.11 semantics, ignores the dataclass field-order rule that does not
+  apply to Equinox constructors, types optional providers as `Any` at their
+  import boundary, and honors only `ty: ignore[rule]` suppressions. The gate also
+  requires every function, method, and nested helper to annotate all parameters
+  and its return type, as reported by the pinned Ruff `0.16.9` `ANN` rules.
+  Remaining diagnostics are recorded in a shrink-only quarantine
+  (`tools/typing_quarantine.json`); changed files must be clean. Non-ty checker
+  comments (`type: ignore` and similar) were removed and are rejected.
 - The dense control linearizations `linearize_discrete_dynamics`,
   `linearize_differential_dynamics`, and `linearize_control_dynamics` are built
   from `PreparedLinearization` and `JacobianLinearOperator` and require a
@@ -398,6 +414,27 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Fixed
+- `VortexFlexibleCouplingPlan.step` no longer passes the unsupported `t0`/`t1`
+  keywords to `SecondOrderDifferentialProblem`, which made every flexible
+  structural step raise `TypeError`; the two-node `TimeGrid` remains the sole
+  owner of the step interval.
+- `PreparedScalarFastProvider3D.as_linear_operator` no longer passes the
+  unsupported `adjoint_action` keyword to `FunctionLinearOperator`, which made the
+  conversion raise `TypeError`; the adjoint is derived from the transpose action
+  and the space pairings.
+- Polynomial eigensolves over `BlockSpace`, `DualSpace`, `TensorProductSpace`,
+  and `AxisArraySpace` sources no longer fail with `AttributeError`: residual
+  norms use the space's own `inner` instead of a `pairing` that only array and
+  PyTree spaces carry.
+- IGA `prepare_tensor_transfer` no longer raises `AttributeError` on every call;
+  it reads the stencil's `indices`.
+- `DifferentialAlgebraicSystem.trial_valid` passes JAX arrays for time, state,
+  and state rate to the `DAETrialValidity` callback, as its contract declares,
+  also when time is a Python scalar.
+- Quantum Hall `charge_gap` no longer raises `AttributeError`; it reads each
+  `HaldaneSpherePlan`'s `twice_monopole_flux`.
+- Ensemble reweighting reports the non-finite-whitening dual objective as a JAX
+  array of the dual dtype instead of the Python float `inf`.
 - Derivative admission refuses every request on a `STOPPED` route, including
   hard-tree fits and meets of differing routes; differentiated regularity keeps
   the conditions it was admitted under.

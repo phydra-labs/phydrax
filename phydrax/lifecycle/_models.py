@@ -48,7 +48,7 @@ class RevisionLineage(StrictModule, NonTrainableState):
         parent_revision_id: str | None = None,
         parent_lineage_id: str | None = None,
         metadata: Mapping[str, str] | Sequence[tuple[str, str]] = (),
-    ):
+    ) -> None:
         if not isinstance(revision, NumericRevision):
             raise TypeError("revision must be a canonical phydrax.NumericRevision.")
         label_ = str(label).strip()
@@ -99,7 +99,7 @@ class CheckpointShard(StrictModule, NonTrainableState):
         /,
         *,
         metadata: Mapping[str, str] | Sequence[tuple[str, str]] = (),
-    ):
+    ) -> None:
         shard = _identifier("shard_id", shard_id)
         digest = _digest("payload_digest", payload_digest)
         if type(byte_count) is not int:
@@ -153,7 +153,7 @@ class CheckpointManifest(StrictModule, NonTrainableState):
         parent_manifest_id: str | None = None,
         parent_checkpoint_id: str | None = None,
         diagnostic_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         checkpoint = _identifier("checkpoint_id", checkpoint_id)
         analysis = _identifier("analysis_plan_id", analysis_plan_id)
         revision = _identifier("numeric_revision_id", numeric_revision_id)
@@ -227,7 +227,7 @@ class AnalysisPlan(StrictModule, NonTrainableState):
         constraint_ids: Sequence[str] = (),
         capability_ids: Sequence[str] = (),
         model_manifest_id: str | None = None,
-    ):
+    ) -> None:
         analysis = _identifier("analysis_plan_id", analysis_plan_id)
         provider = _identifier("provider_plan_id", provider_plan_id)
         discretization = _identifier("discretization_key", discretization_key)
@@ -286,7 +286,7 @@ class RunRecord(StrictModule, NonTrainableState):
         result_ids: Sequence[str] = (),
         diagnostic_ids: Sequence[str] = (),
         checkpoint_id: str | None = None,
-    ):
+    ) -> None:
         run = _identifier("run_id", run_id)
         analysis = _identifier("analysis_plan_id", analysis_plan_id)
         revision = _identifier("numeric_revision_id", numeric_revision_id)
@@ -308,7 +308,7 @@ class RunRecord(StrictModule, NonTrainableState):
         self.analysis_plan_id = analysis
         self.numeric_revision_id = revision
         self.execution_plan_id = execution
-        self.status = status_  # type: ignore[assignment]
+        self.status = status_
         self.result_ids = results
         self.diagnostic_ids = diagnostics
         self.checkpoint_id = checkpoint
@@ -355,7 +355,7 @@ class ModelManifest(StrictModule, NonTrainableState):
         unit_contract_id: str | None = None,
         association_ids: Sequence[str] = (),
         binding: ArtifactBindingIdentity | None = None,
-    ):
+    ) -> None:
         model = _identifier("model_id", model_id)
         analysis = _identifier("analysis_plan_id", analysis_plan_id)
         revision = _identifier("numeric_revision_id", numeric_revision_id)
@@ -418,7 +418,7 @@ class ResultManifest(StrictModule, NonTrainableState):
         evidence_ids: Sequence[str] = (),
         diagnostic_ids: Sequence[str] = (),
         sampled_semantics: Mapping[str, str] | Sequence[tuple[str, str]] = (),
-    ):
+    ) -> None:
         result = _identifier("result_id", result_id)
         run = _identifier("run_id", run_id)
         fields_ = _result_fields(fields)
@@ -471,7 +471,7 @@ class ResultRevision(StrictModule, NonTrainableState):
         /,
         *,
         parent_revision_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(manifest, ResultManifest):
             raise TypeError("manifest must be a ResultManifest.")
         parent = _optional_identifier("parent_result_id", parent_result_id)

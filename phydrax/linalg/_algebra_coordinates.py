@@ -42,7 +42,7 @@ class AlgebraCoordinatePlan(StrictModule, NonTrainableState):
         public_axis: int = -1,
         backend_axis: int = 0,
         public_dtype: Any = np.float64,
-    ):
+    ) -> None:
         from ..metrix.algebra import AbstractFiniteRealAlgebraSpec, ComplexAlgebraSpec
 
         if not isinstance(algebra, AbstractFiniteRealAlgebraSpec):
@@ -80,13 +80,14 @@ class AlgebraCoordinatePlan(StrictModule, NonTrainableState):
 
 
 class PreparedAlgebraCoordinates(AbstractRealCoordinateMap, NonTrainableState):
+    coordinate_space: AlgebraArraySpace
     plan: AlgebraCoordinatePlan
     base_shape: tuple[int, ...] = eqx.field(static=True)
     public_shape: tuple[int, ...] = eqx.field(static=True)
     public_axis: int = eqx.field(static=True)
     backend_axis: int = eqx.field(static=True)
 
-    def __init__(self, plan: AlgebraCoordinatePlan, base_shape: Sequence[int], /):
+    def __init__(self, plan: AlgebraCoordinatePlan, base_shape: Sequence[int], /) -> None:
         if not isinstance(plan, AlgebraCoordinatePlan):
             raise TypeError("plan must be AlgebraCoordinatePlan.")
         base = tuple(base_shape)

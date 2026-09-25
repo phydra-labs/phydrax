@@ -7,8 +7,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from operator import index
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -223,7 +224,7 @@ class LaplaceMultipolePlan3D(StrictModule, NonTrainableState):
         plane_target_top_nodes: int = 32,
         plane_opening_angle: float = 0.6,
         plane_maximum_node_radius: float | None = None,
-    ):
+    ) -> None:
         sources = np.asarray(reference_sources, dtype=np.float64)
         lower_ = np.asarray(lower, dtype=np.float64)
         upper_ = np.asarray(upper, dtype=np.float64)
@@ -327,8 +328,8 @@ class LaplaceMultipolePlan3D(StrictModule, NonTrainableState):
             raise ValueError("Far, near, and queue capacities must be positive.")
         self.reference_sources = jnp.asarray(sources)
         self.reference_targets = jnp.asarray(targets)
-        self.lower = tuple(float(value) for value in lower_)
-        self.upper = tuple(float(value) for value in upper_)
+        self.lower = (float(lower_[0]), float(lower_[1]), float(lower_[2]))
+        self.upper = (float(upper_[0]), float(upper_[1]), float(upper_[2]))
         self.depth = depth_
         self.expansion_order = order
         self.source_capacity = sources.shape[0]
@@ -398,7 +399,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
     local_convention: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: LaplaceMultipolePlan3D, /):
+    def __init__(self, plan: LaplaceMultipolePlan3D, /) -> None:
         if not isinstance(plan, LaplaceMultipolePlan3D):
             raise TypeError("plan must be LaplaceMultipolePlan3D.")
         layout = SphericalModeLayout(plan.expansion_order + 1, spin=0, reality=False)
@@ -633,7 +634,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             if normals.shape != positions.shape:
                 raise ValueError("source_normals must match source_positions.")
 
-            def dipole_basis(vector, normal):
+            def dipole_basis(vector: Array, normal: Array) -> Array:
                 derivative = jax.jacfwd(self._p2m_basis)(vector)
                 return jnp.sum(derivative * normal, axis=-1)
 
@@ -669,7 +670,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             if normals.shape != positions.shape:
                 raise ValueError("source_normals must match source_positions.")
 
-            def dipole_basis(vector, normal):
+            def dipole_basis(vector: Array, normal: Array) -> Array:
                 derivative = jax.jacfwd(self._p2l_basis)(vector)
                 return jnp.sum(derivative * normal, axis=-1)
 
@@ -680,7 +681,12 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             modal.reshape(self.layout.coefficient_shape + payload_shape)
         )
 
-    def _evaluate_basis(self, coefficients: Array, relative: Array, radial: str) -> Array:
+    def _evaluate_basis(
+        self,
+        coefficients: Array,
+        relative: Array,
+        radial: Literal["regular", "irregular"],
+    ) -> Array:
         modal = self._validate_coefficients(coefficients, "coefficients")
         basis = _mode_basis(self.layout, relative, radial=radial)
         modal_flat, payload_shape = _flatten_payload(modal, 2)
@@ -730,7 +736,9 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         )
         return translated
 
-    def _project_local(self, function, center: Array, /) -> Array:
+    def _project_local(
+        self, function: Callable[[Array], Array], center: Array, /
+    ) -> Array:
         directions = self.quadrature_directions.astype(center.dtype)
         weights = self.quadrature_weights.astype(center.dtype)
         payload_probe = function(center)
@@ -742,8 +750,8 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         offset = self.layout.bandlimit - 1
         for degree in range(self.layout.bandlimit):
 
-            def along(direction, degree=degree):
-                def radial(distance):
+            def along(direction: Array, degree: int = degree) -> Array:
+                def radial(distance: Array) -> Array:
                     return function(center + distance * direction)
 
                 derivative = radial
@@ -1184,6 +1192,11 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             ),
         )
 
+    def _level_octree_topology(self) -> SparseLevelOctree:
+        if self.topology is None:
+            raise RuntimeError("Level-octree topology is not prepared.")
+        return self.topology
+
     def _capacity_evidence(self) -> MultipoleCapacityEvidence3D:
         if self.plan.execution == "plane_dual":
             if (
@@ -1204,10 +1217,9 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
                 near_interaction_capacity=interactions.near_capacity,
                 successful=interactions.successful,
             )
-        if self.topology is None:
-            raise RuntimeError("Level-octree topology is not prepared.")
-        hierarchy = self.topology.hierarchy
-        topology = self.topology.evidence
+        level_octree = self._level_octree_topology()
+        hierarchy = level_octree.hierarchy
+        topology = level_octree.evidence
         return MultipoleCapacityEvidence3D(
             required_nodes=hierarchy.evidence.required_nodes,
             node_capacity=hierarchy.evidence.node_capacity,
@@ -1336,7 +1348,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         active: Array,
         normals: Array | None,
     ) -> tuple[Array, Array]:
-        hierarchy = self.topology.hierarchy
+        hierarchy = self._level_octree_topology().hierarchy
         node_count = hierarchy.node_active.size
         source_leaf = hierarchy.logical_point_leaf_slots[: self.plan.source_capacity]
         safe_leaf = jnp.maximum(source_leaf, 0)
@@ -1346,7 +1358,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             basis = jnp.moveaxis(self._p2m_basis(relative), -1, 0)
         else:
 
-            def dipole_basis(vector, normal):
+            def dipole_basis(vector: Array, normal: Array) -> Array:
                 derivative = jax.jacfwd(self._p2m_basis)(vector)
                 return jnp.sum(derivative * normal, axis=-1)
 
@@ -1415,12 +1427,13 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         active: Array,
         normals: Array | None,
     ) -> tuple[Array, MultipoleTruncationEvidence3D, Array, Array, Array]:
-        hierarchy = self.topology.hierarchy
+        topology = self._level_octree_topology()
+        hierarchy = topology.hierarchy
         moments, charge_mass = self._source_moments(sources, strengths, active, normals)
         node_count = hierarchy.node_active.size
-        safe_source = jnp.maximum(self.topology.far_sources, 0)
-        safe_target = jnp.maximum(self.topology.far_targets, 0)
-        active_route = self.topology.far_active
+        safe_source = jnp.maximum(topology.far_sources, 0)
+        safe_target = jnp.maximum(topology.far_targets, 0)
+        active_route = topology.far_active
         source_center = hierarchy.node_centers[safe_source]
         raw_target_center = hierarchy.node_centers[safe_target]
         fallback_offset = jnp.asarray((1.0, 0.0, 0.0), dtype=source_center.dtype)
@@ -1533,7 +1546,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         locals_, truncation, m2m_count, m2l_count, l2l_count = self._far_locals(
             sources, strengths, active, normals
         )
-        hierarchy = self.topology.hierarchy
+        hierarchy = self._level_octree_topology().hierarchy
         target_leaf = hierarchy.logical_point_leaf_slots[
             self.plan.source_capacity : self.plan.source_capacity
             + self.plan.target_capacity
@@ -1586,7 +1599,8 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         locals_, truncation, m2m_count, m2l_count, l2l_count = self._far_locals(
             sources, strengths, active, normals
         )
-        hierarchy = self.topology.hierarchy
+        topology = self._level_octree_topology()
+        hierarchy = topology.hierarchy
         source_leaf = hierarchy.logical_point_leaf_slots[: self.plan.source_capacity]
         target_leaf = hierarchy.logical_point_leaf_slots[
             self.plan.source_capacity : self.plan.source_capacity
@@ -1601,9 +1615,9 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         )
         for route in range(self.plan.near_interaction_capacity):
             pair_mask = pair_mask | (
-                self.topology.near_active[route]
-                & (target_leaf[:, None] == self.topology.near_targets[route])
-                & (source_leaf[None, :] == self.topology.near_sources[route])
+                topology.near_active[route]
+                & (target_leaf[:, None] == topology.near_targets[route])
+                & (source_leaf[None, :] == topology.near_sources[route])
             )
         pair_mask = pair_mask & active[None, :]
         if target_source_indices is None and self.plan.target_topology == "same-support":
@@ -1662,7 +1676,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         source_strengths: ArrayLike,
         target_positions: ArrayLike | None = None,
         /,
-        **kwargs,
+        **kwargs: ArrayLike | None,
     ) -> Array:
         """Return only values while preserving the full evidence API on ``evaluate``."""
         return self.evaluate(
@@ -1672,6 +1686,9 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
 
 class PreparedLaplaceMultipole3D(AbstractPreparedLaplaceMultipole3D):
     """Final prepared complete Laplace FMM pipeline."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractPreparedLaplaceMultipole3D.__init__
 
 
 __all__ = [

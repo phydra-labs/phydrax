@@ -5,6 +5,11 @@ from phydrax.geometry import MeshRegion
 from phydrax.linalg import LinearCapabilityError, MaterializationPolicy, materialize
 from phydrax.operators.integral.layer_potential._galerkin3d import (
     LaplaceSingleLayerDP0GalerkinPolicy3D,
+    prepare_laplace_single_layer_dp0_3d,
+)
+from phydrax.operators.integral.layer_potential._hierarchical3d import (
+    prepare_scalar_h_matrix_provider_3d,
+    ScalarFastPolicy3D,
 )
 from phydrax.operators.integral.layer_potential._scalar_calderon3d import (
     prepare_scalar_calderon_dp0_3d,
@@ -150,3 +155,30 @@ def test_hypersingular_open_surface_and_frequency_envelope_fail_closed():
 
     with pytest.raises(ValueError, match="panel-frequency envelope"):
         _prepared(ScalarKernelFamily3D.outgoing_helmholtz(10.0))
+
+
+def test_scalar_fast_provider_operator_matches_exact_dp0_action_and_duality():
+    exact = prepare_laplace_single_layer_dp0_3d(
+        MeshRegion(_VERTICES, _FACES), policy=_policy()
+    )
+    policy = ScalarFastPolicy3D(tolerance=1.0e-8)
+    operator = prepare_scalar_h_matrix_provider_3d(exact, policy).as_linear_operator()
+    x = jnp.asarray([0.2, -0.4, 0.7, 0.1])
+    y = jnp.asarray([-0.3, 0.5, 0.9, -0.2])
+
+    assert operator.source == exact.strong_operator.source
+    assert operator.target == exact.strong_operator.target
+    forward = operator.mv(x)
+    assert forward.shape == (4,)
+    assert jnp.allclose(
+        forward, exact.strong_operator.mv(x), rtol=policy.tolerance, atol=0.0
+    )
+    assert jnp.allclose(
+        y @ operator.mv(x), x @ operator.transpose_mv(y), rtol=1.0e-12, atol=1.0e-12
+    )
+    assert jnp.allclose(
+        jnp.vdot(y, operator.mv(x)),
+        jnp.vdot(operator.adjoint_mv(y), x),
+        rtol=1.0e-12,
+        atol=1.0e-12,
+    )

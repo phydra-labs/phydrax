@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -51,13 +51,22 @@ from ._base import (
 class OLSModel(AbstractLinearRegressorModel):
     """Fitted weighted ordinary least-squares model."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearRegressorModel.__init__
+
 
 class RidgeModel(AbstractLinearRegressorModel):
     """Fitted isotropic Tikhonov (ridge) model."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearRegressorModel.__init__
+
 
 class TikhonovModel(AbstractLinearRegressorModel):
     """Fitted general Tikhonov model."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearRegressorModel.__init__
 
 
 def _validated_rcond(value: float | None, /) -> float | None:
@@ -244,7 +253,7 @@ def _normal_solve(
     gram_cutoff = cutoff * cutoff
     factors = factor_pseudoinverse(
         gram,
-        RankPolicy(relative_cutoff=gram_cutoff),
+        RankPolicy(relative_cutoff=float(gram_cutoff)),
         hermitian=True,
     )
     singular = factors.singular_values
@@ -308,7 +317,7 @@ class OLSRecipe(AbstractRecipe):
         fit_intercept: bool = True,
         weight_policy: WeightPolicy = "statistical",
         rcond: float | None = None,
-    ):
+    ) -> None:
         self.fit_intercept = bool(fit_intercept)
         self.weight_policy = weight_policy
         self.rcond = _validated_rcond(rcond)
@@ -358,7 +367,7 @@ class RidgeRecipe(AbstractRecipe):
         regularize_intercept: bool = False,
         weight_policy: WeightPolicy = "statistical",
         rcond: float | None = None,
-    ):
+    ) -> None:
         alpha_ = jnp.asarray(alpha)
         if alpha_.weak_type:
             alpha_ = alpha_.astype(jnp.float32)
@@ -419,7 +428,7 @@ class TikhonovRecipe(AbstractRecipe):
         regularize_intercept: bool = False,
         weight_policy: WeightPolicy = "statistical",
         rcond: float | None = None,
-    ):
+    ) -> None:
         value = jnp.asarray(penalty)
         if value.ndim not in {1, 2}:
             raise ValueError(

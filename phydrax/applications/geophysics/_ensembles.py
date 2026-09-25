@@ -21,6 +21,7 @@ from ...dynamics import StateLayout
 from ...ein import contract
 from ...equations import DiscreteStateLayout
 from ...linalg import ArraySpace, FunctionLinearOperator
+from ...linalg._spaces import _coordinate_dtype
 from ...metrix import EuclideanStateGeometry
 from ...stochastic import (
     AbstractStatePrior,
@@ -34,7 +35,7 @@ from ...stochastic import (
     TransitionSample,
 )
 from ...uq import EnsembleFilterResult
-from ._observations import PreparedGeophysicalObservations
+from ._observations import _observation_target_space, PreparedGeophysicalObservations
 from ._quantities import GeophysicalQuantity
 from ._time import GeophysicalTimeSpec
 
@@ -55,7 +56,7 @@ class GeophysicalEnsembleAxis(StrictModule, NonTrainableState):
     labels: tuple[str, ...] = eqx.field(static=True)
     axis_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: str, labels: Sequence[str], /):
+    def __init__(self, kind: str, labels: Sequence[str], /) -> None:
         labels_ = tuple(labels)
         if kind not in _AXIS_KINDS:
             raise ValueError(f"Ensemble axis kind must be one of {_AXIS_KINDS}.")
@@ -88,7 +89,7 @@ class GeophysicalEnsembleLineage(StrictModule, NonTrainableState):
 
     def __init__(
         self, axes: Sequence[GeophysicalEnsembleAxis], coordinates: Mapping[str, str], /
-    ):
+    ) -> None:
         axes_ = tuple(axes)
         if any(not isinstance(axis, GeophysicalEnsembleAxis) for axis in axes_):
             raise TypeError("axes must contain GeophysicalEnsembleAxis values.")
@@ -145,7 +146,9 @@ class _LineagePrior(AbstractStatePrior):
     prior_id: str = eqx.field(static=True)
     has_log_density: bool = eqx.field(static=True)
 
-    def __init__(self, prior: AbstractStatePrior, lineage: GeophysicalEnsembleLineage):
+    def __init__(
+        self, prior: AbstractStatePrior, lineage: GeophysicalEnsembleLineage
+    ) -> None:
         self.prior = prior
         self.lineage = lineage
         self.state_shape = prior.state_shape
@@ -253,7 +256,7 @@ def prepare_geophysical_assimilation(
             )
         source = state_layout.field_spaces[state_layout.field_names.index(source_field)]
 
-        def select(state):
+        def select(state: Array) -> Array:
             return state_layout.field(state, source_field)
     else:
         if not isinstance(source_field, DiscreteFieldSpace):
@@ -269,7 +272,7 @@ def prepare_geophysical_assimilation(
                 "The source field must cover exactly the native state array."
             )
 
-        def select(state):
+        def select(state: Array) -> Array:
             return state
 
     if source.field_space_id != observations.operator.transfer.source.field_space_id:
@@ -277,7 +280,7 @@ def prepare_geophysical_assimilation(
             "Observation source field support/representation does not match the model."
         )
     transfer = observations.operator.transfer
-    state_space = ArraySpace(shape, dtype=source.vector_space.dtype)
+    state_space = ArraySpace(shape, dtype=_coordinate_dtype(source.vector_space))
     state_operator = FunctionLinearOperator(
         lambda state: transfer.primal_operator.mv(select(state)),
         source=state_space,
@@ -292,7 +295,13 @@ def prepare_geophysical_assimilation(
     )
     wrapped_prior = _LineagePrior(prior, lineage)
 
-    def forecast(key, state, t0, t1, context):
+    def forecast(
+        key: Array,
+        state: Array,
+        t0: Array,
+        t1: Array,
+        context: StateSpaceStepContext,
+    ) -> Array | TransitionSample:
         value = transition(
             lineage.key(key, "internal_stochastic"), state, t0, t1, context
         )
@@ -323,7 +332,7 @@ def prepare_geophysical_assimilation(
             observations.error_variance[context.step_index].reshape(-1)
         ),
         state_shape=shape,
-        observation_shape=transfer.target.vector_space.shape,
+        observation_shape=_observation_target_space(observations.operator).shape,
         observation_id=observations.preparation_id,
     )
     original = observations.sequence
@@ -395,7 +404,7 @@ class GeophysicalAnalysisInventory(StrictModule, NonTrainableState):
         weights: ArrayLike,
         state_layout: StateLayout | DiscreteStateLayout,
         /,
-    ):
+    ) -> None:
         shape = _layout_shape(state_layout)
         array = np.asarray(weights, dtype=np.float64)
         if (

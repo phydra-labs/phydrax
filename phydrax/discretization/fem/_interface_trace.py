@@ -26,6 +26,7 @@ from ...linalg import (
 from .._cell_complex import TetrahedralConnectivity
 from .._topology import EntitySelection
 from ._generic import FiniteElementDiscretization
+from ._reference import FiniteElementSpec
 
 
 class PreparedMatchingScalarInterfaceTrace3D(StrictModule, NonTrainableState):
@@ -134,7 +135,7 @@ def _coordinate_tolerance(
     epsilon = np.finfo(coordinates.dtype).eps
     maximum = math.sqrt(epsilon) * scale
     tolerance = (
-        128.0 * epsilon * scale
+        float(128.0 * epsilon * scale)
         if coordinate_tolerance is None
         else float(coordinate_tolerance)
     )
@@ -214,7 +215,7 @@ def _face_routes(
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
     fem_faces = np.asarray(connectivity.faces, dtype=np.int32)
-    keys: Mapping[tuple[int, int, int], int] = {
+    keys: Mapping[tuple[int, ...], int] = {
         tuple(sorted(int(value) for value in fem_faces[face])): int(face)
         for face in selected_faces
     }
@@ -288,6 +289,7 @@ def prepare_matching_scalar_interface_trace_3d(
         )
         or dof_map.association != "vertex"
         or dof_map.component_shape
+        or not isinstance(field_space, ArraySpace)
         or field_space.shape != (mesh.coordinates.shape[0],)
     ):
         raise ValueError(
@@ -302,7 +304,8 @@ def prepare_matching_scalar_interface_trace_3d(
     coordinate_element = discretization.coordinate_elements[0]
     coordinate_dofs = np.asarray(discretization.coordinate_dofs[0], dtype=np.int32)
     if (
-        coordinate_element.cell_kind != "tetrahedron"
+        not isinstance(coordinate_element, FiniteElementSpec)
+        or coordinate_element.cell_kind != "tetrahedron"
         or coordinate_element.family != "Lagrange"
         or coordinate_element.degree != 1
         or coordinate_element.conformity != "H1"

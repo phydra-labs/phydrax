@@ -167,7 +167,7 @@ class VirasoroEllipticBlockPlan(StrictModule):
         maximum_level: int = 8,
         singular_value_tolerance: float = 1e-12,
         maximum_partition_count: int = 4096,
-    ):
+    ) -> None:
         central = complex(central_charge)
         external = tuple(complex(value) for value in external_weights)
         internal = complex(internal_weight)
@@ -192,7 +192,7 @@ class VirasoroEllipticBlockPlan(StrictModule):
             "maximum_partition_count": capacity,
         }
         self.central_charge = central
-        self.external_weights = external  # type: ignore[assignment]
+        self.external_weights = external
         self.internal_weight = internal
         self.maximum_level = level
         self.singular_value_tolerance = tolerance
@@ -475,7 +475,7 @@ class LiouvilleFourPointPlan(StrictModule):
         momentum_nodes: int,
         block_level: int = 6,
         precision_digits: int = 50,
-    ):
+    ) -> None:
         b = float(coupling)
         mu = float(cosmological_constant)
         alphas = tuple(complex(value) for value in external_alphas)
@@ -507,7 +507,7 @@ class LiouvilleFourPointPlan(StrictModule):
         }
         self.coupling = b
         self.cosmological_constant = mu
-        self.external_alphas = alphas  # type: ignore[assignment]
+        self.external_alphas = alphas
         self.cross_ratios = jnp.asarray(points)
         self.maximum_momentum = maximum
         self.momentum_nodes = nodes

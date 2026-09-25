@@ -237,9 +237,9 @@ velocimetry-xarray = [
     "xarray>=2024.10",
 ]
 qa = [
-    "ruff==0.16.3",
+    "ruff==0.16.9",
     "scikit-learn>=1.4,<1.11",
-    "ty==0.0.71",
+    "ty==0.0.84",
     "scipy-stubs>=1.18.1,<1.19; python_version >= '3.12'",
     "scipy-stubs>=1.16,<1.17; python_version < '3.12'",
     "cadquery-ocp-stubs>=7.9.3.1,<7.10; python_version < '3.15'",
@@ -288,6 +288,53 @@ order-by-type = false
 [tool.ruff.lint.pycodestyle]
 max-line-length = 90
 
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.src]
+include = ["phydrax"]
+
+[tool.ty.analysis]
+# Only `ty: ignore[rule]` suppresses a diagnostic.
+respect-type-ignore-comments = false
+# Optional external providers, and compiled submodules without stubs, are `Any`
+# at their import boundary, so the diagnostic set does not depend on which
+# optional extras are installed.
+replace-imports-with-any = [
+  "arviz.**",
+  "cryptography.**",
+  "cvxpy.**",
+  "dafoam.**",
+  "design.**",
+  "h5py.h5o",
+  "manifold3d.**",
+  "mini_studies.**",
+  "mpi4py.**",
+  "open3d.**",
+  "openmdao.**",
+  "parameter_targets.**",
+  "petsc4py.**",
+  "psutil.**",
+  "pyvista.**",
+  "qdesignoptimizer.**",
+  "qiskit_metal.**",
+  "scikits.**",
+  "sklearn.**",
+  "sksparse.**",
+  "sparseqr.**",
+  "uproot.**",
+  "win32api.**",
+  "win32con.**",
+  "win32job.**",
+]
+
+[tool.ty.rules]
+# Equinox keeps an inherited custom `__init__` instead of synthesizing a
+# dataclass constructor, and flattens fields in declaration order. The rule does
+# not apply to such classes; reordering fields to satisfy it would change PyTree
+# leaf order, fingerprints, filter specifications, and checkpoints.
+dataclass-field-order = "ignore"
+
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
 markers = [
@@ -300,6 +347,7 @@ markers = [
     "meshing_vorocrust: requires the real VoroCrust executable and extraction bridge",
     "homotopy_continuation_live: requires an explicitly pinned Julia and HomotopyContinuation environment",
     "macaulay2_live: requires an explicitly pinned Macaulay2 executable",
+    "typecheck: runs the pinned ty checker over static typing fixtures",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:ezdxf.queryparser:",

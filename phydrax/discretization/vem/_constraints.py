@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, ConstraintMap, FunctionLinearOperator
+from .._cell_complex import PolygonalConnectivity
 from .._integration_domain import IntegrationDomain
 from ._space import VirtualElementDiscretization
 
@@ -109,13 +110,15 @@ def virtual_element_dirichlet_constraint(
         if domain.kind != "exterior_facet":
             raise ValueError("VEM Dirichlet domains must select exterior facets.")
         if (
-            domain.support_id != discretization.support.support_id
+            domain.support_id != discretization.mesh.support.support_id
             or domain.entity_set_id
             != discretization.mesh.topology.entity_sets[1].entity_set_id
         ):
             raise ValueError("VEM Dirichlet domain belongs to another facet support.")
         mask = np.zeros_like(mask)
-        edges = np.asarray(discretization.mesh.connectivity.edges, dtype=np.int32)
+        # VirtualElementPlan rejects meshes without PolygonalConnectivity.
+        connectivity = cast(PolygonalConnectivity, discretization.mesh.connectivity)
+        edges = np.asarray(connectivity.edges, dtype=np.int32)
         selected = np.asarray(domain.entity_indices, dtype=np.int32)
         if discretization.dof_map.vertex_dof_count:
             mask[np.unique(edges[selected].reshape((-1,)))] = True
@@ -154,6 +157,8 @@ def virtual_element_dirichlet_constraint(
     else:
         trace_modes = np.full(constrained.shape, -1, dtype=np.int32)
     full_space = discretization.field_space.vector_space
+    if not isinstance(full_space, ArraySpace):
+        raise TypeError("VEM Dirichlet constraints require ArraySpace.")
     reduced_space = ArraySpace((free.size,), pairing=None)
     free_array = jnp.asarray(free)
     prolongation = FunctionLinearOperator(

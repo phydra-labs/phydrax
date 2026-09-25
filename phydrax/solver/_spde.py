@@ -278,7 +278,7 @@ class SemidiscreteSPDE(StrictModule):
         state_shape: Sequence[int],
         noise_shape: Sequence[int],
         basis_id: str | None,
-    ):
+    ) -> None:
         if not isinstance(problem, DifferentialProblem):
             raise TypeError("problem must be a DifferentialProblem.")
         if not isinstance(
@@ -561,7 +561,7 @@ def semidiscretize_spde(
         resolved_noise_shape = ()
         resolved_basis_id = None
         resolved_structure = "general"
-        effective_diffusion = None  # type: ignore[assignment]
+        effective_diffusion = None
 
     validated_drift = _ValidatedVectorField(drift, state_shape, "drift")
     validated_diffusion = (

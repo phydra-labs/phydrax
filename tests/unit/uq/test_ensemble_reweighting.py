@@ -285,6 +285,20 @@ def test_support_collapse_and_out_of_convex_support_are_explicit():
     np.testing.assert_allclose(jnp.sum(jnp.exp(outside.log_weights)), 1.0)
 
 
+def test_nonfinite_whitening_reports_array_valued_dual_objective():
+    support = phx.uq.EnsembleSupport(np.zeros(2), "empirical", "overflow-support")
+    plan = _cholesky_plan([[0.0], [1.0e308]], [0.0], 1.0e-300, "overflow-calibration")
+
+    result = phx.uq.reweight_ensemble(
+        support, plan, regularization=1.0, support_policy=_SUPPORT_POLICY
+    )
+
+    evidence = result.optimization_evidence
+    assert not bool(evidence.successful)
+    assert evidence.dual_objective.dtype == evidence.dual_gradient_norm.dtype
+    assert bool(jnp.isposinf(evidence.dual_objective))
+
+
 def test_held_out_nonlinear_observable_is_averaged_per_conformation():
     support = phx.uq.EnsembleSupport(
         np.zeros(3), "empirical", "nonlinear-observable-support"

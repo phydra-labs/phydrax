@@ -10,6 +10,7 @@ from typing import Literal, TYPE_CHECKING, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -17,6 +18,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
     AbstractLinearOperator,
+    AbstractVectorSpace,
     ArraySpace,
     BlockLinearOperator,
     BlockSpace,
@@ -71,7 +73,7 @@ class PressureGaugePolicy(StrictModule, NonTrainableState):
         weights: ArrayLike | None = None,
         pinned_dof: int | None = None,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         mode_ = str(mode)
         if mode_ not in ("mean-zero", "pinned", "none"):
             raise ValueError("Pressure gauge mode must be mean-zero, pinned, or none.")
@@ -106,7 +108,7 @@ class PressureGaugePolicy(StrictModule, NonTrainableState):
             weights_ = None
         self.weights = None if weights_ is None else jnp.asarray(weights_)
         self.pinned_dof = pin
-        self.mode = mode_  # type: ignore[assignment]
+        self.mode = mode_
         self.tolerance = limit
         self.gauge_id = canonical_fingerprint(
             {
@@ -118,7 +120,7 @@ class PressureGaugePolicy(StrictModule, NonTrainableState):
             }
         )
 
-    def _weights(self, size: int, dtype, /) -> Array:
+    def _weights(self, size: int, dtype: DTypeLike, /) -> Array:
         if size <= 0:
             raise ValueError("Pressure gauge requires a nonempty pressure vector.")
         if self.mode == "mean-zero":
@@ -172,7 +174,9 @@ class PressureGaugePolicy(StrictModule, NonTrainableState):
         )
         return PressureGaugeEvidence(residual, scale, finite, valid, self.mode)
 
-    def diagnostic_vector(self, size: int, dtype=np.float64, /) -> np.ndarray:
+    def diagnostic_vector(
+        self, size: int, dtype: DTypeLike = np.float64, /
+    ) -> np.ndarray:
         return np.asarray(self._weights(size, dtype))
 
 
@@ -189,7 +193,7 @@ class MixedPressureStabilization(StrictModule, NonTrainableState):
         /,
         *,
         coefficient: float = 0.0,
-    ):
+    ) -> None:
         kind_ = str(kind)
         if kind_ not in ("none", "pressure-laplacian"):
             raise ValueError("Unknown mixed-pressure stabilization.")
@@ -200,7 +204,7 @@ class MixedPressureStabilization(StrictModule, NonTrainableState):
             raise ValueError(
                 "No stabilization requires zero coefficient and pressure-laplacian requires a positive coefficient."
             )
-        self.kind = kind_  # type: ignore[assignment]
+        self.kind = kind_
         self.coefficient = coefficient_
         self.stabilization_id = canonical_fingerprint(
             {
@@ -336,7 +340,7 @@ class MixedFiniteElementConstraintPlan(StrictModule, NonTrainableState):
         stabilization: MixedPressureStabilization | None = None,
         rank_tolerance: float = 1.0e-10,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be CellMesh.")
         if not isinstance(gauge, PressureGaugePolicy):
@@ -571,7 +575,7 @@ def mixed_inf_sup_diagnostic(
 
 def _primalized_block(
     operator: AbstractLinearOperator,
-    target,
+    target: AbstractVectorSpace,
     /,
 ) -> FunctionLinearOperator:
     return FunctionLinearOperator(

@@ -70,7 +70,7 @@ def test_lbm_iree_contract_has_explicit_forward_and_vjp_abis():
             initial,
             step_count=5,
             step_size=0.25,
-            mode="reverse",  # type: ignore[arg-type]
+            mode="reverse",  # ty: ignore[invalid-argument-type]
         )
     with pytest.raises(ValueError, match="trailing-Q"):
         lbm_iree.prepare_lattice_boltzmann_iree_contract(

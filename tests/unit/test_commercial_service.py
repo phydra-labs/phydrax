@@ -1472,7 +1472,7 @@ def test_artifact_rights_remain_bound_and_gate_grant_and_fetch():
         artifact_signing_secret=b"s" * 32,
     )
     with pytest.raises(IntegrityError, match="must be a string"):
-        service.fetch_artifact("token", None)  # type: ignore[arg-type]
+        service.fetch_artifact("token", None)  # ty: ignore[invalid-argument-type]
     with pytest.raises(IntegrityError, match="encoded-byte limit"):
         service.fetch_artifact("token", "00" * 3_000)
     service.register_provider(

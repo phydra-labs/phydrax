@@ -11,18 +11,20 @@ import hmac
 import json
 import secrets
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
-from typing import Literal, Protocol
+from typing import cast, Literal, Protocol
 from uuid import uuid4
 
 from phydrax.execution import ExecutionPlan, ResourceRequest
 from phydrax.lifecycle import (
     AnalysisPlan,
+    ArtifactRepository,
     CheckpointManifest,
     CheckpointShard,
     ResolvedRunSpec,
     RunRecord,
+    RunStatus,
 )
 from phydrax.qualification._evidence import SupportDependency
 from phydrax.qualification._registry import (
@@ -40,6 +42,7 @@ from ._auth import (
     SystemClock,
 )
 from ._contracts import (
+    ArtifactClassification,
     ArtifactDescriptor,
     ArtifactExpired,
     ArtifactRights,
@@ -56,6 +59,7 @@ from ._contracts import (
     JobState,
     JobStatus,
     JobSubmission,
+    JSONValue,
     ProfileUnavailable,
     ProviderResult,
     QuotaExceeded,
@@ -86,7 +90,7 @@ class ReleaseIndexDependencyAdmitter:
         trust_policy: ReleaseTrustPolicy,
         support_tuples: Mapping[str, SupportTuple],
         /,
-    ):
+    ) -> None:
         if not isinstance(release_index, ReleaseIndex):
             raise TypeError("Dependency admission requires a typed release index.")
         if not support_tuples:
@@ -198,7 +202,7 @@ class _ProviderContext:
         job: _Job,
         attempt: int,
         durable_version: int | None,
-    ):
+    ) -> None:
         self._service = service
         self._job = job
         self._attempt = int(attempt)
@@ -261,12 +265,12 @@ class InProcessReferenceService:
         cad_egress_policies: Mapping[str, CADEgressPolicy] | None = None,
         dependency_admitter: SupportDependencyAdmitter | None = None,
         durable_store: DurableServiceStore | None = None,
-        repository: object | None = None,
+        repository: ArtifactRepository | None = None,
         scheduler: object | None = None,
         scheduler_id: str | None = None,
         auth_policy_id: str | None = None,
         execution_lease_seconds: int = 300,
-    ):
+    ) -> None:
         if not tenant_quotas:
             raise ValueError("At least one tenant quota is required.")
         if any(
@@ -462,13 +466,15 @@ class InProcessReferenceService:
         if len(prior) != len(prior_payload):
             raise IntegrityError("Durable prior run records are malformed.")
         raw_run = payload.get("run_record")
-        if raw_run is None and record.state is not JobState.QUEUED:
-            raise IntegrityError("Only a recovered queued job may omit its run record.")
         if raw_run is None:
+            if record.state is not JobState.QUEUED:
+                raise IntegrityError(
+                    "Only a recovered queued job may omit its run record."
+                )
             run_record = self._run_record(
                 record.job_id,
                 submission,
-                record.state.value,
+                "queued",
                 checkpoint_ids[-1] if checkpoint_ids else None,
                 attempt=record.attempt,
             )
@@ -1374,7 +1380,7 @@ class InProcessReferenceService:
         content: bytes,
         content_sha256: str,
         media_type: str,
-        classification: str,
+        classification: ArtifactClassification,
         created_at: int,
         rights: ArtifactRights,
         cad: CADArtifactMetadata | None,
@@ -1392,7 +1398,7 @@ class InProcessReferenceService:
                 content_sha256,
                 len(content),
                 media_type,
-                classification,  # type: ignore[arg-type]
+                classification,
                 created_at,
                 job.expires_at,
                 uuid4().hex,
@@ -1415,7 +1421,7 @@ class InProcessReferenceService:
             content_sha256,
             len(content),
             media_type,
-            classification,  # type: ignore[arg-type]
+            classification,
             created_at,
             job.expires_at,
             transaction.transaction_id,
@@ -1990,7 +1996,7 @@ class InProcessReferenceService:
         self,
         job_id: str,
         submission: JobSubmission,
-        status: str,
+        status: RunStatus,
         checkpoint_id: str | None = None,
         result: ProviderResult | None = None,
         *,
@@ -2003,7 +2009,7 @@ class InProcessReferenceService:
             submission.analysis_plan.analysis_plan_id,
             submission.numeric_revision_id,
             submission.execution_plan.execution_plan_id,
-            status,  # type: ignore[arg-type]
+            status,
             result_ids=() if result is None else result.result_ids,
             diagnostic_ids=diagnostics,
             checkpoint_id=checkpoint_id,
@@ -2231,18 +2237,19 @@ def _analysis_plan_record(plan: AnalysisPlan, /) -> dict[str, object]:
 
 
 def _analysis_plan_from_record(record: Mapping[str, object], /) -> AnalysisPlan:
+    # AnalysisPlan validates every durable identifier sequence below.
     value = AnalysisPlan(
         str(record["analysis_plan_id"]),
         str(record["provider_plan_id"]),
         str(record["discretization_key"]),
-        tuple(record["field_layout_ids"]),  # type: ignore[arg-type]
+        tuple(cast("Iterable[str]", record["field_layout_ids"])),
         material_plan_id=(
             None
             if record["material_plan_id"] is None
             else str(record["material_plan_id"])
         ),
-        constraint_ids=tuple(record["constraint_ids"]),  # type: ignore[arg-type]
-        capability_ids=tuple(record["capability_ids"]),  # type: ignore[arg-type]
+        constraint_ids=tuple(cast("Iterable[str]", record["constraint_ids"])),
+        capability_ids=tuple(cast("Iterable[str]", record["capability_ids"])),
         model_manifest_id=(
             None
             if record["model_manifest_id"] is None
@@ -2273,14 +2280,15 @@ def _run_record_payload(record: RunRecord, /) -> dict[str, object]:
 
 
 def _run_record_from_payload(payload: Mapping[str, object], /) -> RunRecord:
+    # RunRecord validates the durable status and identifier sequences.
     value = RunRecord(
         str(payload["run_id"]),
         str(payload["analysis_plan_id"]),
         str(payload["numeric_revision_id"]),
         str(payload["execution_plan_id"]),
-        str(payload["status"]),  # type: ignore[arg-type]
-        result_ids=tuple(payload["result_ids"]),  # type: ignore[arg-type]
-        diagnostic_ids=tuple(payload["diagnostic_ids"]),  # type: ignore[arg-type]
+        cast("RunStatus", str(payload["status"])),
+        result_ids=tuple(cast("Iterable[str]", payload["result_ids"])),
+        diagnostic_ids=tuple(cast("Iterable[str]", payload["diagnostic_ids"])),
         checkpoint_id=(
             None if payload["checkpoint_id"] is None else str(payload["checkpoint_id"])
         ),
@@ -2327,9 +2335,9 @@ def _checkpoint_from_payload(payload: Mapping[str, object], /) -> CheckpointMani
         shard = CheckpointShard(
             str(raw["shard_id"]),
             str(raw["payload_digest"]),
-            raw["byte_count"],  # type: ignore[arg-type]
-            tuple(raw["layout_ids"]),  # type: ignore[arg-type]
-            metadata=tuple(tuple(item) for item in raw["metadata"]),  # type: ignore[arg-type]
+            raw["byte_count"],
+            tuple(raw["layout_ids"]),
+            metadata=tuple(tuple(item) for item in raw["metadata"]),
         )
         if raw.get("shard_fingerprint") != shard.shard_fingerprint:
             raise IntegrityError("Durable checkpoint shard identity is invalid.")
@@ -2337,6 +2345,7 @@ def _checkpoint_from_payload(payload: Mapping[str, object], /) -> CheckpointMani
     complete = payload["complete"]
     if type(complete) is not bool:
         raise IntegrityError("Durable checkpoint completion flag is invalid.")
+    # CheckpointManifest validates the durable diagnostic identifiers.
     value = CheckpointManifest(
         str(payload["checkpoint_id"]),
         str(payload["analysis_plan_id"]),
@@ -2354,7 +2363,7 @@ def _checkpoint_from_payload(payload: Mapping[str, object], /) -> CheckpointMani
             if payload["parent_checkpoint_id"] is None
             else str(payload["parent_checkpoint_id"])
         ),
-        diagnostic_ids=tuple(payload["diagnostic_ids"]),  # type: ignore[arg-type]
+        diagnostic_ids=tuple(cast("Iterable[str]", payload["diagnostic_ids"])),
     )
     if (
         payload.get("kind") != "checkpoint-manifest"
@@ -2364,7 +2373,9 @@ def _checkpoint_from_payload(payload: Mapping[str, object], /) -> CheckpointMani
     return value
 
 
-def _secret_handle_payload(handle: SecretHandle, /) -> dict[str, object]:
+def _secret_handle_payload(
+    handle: SecretHandle | ScopedSecretHandle, /
+) -> dict[str, object]:
     return {
         "handle_id": handle.handle_id,
         "tenant_id": handle.tenant_id,
@@ -2375,7 +2386,10 @@ def _secret_handle_payload(handle: SecretHandle, /) -> dict[str, object]:
     }
 
 
-def _secret_handle_from_payload(payload: Mapping[str, object], /) -> SecretHandle:
+def _secret_handle_from_payload(
+    payload: Mapping[str, object], /
+) -> SecretHandle | ScopedSecretHandle:
+    # The handle constructors validate the durable ``created_at`` timestamp.
     scopes = payload["scopes"]
     expires_at = payload["expires_at"]
     if scopes or expires_at is not None:
@@ -2385,14 +2399,14 @@ def _secret_handle_from_payload(payload: Mapping[str, object], /) -> SecretHandl
             str(payload["handle_id"]),
             str(payload["tenant_id"]),
             frozenset(str(value) for value in scopes),
-            payload["created_at"],  # type: ignore[arg-type]
+            cast("int", payload["created_at"]),
             expires_at,
             str(payload["key_version"]),
         )
     return SecretHandle(
         str(payload["handle_id"]),
         str(payload["tenant_id"]),
-        payload["created_at"],  # type: ignore[arg-type]
+        cast("int", payload["created_at"]),
         str(payload["key_version"]),
     )
 
@@ -2440,6 +2454,7 @@ def _artifact_rights_payload(rights: ArtifactRights, /) -> dict[str, object]:
 
 
 def _artifact_rights_from_payload(payload: Mapping[str, object], /) -> ArtifactRights:
+    # ArtifactRights validates the durable size, classification, and flags.
     value = ArtifactRights(
         str(payload["scientific_artifact_id"]),
         str(payload["rights_id"]),
@@ -2448,12 +2463,12 @@ def _artifact_rights_from_payload(payload: Mapping[str, object], /) -> ArtifactR
         str(payload["source_uri"]),
         str(payload["attribution_id"]),
         str(payload["content_sha256"]),
-        payload["byte_size"],  # type: ignore[arg-type]
-        str(payload["classification"]),  # type: ignore[arg-type]
-        payload["allow_redistribution"],  # type: ignore[arg-type]
-        payload["allow_export"],  # type: ignore[arg-type]
-        payload["redistribution_requested"],  # type: ignore[arg-type]
-        payload["export_requested"],  # type: ignore[arg-type]
+        cast("int", payload["byte_size"]),
+        cast("ArtifactClassification", str(payload["classification"])),
+        cast("bool", payload["allow_redistribution"]),
+        cast("bool", payload["allow_export"]),
+        cast("bool", payload["redistribution_requested"]),
+        cast("bool", payload["export_requested"]),
     )
     if payload.get("rights_binding_id") != value.rights_binding_id:
         raise IntegrityError("Durable artifact rights identity is invalid.")
@@ -2510,24 +2525,25 @@ def _artifact_descriptor_from_payload(
         raise IntegrityError("Durable artifact descriptor is malformed.")
     if type(encryption["encrypted_at_rest"]) is not bool:
         raise IntegrityError("Durable artifact encryption flag is invalid.")
+    # ArtifactDescriptor and EncryptionMetadata validate the durable scalars.
     return ArtifactDescriptor(
         str(payload["artifact_id"]),
         str(payload["scientific_artifact_id"]),
         str(payload["job_id"]),
         str(payload["tenant_id"]),
         str(payload["content_sha256"]),
-        payload["byte_size"],  # type: ignore[arg-type]
+        cast("int", payload["byte_size"]),
         str(payload["media_type"]),
-        str(payload["classification"]),  # type: ignore[arg-type]
-        payload["created_at"],  # type: ignore[arg-type]
-        payload["expires_at"],  # type: ignore[arg-type]
+        cast("ArtifactClassification", str(payload["classification"])),
+        cast("int", payload["created_at"]),
+        cast("int", payload["expires_at"]),
         str(payload["storage_generation"]),
         EncryptionMetadata(
             str(encryption["algorithm"]),
             str(encryption["key_id"]),
-            encryption["encrypted_at_rest"],  # type: ignore[arg-type]
+            encryption["encrypted_at_rest"],
             str(encryption["transport_protocol"]),
-            encryption["key_rotated_at"],  # type: ignore[arg-type]
+            encryption["key_rotated_at"],
         ),
         _artifact_rights_from_payload(rights),
         (
@@ -2559,19 +2575,20 @@ def _submission_from_payload(payload: Mapping[str, object], /) -> JobSubmission:
         or (resolved is not None and not isinstance(resolved, Mapping))
     ):
         raise IntegrityError("Durable job submission is malformed.")
+    # JobSubmission validates the durable parameters and retention period.
     value = JobSubmission(
         _analysis_plan_from_record(analysis),
         ExecutionPlan.from_payload(execution),
         str(payload["numeric_revision_id"]),
         str(payload["profile_id"]),
-        payload["parameters"],  # type: ignore[arg-type]
+        cast("Mapping[str, JSONValue]", payload["parameters"]),
         ResourceRequest.from_payload(resources),
         tuple(
             _secret_handle_from_payload(handle)
             for handle in handles
             if isinstance(handle, Mapping)
         ),
-        payload["retention_seconds"],  # type: ignore[arg-type]
+        cast("int", payload["retention_seconds"]),
         str(payload["request_id"]),
         (None if resolved is None else ResolvedRunSpec.from_record(resolved)),
     )
@@ -2606,8 +2623,8 @@ def _failure_from_payload(payload: object, /) -> FailureEvidence | None:
         str(payload["exception_type"]),
         str(payload["message"]),
         payload["retryable"],
-        payload["attempt"],  # type: ignore[arg-type]
-        tuple(payload["diagnostic_ids"]),  # type: ignore[arg-type]
+        payload["attempt"],
+        tuple(payload["diagnostic_ids"]),
     )
 
 

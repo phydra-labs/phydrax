@@ -15,7 +15,8 @@ from ._wavelet_catalog import get_wavelet
 
 WaveletBoundary = Literal["periodization", "symmetric", "constant"]
 
-_FILTERS: dict[str, tuple[tuple[float, ...], ...]] = {
+_FilterTaps = tuple[float, ...]
+_FILTERS: dict[str, tuple[_FilterTaps, _FilterTaps, _FilterTaps, _FilterTaps]] = {
     "haar": (
         (0.7071067811865476, 0.7071067811865476),
         (-0.7071067811865476, 0.7071067811865476),
@@ -152,8 +153,13 @@ def load_filter_taps(name: str, /) -> tuple[Array, Array, Array, Array]:
             jnp.asarray(wavelet.rec_lo),
             jnp.asarray(wavelet.rec_hi),
         )
-    taps = _FILTERS[key]
-    return tuple(jnp.asarray(values) for values in taps)  # type: ignore[return-value]
+    dec_lo, dec_hi, rec_lo, rec_hi = _FILTERS[key]
+    return (
+        jnp.asarray(dec_lo),
+        jnp.asarray(dec_hi),
+        jnp.asarray(rec_lo),
+        jnp.asarray(rec_hi),
+    )
 
 
 def _dwt_row(

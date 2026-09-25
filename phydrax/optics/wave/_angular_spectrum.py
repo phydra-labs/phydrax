@@ -49,13 +49,14 @@ def _normalize_padding(
         return None
     if isinstance(padding, bool):
         raise TypeError("padding widths must be integers.")
-    if isinstance(padding, Integral):
+    if isinstance(padding, (int, Integral)):
         value = _padding_width(padding)
         return ((value, value), (value, value))
     axes = tuple(tuple(_padding_width(width) for width in pair) for pair in padding)
     if len(axes) != 2 or any(len(pair) != 2 for pair in axes):
         raise ValueError("padding must contain (before, after) widths for two axes.")
-    return axes  # type: ignore[return-value]
+    (first_before, first_after), (second_before, second_after) = axes
+    return ((first_before, first_after), (second_before, second_after))
 
 
 def _uniform_spacing(space: PlaneFieldSpace, axis_index: int, /) -> float:
@@ -164,7 +165,7 @@ class AngularSpectrumPlan(StrictModule, NonTrainableState):
         *,
         maximum_leakage_fraction: float = 1.0e-6,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         padding_ = _normalize_padding(padding)
         tolerance = float(maximum_leakage_fraction)
         if not np.isfinite(tolerance) or not 0.0 <= tolerance <= 1.0:
@@ -198,10 +199,12 @@ class AngularSpectrumPlan(StrictModule, NonTrainableState):
                     "Finite-window propagation requires explicit positive padding before and after both axes."
                 )
             padding = self.padding
-        spacings = tuple(_uniform_spacing(space, index) for index in range(2))
-        working_shape = tuple(
-            size + before + after
-            for size, (before, after) in zip(space.shape, padding, strict=True)
+        spacings = (_uniform_spacing(space, 0), _uniform_spacing(space, 1))
+        rows, columns = space.shape
+        (row_before, row_after), (column_before, column_after) = padding
+        working_shape = (
+            rows + row_before + row_after,
+            columns + column_before + column_after,
         )
         frequencies = tuple(
             2.0 * jnp.pi * jnp.fft.fftfreq(size, d=spacing)
@@ -217,7 +220,7 @@ class AngularSpectrumPlan(StrictModule, NonTrainableState):
                 "space": space.space_id,
                 "padding": padding,
                 "working_shape": working_shape,
-                "sample_spacings": [spacing.hex() for spacing in spacings],
+                "sample_spacings": [float(spacing).hex() for spacing in spacings],
             }
         )
         return PreparedAngularSpectrum(
@@ -225,7 +228,7 @@ class AngularSpectrumPlan(StrictModule, NonTrainableState):
             space=space,
             padding=padding,
             sample_spacings=spacings,
-            working_shape=working_shape,  # type: ignore[arg-type]
+            working_shape=working_shape,
             transverse_wavenumber_squared=transverse_wavenumber_squared,
             prepared_id=prepared_id,
         )
@@ -253,7 +256,7 @@ class PreparedAngularSpectrum(StrictModule, NonTrainableState):
         working_shape: tuple[int, int],
         transverse_wavenumber_squared: Array,
         prepared_id: str,
-    ):
+    ) -> None:
         if transverse_wavenumber_squared.shape != working_shape:
             raise ValueError("Prepared transverse spectrum has the wrong fixed shape.")
         if not prepared_id:

@@ -55,7 +55,7 @@ class Diagnostic(StrictModule, NonTrainableState):
         remediation: str | None = None,
         parent_code: str | None = None,
         run_id: str | None = None,
-    ):
+    ) -> None:
         code_ = str(code).strip()
         severity_ = str(severity).strip()
         phase_ = str(phase).strip()
@@ -92,7 +92,7 @@ class Diagnostic(StrictModule, NonTrainableState):
             raise ValueError("Diagnostic tolerance must be nonnegative.")
 
         self.code = code_
-        self.severity = severity_  # type: ignore[assignment]
+        self.severity = severity_
         self.phase = phase_
         self.message = message_
         self.entity_ids = entities
@@ -127,7 +127,7 @@ class DiagnosticError(RuntimeError):
 
     diagnostics: tuple[Diagnostic, ...]
 
-    def __init__(self, diagnostics: Sequence[Diagnostic], /):
+    def __init__(self, diagnostics: Sequence[Diagnostic], /) -> None:
         values = tuple(diagnostics)
         if not values or not all(isinstance(value, Diagnostic) for value in values):
             raise TypeError("DiagnosticError requires one or more Diagnostic values.")

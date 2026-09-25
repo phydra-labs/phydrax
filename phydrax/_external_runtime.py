@@ -23,7 +23,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, BinaryIO, Literal
+from typing import Any, BinaryIO, Literal, TypeAlias
 
 import jax
 import jax.core
@@ -98,8 +98,8 @@ def _limits(max_bytes: int) -> ResourceLimits:
     )
 
 
-ExternalIsolation: type = Literal["trusted-local"]
-ExternalEnforcement: type = Literal[
+ExternalIsolation: TypeAlias = Literal["trusted-local"]
+ExternalEnforcement: TypeAlias = Literal[
     "trusted-local-direct-descriptor",
     "trusted-local-private-snapshot",
     "trusted-local-verified-path",
@@ -240,7 +240,7 @@ class EnergyRuntimeError(RuntimeError):
         *,
         result: EnergyRunResult | None = None,
         evidence: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         self.result = result
         self.evidence = dict(evidence or {})
         super().__init__(message)
@@ -685,7 +685,7 @@ class _HostWorker:
         inputs: Mapping[str, bytes],
         timeout: float,
         max_bytes: int = _DEFAULT_BYTES,
-    ):
+    ) -> None:
         _host_only(config)
         if os.name != "posix":
             raise OSError(
@@ -986,8 +986,8 @@ def run_opendss(
 
 # External model tiers ---------------------------------------------------------------
 
-ExternalTransport: type = Literal["copy", "dlpack"]
-ExternalDerivativeRoute: type = Literal["external-adjoint", "none"]
+ExternalTransport: TypeAlias = Literal["copy", "dlpack"]
+ExternalDerivativeRoute: TypeAlias = Literal["external-adjoint", "none"]
 
 # Phydrax methods that need only function values. A provider without an adjoint
 # reports them; none is ever selected on the caller's behalf.
@@ -1364,7 +1364,7 @@ class ExternalAdjointAction(ABC):
         input_schema: Sequence[ExternalTensorSpec],
         output_schema: Sequence[ExternalTensorSpec],
         configuration_id: str,
-    ):
+    ) -> None:
         identifiers = {
             "provider": provider,
             "version": version,

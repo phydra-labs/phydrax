@@ -7,7 +7,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable, Sequence
 from math import isfinite
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -45,7 +45,7 @@ class SampleBatch(StrictModule):
     weights: Array
     size: int = eqx.field(static=True)
 
-    def __init__(self, scenarios: PyTree[Any], weights: Any | None = None, /):
+    def __init__(self, scenarios: PyTree[Any], weights: Any | None = None, /) -> None:
         scenarios_ = jax.tree.map(jnp.asarray, scenarios)
         leaves = jax.tree.leaves(scenarios_)
         if any(
@@ -112,7 +112,7 @@ class FixedSampling(AbstractSamplingPolicy):
 
     batch: SampleBatch
 
-    def __init__(self, scenarios: PyTree[Any], weights: Any | None = None, /):
+    def __init__(self, scenarios: PyTree[Any], weights: Any | None = None, /) -> None:
         self.batch = SampleBatch(scenarios, weights)
 
     @property
@@ -142,7 +142,7 @@ class MonteCarloSampling(AbstractSamplingPolicy):
         /,
         *,
         refresh: Literal["fixed", "per_iteration"] = "per_iteration",
-    ):
+    ) -> None:
         if not callable(sampler):
             raise TypeError("sampler must be callable.")
         size = int(sample_size)
@@ -176,7 +176,7 @@ class AbstractRiskMeasure(StrictModule):
 class ExpectationRisk(AbstractRiskMeasure):
     """Weighted expected loss."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -192,7 +192,7 @@ class MeanVarianceRisk(AbstractRiskMeasure):
 
     coefficient: float = eqx.field(static=True)
 
-    def __init__(self, coefficient: float = 1.0, /):
+    def __init__(self, coefficient: float = 1.0, /) -> None:
         value = float(coefficient)
         if not isfinite(value) or value < 0.0:
             raise ValueError("coefficient must be finite and non-negative.")
@@ -213,7 +213,7 @@ class CVaRRisk(AbstractRiskMeasure):
 
     alpha: float = eqx.field(static=True)
 
-    def __init__(self, alpha: float = 0.95, /):
+    def __init__(self, alpha: float = 0.95, /) -> None:
         value = float(alpha)
         if not isfinite(value) or not 0.0 <= value < 1.0:
             raise ValueError("alpha must be finite and lie in [0, 1).")
@@ -243,7 +243,7 @@ class EntropicRisk(AbstractRiskMeasure):
 
     aversion: float = eqx.field(static=True)
 
-    def __init__(self, aversion: float = 1.0, /):
+    def __init__(self, aversion: float = 1.0, /) -> None:
         value = float(aversion)
         if not isfinite(value) or value <= 0.0:
             raise ValueError("aversion must be positive and finite.")
@@ -277,7 +277,7 @@ class ChanceConstraint(StrictModule):
         maximum_probability: float,
         smoothing_temperature: float = 0.05,
         constraint_id: str = "chance-constraint",
-    ):
+    ) -> None:
         probability = float(maximum_probability)
         temperature = float(smoothing_temperature)
         if not callable(event):
@@ -369,7 +369,7 @@ class ChanceCertificatePolicy(StrictModule):
         *,
         sampling_provenance: ChanceSamplingProvenance = "unknown",
         confidence: float = 0.95,
-    ):
+    ) -> None:
         confidence_ = float(confidence)
         if method not in ("exact-enumeration", "weighted-hoeffding"):
             raise ValueError(
@@ -511,7 +511,7 @@ class StochasticProblem(StrictModule):
         bounds: Bounds | None = None,
         chance_constraints: Sequence[ChanceConstraint] = (),
         problem_id: str = "stochastic-program",
-    ):
+    ) -> None:
         if not callable(scenario_loss):
             raise TypeError("scenario_loss must be callable.")
         if not isinstance(sampling, AbstractSamplingPolicy):
@@ -609,7 +609,7 @@ class StochasticResult(StrictModule):
         provenance: OptimizationProvenance,
         key: Key[Array, ""],
         /,
-    ):
+    ) -> None:
         self.parameters = _validate_real_inexact_tree(parameters, name="parameters")
         self.scenario_parameters = scenario_parameters
         self.duals = duals
@@ -647,6 +647,22 @@ class AbstractStochasticMethod(StrictModule):
         raise NotImplementedError
 
 
+# (parameters, optimizer state, initial optimality, final optimality, step norm,
+#  status, accepted steps, rejected steps, evaluations, last batch)
+_AdamCarry: TypeAlias = tuple[
+    PyTree[Array],
+    optax.OptState,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    SampleBatch,
+]
+
+
 class StochasticAdam(AbstractStochasticMethod):
     """Adam baseline over explicitly refreshed risk batches."""
 
@@ -663,7 +679,7 @@ class StochasticAdam(AbstractStochasticMethod):
         beta1: float = 0.9,
         beta2: float = 0.999,
         epsilon: float = 1e-8,
-    ):
+    ) -> None:
         values = tuple(float(value) for value in (learning_rate, beta1, beta2, epsilon))
         if any(not isfinite(value) for value in values):
             raise ValueError("Adam parameters must be finite.")
@@ -716,7 +732,7 @@ class StochasticAdam(AbstractStochasticMethod):
         rejected_steps = jnp.asarray(0, dtype=jnp.int32)
         loop_evaluations = jnp.asarray(0, dtype=jnp.int32)
 
-        def condition(carry):
+        def condition(carry: _AdamCarry) -> Array:
             (
                 _,
                 _,
@@ -740,7 +756,7 @@ class StochasticAdam(AbstractStochasticMethod):
                 & within_evaluations
             )
 
-        def body(carry):
+        def body(carry: _AdamCarry) -> _AdamCarry:
             (
                 current_parameters,
                 current_optimizer_state,
@@ -796,7 +812,9 @@ class StochasticAdam(AbstractStochasticMethod):
                 ),
             ).astype(jnp.int32)
 
-            def perform_update(operand):
+            def perform_update(
+                operand: tuple[PyTree[Array], optax.OptState],
+            ) -> tuple[PyTree[Array], optax.OptState, Array]:
                 values, state = operand
                 updates, next_optimizer_state = optimizer.update(
                     gradient,
@@ -815,7 +833,9 @@ class StochasticAdam(AbstractStochasticMethod):
                 )
                 return candidate, next_optimizer_state, step_norm
 
-            def retain_parameters(operand):
+            def retain_parameters(
+                operand: tuple[PyTree[Array], optax.OptState],
+            ) -> tuple[PyTree[Array], optax.OptState, Array]:
                 values, state = operand
                 return values, state, current_step_norm
 
@@ -988,7 +1008,7 @@ class _AbstractConsensusMethod(AbstractStochasticMethod):
         maximum_outer_steps: int = 50,
         inner_maximum_steps: int = 50,
         inner_method: AbstractMinimizationMethod | None = None,
-    ):
+    ) -> None:
         penalty_ = float(penalty)
         outer = int(maximum_outer_steps)
         inner = int(inner_maximum_steps)
@@ -1034,6 +1054,9 @@ class _AbstractConsensusMethod(AbstractStochasticMethod):
 class ProgressiveHedging(_AbstractConsensusMethod):
     """Scenario-decomposed progressive hedging with weighted consensus."""
 
+    if TYPE_CHECKING:
+        __init__ = _AbstractConsensusMethod.__init__
+
     @property
     def method_id(self) -> str:
         return "progressive-hedging"
@@ -1045,6 +1068,9 @@ class ProgressiveHedging(_AbstractConsensusMethod):
 
 class ConsensusADMM(_AbstractConsensusMethod):
     """Consensus ADMM over independent scenario subproblems."""
+
+    if TYPE_CHECKING:
+        __init__ = _AbstractConsensusMethod.__init__
 
     @property
     def method_id(self) -> str:
@@ -1226,7 +1252,7 @@ def _solve_consensus(
             scenario = batch.scenario(index)
             dual_value = jax.tree.map(lambda value: value[index], duals)
 
-            def local_objective(candidate, dynamic_args):
+            def local_objective(candidate: PyTree[Any], dynamic_args: Any) -> Any:
                 scenario_value = problem.scenario_loss(
                     candidate,
                     scenario,

@@ -34,12 +34,12 @@ class OrderedOrdinalCutpoints(StrictModule, ParameterOwner):
         class_count: int,
         /,
         *,
-        key: Key | None = None,
+        key: Key[Array, ""] | None = None,
         initial: ArrayLike | None = None,
         minimum_gap: float = 1.0e-3,
         anchor: OrdinalCutpointAnchor = "mean",
         anchor_value: float = 0.0,
-    ):
+    ) -> None:
         count = int(class_count)
         if count < 3:
             raise ValueError("Ordered ordinal cutpoints require at least three classes.")

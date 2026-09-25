@@ -191,3 +191,27 @@ def test_pencil_pseudospectrum_frozen_direction_and_invalid_norm_fail_closed():
     assert bool(result.diagnostics.frozen_direction_mask[0])
     with pytest.raises(ValueError, match="cannot both be zero"):
         phx.linalg.eigen.PencilPerturbationNorm(0.0, 0.0)
+
+
+def test_polynomial_eigenproblem_certifies_residuals_on_block_space():
+    space = phx.linalg.BlockSpace(
+        (phx.linalg.ArraySpace((1,)), phx.linalg.ArraySpace((1,))),
+        names=("first", "second"),
+    )
+
+    def diagonal(values):
+        return phx.linalg.DenseLinearOperator(
+            jnp.diag(jnp.asarray(values)), source=space, target=space
+        )
+
+    result = phx.linalg.eigen.polynomial_eigensolve(
+        phx.linalg.eigen.PolynomialEigenproblem(
+            (diagonal([-1.0, -4.0]), diagonal([0.0, 0.0]), diagonal([1.0, 1.0]))
+        )
+    )
+
+    np.testing.assert_allclose(
+        jnp.sort(jnp.real(result.eigenvalues)), [-2.0, -1.0, 1.0, 2.0]
+    )
+    assert jnp.max(result.diagnostics.original_relative_residuals) < 1e-12
+    assert bool(result.successful)

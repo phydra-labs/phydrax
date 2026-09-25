@@ -13,9 +13,13 @@ Phydrax-specific deviations (kept intentionally):
 
 import abc
 import re
-from typing import Any
+from typing import Any, TYPE_CHECKING, TypeVar
 
 import equinox as eqx
+
+
+_StrictMetaT = TypeVar("_StrictMetaT", bound="_StrictMeta")
+_StrictEqxMetaT = TypeVar("_StrictEqxMetaT", bound="_StrictEqxMeta")
 
 
 def _is_strict_subclass(cls: type) -> bool:
@@ -26,12 +30,12 @@ class _StrictMeta(abc.ABCMeta):
     _strict_is_abstract_: bool
 
     def __new__(
-        mcs,
+        mcs: type[_StrictMetaT],
         name: str,
         bases: tuple[type, ...],
         namespace: dict[str, Any],
         **kwargs: Any,
-    ):
+    ) -> _StrictMetaT:
         """
         Runs when a class inheriting from Strict is defined.
         """
@@ -105,21 +109,27 @@ class _StrictMeta(abc.ABCMeta):
 
         return cls
 
-    def __call__(cls, *args: Any, **kwargs: Any) -> Any:
-        """Create one concrete strict instance and complete its freeze transition."""
-        if getattr(cls, "_strict_is_abstract_", False):
-            abs_methods = list(cls.__abstractmethods__)
-            abs_attrs = list(getattr(cls, "__abstractvars__", ()))
-            raise TypeError(
-                f"Cannot instantiate abstract class {cls.__name__}. "
-                f"Abstract elements: methods={abs_methods}, attributes={abs_attrs}"
-            )
+    # Runtime construction performs the abstract/final refusal and the freeze
+    # transition. Static checkers must not see this override: a metaclass
+    # `__call__` replaces every concrete generated or custom `__init__` signature,
+    # so construction is typed by each concrete class instead.
+    if not TYPE_CHECKING:
 
-        instance = super().__call__(*args, **kwargs)
+        def __call__(cls, *args: Any, **kwargs: Any) -> "Strict":
+            """Create one concrete strict instance and complete its freeze transition."""
+            if getattr(cls, "_strict_is_abstract_", False):
+                abs_methods = list(cls.__abstractmethods__)
+                abs_attrs = list(getattr(cls, "__abstractvars__", ()))
+                raise TypeError(
+                    f"Cannot instantiate abstract class {cls.__name__}. "
+                    f"Abstract elements: methods={abs_methods}, attributes={abs_attrs}"
+                )
 
-        mark_strict_initialized(instance)
+            instance = super().__call__(*args, **kwargs)
 
-        return instance
+            mark_strict_initialized(instance)
+
+            return instance
 
 
 def mark_strict_initialized(instance: Any, /) -> None:
@@ -176,7 +186,13 @@ _STRINGIFIED_ABSTRACT = re.compile(
 
 
 class _StrictEqxMeta(_StrictMeta, type(eqx.Module)):
-    def __new__(mcs, name, bases, namespace, **kwargs):
+    def __new__(
+        mcs: type[_StrictEqxMetaT],
+        name: str,
+        bases: tuple[type, ...],
+        namespace: dict[str, Any],
+        **kwargs: Any,
+    ) -> _StrictEqxMetaT:
         annotations = namespace.get("__annotations__", {})
         for field_name, annotation in annotations.items():
             if isinstance(annotation, str) and (

@@ -30,7 +30,7 @@ class JulianDate(StrictModule, NonTrainableState):
     low: float = eqx.field(static=True)
     date_id: str = eqx.field(static=True)
 
-    def __init__(self, high: float, low: float = 0.0, /):
+    def __init__(self, high: float, low: float = 0.0, /) -> None:
         high_ = float(high)
         low_ = float(low)
         if not np.isfinite(high_) or not np.isfinite(low_):
@@ -61,14 +61,14 @@ class TimeInstant(StrictModule, NonTrainableState):
     scale: AstrodynamicsTimeScale = eqx.field(static=True)
     instant_id: str = eqx.field(static=True)
 
-    def __init__(self, julian_date: JulianDate, scale: AstrodynamicsTimeScale, /):
+    def __init__(self, julian_date: JulianDate, scale: AstrodynamicsTimeScale, /) -> None:
         if not isinstance(julian_date, JulianDate):
             raise TypeError("julian_date must be a JulianDate.")
         scale_ = str(scale).upper()
         if scale_ not in ("UTC", "TAI", "GPS", "TT", "TCG", "TDB", "TCB", "UT1"):
             raise ValueError("Unknown astronomical time scale.")
         self.julian_date = julian_date
-        self.scale = scale_  # type: ignore[assignment]
+        self.scale = scale_
         self.instant_id = canonical_fingerprint(
             {
                 "kind": "time-instant",
@@ -85,7 +85,7 @@ class ReferenceEpoch(StrictModule, NonTrainableState):
     continuous: bool = eqx.field(static=True)
     epoch_id: str = eqx.field(static=True)
 
-    def __init__(self, instant: TimeInstant, /, *, continuous: bool = True):
+    def __init__(self, instant: TimeInstant, /, *, continuous: bool = True) -> None:
         if not isinstance(instant, TimeInstant):
             raise TypeError("instant must be a TimeInstant.")
         if not isinstance(continuous, bool):
@@ -122,7 +122,7 @@ class FrameDefinition(StrictModule, NonTrainableState):
         /,
         *,
         pseudo_inertial: bool,
-    ):
+    ) -> None:
         origin = str(origin_id).strip()
         orientation = str(orientation_id).strip()
         if not origin or not orientation:
@@ -156,7 +156,7 @@ class AstrodynamicsContext(StrictModule, NonTrainableState):
         epoch: ReferenceEpoch,
         frame: FrameDefinition,
         /,
-    ):
+    ) -> None:
         if not isinstance(scale, AstrodynamicsScaleContract):
             raise TypeError("scale must be an AstrodynamicsScaleContract.")
         if not isinstance(epoch, ReferenceEpoch):

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -19,7 +20,7 @@ class AbstractStationaryKernel(AbstractUnitDiagonalKernel):
 
     length_scale: Array
 
-    def __init__(self, *, length_scale: ArrayLike = 1.0):
+    def __init__(self, *, length_scale: ArrayLike = 1.0) -> None:
         scale = jnp.asarray(length_scale, dtype=jnp.float64)
         if scale.ndim > 1 or (scale.ndim == 1 and scale.shape[0] == 0):
             raise ValueError("length_scale must be scalar or a nonempty vector.")
@@ -59,6 +60,9 @@ class AbstractStationaryKernel(AbstractUnitDiagonalKernel):
 class SquaredExponentialKernel(AbstractStationaryKernel):
     """Squared-exponential correlation kernel."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractStationaryKernel.__init__
+
     def _from_squared_distance(self, squared_distance: Array, /) -> Array:
         return jnp.exp(-0.5 * squared_distance)
 
@@ -69,6 +73,9 @@ class SquaredExponentialKernel(AbstractStationaryKernel):
 
 class Matern32Kernel(AbstractStationaryKernel):
     """Matérn-3/2 correlation kernel."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractStationaryKernel.__init__
 
     def _from_squared_distance(self, squared_distance: Array, /) -> Array:
         return _matern32_from_squared_distance(squared_distance)
@@ -81,6 +88,9 @@ class Matern32Kernel(AbstractStationaryKernel):
 class Matern52Kernel(AbstractStationaryKernel):
     """Matérn-5/2 correlation kernel."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractStationaryKernel.__init__
+
     def _from_squared_distance(self, squared_distance: Array, /) -> Array:
         return _matern52_from_squared_distance(squared_distance)
 
@@ -91,6 +101,9 @@ class Matern52Kernel(AbstractStationaryKernel):
 
 class InverseMultiquadricKernel(AbstractStationaryKernel):
     """Inverse-multiquadric correlation kernel."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractStationaryKernel.__init__
 
     def _from_squared_distance(self, squared_distance: Array, /) -> Array:
         return jax_lax_rsqrt(1.0 + squared_distance)
@@ -113,7 +126,9 @@ def _matern32_from_squared_distance(squared_distance: Array, /) -> Array:
 
 
 @_matern32_from_squared_distance.defjvp
-def _matern32_from_squared_distance_jvp(primals, tangents):
+def _matern32_from_squared_distance_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (squared_distance,) = primals
     (squared_distance_tangent,) = tangents
     scaled = jnp.sqrt(3.0) * _safe_distance(squared_distance)
@@ -129,7 +144,9 @@ def _matern52_from_squared_distance(squared_distance: Array, /) -> Array:
 
 
 @_matern52_from_squared_distance.defjvp
-def _matern52_from_squared_distance_jvp(primals, tangents):
+def _matern52_from_squared_distance_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (squared_distance,) = primals
     (squared_distance_tangent,) = tangents
     value = _matern52_from_squared_distance(squared_distance)
@@ -147,7 +164,9 @@ def _matern52_first_squared_distance_derivative(
 
 
 @_matern52_first_squared_distance_derivative.defjvp
-def _matern52_first_squared_distance_derivative_jvp(primals, tangents):
+def _matern52_first_squared_distance_derivative_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (squared_distance,) = primals
     (squared_distance_tangent,) = tangents
     scaled = jnp.sqrt(5.0) * _safe_distance(squared_distance)

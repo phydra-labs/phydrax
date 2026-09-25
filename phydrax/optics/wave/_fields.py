@@ -95,7 +95,7 @@ class PlaneFieldSpace(StrictModule, NonTrainableState):
         /,
         *,
         space_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("grid must be a PreparedTensorGrid.")
         if len(grid.shape) != 2:
@@ -130,7 +130,9 @@ class PlaneFieldSpace(StrictModule, NonTrainableState):
 
     @property
     def shape(self) -> tuple[int, int]:
-        return self.grid.shape  # type: ignore[return-value]
+        # Construction validates an exactly two-dimensional grid.
+        rows, columns = self.grid.shape
+        return (rows, columns)
 
     @property
     def size(self) -> int:
@@ -138,8 +140,8 @@ class PlaneFieldSpace(StrictModule, NonTrainableState):
 
     @property
     def coordinate_axes(self) -> tuple[Array, Array]:
-        axes = self.grid.primary_entity_layout.coordinates_by_axis
-        return axes  # type: ignore[return-value]
+        first, second = self.grid.primary_entity_layout.coordinates_by_axis
+        return (first, second)
 
     @property
     def transverse_coordinates(self) -> Array:
@@ -186,7 +188,7 @@ class ScalarPlaneField(StrictModule):
         angular_frequency: ArrayLike,
         longitudinal_coordinate: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(space, PlaneFieldSpace):
             raise TypeError("space must be a PlaneFieldSpace.")
         self.space = space
@@ -210,7 +212,7 @@ class TangentialPlaneField(StrictModule):
         angular_frequency: ArrayLike,
         longitudinal_coordinate: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(space, PlaneFieldSpace):
             raise TypeError("space must be a PlaneFieldSpace.")
         self.space = space
@@ -234,7 +236,7 @@ class IntensityPlane(StrictModule):
         angular_frequency: ArrayLike,
         longitudinal_coordinate: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(space, PlaneFieldSpace):
             raise TypeError("space must be a PlaneFieldSpace.")
         array = jnp.asarray(values)
