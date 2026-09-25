@@ -676,7 +676,9 @@ class AbstractSolverObjective(StrictModule):
         """Admit, bind, and evaluate the objective on the trained `tree`.
 
         Admission runs first, so a refused component never reaches `bind` or
-        `measure`. Parameters this objective does not train are stop-gradient.
+        `measure`. Only the PARAMETER lane is differentiated: parameters this
+        objective does not train are stop-gradient, and FIXED and MODEL_STATE
+        leaves receive an exact zero derivative.
         """
         admission = self.admit(tree, differentiable=differentiable)
         stopped = frozenset(path for path, _ in admission.stopped)
@@ -717,14 +719,17 @@ def _gated_case(component: Any, objective: AbstractSolverObjective, case: Any) -
 def _gated_case_fwd(
     perturbed: Any, component: Any, objective: AbstractSolverObjective, case: Any
 ) -> Any:
+    # Only the PARAMETER lane is differentiated: FIXED data and MODEL_STATE of
+    # the component are constants of the case and receive no cotangent.
     del perturbed
-    arrays, static = eqx.partition(component, eqx.is_inexact_array)
-    loss, pullback, rest = jax.vjp(
-        lambda values: objective._case(eqx.combine(values, static), case),
-        arrays,
+    lane = resolve_array_roles(component).filter_spec(ArrayRole.PARAMETER)
+    parameters, rest = eqx.partition(component, lane)
+    loss, pullback, aux = jax.vjp(
+        lambda values: objective._case(eqx.combine(values, rest), case),
+        parameters,
         has_aux=True,
     )
-    return (loss, rest), (pullback, rest[0][0] > 0)
+    return (loss, aux), (pullback, aux[0][0] > 0)
 
 
 @_gated_case.def_bwd

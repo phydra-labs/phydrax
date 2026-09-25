@@ -145,7 +145,10 @@ implementation. Its `function(state, args)` is a stateless operation or a
 callable module held as a dynamic child, so a learned model inside it keeps its
 PARAMETER arrays. Every `AbstractArrayModel` in the callable is bound to the
 update slot, and `component_contracts()` returns the bound contracts; a
-`ComponentBinding` with another authority is rejected. Capabilities derive
+`ComponentBinding` with another authority is rejected. A model declaring ports
+cannot be a bare child: the callable binds it with its own owner ports,
+`bind_component(model, AbstractNonlinearUpdate, owner_ports=...,
+port_mapping=...)`. Capabilities derive
 from the models' execution and derivative contracts: a host-only model makes
 the update non-JIT and a stopped or input-nondifferentiable model makes the
 action non-differentiable. A proposal is never trusted. Application evaluates
@@ -175,11 +178,12 @@ provider, args=args)` asks a `phydrax.linalg.AbstractInitialGuessProvider`
 for `provider.propose(args, baseline)`, evaluates the original residual at the
 proposal and at the native `baseline`, and returns the proposal only when
 `problem.valid` accepts it with a strictly smaller residual norm (or when the
-baseline itself is invalid). The returned state is stopped, and its
-`InitialGuessDiagnostics` record both residual norms, proposal validity, the
-accepted branch, and the provider identity, exactly as a linear solve reports
-`result.initial_guess`. Any nonlinear method, including `implicit_root_result`,
-can start from the selected state.
+baseline itself is invalid). Selection is one decision per state: the residual
+norms and validity are scalars, and every state leaf follows it. The returned
+state is stopped, and its `InitialGuessDiagnostics` record both residual norms,
+proposal validity, the accepted branch, and the provider identity, exactly as a
+linear solve reports `result.initial_guess`. Any nonlinear method, including
+`implicit_root_result`, can start from the selected state.
 
 `CompositeNonlinearUpdate` supports static multiplicative, weighted additive,
 and safeguarded residual-optimal composition. Every child is evaluated from
@@ -387,15 +391,19 @@ values of the learned or discretized components in the nonlinear work. `MODEL`,
 `DISCRETIZATION`, and `SURROGATE` components define the residual and must declare
 a `ComponentPrecisionContract`. `ACCELERATOR` and `DECISION` components never
 raise the floor: the owner re-evaluates the residual that certifies their
-proposals. `residual_floor(scale=0.0)` is the sum of the declared absolute and
-relative (times `scale`) evaluation-error floors of the residual-defining
-components. It is `None` when no floor is declared. Machine epsilon is never
-substituted for an undeclared floor, so the achievable tolerance comes only from
-declared floors.
+proposals. `residual_floor(scale=None)` is the sum of the declared absolute and
+relative (times the residual magnitude) evaluation-error floors of the
+residual-defining components. The magnitude is `scale`, else the policy's
+declared `residual_scale`. A declared `relative_error_floor` has no absolute value
+without a magnitude, so it raises `ValueError` when neither is given. The floor is
+`None` when no floor is declared. Machine epsilon is never substituted for an
+undeclared floor, so the achievable tolerance comes only from declared floors.
 
 `validate_tolerance(tolerance, residual_dtype=...)` rejects a positive absolute
-tolerance below the component floor or below certificate precision epsilon. It
-also rejects a residual-defining component whose compute dtype is coarser than the
+tolerance below the component floor at the declared `residual_scale` or below
+certificate precision epsilon. A relative component floor without a declared
+`residual_scale` cannot certify any absolute tolerance and is refused. It also
+rejects a residual-defining component whose compute dtype is coarser than the
 residual dtype and that declares no error floor. Newton solves,
 `prepare_nonlinear`, and prepared solves run with an overriding termination
 validate the tolerance against the observed residual dtype before iterating. A
@@ -407,6 +415,11 @@ its `cast_boundary_evidence`.
 surrogate = phx.bind_component(model, phx.ComponentAuthority.SURROGATE)
 policy = phx.nonlinear.NonlinearPrecisionPolicy(components=(surrogate.contract(),))
 tolerance = policy.residual_floor()  # None unless the model declares a floor
+
+# A relative floor needs the declared residual magnitude it is relative to.
+scaled = phx.nonlinear.NonlinearPrecisionPolicy(
+    components=(surrogate.contract(),), residual_scale=10.0
+)
 ```
 
 ## Solution-map derivatives

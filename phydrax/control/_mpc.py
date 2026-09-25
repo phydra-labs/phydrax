@@ -854,7 +854,10 @@ class PreparedMPCSensitivity(StrictModule):
 
     The complete derivative is refused unless every window is valid, OPTIMAL,
     and regular (strictly complementary with a nonsingular reduced KKT
-    system). No partial or stage-truncated derivative is returned.
+    system) in every case. `stage_optimal` and `stage_regular` have shape
+    `case_shape + (windows,)`, and `refusal` names the failing windows, or the
+    failing `(case, window)` stages for batched cases. No partial or
+    stage-truncated derivative is returned.
     """
 
     specification: LinearQuadraticControlProblem
@@ -1037,20 +1040,33 @@ def _closed_loop_map(
     return closed_loop
 
 
+def _failing_stages(mask: np.ndarray, /) -> str:
+    # The last axis indexes windows; leading axes index specification cases.
+    failing = np.argwhere(~mask)
+    if mask.ndim == 1:
+        return f"windows {failing[:, 0].tolist()}"
+    coordinates = [
+        (tuple(int(index) for index in row[:-1]), int(row[-1])) for row in failing
+    ]
+    return f"(case, window) stages {coordinates}"
+
+
 def _sensitivity_refusal(stage_optimal: Array, stage_regular: Array, /) -> str | None:
     # Host evidence boundary: the prepared sensitivity is an eager artifact
     # whose admission is decided once, after every window has been solved.
-    case_axes = tuple(range(stage_optimal.ndim - 1))
-    optimal = np.asarray(jnp.all(stage_optimal, axis=case_axes))
+    optimal = np.asarray(stage_optimal)
     regular = np.asarray(stage_regular)
+    if optimal.shape != regular.shape:
+        raise ValueError(
+            f"MPC stage optimality {optimal.shape} and regularity {regular.shape} "
+            "must share the case-by-window shape."
+        )
     reasons = []
     if not optimal.all():
-        reasons.append(
-            f"windows {np.flatnonzero(~optimal).tolist()} are not valid and OPTIMAL"
-        )
+        reasons.append(f"{_failing_stages(optimal)} are not valid and OPTIMAL")
     if not regular.all():
         reasons.append(
-            f"windows {np.flatnonzero(~regular).tolist()} have nonregular QP "
+            f"{_failing_stages(regular)} have nonregular QP "
             "sensitivities (weak complementarity or a singular reduced KKT system)"
         )
     if not reasons:
@@ -1088,7 +1104,9 @@ def prepare_receding_horizon_mpc_sensitivity(
         tuple(qp_result.status for qp_result in result.qp_results), axis=case_axis
     )
     stage_optimal = result.stage_valid & (statuses == int(ConvexProgramStatus.OPTIMAL))
-    stage_regular = jnp.stack(tuple(item.regular for item in sensitivities))
+    stage_regular = jnp.stack(
+        tuple(item.regular for item in sensitivities), axis=case_axis
+    )
     refusal = _sensitivity_refusal(stage_optimal, stage_regular)
     sensitivity_id = "control-mpc-sensitivity:" + canonical_fingerprint(
         {

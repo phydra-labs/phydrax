@@ -154,7 +154,8 @@ Fitting derivatives are separate from prediction derivatives. The contract route
 - **relaxed**: the fit differentiates through an explicitly smooth replacement for
   a discrete algorithm;
 - **stopped**: the fit contains a declared discrete choice and supplies no
-  derivative through that choice.
+  derivative through that choice; the fit contract admits no request, and
+  prediction derivatives come from the fitted model's `model_execution_contract()`.
 
 Each surface carries a `phydrax.GradientLevel` (`SMOOTH`, `ALMOST_EVERYWHERE`,
 `CONDITIONAL`, or `NONE`). Conditions such as full rank, positive regularization,
@@ -335,9 +336,10 @@ Models that stay in another framework are placed on an explicit execution tier
   provider's primal and applies its adjoint at the same realization; a provider
   without an adjoint reports derivative-free alternatives without selecting one.
 
-`ExternalOperatorAdapter` requires the runner's `capabilities` and artifact
-`binding`; a host-only runner is refused under transformations and cannot use
-the compiled `OperatorExecutionPlan` strategy.
+`ExternalOperatorAdapter` requires the runner's `capabilities`; its artifact
+`binding` is derived from the checkpoint manifest (`binding_identity()`), never
+supplied separately. A host-only runner is refused under transformations and
+cannot use the compiled `OperatorExecutionPlan` strategy.
 
 ## Numerical policies
 

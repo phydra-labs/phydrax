@@ -683,6 +683,11 @@ projection remains authoritative. A transition distinguishes a numerically
 usable coarse training candidate from a physically converged accepted result.
 Normal deployment admits only physical convergence.
 
+Both transitions bind their model through owner ports derived from their own
+layouts: the prepared plan's feature and stress ports for the periodic stress
+transition, and the state point and tangent ports for the MAC rate. A model
+declaring ports needs the transition's explicit `port_mapping` in that order.
+
 `ProgressiveLinearRefinementPolicy` changes the native Krylov iteration budget
 after fixed-validation plateaus. Initial support requires algorithmic
 differentiation through the executed finite Krylov map. Mathematical implicit,

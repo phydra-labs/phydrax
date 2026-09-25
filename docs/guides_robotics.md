@@ -395,8 +395,9 @@ transition identity and step constraints, state/input layouts, initializer
 identity, task and wrapper configuration, array fingerprints, repetition and
 horizon policy, and PRNG representation. Callables are identified by content:
 StrictModule callables by their fields and plain module-level functions by
-their code and static defaults. Lambdas, closures, methods, partials, and other
-opaque callables are refused unless their owner declares both identities;
+their code, static defaults, and the scalar constants they read from module
+globals. Lambdas, closures, methods, partials, functions reading module-level
+arrays, and other opaque callables are refused unless their owner declares both identities;
 `prepare_array_robot_environment` accepts `transition_semantic_id`/
 `transition_numeric_id` and `initializer_semantic_id`/`initializer_numeric_id`
 for this purpose. Semantic identities enter the plant semantic provenance and

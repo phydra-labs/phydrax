@@ -388,14 +388,18 @@ runtime preserves triangle connectivity and reports sign, root, QEF, orientation
 and intersection evidence.
 
 `NeuralImplicitRegion` is the region `{x in B : phi(x; w) <= 0}` of a scalar
-network over declared axis-aligned bounds `B`. Its weight arrays are design
-parameters of the compiled `DesignState`; construction refuses without a
-Lipschitz bound (constructed for a plain `MLP` or declared), an evaluation-error
-bound, sign margins on explicit certification points, and a topology identity
-discovered by `discover_implicit_curve`/`discover_implicit_surface`.
-`NeuralImplicitRegion.recertify(state)` rejects trained weights whose margins fail
-or whose `ImplicitRegionTopology` changed; uncertified states report inconclusive
-validity.
+network over declared axis-aligned bounds `B`. The network's PARAMETER arrays are
+design parameters of the compiled `DesignState`; FIXED arrays (`fixed_field`
+data) stay fixed kernel data, and networks with model state are refused.
+Construction refuses without a Lipschitz bound (constructed for a plain `MLP` or
+declared), an evaluation-error bound, sign margins on explicit sample points, and
+a topology resolved from the field signs on a `discovery_resolution` lattice. The
+evidence is sampled, not a covering proof: a zero-set component between samples
+can go undetected, so the field certificate reports `SignReliability.LOCAL`,
+`ZeroSetAccuracy.APPROXIMATE`, and no `topology_identity`.
+`NeuralImplicitRegion.recertify(state)` rejects trained weights whose sampled
+margins fail or whose sampled `ImplicitRegionTopology` changed; other states
+report inconclusive validity.
 
 `FiniteElementMeshMotionPlan` is owned by `phydrax.discretization`; it consumes any
 structural fixed-route boundary provider, performs graph-harmonic interior motion,

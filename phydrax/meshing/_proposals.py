@@ -22,7 +22,11 @@ from .._model import (
     AbstractComponentSlot,
     bind_component,
     ComponentContract,
+    ModelPorts,
+    PortMapping,
 )
+from .._model._component import bind_positional_component
+from .._model._ports import require_port_shapes
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -305,9 +309,18 @@ class LearnedMeshProposer(AbstractMeshProposer):
     native projection certifies it. The model is a dynamic child whose arrays
     keep their own roles and is bound to the `AbstractMeshProposer` `DECISION`
     slot; `component_contract()` returns the bound contract.
+
+    `ports` declare the scientific identity of the proposer's values: one
+    feature-row port (event shape `(in_size,)`) as the input and the proposal
+    value port (event shape `()` or `(spatial_dimension, spatial_dimension)`)
+    as the output. A model declaring ports requires `ports` and an explicit
+    `port_mapping` binding its ordered ports to exactly that owner order; a
+    model without ports keeps the size checks alone.
     """
 
     model: AbstractArrayModel
+    ports: ModelPorts | None
+    port_mapping: PortMapping | None
     kind: MeshProposerKind = eqx.field(static=True)
     spatial_dimension: int | None = eqx.field(static=True)
     proposer_id: str = eqx.field(static=True)
@@ -320,6 +333,8 @@ class LearnedMeshProposer(AbstractMeshProposer):
         kind: MeshProposerKind,
         proposer_id: str,
         spatial_dimension: int | None = None,
+        ports: ModelPorts | None = None,
+        port_mapping: PortMapping | None = None,
     ):
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
@@ -351,15 +366,28 @@ class LearnedMeshProposer(AbstractMeshProposer):
         identifier = str(proposer_id).strip()
         if not identifier:
             raise ValueError("proposer_id must be non-empty.")
-        bind_component(model, AbstractMeshProposer)
+        site = "LearnedMeshProposer"
+        owner_ports = require_port_shapes(
+            ports, inputs=((model.in_size,),), outputs=(value_shape,), site=site
+        )
+        bind_positional_component(
+            model, AbstractMeshProposer, owner_ports, port_mapping, site=site
+        )
         self.model = model
+        self.ports = owner_ports
+        self.port_mapping = port_mapping
         self.kind = kind
         self.spatial_dimension = spatial_dimension
         self.proposer_id = identifier
 
     def component_contract(self) -> ComponentContract:
         """Return the model's contract bound to the mesh-proposer slot."""
-        return bind_component(self.model, AbstractMeshProposer).contract()
+        return bind_component(
+            self.model,
+            AbstractMeshProposer,
+            owner_ports=self.ports,
+            port_mapping=self.port_mapping,
+        ).contract()
 
     def evaluate(self, features: ArrayLike, /) -> Array:
         """Return one proposal value per feature row, shape `(rows,) + value shape`."""

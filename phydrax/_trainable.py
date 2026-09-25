@@ -5,16 +5,19 @@
 from __future__ import annotations
 
 import dataclasses
+import dis
 import enum
 import functools
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from enum import StrEnum
-from types import FunctionType, MethodType, ModuleType
+from types import CodeType, FunctionType, MethodType, ModuleType
 from typing import Any, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax
+import numpy as np
+from jax.extend import core as jax_core
 from jaxtyping import PyTree
 
 from ._strict import StrictModule
@@ -419,7 +422,53 @@ _HIDDEN_STATE_REMEDY = (
     "explicit argument, or freeze its provider on purpose with an ExplicitFreeze "
     "holder such as FrozenModel"
 )
-_HIDDEN_STATE_ATOMS = (type, ModuleType, str, bytes, int, float, complex, enum.Enum)
+# NumPy scalars are immutable host constants, like the Python numbers beside them.
+_HIDDEN_STATE_ATOMS = (
+    type,
+    ModuleType,
+    str,
+    bytes,
+    int,
+    float,
+    complex,
+    enum.Enum,
+    np.generic,
+)
+_GLOBAL_READ_OPCODES = frozenset({"LOAD_GLOBAL", "LOAD_NAME"})
+
+
+@functools.lru_cache(maxsize=4096)
+def _code_global_names(code: CodeType, /) -> frozenset[str]:
+    names = {
+        instruction.argval
+        for instruction in dis.get_instructions(code)
+        if instruction.opname in _GLOBAL_READ_OPCODES
+    }
+    for constant in code.co_consts:
+        if isinstance(constant, CodeType):
+            names |= _code_global_names(constant)
+    return frozenset(names)
+
+
+def _global_reads(function: FunctionType, /) -> tuple[tuple[str, Any], ...]:
+    """Return the `(name, value)` module globals `function` reads, sorted by name.
+
+    Nested code (lambdas, inner functions, comprehensions) shares the function's
+    globals and is included. Names absent from the module namespace resolve to
+    builtins and are skipped. Functions imported from another module are
+    operations named by their import, not state of this module: their own
+    module state belongs to their defining module and is not followed.
+    """
+    namespace = function.__globals__
+    return tuple(
+        (name, namespace[name])
+        for name in sorted(_code_global_names(function.__code__))
+        if name in namespace
+        and not (
+            isinstance(namespace[name], FunctionType)
+            and namespace[name].__module__ != function.__module__
+        )
+    )
 
 
 def _hidden_state(value: Any, /) -> Iterator[tuple[str, Any]]:
@@ -437,6 +486,8 @@ def _hidden_state(value: Any, /) -> Iterator[tuple[str, Any]]:
             yield f"default argument {index}", default
         for name, default in (value.__kwdefaults__ or {}).items():
             yield f"keyword default {name!r}", default
+        for name, referenced in _global_reads(value):
+            yield f"global {name!r}", referenced
     elif isinstance(value, functools.partial):
         yield "partial function", value.func
         for index, argument in enumerate(value.args):
@@ -488,28 +539,41 @@ def _instance_attributes(value: Any, /) -> Iterator[tuple[str, Any]]:
 
 
 class _HiddenStateWalk:
-    """Mutable accumulator of inexact arrays hidden from PyTree flattening."""
+    """Mutable accumulator of arrays hidden from PyTree flattening."""
 
-    def __init__(self) -> None:
+    def __init__(self, selected: Callable[[Any], bool], /) -> None:
+        self.selected = selected
         self.found: list[tuple[str, tuple[str, ...]]] = []
         self._seen: set[tuple[int, bool]] = set()
 
     def visit(
         self, node: Any, path: str, trail: tuple[str, ...], hidden: bool, /
     ) -> None:
-        if eqx.is_array(node):
-            if hidden and eqx.is_inexact_array(node):
-                self.found.append((path, trail))
-            return
         if node is None or isinstance(node, _HIDDEN_STATE_ATOMS):
             return
-        if not hidden and _is_terminal(node):
-            # A visible terminal node declares its whole subtree FIXED or frozen.
+        if eqx.is_array(node):
+            if hidden and self.selected(node):
+                self.found.append((path, trail))
+            return
+        if isinstance(node, jax_core.Literal) and not node.aval.shape:
+            # Scalar jaxpr literals are code constants, like bytecode constants;
+            # the arrays a closed jaxpr captures live in its consts.
+            return
+        if not hidden and isinstance(node, ExplicitFreeze):
+            # A visible ExplicitFreeze holder freezes its whole subtree on
+            # purpose. A plain NonTrainableState only declares its visible leaves
+            # FIXED: the state its callables hide is still searched.
             return
         marker = (id(node), hidden)
         if marker in self._seen:
             return
         self._seen.add(marker)
+        if hidden and isinstance(node, dict):
+            # Hidden mappings (module registries, caches) may key by values that
+            # PyTree flattening cannot sort; their entries are searched directly.
+            for key, value in node.items():
+                self.visit(value, path, (*trail, f"[{key!r}]"), True)
+            return
         if dataclasses.is_dataclass(node):
             for field in dataclasses.fields(node):
                 if field.metadata.get("static", False):
@@ -533,39 +597,48 @@ class _HiddenStateWalk:
                 self.visit(child, path + key, trail, False)
 
 
+def _hidden_arrays(
+    tree: PyTree[Any], selected: Callable[[Any], bool], /
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Return `(path, capture trail)` of every `selected` array hidden in `tree`."""
+    walk = _HiddenStateWalk(selected)
+    walk.visit(tree, "", (), False)
+    return tuple(walk.found)
+
+
 def require_declared_callables(tree: PyTree[Any], /, *, context: str) -> None:
     """Raise `ValueError` when callables in `tree` hide inexact numeric state.
 
     A callable reachable at a training or artifact boundary must be one of:
 
-    1. a stateless operation whose closure cells, defaults and bound arguments
-       capture no inexact array (plain module-level functions are the canonical
-       case, see `phydrax._identity`);
+    1. a stateless operation whose closure cells, defaults, bound arguments and
+       read module globals capture no inexact array (plain module-level
+       functions over modules, classes and Python or NumPy scalar constants are
+       the canonical case, see `phydrax._identity`);
     2. a visible component: a callable module held in a dynamic field, whose
        arrays are PyTree leaves with declared roles;
-    3. an explicit frozen provider below an `ExplicitFreeze` holder (visible
-       terminal nodes declare their whole subtree FIXED and are not searched);
+    3. an explicit frozen provider below a visible `ExplicitFreeze` holder, the
+       only node that authorizes hidden numeric state in its subtree;
     4. a host-only callback that captures no inexact array.
 
-    Everything a PyTree flattening cannot see is searched: closure cells,
-    defaults, `functools.partial` arguments, bound instances, wrapped callables,
-    attributes of opaque leaves (dataclass fields, declared `__slots__` and
-    `__dict__`, so slotted frozen dataclasses are covered) and static fields. Each
-    inexact array found there is reported with its path and capture route.
+    Everything a PyTree flattening cannot see is searched, below plain
+    `NonTrainableState` and `Domain` nodes too: closure cells, defaults, module
+    globals a function's code reads (transitively), `functools.partial`
+    arguments, bound instances, wrapped callables, attributes of opaque leaves
+    (dataclass fields, declared `__slots__` and `__dict__`, so slotted frozen
+    dataclasses are covered) and static fields. Each inexact array found there is
+    reported with its path and capture route.
     """
     if not isinstance(context, str) or not context:
         raise TypeError("context must be a non-empty string.")
-    walk = _HiddenStateWalk()
-    walk.visit(tree, "", (), False)
-    if not walk.found:
+    found = _hidden_arrays(tree, eqx.is_inexact_array)
+    if not found:
         return
     lines = [
         f"{context}: callables or static fields hide inexact arrays that are not "
         f"visible PyTree leaves ({_HIDDEN_STATE_REMEDY}):"
     ]
-    lines.extend(
-        f"  - {_display(path)}: {' -> '.join(trail)}" for path, trail in walk.found
-    )
+    lines.extend(f"  - {_display(path)}: {' -> '.join(trail)}" for path, trail in found)
     raise ValueError("\n".join(lines))
 
 
@@ -636,7 +709,9 @@ class LaneLayout(StrictModule):
 
     A lane is a batch of items, cases or ensemble members stacked on axis 0 of the
     declared leaves; every other leaf is shared across the lane. FIXED data may be
-    lane-mapped (for example per-member normalizers).
+    lane-mapped (for example per-member normalizers). `mapped_paths` is a set:
+    it is stored sorted, so equal declarations have one identity whatever order
+    the caller lists them in.
     """
 
     kind: LaneKind = eqx.field(static=True)
@@ -656,7 +731,7 @@ class LaneLayout(StrictModule):
         if not paths or len(set(paths)) != len(paths):
             raise ValueError("mapped_paths must contain distinct PyTree paths.")
         self.kind = kind
-        self.mapped_paths = paths
+        self.mapped_paths = tuple(sorted(paths))
 
     @classmethod
     def from_predicate(

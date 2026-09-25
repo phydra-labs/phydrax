@@ -2841,9 +2841,10 @@ so losses, metrics, gradients, and reported case support remain unchanged.
 `ExternalOperatorAdapter` requires an `OperatorCheckpointManifest` with
 immutable source and checkpoint revisions, separate code and weight licenses,
 field schemas, preprocessing, normalization, dataset provenance, and a mandatory
-SHA-256 digest, plus the runner's declared `ExecutionCapabilities` and artifact
-`binding` (`OperatorCheckpointManifest.binding_identity()` for a loaded
-checkpoint). Loading verifies the checkpoint before framework-specific
+SHA-256 digest, plus the runner's declared `ExecutionCapabilities`. The artifact
+`binding` is always derived from `OperatorCheckpointManifest.binding_identity()`;
+the manifest is its single authority and no other binding can be attached.
+Loading verifies the checkpoint before framework-specific
 tokenization or execution, and every call is admitted against the capabilities
 before the runner runs: a host-only runner is refused under `jit`, `vmap`,
 `grad`, `jvp`, and `vjp`, has no JAX derivative route, and cannot use the

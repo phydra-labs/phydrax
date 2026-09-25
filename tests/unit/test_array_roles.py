@@ -314,6 +314,78 @@ def test_training_callable_capturing_slotted_dataclass_scalars_is_accepted():
     assert phx.require_parameter_roles(tree, context="x").unclassified == ()
 
 
+_GLOBAL_WEIGHTS = jnp.array([1.0, 2.0])
+_GLOBAL_TABLE = {"weights": (jnp.array([3.0]),)}
+_GLOBAL_SCALE = 2.0
+
+
+def _reads_global_weights(x):
+    return x * _GLOBAL_WEIGHTS
+
+
+def _reads_global_table(x):
+    return x * _GLOBAL_TABLE["weights"][0]
+
+
+def _calls_global_reader(x):
+    return _reads_global_weights(x) + 1.0
+
+
+def _reads_scalar_globals(x):
+    return jnp.sin(x) * _GLOBAL_SCALE
+
+
+class _StaticPlan(phx.StrictModule, phx.NonTrainableState):
+    fn: object = eqx.field(static=True)
+
+
+class _ExplicitStaticPlan(phx.StrictModule, phx.ExplicitFreeze):
+    fn: object = eqx.field(static=True)
+
+
+class _PlanOwner(phx.StrictModule, phx.ParameterOwner):
+    weight: jax.Array
+    plan: object = phx.fixed_field()
+
+
+@pytest.mark.parametrize(
+    ("fn", "route"),
+    [
+        (_reads_global_weights, "global '_GLOBAL_WEIGHTS'"),
+        (_reads_global_table, "global '_GLOBAL_TABLE' -> ['weights']"),
+        (_calls_global_reader, "global '_reads_global_weights' -> global"),
+    ],
+)
+def test_plain_function_reading_global_arrays_is_rejected(fn, route):
+    tree = _PlanOwner(jnp.ones(2), _StaticPlan(fn))
+
+    with pytest.raises(ValueError) as error:
+        phx.require_parameter_roles(tree, context="unit training")
+
+    assert f".plan.fn: static field -> {route}" in str(error.value)
+
+
+def test_plain_nontrainable_state_does_not_hide_closure_arrays():
+    captured = jnp.ones(2)
+    tree = _PlanOwner(jnp.ones(2), _StaticPlan(lambda x: x * captured))
+
+    with pytest.raises(ValueError, match="closure variable 'captured'"):
+        phx.require_parameter_roles(tree, context="unit training")
+
+
+def test_explicit_freeze_authorizes_hidden_provider_state():
+    captured = jnp.ones(2)
+    for fn in (_reads_global_weights, lambda x: x * captured):
+        tree = _PlanOwner(jnp.ones(2), _ExplicitStaticPlan(fn))
+        assert phx.require_parameter_roles(tree, context="x").unclassified == ()
+
+
+def test_plain_function_reading_modules_and_scalar_globals_is_accepted():
+    tree = _PlanOwner(jnp.ones(2), _StaticPlan(_reads_scalar_globals))
+
+    assert phx.require_parameter_roles(tree, context="x").unclassified == ()
+
+
 def _stacked_members():
     members = [
         Normalized(jnp.full(3, 1.0 + index), jnp.full(3, float(index)))
@@ -343,7 +415,7 @@ def test_lane_layout_maps_parameters_and_fixed_arrays():
         (model, inputs), lambda path: path.startswith("[0]"), kind="member"
     )
 
-    assert layout.mapped_paths == ("[0].weight", "[0].shift")
+    assert layout.mapped_paths == ("[0].shift", "[0].weight")
     assert phx.resolve_array_roles(model).role_of(".shift") is ArrayRole.FIXED
     in_axes = layout.in_axes((model, inputs))
     vmapped = eqx.filter_vmap(lambda m, x: m(x), in_axes=in_axes)(model, inputs)
@@ -362,6 +434,15 @@ def test_lane_layout_shares_unmapped_parameters():
 
     assert in_axes[0].weight is None
     assert jnp.allclose(vmapped, _serial(shared, inputs, layout))
+
+
+def test_lane_layout_identity_ignores_declaration_order():
+    forward = phx.LaneLayout("item", ("[0].shift", "[1]", "[0].weight"))
+    permuted = phx.LaneLayout("item", ("[1]", "[0].weight", "[0].shift"))
+
+    assert forward == permuted
+    assert hash(forward) == hash(permuted)
+    assert forward.mapped_paths == ("[0].shift", "[0].weight", "[1]")
 
 
 def test_lane_layout_validates_paths_and_lane_sizes():

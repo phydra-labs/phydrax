@@ -746,11 +746,11 @@ def test_external_operator_manifest_roundtrip_and_adapter(tmp_path):
         output_adapter=lambda output, operator_batch, _: output,
         manifest=loaded,
         capabilities=capabilities,
-        binding=loaded.binding_identity(),
         in_size="scalar",
         out_size="scalar",
     )
     assert loaded.to_dict() == manifest.to_dict()
+    assert adapter.binding.binding_id == manifest.binding_identity().binding_id
     assert "format_version" not in loaded.to_dict()
     assert jnp.allclose(adapter(batch), 2.0 * jnp.arange(5.0))
     compiled = eqx.filter_jit(lambda model, operator_batch: model(operator_batch))
@@ -806,3 +806,43 @@ def test_external_operator_binding_tracks_the_checkpoint_revision(tmp_path):
     assert first.numeric_revision_id != second.numeric_revision_id
     assert first.executable_signature_id == second.executable_signature_id
     assert first.binding_id != second.binding_id
+
+
+def test_external_operator_binding_has_the_manifest_as_its_single_authority():
+    fields = dict(
+        model_version="1.2.0",
+        source_uri="https://example.test/source",
+        checkpoint_uri="https://example.test/checkpoint",
+        revision="abc123",
+        input_schema={"u": {"channels": 1}},
+        output_schema={"y": {"channels": 1}},
+        preprocessing={"layout": "case-query-channel"},
+        normalization={"u": {"mean": 0.0, "std": 1.0}},
+        dataset_provenance=("analytic",),
+        code_license="test-only",
+        weights_license="test-only",
+    )
+    loaded = phx.nn.operator.adapters.OperatorCheckpointManifest(
+        **fields, architecture="loaded-operator", checkpoint_sha256="a" * 64
+    )
+    other = phx.nn.operator.adapters.OperatorCheckpointManifest(
+        **fields, architecture="other-operator", checkpoint_sha256="b" * 64
+    )
+    arguments = dict(
+        runner=lambda payload, key: payload,
+        input_adapter=lambda operator_batch, _: operator_batch.input("u").values,
+        output_adapter=lambda output, operator_batch, _: output,
+        manifest=loaded,
+        capabilities=phx.ExecutionCapabilities("functional-jax"),
+        in_size="scalar",
+        out_size="scalar",
+    )
+
+    # A binding claimed for another checkpoint cannot be attached.
+    with pytest.raises(TypeError, match="binding"):
+        phx.nn.operator.adapters.ExternalOperatorAdapter(
+            **arguments, binding=other.binding_identity()
+        )
+    adapter = phx.nn.operator.adapters.ExternalOperatorAdapter(**arguments)
+    assert adapter.binding.binding_id == loaded.binding_identity().binding_id
+    assert adapter.binding.binding_id != other.binding_identity().binding_id

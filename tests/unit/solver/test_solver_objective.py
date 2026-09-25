@@ -249,6 +249,45 @@ def test_failed_cases_reduce_support_with_exact_zero_derivative():
     assert rejected.support == 3.0
 
 
+class _OffsetGain(phx.AbstractComponentSlot):
+    """Discretization slot with a trainable gain and a fixed calibration offset."""
+
+    component_authority: ClassVar = phx.ComponentAuthority.DISCRETIZATION
+    slot_semantic_id: ClassVar[str] = "test.offset-gain"
+    gain: jax.Array = phx.parameter_field()
+    offset: jax.Array = phx.fixed_field()
+
+    def __init__(self, gain, offset):
+        self.gain = jnp.asarray(gain)
+        self.offset = jnp.asarray(offset)
+
+
+def test_evaluate_differentiates_only_the_parameter_lane():
+    def measure(owner, case):
+        x, target = case
+        return phx.solver.SolverCaseResult(
+            value=(owner.gain * x + owner.offset - target) ** 2,
+            accepted=jnp.asarray(True),
+        )
+
+    x = jnp.asarray([1.0, 2.0, -1.0])
+    target = jnp.asarray([0.5, 3.0, 1.0])
+    objective = phx.solver.RolloutObjective(
+        None,
+        lambda solve, component: component,
+        measure,
+        objective_id="offset-gain",
+        cases=(x, target),
+    )
+    gradient = jax.grad(lambda tree: objective.evaluate(tree).value)(
+        _OffsetGain(2.0, 3.0)
+    )
+    # The FIXED offset is a constant of the objective: no derivative reaches it.
+    assert float(gradient.offset) == 0.0
+    expected = jnp.mean(2.0 * (2.0 * x + 3.0 - target) * x)
+    assert float(gradient.gain) == pytest.approx(float(expected), rel=1e-12)
+
+
 def test_algorithmic_work_loss_is_finite_at_exact_convergence_and_saturates():
     def loss(final, dtype):
         return phx.solver.algorithmic_work_loss(

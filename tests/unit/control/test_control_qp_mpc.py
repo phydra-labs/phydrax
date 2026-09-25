@@ -692,6 +692,39 @@ def test_mpc_sensitivity_refuses_the_complete_derivative_for_one_weak_window():
     assert "windows [0] are not valid and OPTIMAL" in refused.refusal
 
 
+def test_batched_mpc_sensitivity_refusal_names_the_weak_case_and_window():
+    specification = phx.control.LinearQuadraticControlProblem(
+        jnp.ones((2, 2, 1, 1)),
+        jnp.ones((2, 2, 1, 1)),
+        jnp.zeros((2, 1)),
+        jnp.zeros((2, 2, 1, 1)),
+        jnp.ones((2, 2, 1, 1)),
+        jnp.zeros((2, 1, 1)),
+        # Only case 1, window 1 has its unconstrained optimum u = 0.5 exactly on
+        # the bound (zero multiplier); every other stage is strictly interior.
+        control_linear=jnp.array([[[-0.2], [-0.2]], [[-0.2], [-0.5]]]),
+        control_upper_bounds=0.5 * jnp.ones((2, 2, 1)),
+    )
+    controller = phx.control.RecedingHorizonMPC(
+        specification,
+        prediction_horizon=1,
+        terminal_policy="none",
+        policy=_TIGHT,
+    )
+    sensitivity = phx.control.prepare_receding_horizon_mpc_sensitivity(controller)
+
+    np.testing.assert_array_equal(sensitivity.stage_optimal, [[True, True]] * 2)
+    np.testing.assert_array_equal(
+        sensitivity.stage_regular, [[True, True], [True, False]]
+    )
+    assert not bool(sensitivity.regular)
+    assert sensitivity.linearization is None
+    with pytest.raises(
+        ValueError, match=r"refused: \(case, window\) stages \[\(\(1,\), 1\)\] have"
+    ):
+        sensitivity.jvp(jax.tree.map(jnp.zeros_like, specification))
+
+
 def test_mpc_sensitivity_admits_only_dense_cold_unregularized_qp_sensitivities():
     specification = phx.control.LinearQuadraticControlProblem(
         jnp.ones((2, 1, 1)),

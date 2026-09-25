@@ -408,6 +408,102 @@ def test_checkpoint_restore_fails_closed_on_identity_or_content_mismatch():
         )
 
 
+def _forge_cursor(arrays):
+    accepted = arrays["cursors"]["accepted"] + 7
+    return {**arrays, "cursors": {**arrays["cursors"], "accepted": accepted}}
+
+
+def _forge_rule_state(arrays):
+    return {
+        **arrays,
+        "rule_state": jax.tree.map(lambda leaf: leaf * 0, arrays["rule_state"]),
+    }
+
+
+def _forge_calls(arrays, name):
+    forged = eqx.tree_at(lambda state: state.calls, arrays[name], arrays[name].calls + 9)
+    return {**arrays, name: forged}
+
+
+def _forge_model_state(arrays):
+    return _forge_calls(arrays, "model_state")
+
+
+def _forge_pending_model_state(arrays):
+    return _forge_calls(arrays, "pending_model_state")
+
+
+def _forge_targets(arrays):
+    return {**arrays, "targets": jax.tree.map(lambda leaf: leaf + 1, arrays["targets"])}
+
+
+def _forge_root_key(arrays):
+    return {**arrays, "root_key_data": arrays["root_key_data"] + 1}
+
+
+@pytest.mark.parametrize(
+    "forge",
+    [
+        _forge_cursor,
+        _forge_rule_state,
+        _forge_model_state,
+        _forge_pending_model_state,
+        _forge_targets,
+        _forge_root_key,
+    ],
+)
+def test_checkpoint_restore_refuses_forged_state_lanes_and_cursors(forge):
+    kernel, initial = _resumable_kernel()
+    payload = build_training_checkpoint(kernel, _advance(kernel, initial, 2))
+    with pytest.raises(ValueError, match="content digest"):
+        restore_training_checkpoint(
+            kernel, TrainingCheckpointPayload(payload.manifest, forge(payload.arrays))
+        )
+
+
+class _HeldWeight(StrictModule):
+    weight: jax.Array = parameter_field()
+
+    def __call__(self, parameters, model_state, fixed, payload, keys):
+        return _squared_error(parameters, model_state, fixed, payload, keys)
+
+
+class _HeldCounter(StrictModule):
+    count: jax.Array = model_state_field()
+
+    def __call__(self, parameters, model_state, fixed, payload, keys):
+        return _squared_error(parameters, model_state, fixed, payload, keys)
+
+
+class _HeldTarget(StrictModule):
+    offset: jax.Array = fixed_field()
+
+    def __call__(self, parameters, model_state, fixed, payload, keys):
+        contribution, next_state, diagnostics = _squared_error(
+            parameters, model_state, fixed, payload, keys
+        )
+        return (
+            _ObjectiveContribution(
+                contribution.numerator + self.offset, contribution.support
+            ),
+            next_state,
+            diagnostics,
+        )
+
+
+def test_objective_callables_may_hold_only_fixed_arrays():
+    rule = OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd")
+    with pytest.raises(
+        ValueError, match=r"PARAMETER leaves \['\.weight'\].*trained tree"
+    ):
+        _kernel(rule, objectives=(_fit(_HeldWeight(jnp.asarray([1.0, 1.0]))),))
+    with pytest.raises(ValueError, match=r"MODEL_STATE leaves \['\.count'\]"):
+        _kernel(rule, objectives=(_fit(_HeldCounter(jnp.asarray(0.0))),))
+    kernel, state = _kernel(rule, objectives=(_fit(_HeldTarget(jnp.asarray(1.0))),))
+    _, evidence = run_training_attempt(kernel, state, _payload())
+    assert int(evidence.outcome) == TrainingAttemptOutcome.ACCEPTED
+
+
 def _scaled_error(name, center):
     def objective(parameters, model_state, fixed, payload, keys):
         del fixed, keys
@@ -702,6 +798,33 @@ def test_zero_support_skips_do_not_spend_the_rejection_budget():
     with pytest.raises(TrainingRejectionBudgetError) as raised:
         run_training_attempt(kernel, state, _payload(scale=jnp.nan))
     assert raised.value.outcome is TrainingAttemptOutcome.NONFINITE
+
+
+def _unsupported_counter(parameters, model_state, fixed, payload, keys):
+    del fixed, payload, keys
+    contribution = _ObjectiveContribution(jnp.sum(parameters.weight**2), 0.0)
+    counted = eqx.tree_at(
+        lambda state: state.calls, model_state, model_state.calls + 10.0
+    )
+    return contribution, counted, {}
+
+
+def test_zero_support_objective_commits_no_model_state_transition():
+    kernel, state = _kernel(
+        OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd"),
+        objectives=(_fit(), _fit(_unsupported_counter, objective_id="unsupported")),
+    )
+    reference, reference_state = _kernel(OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd"))
+    state = kernel.accumulate(state, _payload(support=1.0))
+    next_state, evidence = run_training_attempt(kernel, state, _payload())
+    assert int(evidence.outcome) == TrainingAttemptOutcome.ACCEPTED
+    # Each supported microbatch counts once; the unsupported objective's
+    # increments never reach the committed model state.
+    assert float(next_state.model_state.calls) == 2.0
+    reference_state = reference.accumulate(reference_state, _payload(support=1.0))
+    expected, _ = run_training_attempt(reference, reference_state, _payload())
+    _assert_trees_equal(next_state.parameters, expected.parameters)
+    _assert_trees_equal(next_state.model_state, expected.model_state)
 
 
 def test_evaluation_view_drives_evaluation_source_targets_from_the_start():

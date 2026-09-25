@@ -1815,7 +1815,8 @@ derivatives rather than a selected minimum-norm generalized derivative.
 finite, explicitly centered primal-dual barrier system. It returns the
 finite-barrier solution and never hides its smoothing scale.
 `prepare_qp_sensitivity` retains one prepared linearization with reusable JVP
-and VJP actions and reports whether the solution map is regular. MPAX exposes
+and VJP actions and reports whether the solution map is regular, one `regular`
+flag per batched program case. MPAX exposes
 only explicitly requested algorithmic differentiation: the selected method
 must use `unroll=True` and the differentiation policy must be `"algorithmic"`.
 

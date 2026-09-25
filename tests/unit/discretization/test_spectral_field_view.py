@@ -246,6 +246,21 @@ def test_coefficient_transpose_is_the_exact_adjoint_of_the_synthesis():
     )
 
 
+def test_invalid_query_routes_have_no_transpose():
+    space, coefficients = _mixed()
+    reconstruction = prepare_spectral_field_reconstruction(space)
+    # One valid point and one outside the bounded y axis.
+    points = jnp.asarray(((0.5, 0.0), (0.5, 1.2)))
+    cotangent = jnp.asarray((1.0, 1.0))
+
+    with pytest.raises(ValueError, match=r"Invalid points \[1\].*OUTSIDE_SUPPORT"):
+        reconstruction.transpose(points, cotangent)
+    with pytest.raises(ValueError, match=r"Invalid points \[1\].*OUTSIDE_SUPPORT"):
+        reconstruction.duality_evidence(coefficients, points, cotangent)
+    with pytest.raises(Exception, match="invalid"):
+        eqx.filter_jit(reconstruction.transpose)(points, cotangent).block_until_ready()
+
+
 def test_vector_components_follow_the_declared_value_port():
     space, coefficients = _mixed()
     port = phx.ValuePort(

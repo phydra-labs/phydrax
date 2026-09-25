@@ -51,7 +51,10 @@ returns a static `phx.RoleResolution` (`paths`, `roles`, `violations`,
 Training boundaries call `phx.require_parameter_roles(tree, context=...)`. It
 raises a `ValueError` naming every violation and unclassified path with its
 remedy, and it also rejects callables or static fields that hide inexact arrays
-from the tree (closure cells, defaults, partial arguments, bound instances).
+from the tree (closure cells, defaults, module globals a function reads, partial
+arguments, bound instances). The search continues below plain
+`NonTrainableState` holders; only an `ExplicitFreeze` holder authorizes hidden
+numeric state in its subtree.
 `phx.partition_parameters(tree)` applies the same role check and splits the tree
 into `(parameters, model_state, fixed)` lanes with `None` holes (terminal nodes
 stay whole in `fixed`); `phx.combine_parameters` restores the tree.
@@ -261,7 +264,9 @@ a `phx.ModelExecutionContract`, independent of any owner:
   `host_only`, `stateful`);
 - `precision` — a `phx.ComponentPrecisionContract`;
 - `randomness` — a `phx.RandomnessContract`;
-- `ports`, construction certificates, and semantic provenance.
+- `ports`, construction certificates (`CONSTRUCTED` or `RUNTIME_CHECKED`
+  evidence), `declared_capabilities` (`DECLARED` evidence, a separate channel),
+  and semantic provenance.
 
 `None` means undeclared. The default contract is conservative: regularity,
 precision, and randomness undeclared. Model families with known structure
@@ -299,7 +304,9 @@ binding, never by the model, and comes from exactly one of:
 `phx.ComponentContract`: authority, slot identity, the intrinsic model
 contract, port binding evidence, requirements, an optional derivative admission
 made for this authority, and a content-addressed `bound_semantic_id`.
-Construction fails closed when a requirement lacks its evidence.
+Construction fails closed when a requirement lacks its evidence: a requirement
+accepting declaration is met by a declared capability, while a safety-critical
+one needs a certificate.
 
 ```python executable
 contract = network.model_execution_contract()
@@ -340,8 +347,14 @@ every model port to be mapped (owner ports may stay unused) and:
   returned `phx.PortBindingEvidence` (`unverified`, `dimensions_verified`,
   `axes_verified`, ...).
 
-`bind_component(..., owner_ports=..., port_mapping=...)` requires a mapping
-exactly when the model declares ports and owner ports are supplied. Domain
+A model that declares ports never binds without port evidence.
+`bind_component(..., owner_ports=..., port_mapping=...)` requires the owner's
+ports and an explicit mapping for such a model, and refuses it without owner
+ports (the error names the slot); a model without ports takes no mapping. Owner
+slots define their owner ports from their own value layouts: learned policies,
+observation locations, step corrections, and mesh proposers take declared
+`ports` checked against their value shapes together with a `port_mapping`, and
+rollout transitions derive theirs from their state and input layouts. Domain
 fields bind ports the same way: `domain.Model(*deps, port_mapping=...)` maps each
 model input port to the `domain.value_port(label)` of one dependency, packs
 dependencies in `deps` order without repacking, and publishes the evidence as the
@@ -505,12 +518,14 @@ Nonlinear owners compose these contracts in
 `phx.nonlinear.NonlinearPrecisionPolicy(components=...)`, which takes bound
 `ComponentContract` values. Residual-defining components (`MODEL`,
 `DISCRETIZATION`, `SURROGATE`) must declare a precision contract, and
-`residual_floor(scale)` sums their floors. `ACCELERATOR` and `DECISION`
-components are excluded, so a float32 preconditioner never raises the floor of a
-float64 residual. Passed to a Newton solve as `precision=policy`, the policy
-refuses a residual-defining component that computes in a coarser dtype without
-a declared floor, and refuses a tolerance below the derived floor; the floor
-itself is an achievable tolerance.
+`residual_floor(scale)` sums their floors. A relative floor is expressed at the
+policy's declared `residual_scale` (the residual magnitude it is relative to);
+without one the policy refuses to certify any absolute tolerance. `ACCELERATOR`
+and `DECISION` components are excluded, so a float32 preconditioner never raises
+the floor of a float64 residual. Passed to a Newton solve as `precision=policy`,
+the policy refuses a residual-defining component that computes in a coarser
+dtype without a declared floor, and refuses a tolerance below the derived floor;
+the floor itself is an achievable tolerance.
 
 ```python executable
 class Cubic(phx.AbstractArrayModel):

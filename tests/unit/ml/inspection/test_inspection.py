@@ -12,10 +12,12 @@ from phydrax import (
     DerivativeContract,
     DerivativeRoute,
     DerivativeSurface,
+    fixed_field,
     GradientLevel,
     SurfaceDerivative,
 )
 from phydrax._model import AbstractArrayModel, ModelBinding
+from phydrax.linalg import LinearSolveStatus
 from phydrax.ml import FitDiagnostics, FitResult, ML_SUCCESS, MLBatch
 from phydrax.ml.inspection import (
     gradient_sensitivity,
@@ -254,3 +256,67 @@ def test_influence_functions_obey_derivative_contract_and_return_jax_arrays():
     )
     with pytest.raises(TypeError, match="real parameterization"):
         influence_functions(complex_result, batch)
+
+
+class _CenteredLinearModel(AbstractArrayModel):
+    coefficients: jax.Array
+    feature_mean: jax.Array = fixed_field()
+    in_size: int = eqx.field(static=True)
+    out_size: str = eqx.field(static=True)
+
+    def __init__(self, coefficients, feature_mean):
+        self.coefficients = jnp.asarray(coefficients)
+        self.feature_mean = jnp.asarray(feature_mean)
+        self.in_size = self.coefficients.shape[0]
+        self.out_size = "scalar"
+
+    def __call__(self, x, /, *, key=None):
+        del key
+        return oe.contract(
+            "...f,f->...", jnp.asarray(x) - self.feature_mean, self.coefficients
+        )
+
+
+def test_influence_functions_perturb_only_parameters_and_carry_solve_evidence():
+    x = jnp.array([[-1.0, 0.5], [0.0, 1.0], [1.0, 2.0], [2.0, -1.0], [0.5, 0.0]])
+    targets = jnp.array([0.3, -0.2, 1.1, 0.4, -0.5])
+    weights = jnp.array([1.0, 2.0, 1.0, 0.5, 1.5])
+    model = _CenteredLinearModel(jnp.array([0.7, -0.3]), jnp.array([0.4, 0.5]))
+    batch = MLBatch(x, targets, sample_weight=weights)
+    damping = 1e-3
+    influence = influence_functions(
+        _fit_result(model, _DIRECT_CONTRACT), batch, damping=damping
+    )
+
+    # The fixed feature mean is a statistic of the fit, not a parameter.
+    assert influence.parameter_paths == (".coefficients",)
+    assert influence.parameter_influence.shape == (5, 2)
+    assert influence.hessian.shape == (2, 2)
+    centered = x - model.feature_mean
+    normalizer = jnp.sum(weights)
+    residual = centered @ model.coefficients - targets
+    gradients = 2.0 * (weights * residual)[:, None] * centered
+    hessian = 2.0 * (centered.T * weights) @ centered / normalizer
+    expected = -jnp.linalg.solve(hessian + damping * jnp.eye(2), gradients.T).T
+    assert jnp.allclose(influence.hessian, hessian, rtol=1e-12)
+    assert jnp.allclose(influence.parameter_influence, expected / normalizer, rtol=1e-10)
+    assert influence.valid
+    assert influence.solve_status.tolist() == [int(LinearSolveStatus.SUCCESS)] * 5
+    assert int(influence.hessian_rank) == 2
+    singular = jnp.linalg.svd(hessian + damping * jnp.eye(2), compute_uv=False)
+    assert float(influence.condition_estimate) == pytest.approx(
+        float(singular[0] / singular[-1]), rel=1e-10
+    )
+
+    # A redundant parameterization without damping has a singular Hessian: the
+    # solve reports the rank deficiency instead of returning plausible influence.
+    redundant = _CenteredLinearModel(jnp.array([0.7, -0.3]), jnp.array([0.4, 0.4]))
+    collinear = MLBatch(
+        jnp.stack((x[:, 0], x[:, 0]), axis=-1), targets, sample_weight=weights
+    )
+    deficient = influence_functions(
+        _fit_result(redundant, _DIRECT_CONTRACT), collinear, damping=0.0
+    )
+    assert not deficient.valid
+    assert int(deficient.hessian_rank) == 1
+    assert set(deficient.solve_status.tolist()) == {int(LinearSolveStatus.RANK_DEFICIENT)}

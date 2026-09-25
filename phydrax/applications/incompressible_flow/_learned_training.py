@@ -28,7 +28,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._fingerprint import canonical_fingerprint
-from ..._model import AbstractArrayModel
+from ..._model import AbstractArrayModel, ModelPorts, PortMapping
 from ..._numerics._ssp_runge_kutta import (
     ssprk33_step_with_evidence,
     StageTransformResult,
@@ -180,10 +180,17 @@ class _CurrentStressPredictor(StrictModule):
 class PeriodicLearnedStressRolloutTransition(
     AbstractDiscreteModelRolloutTransition, NonTrainableState
 ):
-    """SSPRK(3,3) periodic dynamics with learned stress at every stage."""
+    """SSPRK(3,3) periodic dynamics with learned stress at every stage.
+
+    The model is the stage stress predictor: its owner ports are the prepared
+    plan's feature port (input) and stress port (output), as for
+    `PreparedLearnedStressBinding`. A model declaring ports requires
+    `port_mapping` binding them in that order.
+    """
 
     prepared_stress: PreparedPeriodicLearnedStress
     coordinates: HermitianSpectralCoordinates
+    port_mapping: PortMapping | None
     base_rate: Callable = eqx.field(static=True)
     base_rate_id: str = eqx.field(static=True)
 
@@ -200,6 +207,7 @@ class PeriodicLearnedStressRolloutTransition(
         step_size: float,
         step_rtol: float = 1e-7,
         step_atol: float = 1e-12,
+        port_mapping: PortMapping | None = None,
     ):
         if not isinstance(prepared_stress, PreparedPeriodicLearnedStress):
             raise TypeError("prepared_stress must be PreparedPeriodicLearnedStress.")
@@ -224,7 +232,10 @@ class PeriodicLearnedStressRolloutTransition(
             raise ValueError("step_size must be finite and positive.")
         if not np.isfinite(rtol) or rtol < 0.0 or not np.isfinite(atol) or atol < 0.0:
             raise ValueError("Step tolerances must be finite and nonnegative.")
+        if port_mapping is not None and not isinstance(port_mapping, PortMapping):
+            raise TypeError("port_mapping must be a PortMapping or None.")
         self.prepared_stress = prepared_stress
+        self.port_mapping = port_mapping
         self.coordinates = coordinates
         self.base_rate = base_rate
         self.base_rate_id = rate_id
@@ -248,6 +259,13 @@ class PeriodicLearnedStressRolloutTransition(
             }
         )
 
+    def owner_ports(self) -> ModelPorts:
+        plan = self.prepared_stress.binding.plan
+        return ModelPorts(
+            inputs=(plan.feature_schema.value_port(),),
+            outputs=(plan.output_contract.value_port(),),
+        )
+
     def validate_model(self, model: AbstractArrayModel, /) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("Learned stress transitions require AbstractArrayModel.")
@@ -257,6 +275,7 @@ class PeriodicLearnedStressRolloutTransition(
             raise ValueError(
                 "Learned stress model sizes do not match the prepared feature/output ABI."
             )
+        self.component_binding(model)
 
     def evaluate(
         self,
@@ -350,9 +369,15 @@ class PeriodicLearnedStressRolloutTransition(
 class MACLearnedRateRolloutTransition(
     AbstractDiscreteModelRolloutTransition, NonTrainableState
 ):
-    """Explicit MAC transition with a learned rate and controlled projection."""
+    """Explicit MAC transition with a learned rate and controlled projection.
+
+    The model maps the state point (`state_layout.value_port(role="point")`) to
+    the learned rate coordinates (`state_layout.value_port(role="tangent")`);
+    a model declaring ports requires `port_mapping` binding them in that order.
+    """
 
     dynamics: CompiledMACIncompressibleDynamics
+    port_mapping: PortMapping | None
     coarse_relative_residual: float = eqx.field(static=True)
 
     def __init__(
@@ -365,6 +390,7 @@ class MACLearnedRateRolloutTransition(
         coarse_relative_residual: float = 1.0,
         step_rtol: float = 1e-7,
         step_atol: float = 1e-12,
+        port_mapping: PortMapping | None = None,
     ):
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
@@ -394,7 +420,10 @@ class MACLearnedRateRolloutTransition(
             raise ValueError("step_size must be finite and positive.")
         if not np.isfinite(rtol) or rtol < 0.0 or not np.isfinite(atol) or atol < 0.0:
             raise ValueError("Step tolerances must be finite and nonnegative.")
+        if port_mapping is not None and not isinstance(port_mapping, PortMapping):
+            raise TypeError("port_mapping must be a PortMapping or None.")
         self.dynamics = dynamics
+        self.port_mapping = port_mapping
         self.coarse_relative_residual = residual
         self.state_layout = state_layout
         self.input_layout = None
@@ -420,6 +449,12 @@ class MACLearnedRateRolloutTransition(
     def supports_linear_refinement(self) -> bool:
         return True
 
+    def owner_ports(self) -> ModelPorts:
+        return ModelPorts(
+            inputs=(self.state_layout.value_port(role="point"),),
+            outputs=(self.state_layout.value_port(role="tangent"),),
+        )
+
     def validate_model(self, model: AbstractArrayModel, /) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("MAC learned rates require AbstractArrayModel.")
@@ -430,6 +465,7 @@ class MACLearnedRateRolloutTransition(
             raise ValueError(
                 "MAC learned-rate model input and output must match the state layout."
             )
+        self.component_binding(model)
 
     def evaluate(
         self,

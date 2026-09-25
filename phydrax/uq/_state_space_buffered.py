@@ -18,7 +18,7 @@ from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKin
 from .._fingerprint import canonical_fingerprint
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
-from .._trainable import combine_parameters
+from .._trainable import combine_parameters, fixed_field
 from .._training_kernel import (
     KernelObjective,
     OptaxUpdateRule,
@@ -56,7 +56,7 @@ class StateSpaceWindowBatch(StrictModule):
 class StateSpaceWindowPlan(StrictModule):
     """Uniform fixed-length target windows with explicit edge probabilities."""
 
-    inclusion_probability: Array
+    inclusion_probability: Array = fixed_field()
     num_steps: int = eqx.field(static=True)
     target_length: int = eqx.field(static=True)
     left_buffer: int = eqx.field(static=True)

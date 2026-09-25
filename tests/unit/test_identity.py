@@ -3,6 +3,7 @@
 #
 
 import functools
+import sys
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -66,6 +67,49 @@ def test_plain_function_payload_is_content_addressed():
     assert (
         nested["semantic_content_id"]
         != (strict_module_payload(_ActivatedCallable(_cube))["semantic_content_id"])
+    )
+
+
+_GLOBAL_WEIGHTS = jnp.asarray([1.0, 2.0])
+_GLOBAL_OFFSETS = (jnp.asarray([3], dtype=jnp.int32),)
+_GLOBAL_SCALE = 2.0
+
+
+def _weighted(value):
+    return _GLOBAL_WEIGHTS * value
+
+
+def _offset(value):
+    return value + _GLOBAL_OFFSETS[0]
+
+
+def _calls_weighted(value):
+    return _weighted(value) + 1.0
+
+
+def _scaled(value):
+    return jnp.sin(value) * _GLOBAL_SCALE
+
+
+def test_functions_reading_global_arrays_are_opaque():
+    for reader in (_weighted, _offset, _calls_weighted):
+        with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+            callable_payload(reader)
+        with pytest.raises(TypeError, match="requires explicit semantic and numeric"):
+            strict_module_payload(_ActivatedCallable(reader))
+        payload = callable_payload(reader, semantic_id="law", numeric_id="weights")
+        assert payload["numeric_content_id"] == "weights"
+
+
+def test_plain_function_identity_follows_scalar_global_values(monkeypatch):
+    payload = callable_payload(_scaled)
+    assert callable_payload(_scaled) == payload
+
+    monkeypatch.setattr(sys.modules[__name__], "_GLOBAL_SCALE", 3.0)
+
+    assert (
+        callable_payload(_scaled)["semantic_content_id"]
+        != (payload["semantic_content_id"])
     )
 
 

@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from tests._ported_models import full_port, in_order, PortedAffine
 
 
 Common = phx.AdmissibilityReason
@@ -216,6 +217,37 @@ def test_correction_slot_confers_discretization_authority():
         phx.dynamics.AbstractDiscreteModelRolloutTransition.slot_contract().authority
         is phx.ComponentAuthority.MODEL
     )
+
+
+def test_port_declaring_correction_binds_in_owner_order():
+    accepted, candidate = full_port("y:accepted", (2,)), full_port("y:candidate", (2,))
+    owner = phx.ModelPorts(
+        inputs=(accepted, candidate), outputs=(full_port("y:increment", (2,)),)
+    )
+    weight = jnp.asarray([[0.0, 0.0, 0.1, 0.0], [0.0, 0.0, 0.0, 0.1]])
+    arguments = dict(state_shape=(2,), maximum_relative_correction=0.5)
+    model = PortedAffine(owner, out_size=2, weight=weight)
+    with pytest.raises(ValueError, match="accepted-step-transform'.*owner_ports"):
+        phx.solver.LearnedStepCorrection(model, **arguments)
+    swapped = phx.ModelPorts(inputs=(candidate, accepted), outputs=owner.outputs)
+    with pytest.raises(ValueError, match="never repacked"):
+        phx.solver.LearnedStepCorrection(
+            PortedAffine(swapped, out_size=2),
+            **arguments,
+            ports=owner,
+            port_mapping=in_order(swapped, swapped),
+        )
+
+    correction = phx.solver.LearnedStepCorrection(
+        model, **arguments, ports=owner, port_mapping=in_order(owner, owner)
+    )
+    evidence = correction.component_contract().port_binding
+    assert evidence.inputs == ((accepted.port_id,) * 2, (candidate.port_id,) * 2)
+    assert evidence.unverified == ()
+    transaction = correction.propose(
+        jnp.asarray(0), jnp.asarray([1.0, 2.0]), jnp.asarray([0.9, 1.8])
+    )
+    np.testing.assert_allclose(transaction.proposed, [0.99, 1.98])
 
 
 @pytest.mark.parametrize(

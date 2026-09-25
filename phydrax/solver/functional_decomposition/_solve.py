@@ -29,7 +29,12 @@ from ..._iteration import (
 )
 from ..._sampling._addressing import derive_key, SampleAddress
 from ..._strict import StrictModule
-from ..._trainable import ArrayRole, require_parameter_roles, resolve_array_roles
+from ..._trainable import (
+    ArrayRole,
+    NonTrainableState,
+    require_parameter_roles,
+    resolve_array_roles,
+)
 from ..._training_kernel import (
     AbstractKernelUpdateRule,
     KernelUpdateContext,
@@ -535,14 +540,20 @@ def _merge_patch_candidate(
 
 
 @final
-class _LocalPatchLoss(StrictModule):
+class _LocalPatchLoss(StrictModule, NonTrainableState):
     """Local FunctionalSolver objective of one patch over its parameter subspace.
 
-    The solver's functions are rebound to the reconstructed trial functions; its
-    terms evaluate with the attempt's `loss` key at the accepted local step.
+    Holds the patch solver without its functions: its terms, collocation, and
+    enforcement are the objective's FIXED data, while the trained functions
+    reach it only through the kernel. Every evaluation binds the reconstructed
+    trial functions and evaluates the terms with the attempt's `loss` key at
+    the accepted local step.
     """
 
     solver: FunctionalSolver
+
+    def __init__(self, solver: FunctionalSolver, /):
+        self.solver = eqx.tree_at(lambda value: value.functions, solver, frozendict())
 
     def __call__(
         self, parameters: Any, held: ParameterSubspace, payload: None, keys: Any

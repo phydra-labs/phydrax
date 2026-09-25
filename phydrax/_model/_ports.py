@@ -611,6 +611,40 @@ def require_mapped_order(
         )
 
 
+def require_port_shapes(
+    ports: ModelPorts | None,
+    /,
+    *,
+    inputs: tuple[tuple[int, ...], ...],
+    outputs: tuple[tuple[int, ...], ...],
+    site: str,
+) -> ModelPorts | None:
+    """Require owner `ports` to declare the owner's value layout; return them.
+
+    An owner that declares its ports explicitly must declare exactly the event
+    shapes of the values it passes to (`inputs`) and reads from (`outputs`) its
+    model, in owner order. `None` (no owner ports) is returned unchanged.
+    Raises `TypeError` for a non-`ModelPorts` value and `ValueError` naming
+    `site` for any other layout.
+    """
+    if ports is None:
+        return None
+    if not isinstance(ports, ModelPorts):
+        raise TypeError(f"{site} ports must be ModelPorts or None.")
+    for direction, values, expected in (
+        ("input", ports.inputs, inputs),
+        ("output", ports.outputs, outputs),
+    ):
+        declared = tuple(port.event_shape for port in values)
+        if declared != tuple(expected):
+            raise ValueError(
+                f"{site} {direction} ports must declare the event shapes "
+                f"{tuple(expected)} of its {direction} values in owner order; got "
+                f"{declared}."
+            )
+    return ports
+
+
 __all__ = [
     "bind_model_ports",
     "intrinsic_model_ports",
@@ -620,6 +654,7 @@ __all__ = [
     "PortProvider",
     "PortVariance",
     "require_mapped_order",
+    "require_port_shapes",
     "ValuePort",
     "resolve_port_mapping",
 ]

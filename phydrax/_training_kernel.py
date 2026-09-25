@@ -32,7 +32,7 @@ from ._differentiation import (
     DerivativeRoute,
     ObjectiveKind,
 )
-from ._fingerprint import canonical_fingerprint
+from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._identity import (
     ArtifactBindingIdentity,
     ExecutableSignature,
@@ -50,7 +50,6 @@ from ._trainable import (
     LaneLayout,
     parameter_field,
     partition_parameters,
-    require_declared_callables,
     require_parameter_roles,
     RoleResolution,
 )
@@ -85,6 +84,7 @@ _MANIFEST_FIELDS = frozenset(
         "structures",
         "fixed_structure",
         "parameter_revision",
+        "content_digest",
         "accepted_boundary",
         "selection",
         "sharding_identity",
@@ -277,10 +277,13 @@ class KernelObjective(StrictModule):
     `(_ObjectiveContribution, next_model_state, diagnostics)`: a real scalar
     numerator with stop-gradient support, the MODEL_STATE lane after the
     evaluation (same structure, shapes and dtypes), and an array PyTree of
-    diagnostics. The kernel combines objectives as `sum(weight * value)` of
-    their individually normalized values; support merging happens only across
-    the microbatches of one objective. `kind` and `route` decide which parameter
-    authorities the objective may train.
+    diagnostics. An evaluation with zero support contributes neither a gradient
+    nor a model-state transition. The kernel combines objectives as
+    `sum(weight * value)` of their individually normalized values; support
+    merging happens only across the microbatches of one objective. `kind` and
+    `route` decide which parameter authorities the objective may train. `fn`
+    may hold only FIXED arrays: trained and model-state arrays reach it through
+    its arguments.
     """
 
     fn: ObjectiveFunction
@@ -1099,6 +1102,42 @@ def _objective_admission(
     return admission
 
 
+def _require_objective_roles(objective: KernelObjective, context: str, /) -> None:
+    """Refuse objective callables holding arrays the kernel would not own.
+
+    The kernel trains only the prepared tree's PARAMETER lane and threads only
+    its MODEL_STATE lane; an objective callable's own arrays are neither. Its
+    roles must be fully declared, like the tree's, and every array it holds
+    must be FIXED: a PARAMETER leaf there would be silently excluded from
+    training and a MODEL_STATE leaf would never be committed.
+    """
+    label = f"{context} objective {objective.objective_id!r}"
+    resolution = require_parameter_roles(objective.fn, context=label)
+    held = {
+        role: [
+            path or "<root>"
+            for path, resolved in zip(resolution.paths, resolution.roles, strict=True)
+            if resolved is role
+        ]
+        for role in (ArrayRole.PARAMETER, ArrayRole.MODEL_STATE)
+    }
+    if held[ArrayRole.PARAMETER]:
+        raise ValueError(
+            f"{label}: the objective callable holds PARAMETER leaves "
+            f"{held[ArrayRole.PARAMETER]!r} that the kernel would never train; move "
+            "them into the trained tree, which reaches the objective as its "
+            "`parameters` argument, or declare them fixed_field."
+        )
+    if held[ArrayRole.MODEL_STATE]:
+        raise ValueError(
+            f"{label}: the objective callable holds MODEL_STATE leaves "
+            f"{held[ArrayRole.MODEL_STATE]!r} outside the kernel lifecycle, which "
+            "threads and commits only the trained tree's MODEL_STATE lane; move "
+            "them into the trained tree, which reaches the objective as its "
+            "`model_state` argument."
+        )
+
+
 def _lane_configuration(
     context: str,
     layout: LaneLayout | None,
@@ -1380,7 +1419,13 @@ class PreparedTrainingKernel(StrictModule):
         *,
         differentiate: bool,
     ) -> tuple[tuple[_ObjectiveContribution, ...], tuple[Any, ...], Any, tuple[Any, ...]]:
-        """Evaluate every objective in declaration order, threading model state."""
+        """Evaluate every objective in declaration order, threading model state.
+
+        An objective with zero support carries no training signal: it neither
+        contributes a gradient (see `_GradientAccumulationState.add`) nor
+        transitions the MODEL_STATE lane, whose next objective sees the state
+        unchanged. A supported objective's next state passes through exactly.
+        """
         contributions: list[_ObjectiveContribution] = []
         gradients: list[Any] = []
         diagnostics: list[Any] = []
@@ -1409,7 +1454,8 @@ class PreparedTrainingKernel(StrictModule):
                 gradients.append(gradient)
             else:
                 numerator, aux = numerator_fn(parameters)
-            support, log_scale, current, diagnostic = aux
+            support, log_scale, next_model_state, diagnostic = aux
+            current = tree_where(support > 0.0, next_model_state, current)
             contributions.append(_ObjectiveContribution(numerator, support, log_scale))
             diagnostics.append(diagnostic)
         return tuple(contributions), tuple(gradients), current, tuple(diagnostics)
@@ -1803,6 +1849,8 @@ def prepare_training_kernel(
     `root_authority`. Every authority group must be admitted by at least one
     objective's `(route, kind)`; each objective trains only the groups that
     admit it (other parameters are stop-gradient inside its evaluation).
+    Each objective callable passes the same role preflight as the tree and
+    may hold only FIXED arrays (`_require_objective_roles`).
     """
     if not isinstance(spec, TrainingKernelSpec):
         raise TypeError("spec must be a TrainingKernelSpec.")
@@ -1816,9 +1864,7 @@ def prepare_training_kernel(
     if len(set(identifiers)) != len(identifiers):
         raise ValueError(f"{context}: objective ids must be unique.")
     for objective in objectives_:
-        require_declared_callables(
-            objective.fn, context=f"{context} objective {objective.objective_id!r}"
-        )
+        _require_objective_roles(objective, context)
     if root_authority is not None and not isinstance(root_authority, ComponentAuthority):
         raise TypeError("root_authority must be a ComponentAuthority or None.")
 
@@ -2001,9 +2047,10 @@ class TrainingCheckpointPayload:
     """Canonical JSON manifest of identities plus the exact array state.
 
     `arrays` holds parameters, model state, rule state, targets, accumulation,
-    root-key data, cursors, and the accepted-boundary marker; the manifest binds
-    them to the kernel's identities. There are no version fields: any identity
-    or structure mismatch fails closed on restore.
+    pending model state, root-key data, cursors, and the accepted-boundary
+    marker; the manifest binds them to the kernel's identities and binds their
+    exact content by one canonical digest. There are no version fields: any
+    identity, structure, or content mismatch fails closed on restore.
     """
 
     manifest: Mapping[str, Any]
@@ -2043,6 +2090,15 @@ def _parameter_revision(
     return NumericRevision(kernel.checkpoint_id, _leaf_records(parameters))
 
 
+def _content_digest(arrays: Mapping[str, Any], /) -> str:
+    """SHA-256 over the lane path, dtype, shape, and bytes of every checkpoint array.
+
+    Every lane and cursor of `_checkpoint_arrays` enters the digest, so no
+    array of a checkpoint can change without changing its manifest.
+    """
+    return array_tree_fingerprint(dict(arrays))["sha256"]
+
+
 def training_role_schema_id(resolution: RoleResolution, /) -> str:
     """Fingerprint the path and array role of every leaf of one resolved tree."""
     return canonical_fingerprint(
@@ -2068,7 +2124,8 @@ def parameter_binding_identity(
     `parameters` is the PARAMETER lane of `partition_parameters`. Its leaf
     records form the numeric revision, exactly the kernel's `parameter_revision`
     convention: model state and FIXED arrays are checkpoint payload verified by
-    structure and checksum, not model content that re-identifies the weights.
+    structure and content digest, not model content that re-identifies the
+    weights.
     The executable signature holds only static facts: the lane's leaf shapes and
     dtypes, the caller's algorithm and backend facts, and the `callable_payload`
     identities of callables held statically, whose weights are compiled into the
@@ -2158,6 +2215,7 @@ def build_training_checkpoint(
         },
         "fixed_structure": _structure_signature(kernel.fixed),
         "parameter_revision": _parameter_revision(kernel, state.parameters).revision_id,
+        "content_digest": _content_digest(arrays),
         "accepted_boundary": boundary,
         "selection": None if selection is None else dataclasses.asdict(selection),
         "sharding_identity": sharding,
@@ -2217,6 +2275,12 @@ def _verify_checkpoint(
         != manifest["parameter_revision"]
     ):
         raise ValueError("Training checkpoint parameter revision does not match.")
+    if _content_digest(arrays) != manifest["content_digest"]:
+        raise ValueError(
+            "Training checkpoint content digest does not match its arrays: a "
+            "parameter, model-state, rule-state, target, accumulation, pending "
+            "model-state, root-key, cursor, or boundary array was altered."
+        )
 
 
 def restore_training_checkpoint(
@@ -2229,8 +2293,9 @@ def restore_training_checkpoint(
     """Verify a checkpoint against `kernel` and rebuild its committed state.
 
     Manifest fields, identities, structures, the key implementation, the
-    accepted-boundary marker, and the parameters' numeric revision must all
-    match; anything else raises `ValueError`.
+    accepted-boundary marker, the parameters' numeric revision, and the content
+    digest of every array lane and cursor must all match; anything else raises
+    `ValueError`.
     """
     if not isinstance(kernel, PreparedTrainingKernel):
         raise TypeError("kernel must be a PreparedTrainingKernel.")

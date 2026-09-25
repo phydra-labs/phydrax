@@ -100,10 +100,13 @@ in `DerivativeSurface` order. Compare them as sets.
 - `EXTERNAL_ADJOINT`: an adjoint supplied by an external or dedicated solver.
 - `STOPPED`: no derivative mechanism is claimed for the combined map.
 
-The route never changes declared surface levels. A `STOPPED` ML fit may still
-declare prediction surfaces — a RANSAC fit is stopped yet its fitted linear
-prediction is smooth in its input and coefficients — but it declares no `FIT_*`
-surface. `authority_admits` never admits `STOPPED` as a training route.
+The route never changes declared surface levels, but a `STOPPED` contract admits
+no differentiation request: every requested level is `NONE` with the reason
+`"route-stopped"`. A `STOPPED` ML fit may still declare prediction surfaces — a
+RANSAC fit is stopped yet its fitted linear prediction is smooth in its input and
+coefficients — and those are admitted by the fitted executable's
+`model_execution_contract()`, which differentiates through the `DIRECT` route.
+`authority_admits` never admits `STOPPED` as a training route.
 
 ### Direct differentiation
 
@@ -329,9 +332,10 @@ computed by `admit_regularity` under the owner's `RegularityPolicy`:
 
 A requested surface the contract does not declare (or declares `NONE`) is rejected
 with the reason `"surface-unsupported:<surface>"`, for example
-`"surface-unsupported:fit-features"`. The admission is supported exactly when no
-requested level is `NONE`; an unsupported admission names its reasons and a
-supported one carries none. `admission.conditions` collect the contract,
+`"surface-unsupported:fit-features"`, and every surface of a `STOPPED` contract is
+rejected with the reason `"route-stopped"`. The admission is supported exactly
+when no requested level is `NONE`; an unsupported admission names its reasons and
+a supported one carries none. `admission.conditions` collect the contract,
 requested-surface, and regularity conditions and qualify every admitted level —
 resolve them with `gradient_level_at_least` before relying on the level.
 
@@ -419,9 +423,9 @@ implicit route, `"residual:regularity-undeclared"`) in
 
 Two operations combine contracts. Both combine routes the same way: equal routes
 are kept, and differing routes become `STOPPED` with the condition
-`"mixed-derivative-routes:<routes joined by ,>"` unless an explicit
-`composition_route=` is supplied. Conditions and nondifferentiable outputs are
-unions.
+`"mixed-derivative-routes:<routes joined by ,>"`, so the combination admits no
+request, unless an explicit `composition_route=` is supplied. Conditions and
+nondifferentiable outputs are unions.
 
 `a.meet(b, ...)` combines **parallel** parts of one map:
 
@@ -518,7 +522,10 @@ fit:        (training data, weights, hyperparameters) -> fitted parameters
 the fit route. `MODEL_PARAMETER` is owned and always declared by ML results. A
 model may have smooth prediction while its fit is nondifferentiable: hard trees
 are the simplest example, because leaf values are parameters but split feature
-and threshold selection are discrete. Conversely, a fitted spectral basis may be
+and threshold selection are discrete. Their fit route is `STOPPED`, so
+`FitResult.require_derivative` refuses every request, while
+`model_execution_contract().derivative` admits leaf-value (`MODEL_PARAMETER`)
+derivatives of the fitted executable. Conversely, a fitted spectral basis may be
 callable through smooth matrix multiplication while the basis returned by fitting
 is not uniquely differentiable at repeated singular values.
 
@@ -566,7 +573,7 @@ phx.ml.fit(
     targets,
     derivative_request=tree_fit,
 )
-# ValueError: derivative-unsupported: ... (reasons: surface-unsupported:fit-features) ...
+# ValueError: derivative-unsupported: ... (reasons: route-stopped, surface-unsupported:fit-features) ...
 ```
 
 The contract is static, so the check runs identically inside `jax.jit` or
@@ -678,7 +685,9 @@ levels. Constructor options select between the rows where noted. Legend: `S`
 smooth, `AE` almost-everywhere, `C` conditional, `N` declared `NONE` (owned
 surface only), `–` undeclared capability (level `NONE`). Columns: `IN` = `INPUT`,
 `MP` = `MODEL_PARAMETER`, `FF`/`FT`/`FW`/`FH` = `FIT_FEATURES`/`FIT_TARGETS`/
-`FIT_WEIGHTS`/`FIT_HYPERPARAMETERS`.
+`FIT_WEIGHTS`/`FIT_HYPERPARAMETERS`. A `stopped` fit contract admits no request;
+its `IN` and `MP` levels are admitted through the fitted executable's
+`model_execution_contract()`.
 
 | Family | Route | IN | MP | FF | FT | FW | FH | Nondifferentiable outputs; principal conditions |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

@@ -591,7 +591,10 @@ class FunctionNonlinearUpdate(AbstractNonlinearUpdate):
     and `capabilities` derive JIT support and action differentiability from the
     models' execution and derivative contracts. An array model maps model
     inputs, not `(state, args)`, so it enters through a callable module that
-    defines the proposal.
+    defines the proposal. Only that module knows the values it passes to a
+    model, so a model declaring ports is refused as a bare child: the module
+    binds it with `bind_component(model, AbstractNonlinearUpdate,
+    owner_ports=..., port_mapping=...)`.
 
     The proposal is never trusted. Application evaluates the original problem
     at the current state and at the candidate, and reports `APPLIED` only for a

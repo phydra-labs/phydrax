@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from tests._ported_models import full_port, in_order, PortedAffine
 
 
 nl = phx.nonlinear
@@ -141,6 +142,31 @@ def test_models_bind_as_accelerator_components_and_keep_parameters():
         )
     with pytest.raises(TypeError, match="callable module"):
         nl.FunctionNonlinearUpdate(model)
+
+
+def test_port_declaring_models_bind_through_the_callable_owner_ports():
+    owner = phx.ModelPorts(
+        inputs=(full_port("root.defect", (1,)),),
+        outputs=(full_port("root.correction", (1,)),),
+    )
+    model = PortedAffine(owner, out_size=1, weight=jnp.asarray([[0.5]]))
+    with pytest.raises(ValueError, match="nonlinear.update'.*owner_ports"):
+        nl.FunctionNonlinearUpdate(_Correction(model))
+
+    bound = phx.bind_component(
+        model,
+        nl.AbstractNonlinearUpdate,
+        owner_ports=owner,
+        port_mapping=in_order(owner, owner),
+    )
+    update = nl.FunctionNonlinearUpdate(_Correction(bound))
+    ((location, contract),) = update.component_contracts()
+    assert location == "function.model"
+    assert contract.port_binding.outputs == ((owner.outputs[0].port_id,) * 2,)
+    assert contract.port_binding.unverified == ()
+    assert jnp.allclose(
+        _apply(update, jnp.asarray([1.0]), jnp.asarray([2.0])).state, jnp.asarray([1.5])
+    )
 
 
 def test_capabilities_follow_the_bound_model_execution_contract():

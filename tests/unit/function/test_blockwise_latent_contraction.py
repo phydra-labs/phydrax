@@ -19,6 +19,7 @@ from phydrax.domain import (
     SampleLayout,
     TimeInterval,
 )
+from phydrax.domain._evaluation import try_blockwise_evaluation
 from phydrax.enforcement import enforce_dirichlet, enforce_initial
 from phydrax.nn._base import _AbstractBaseModel
 from phydrax.nn.models import LatentContractionModel, LatentExecutionPolicy
@@ -625,12 +626,21 @@ def test_blockwise_output_layout_declarations_are_validated():
         phx.domain.ModelBinding(output_layout="axis_array")
 
     domain, batch, _, _ = _cube_batch()
-    with pytest.raises(ValueError, match="not model dependencies"):
-        domain.Model(
-            "a",
-            "b",
-            binding=_blockwise(output_layout="dependency_subset", output_labels=("c",)),
-        )(lambda x: x[0])
+    unknown = _blockwise(output_layout="dependency_subset", output_labels=("c", "d"))
+    # Binding time: Domain.Model knows its dependencies before any model is bound.
+    with pytest.raises(ValueError, match=r"output_labels \('c', 'd'\) are not model"):
+        domain.Model("a", "b", binding=unknown)
+
+    # Invocation: the labels are checked before the model runs.
+    calls = []
+
+    def model(*blocks, key=None):
+        calls.append(blocks)
+        return jnp.sum(blocks[0])
+
+    with pytest.raises(ValueError, match=r"output_labels \('c', 'd'\) are not model"):
+        try_blockwise_evaluation(model, ("a", "b"), batch, unknown)
+    assert calls == []
 
 
 def test_reduced_blockwise_layout_refuses_pointwise_evaluation():

@@ -26,7 +26,11 @@ from .._model import (
     AbstractComponentSlot,
     bind_component,
     ComponentContract,
+    ModelPorts,
+    PortMapping,
 )
+from .._model._component import bind_positional_component
+from .._model._ports import require_port_shapes
 from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import fixed_field
@@ -477,13 +481,23 @@ class NeuralFeedbackPolicy(AbstractControlParameterization):
     `case_shape` token because the decision lives in the model's arrays.
     Feedback policies cannot be sampled without a state trajectory.
 
+    `ports` declare the scientific identity of the policy's values: the state
+    port (event shape `state_shape`), then a scalar time port with
+    `time_input`, as inputs, and the control port (event shape
+    `control_shape`) as the output. A model declaring ports requires `ports`
+    and an explicit `port_mapping` binding its ordered ports to exactly that
+    owner order (values are packed, never repacked); a model without ports
+    keeps the size checks alone.
+
     The model is a dynamic child whose arrays keep their own roles, so a
     learned policy stays PARAMETER. It is bound to the
     `AbstractControlParameterization` `DECISION` slot; `component_contract()`
-    returns the bound contract.
+    returns the bound contract, whose `port_binding` holds the port evidence.
     """
 
     model: AbstractArrayModel
+    ports: ModelPorts | None
+    port_mapping: PortMapping | None
     time_grid: TimeGrid | None
     state_shape: tuple[int, ...] = eqx.field(static=True)
     time_input: bool = eqx.field(static=True)
@@ -497,6 +511,8 @@ class NeuralFeedbackPolicy(AbstractControlParameterization):
         control_shape: Sequence[int],
         policy_id: str,
         time_input: bool = False,
+        ports: ModelPorts | None = None,
+        port_mapping: PortMapping | None = None,
     ):
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
@@ -520,8 +536,19 @@ class NeuralFeedbackPolicy(AbstractControlParameterization):
                 f"Neural feedback policy out_size must produce shape {controls}; got "
                 f"{model.out_size!r}."
             )
-        bind_component(model, AbstractControlParameterization)
+        site = "NeuralFeedbackPolicy"
+        owner_ports = require_port_shapes(
+            ports,
+            inputs=(states, ()) if time_input else (states,),
+            outputs=(controls,),
+            site=site,
+        )
+        bind_positional_component(
+            model, AbstractControlParameterization, owner_ports, port_mapping, site=site
+        )
         self.model = model
+        self.ports = owner_ports
+        self.port_mapping = port_mapping
         self.time_grid = None
         self.state_shape = states
         self.time_input = time_input
@@ -536,7 +563,12 @@ class NeuralFeedbackPolicy(AbstractControlParameterization):
 
     def component_contract(self) -> ComponentContract:
         """Return the model's contract bound to the control-parameterization slot."""
-        return bind_component(self.model, AbstractControlParameterization).contract()
+        return bind_component(
+            self.model,
+            AbstractControlParameterization,
+            owner_ports=self.ports,
+            port_mapping=self.port_mapping,
+        ).contract()
 
     def evaluate(
         self,

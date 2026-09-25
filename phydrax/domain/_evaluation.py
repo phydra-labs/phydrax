@@ -376,8 +376,10 @@ def try_blockwise_evaluation(
     """Try one model call over independent batch axes without point materialization.
 
     Output axes come only from `binding.output_layout`; raw arrays must carry the
-    declared leading batch axes exactly.
+    declared leading batch axes exactly. `binding.output_labels` must name
+    dependencies in `deps`; unknown labels raise `ValueError` before the model runs.
     """
+    binding.require_dependencies(deps)
     if not deps:
         return None, "blockwise model execution requires non-empty dependencies."
 

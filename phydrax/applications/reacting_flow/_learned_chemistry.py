@@ -33,6 +33,7 @@ from ..._differentiation import (
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._identity import SemanticProvenance
 from ..._model._frozen import trainable_provider
+from ..._model._ports import intrinsic_model_ports
 from ..._strict import StrictModule
 from ..._trainable import (
     ExplicitFreeze,
@@ -379,6 +380,10 @@ class LearnedChemicalTransitionPlan(_AbstractLearnedChemicalTransition, Explicit
     wherever the plan is held, so training never updates the deployed artifact
     accidentally. `as_trainable_binding` is the explicit operation that returns
     a new trainable plan.
+
+    The plan's feature schema declares no owner value ports, so a model or
+    uncertainty model declaring ports (`intrinsic_model_ports`) cannot bind to
+    it and is refused.
     """
 
     model: Callable
@@ -415,6 +420,13 @@ class LearnedChemicalTransitionPlan(_AbstractLearnedChemicalTransition, Explicit
             raise TypeError(
                 "Learned chemistry model and uncertainty model must be callable."
             )
+        for name, value in (("model", model), ("uncertainty_model", uncertainty_model)):
+            if intrinsic_model_ports(value) is not None:
+                raise ValueError(
+                    "LearnedChemicalTransitionPlan declares no owner value ports; its "
+                    f"{name} {type(value).__name__} declares model ports and cannot "
+                    "be bound without them."
+                )
         manifests = tuple(training_manifests)
         if (
             not isinstance(model_manifest, ReferenceArtifactManifest)

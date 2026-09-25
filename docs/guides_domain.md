@@ -294,7 +294,9 @@ output layout on its `ModelBinding`:
   axes of every dependency, in dependency order; trailing axes are channels.
 - `output_layout="dependency_subset", output_labels=(...)`: the raw output starts
   with the batch axes of exactly those labels, in that order; the model reduced
-  every other dependency axis, and the result is broadcast back over it.
+  every other dependency axis, and the result is broadcast back over it. Labels
+  that are not dependencies of the model raise `ValueError` when `Domain.Model`
+  binds it, and again before any blockwise invocation.
 - `output_layout="axis_array"`: the model returns a `phydrax.axes.AxisArray`
   whose `None` dims are channels and whose named dims are dependency batch axes.
 

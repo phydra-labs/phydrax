@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import importlib.util
 import json
 from collections import deque
 from pathlib import Path
@@ -47,6 +48,23 @@ def _validate_public_path(path: str, /) -> None:
         raise ValueError(f"Canonical public path {path!r} contains a private component.")
 
 
+def _export_value(module: ModuleType, name: str, qualified_name: str, /) -> object:
+    # Lazily exported submodules are discovered by module spec so the traversal
+    # never depends on which submodules earlier code happened to import; lazy
+    # leaf values are not resolved, because they may require optional providers.
+    if name in module.__dict__ and not isinstance(module.__dict__[name], ModuleType):
+        return module.__dict__[name]
+    if "__path__" in module.__dict__:
+        submodule = f"{module.__name__}.{name}"
+        if importlib.util.find_spec(submodule) is not None:
+            return importlib.import_module(submodule)
+    if name in module.__dict__:
+        return module.__dict__[name]
+    if "__getattr__" in module.__dict__:
+        return None
+    raise AttributeError(f"{qualified_name} is exported but missing.")
+
+
 def public_api_record() -> dict[str, object]:
     queue: deque[tuple[str, ModuleType]] = deque((("phydrax", phydrax),))
     queue.extend(
@@ -80,12 +98,7 @@ def public_api_record() -> dict[str, object]:
         for name in names:
             qualified_name = f"{public_path}.{name}"
             _validate_public_path(qualified_name)
-            if name in module.__dict__:
-                value = module.__dict__[name]
-            elif "__getattr__" in module.__dict__:
-                value = None
-            else:
-                raise AttributeError(f"{qualified_name} is exported but missing.")
+            value = _export_value(module, name, qualified_name)
             qualified.append(qualified_name)
             if isinstance(value, ModuleType) and value.__name__.startswith("phydrax."):
                 queue.append((qualified_name, value))

@@ -11,6 +11,7 @@ import pytest
 import phydrax as phx
 from phydrax import (
     ArrayRole,
+    fixed_field,
     ParameterOwner,
     partition_parameters,
     require_parameter_roles,
@@ -642,10 +643,22 @@ def test_frozen_spectral_binding_cannot_train_but_its_trainable_binding_does():
     assert float(artifact.predictor.rate) == 0.1
 
 
+class _FixedSpectralDamping(StrictModule, ParameterOwner):
+    rate: jax.Array = fixed_field()
+
+    def __call__(self, value, args=None):
+        del args
+        return -self.rate * value
+
+
 def test_trainable_closure_binding_requires_a_visible_trainable_predictor():
     schema = _spectral_contract()[-1]
-    with pytest.raises(ValueError, match="no visible inexact array"):
+    with pytest.raises(ValueError, match="no PARAMETER leaf"):
         _damping_binding(schema, lambda value, args: -0.1 * value).as_trainable_binding()
+    with pytest.raises(ValueError, match="no PARAMETER leaf"):
+        _damping_binding(
+            schema, _FixedSpectralDamping(jnp.asarray(0.1))
+        ).as_trainable_binding()
     network = phx.nn.models.MLP(
         in_size=2, out_size=2, width_size=4, depth=1, key=jax.random.key(0)
     )

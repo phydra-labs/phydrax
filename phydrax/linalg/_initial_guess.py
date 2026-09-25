@@ -79,15 +79,47 @@ def _select_proposal(
 ) -> tuple[PyTree[Array], InitialGuessDiagnostics]:
     """Select a valid, strictly improving proposal over the native baseline.
 
-    The owning solve supplies both residual norms and the proposal validity.
-    Selection is elementwise over leading evidence axes. The selected guess and
-    the evidence are stopped: no derivative flows through the branch or the
-    proposal.
+    The owning solve supplies both residual norms and the proposal validity,
+    which share one evidence shape `E`: `()` for one nonlinear state, or the
+    trailing right-hand-side axes `(k,)` of a canonical linear solve. Every
+    proposal leaf has its baseline leaf's shape and ends with `E`, so one
+    decision selects each trailing evidence entry across the leading solution
+    axes. `baseline_valid` is a scalar or has shape `E`. Other shapes raise
+    `ValueError`. The selected guess and the evidence are stopped: no
+    derivative flows through the branch or the proposal.
     """
     proposal_norm = jax.lax.stop_gradient(jnp.asarray(proposal_residual_norm))
     baseline_norm = jax.lax.stop_gradient(jnp.asarray(baseline_residual_norm))
-    valid = jnp.asarray(proposal_valid, dtype=jnp.bool_) & jnp.isfinite(proposal_norm)
+    proposal_ok = jnp.asarray(proposal_valid, dtype=jnp.bool_)
     baseline_ok = jnp.asarray(baseline_valid, dtype=jnp.bool_)
+    evidence_shape = proposal_norm.shape
+    if baseline_norm.shape != evidence_shape or proposal_ok.shape != evidence_shape:
+        raise ValueError(
+            "Initial-guess residual norms and proposal validity must share one "
+            f"evidence shape; got {proposal_norm.shape}, {baseline_norm.shape}, and "
+            f"{proposal_ok.shape}."
+        )
+    if baseline_ok.shape not in ((), evidence_shape):
+        raise ValueError(
+            f"Initial-guess baseline validity must be scalar or {evidence_shape}; "
+            f"got {baseline_ok.shape}."
+        )
+    rank = len(evidence_shape)
+    proposal_leaves, structure = jax.tree.flatten(proposal)
+    baseline_leaves = structure.flatten_up_to(baseline)
+    for proposed, native in zip(proposal_leaves, baseline_leaves, strict=True):
+        shape = jnp.shape(proposed)
+        if jnp.shape(native) != shape:
+            raise ValueError(
+                f"Initial-guess proposal leaf shape {shape} differs from its "
+                f"baseline leaf shape {jnp.shape(native)}."
+            )
+        if len(shape) < rank or shape[len(shape) - rank :] != evidence_shape:
+            raise ValueError(
+                f"Initial-guess proposal leaf shape {shape} does not end with the "
+                f"trailing evidence axes {evidence_shape}."
+            )
+    valid = proposal_ok & jnp.isfinite(proposal_norm)
     accepted = valid & (~baseline_ok | (proposal_norm < baseline_norm))
     selected = jax.tree.map(
         lambda proposed, native: jax.lax.stop_gradient(
@@ -400,7 +432,10 @@ class LearnedInitialGuess(AbstractInitialGuessProvider):
     `ACCELERATOR` slot, and a `ComponentBinding` inside it must carry the same
     authority and slot. A bare array model maps model inputs, not
     `(data, baseline)`, so it enters through a callable module that defines the
-    proposal. The proposal is never trusted by a production solve.
+    proposal. Only that module knows the values it passes to a model, so a
+    model declaring ports is refused as a bare child: the module binds it with
+    `bind_component(model, LearnedInitialGuess, owner_ports=...,
+    port_mapping=...)`. The proposal is never trusted by a production solve.
     """
 
     function: Callable[[PyTree[Any], PyTree[Any]], PyTree[Any]]

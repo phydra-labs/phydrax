@@ -49,7 +49,11 @@ from .._model import (
     AbstractComponentSlot,
     bind_component,
     ComponentContract,
+    ModelPorts,
+    PortMapping,
 )
+from .._model._component import bind_positional_component
+from .._model._ports import require_port_shapes
 from .._numerics._checkpointed_scan import (
     AdaptiveReplayPreparationPolicy,
     checkpointed_scan,
@@ -390,9 +394,19 @@ class LearnedStepCorrection(AbstractAcceptedStepTransform):
     `FixedStepRolloutPlan` scans). Rollout derivatives hold every accept/reject
     decision frozen (`derivative_contract`); the checks and the reported
     correction norm are nondifferentiable evidence.
+
+    `ports` declare the scientific identity of the correction's values: the
+    accepted state and the native candidate (two distinct ports, each of event
+    shape `state_shape`) as inputs, and the increment (event shape
+    `state_shape`) as the output. A model declaring ports requires `ports` and
+    an explicit `port_mapping` binding its ordered ports to exactly that owner
+    order (values are packed, never repacked); a model without ports keeps the
+    size checks alone. `component_contract().port_binding` holds the evidence.
     """
 
     model: AbstractArrayModel
+    ports: ModelPorts | None
+    port_mapping: PortMapping | None
     support: AbstractStateGeometry = fixed_field()
     conserved: Array | None = fixed_field()
     lower_bounds: Array | None = fixed_field()
@@ -412,6 +426,8 @@ class LearnedStepCorrection(AbstractAcceptedStepTransform):
         conserved: Any = None,
         conservation_tolerance: float | None = None,
         lower_bounds: Any = None,
+        ports: ModelPorts | None = None,
+        port_mapping: PortMapping | None = None,
     ):
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
@@ -439,8 +455,16 @@ class LearnedStepCorrection(AbstractAcceptedStepTransform):
         maximum = _positive_float(
             maximum_relative_correction, "maximum_relative_correction"
         )
-        component = bind_component(model, type(self)).contract()
+        site = "LearnedStepCorrection"
+        owner_ports = require_port_shapes(
+            ports, inputs=(shape, shape), outputs=(shape,), site=site
+        )
+        component = bind_positional_component(
+            model, type(self), owner_ports, port_mapping, site=site
+        ).contract()
         self.model = model
+        self.ports = owner_ports
+        self.port_mapping = port_mapping
         self.support = support_
         self.conserved = None if weights is None else jnp.asarray(weights)
         self.lower_bounds = None if bounds is None else jnp.asarray(bounds)
@@ -451,6 +475,7 @@ class LearnedStepCorrection(AbstractAcceptedStepTransform):
             {
                 "kind": "learned-step-correction",
                 "component": component.bound_semantic_id,
+                "ports": None if owner_ports is None else owner_ports.ports_id,
                 "state_shape": list(shape),
                 "support": support_.geometry_id,
                 "conserved": weights,
@@ -468,7 +493,12 @@ class LearnedStepCorrection(AbstractAcceptedStepTransform):
 
     def component_contract(self) -> ComponentContract:
         """Contract of the model bound to this slot."""
-        return bind_component(self.model, type(self)).contract()
+        return bind_component(
+            self.model,
+            type(self),
+            owner_ports=self.ports,
+            port_mapping=self.port_mapping,
+        ).contract()
 
     def _states(self, previous_state: Any, candidate_state: Any, /):
         if not eqx.is_array(previous_state) or not eqx.is_array(candidate_state):

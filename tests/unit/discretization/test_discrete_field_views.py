@@ -465,7 +465,12 @@ def test_point_cloud_view_reports_conditioning_and_support_evidence():
     np.testing.assert_allclose(result.values[:2], _quadratic(queries[:2]), atol=1e-11)
     np.testing.assert_allclose(result.values[2:], 0.0)
     cotangent = jnp.asarray((1.0, -2.0, 0.5, 3.0))
-    assert bool(reconstruction.duality_evidence(values, queries, cotangent).valid)
+    assert bool(reconstruction.duality_evidence(values, queries[:2], cotangent[:2]).valid)
+    # Invalid query points have no transpose.
+    with pytest.raises(
+        ValueError, match=r"Invalid points \[2, 3\].*ILL_CONDITIONED, OUTSIDE_SUPPORT"
+    ):
+        reconstruction.transpose(queries, cotangent)
 
     bounded = prepare_point_cloud_field_reconstruction(
         discretization, support_geometry=square, radius=0.15, capacity=8

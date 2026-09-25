@@ -225,7 +225,9 @@ identical values from any proposer project identically: protected entities,
 size bounds, gradation, capacity limits, native refinement, safety audit, and
 compliance all apply unchanged. The model is a dynamic child whose arrays stay
 PARAMETER; `evaluate(features)` is the differentiable per-entity map for
-supervised training.
+supervised training. A model declaring ports binds only through the proposer's
+declared `ports` (one feature-row port of shape `(in_size,)` and the proposal
+value port) and an explicit `port_mapping`.
 
 Supervised marking targets come from native estimators, reordered to the
 proposal scope's sorted global IDs: `FiniteElementDWRIndicators.absolute` from

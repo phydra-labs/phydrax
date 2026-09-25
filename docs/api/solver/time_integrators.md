@@ -248,7 +248,10 @@ one keeps `c` unchanged, with `LearnedStepCorrectionReason` and
 the stacked `transform_admissibility` of rollout results. There is no retry,
 and rejection never fails the step; `c` stays under the method's own
 acceptance. The checks are admissibility conditions, not an accuracy
-certificate: the coarse method's residual or error does not certify `p`.
+certificate: the coarse method's residual or error does not certify `p`. A
+model declaring ports binds only through the correction's declared `ports`
+(distinct accepted-state and candidate ports, then the increment port, each of
+shape `state_shape`) and an explicit `port_mapping` in that order.
 
 ```python
 correction = phx.solver.LearnedStepCorrection(

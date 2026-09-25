@@ -12,6 +12,7 @@ from phydrax import _training_checkpoint
 from phydrax._model import AbstractArrayModel, ModelBinding
 from phydrax.dynamics.identification._neural import _objective_contributions
 from phydrax.dynamics.identification._neural_windows import _NeuralWindowSource
+from tests._ported_models import in_order, PortedAffine
 
 
 class _ScaledStep(AbstractArrayModel):
@@ -581,3 +582,27 @@ def test_fit_rejects_key_required_deployment_and_freezes_dropout_inference():
         fitted.system.evaluate(context, state, None),
         2.0 * state,
     )
+
+
+def test_rollout_transition_binds_port_declaring_models_through_layout_ports():
+    layout = phx.dynamics.StateLayout((2,))
+    point = layout.value_port(role="point")
+    ports = phx.ModelPorts(inputs=(point,), outputs=(point,))
+    model = PortedAffine(ports, out_size=2, weight=2.0 * jnp.eye(2))
+    context = phx.dynamics.DiscreteStepContext(0.0, 1.0, 0)
+    state = jnp.asarray([1.0, -1.0])
+    Direct = phx.dynamics.identification.DirectDiscreteModelRolloutTransition
+    unmapped = Direct(layout, step_size=1.0)
+    with pytest.raises(ValueError, match="port_mapping"):
+        unmapped.validate_model(model)
+    with pytest.raises(ValueError, match="explicit PortMapping"):
+        unmapped.evaluate(model, context, state, None, key=None, iteration=None)
+
+    transition = Direct(layout, step_size=1.0, port_mapping=in_order(ports, ports))
+    assert transition.owner_ports() == ports
+    transition.validate_model(model)
+    evidence = transition.component_binding(model).contract().port_binding
+    assert evidence.inputs == ((point.port_id, point.port_id),)
+    assert evidence.outputs == ((point.port_id, point.port_id),)
+    result = transition.evaluate(model, context, state, None, key=None, iteration=None)
+    np.testing.assert_allclose(result.accepted_state, [2.0, -2.0])

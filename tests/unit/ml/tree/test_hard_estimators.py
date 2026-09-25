@@ -6,9 +6,17 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from phydrax import DerivativeRoute, DerivativeSurface, GradientLevel
+from phydrax import (
+    DERIVATIVE_UNSUPPORTED,
+    DerivativeRoute,
+    DerivativeSurface,
+    DifferentiationRequest,
+    GradientLevel,
+    RegularityPolicy,
+)
 from phydrax.ml import (
     FeatureSchema,
+    fit,
     ML_CAPACITY_EXHAUSTED,
     ML_INSUFFICIENT_DATA,
     MLBatch,
@@ -159,6 +167,27 @@ def test_every_hard_regression_family_fits_frozen_executable_ensembles(
         result.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
         is GradientLevel.NONE
     )
+
+
+def test_hard_tree_fit_refuses_every_derivative_request_on_its_stopped_route():
+    batch = _regression_batch()
+    result = DecisionTreeRegressor(max_depth=2).fit_batch(batch)
+    request = DifferentiationRequest((DerivativeSurface.MODEL_PARAMETER,))
+    permissive = RegularityPolicy(allow_almost_everywhere=True)
+
+    admission = result.derivative_admission(request, policy=permissive)
+    assert admission.status == DERIVATIVE_UNSUPPORTED
+    assert admission.level(DerivativeSurface.MODEL_PARAMETER) is GradientLevel.NONE
+    assert "route-stopped" in admission.reasons
+    with pytest.raises(ValueError, match="route-stopped"):
+        result.require_derivative(request, policy=permissive)
+    with pytest.raises(ValueError, match=DERIVATIVE_UNSUPPORTED):
+        fit(DecisionTreeRegressor(max_depth=2), batch, derivative_request=request)
+
+    # The fitted executable is differentiated directly in its leaf values.
+    execution = result.as_trainable().model_execution_contract().derivative
+    assert execution.route is DerivativeRoute.DIRECT
+    assert execution.require(request, policy=permissive).supported
 
 
 _CLASSIFIERS = (

@@ -10,6 +10,7 @@ import pytest
 
 import phydrax as phx
 from phydrax._admissibility import AdmissibilityReason, DOMAIN_REASON_SHIFT
+from tests._ported_models import full_port, PortedAffine
 
 
 def _manifest(name, *, training=True):
@@ -278,9 +279,32 @@ def test_explicit_trainable_chemistry_binding_trains_without_touching_the_artifa
     assert float(trained.model.extent) > 0.01
 
 
-def test_trainable_binding_requires_visible_model_arrays():
+class _FixedExtent(phx.AbstractArrayModel):
+    extent: jax.Array = phx.fixed_field()
+    in_size: int = eqx.field(static=True, default=5)
+    out_size: int = eqx.field(static=True, default=1)
+
+    def __call__(self, features, /, *, key=None):
+        return self.extent * jnp.ones(features.shape[:-1] + (1,))
+
+
+def test_trainable_binding_requires_a_parameter_model_array():
     def model(features):
         return 0.01 * jnp.ones(features.shape[:-1] + (1,))
 
-    with pytest.raises(ValueError, match="no visible inexact array"):
-        _artifact(model).as_trainable_binding()
+    for untrainable in (model, _FixedExtent(jnp.asarray(0.01))):
+        with pytest.raises(ValueError, match="no PARAMETER leaf"):
+            _artifact(untrainable).as_trainable_binding()
+
+
+def test_port_declaring_extent_models_are_refused_without_owner_ports():
+    ported = PortedAffine(
+        phx.ModelPorts(
+            inputs=(full_port("chemistry.features", (5,)),),
+            outputs=(full_port("chemistry.extent", (1,)),),
+        ),
+        out_size=1,
+    )
+    for model in (ported, phx.uq.FrozenModel(ported)):
+        with pytest.raises(ValueError, match="no owner value ports; its model"):
+            _artifact(model)

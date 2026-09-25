@@ -21,15 +21,20 @@ _BOUNDS = ((-1.5, -1.5), (1.5, 1.5))
 _GeometryCapability = phx.geometry.GeometryCapability
 
 
-def _set_weights(network, first_weight, first_bias, second_weight, second_bias):
-    for select, value in (
-        (lambda model: model.layers[0].weight, first_weight),
-        (lambda model: model.layers[0].bias, first_bias),
-        (lambda model: model.layers[1].weight, second_weight),
-        (lambda model: model.layers[1].bias, second_bias),
-    ):
-        network = eqx.tree_at(select, network, jnp.asarray(value, dtype=jnp.float64))
+def _set_layers(network, layers):
+    for index, (weight, bias) in enumerate(layers):
+        for select, value in (
+            (lambda model, index=index: model.layers[index].weight, weight),
+            (lambda model, index=index: model.layers[index].bias, bias),
+        ):
+            network = eqx.tree_at(select, network, jnp.asarray(value, dtype=jnp.float64))
     return network
+
+
+def _set_weights(network, first_weight, first_bias, second_weight, second_bias):
+    return _set_layers(
+        network, ((first_weight, first_bias), (second_weight, second_bias))
+    )
 
 
 def _ellipse_network(*, split: float = 0.0, **options):
@@ -136,13 +141,14 @@ def test_three_dimensional_region_certifies_ball_topology():
     assert _GeometryCapability.BOUNDARY_NORMAL in ball.compile().capabilities
 
 
-def test_smooth_region_is_certified_with_negative_inside_sign(region):
+def test_smooth_region_has_negative_inside_sign_with_sampled_evidence(region):
     geometry = region.compile()
     certificate = geometry.field_certificate
-    topology = region.certificate.topology
 
-    assert topology.betti_numbers == (1, 0)
-    assert certificate.topology_identity == topology.topology_id
+    assert region.certificate.topology.betti_numbers == (1, 0)
+    assert certificate.topology_identity is None
+    assert certificate.sign_reliability is phx.geometry.SignReliability.LOCAL
+    assert certificate.zero_set_accuracy is phx.geometry.ZeroSetAccuracy.APPROXIMATE
     assert certificate.evaluation_error == 1.0e-12
     assert certificate.lipschitz_upper_bound > 0.0
     assert region.certificate.lipschitz_evidence is phx.CapabilityEvidenceKind.CONSTRUCTED
@@ -215,9 +221,157 @@ def test_nonsmooth_network_does_not_advertise_normals():
 def test_declared_lipschitz_bound_is_recorded_and_checked():
     declared = _region(_ellipse_network(), lipschitz_upper_bound=10.0)
     assert declared.certificate.lipschitz_evidence is phx.CapabilityEvidenceKind.DECLARED
-    assert declared.compile().field_certificate.lipschitz_upper_bound == 10.0
+    certificate = declared.compile().field_certificate
+    assert certificate.lipschitz_upper_bound == 10.0
+    # A declared bound checked only against sampled gradients certifies neither
+    # the sign nor the topology of the region.
+    assert certificate.topology_identity is None
+    assert certificate.sign_reliability is not phx.geometry.SignReliability.RELIABLE
     with pytest.raises(ValueError, match="lipschitz_sampled_gradient"):
         _region(_ellipse_network(), lipschitz_upper_bound=0.1)
+
+
+# A lattice cell of the 25-point discovery lattice over `_BOUNDS` spans
+# [1.125, 1.25] per axis; the hidden component fills its central square.
+_HIDDEN_LOW = 1.1575
+_HIDDEN_HIGH = 1.2175
+_HIDDEN_STEEPNESS = 400.0
+_AND_GAIN = 40.0
+_LINEAR_SCALE = 0.05
+_HIDDEN_DEPTH = 2.5
+
+
+def _hidden_component_network():
+    """The ellipse field minus `_HIDDEN_DEPTH` on a square between lattice nodes.
+
+    Layer one adds four steep tanh ridges bounding the square; layer two passes
+    the ellipse field through a nearly linear tanh unit and fires a second unit
+    only where both ridge pairs are active, so the square is a separate
+    component of the region that no lattice node or sample point sees.
+    """
+    ellipse = _ellipse_network()
+    steep = _HIDDEN_STEEPNESS
+    network = phx.nn.models.MLP(
+        in_size=2,
+        out_size="scalar",
+        hidden_sizes=[10, 2],
+        activation=jax.nn.tanh,
+        rwf=False,
+    )
+    half_gain = 0.5 * _AND_GAIN
+    return _set_layers(
+        network,
+        (
+            (
+                np.concatenate(
+                    (
+                        np.asarray(ellipse.layers[0].weight),
+                        [[steep, 0.0], [steep, 0.0], [0.0, steep], [0.0, steep]],
+                    )
+                ),
+                np.concatenate(
+                    (
+                        np.asarray(ellipse.layers[0].bias),
+                        -steep * np.asarray([_HIDDEN_LOW, _HIDDEN_HIGH] * 2),
+                    )
+                ),
+            ),
+            (
+                [
+                    [
+                        *(_LINEAR_SCALE * np.asarray(ellipse.layers[1].weight[0])),
+                        0,
+                        0,
+                        0,
+                        0,
+                    ],
+                    [0.0] * 6 + [half_gain, -half_gain, half_gain, -half_gain],
+                ],
+                [
+                    _LINEAR_SCALE * float(ellipse.layers[1].bias[0]),
+                    -1.5 * _AND_GAIN,
+                ],
+            ),
+            (
+                [[1.0 / _LINEAR_SCALE, -0.5 * _HIDDEN_DEPTH]],
+                [-0.5 * _HIDDEN_DEPTH],
+            ),
+        ),
+    )
+
+
+def test_zero_set_component_between_samples_is_not_certified():
+    region = _region(_hidden_component_network())
+    geometry = region.compile()
+    hidden = 0.5 * (_HIDDEN_LOW + _HIDDEN_HIGH)
+
+    # The true region has a second component the lattice never sees.
+    np.testing.assert_array_equal(
+        np.asarray(
+            geometry.contains(
+                jnp.asarray([[hidden, hidden], [hidden, 0.9], [0.9, hidden]])
+            )
+        ),
+        [True, False, False],
+    )
+    assert region.certificate.topology.betti_numbers == (1, 0)
+    certificate = geometry.field_certificate
+    assert certificate.topology_identity is None
+    assert certificate.sign_reliability is not phx.geometry.SignReliability.RELIABLE
+    assert certificate.zero_set_accuracy is phx.geometry.ZeroSetAccuracy.APPROXIMATE
+
+
+class _ShiftedField(phx.AbstractArrayModel):
+    """A network evaluated at `x - shift` with a FIXED shift."""
+
+    network: phx.nn.models.MLP
+    shift: jax.Array = phx.fixed_field()
+    in_size: int = eqx.field(static=True)
+    out_size: str = eqx.field(static=True)
+
+    def __init__(self, network, shift):
+        self.network = network
+        self.shift = jnp.asarray(shift, dtype=jnp.float64)
+        self.in_size = 2
+        self.out_size = "scalar"
+
+    def __call__(self, x, /, *, key=None):
+        del key
+        return self.network(x - self.shift)
+
+    def model_execution_contract(self):
+        return self.network.model_execution_contract()
+
+
+def test_fixed_field_leaves_are_fixed_data_not_design_parameters():
+    shift = jnp.asarray([0.05, 0.0])
+    network = _ShiftedField(_ellipse_network(), shift)
+    region = _region(network, lipschitz_upper_bound=10.0)
+    geometry = region.compile()
+
+    names = {parameter.name for parameter in region.parameter_ids}
+    assert names == {
+        "network.layers[0].weight",
+        "network.layers[0].bias",
+        "network.layers[1].weight",
+        "network.layers[1].bias",
+    }
+    assert geometry.schema.parameter_ids == region.parameter_ids
+    with pytest.raises(KeyError):
+        geometry.schema.index(phx.geometry.ParameterId("ellipse", "shift"))
+
+    # The fixed shift still acts on the field and survives recertification.
+    points = jnp.asarray([[0.0, 0.0], [0.5, 0.2], [1.2, 0.1]])
+    np.testing.assert_allclose(
+        np.asarray(geometry.boundary_field(points)),
+        np.asarray(jax.vmap(network.network)(points - shift)),
+        rtol=0.0,
+        atol=1e-12,
+    )
+    bias = phx.geometry.ParameterId("ellipse", "network.layers[1].bias")
+    base = geometry.state.values[geometry.schema.index(bias)]
+    recertified = region.recertify(geometry.with_parameters({bias: base - 0.01}).state)
+    np.testing.assert_array_equal(np.asarray(recertified.network.shift), shift)
 
 
 def test_weights_update_through_the_design_state(region):
@@ -248,7 +402,7 @@ def test_weights_update_through_the_design_state(region):
     assert not bool(evidence.accepted)
 
 
-def test_small_weight_perturbation_keeps_the_topology_identity(region):
+def test_small_weight_perturbation_keeps_the_sampled_topology(region):
     geometry = region.compile()
     bias = _bias_id()
     base = geometry.state.values[geometry.schema.index(bias)]
@@ -256,12 +410,7 @@ def test_small_weight_perturbation_keeps_the_topology_identity(region):
 
     recertified = region.recertify(trained.state)
     assert recertified.certificate.topology == region.certificate.topology
-    compiled = recertified.compile()
-    assert (
-        compiled.field_certificate.topology_identity
-        == geometry.field_certificate.topology_identity
-    )
-    assert bool(compiled.validity().accepted)
+    assert bool(recertified.compile().validity().accepted)
 
 
 def test_topology_changing_update_is_rejected(region):

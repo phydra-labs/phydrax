@@ -236,7 +236,9 @@ uses native tabulation and oriented DOF routes: values and first physical
 derivatives are exact inside each cell, the regularity is `C^0` (H1) or
 `C^-1` (L2) with polynomial pieces of the element degree on affine cells, and
 the coefficient adjoint is the exact transpose scatter
-(`reconstruction.transpose`, `reconstruction.duality_evidence`).
+(`reconstruction.transpose`, `reconstruction.duality_evidence`). A route with
+any invalid query point has no transpose: both raise `ValueError` naming the
+invalid points and their `FieldQueryStatus`.
 
 Arbitrary points on triangle and tetrahedron blocks are located by a
 `PreparedSimplicialCellLocator`; every containing cell is reported, and no

@@ -318,7 +318,10 @@ surrogate.
 `particle_fisher_score` differentiates the stored normalized transition log density
 under stop-gradient FFBSm pair weights. It estimates the transition contribution only,
 not prior or observation scores, and returns both the transition-parameter PyTree and
-flat physical-case scores. `particle_fisher_information` averages the outer products
+flat physical-case scores. Only the kernel's PARAMETER leaves are scored, listed in
+`parameter_paths`; FIXED and MODEL_STATE leaves (for example a `fixed_field` noise
+scale) are constants and appear as `None` in the score PyTree.
+`particle_fisher_information` averages the outer products
 of valid physical-case score vectors. Both retain the source smoother and its
 process, approximation, model, problem, sequence, and input provenance. These are
 particle approximations, not exact observed information.
@@ -1698,7 +1701,10 @@ ordinary generalized U-turn selection over only certified states.
 observation score increments through realized stopped-gradient ancestry. Its stored
 state scales as `O(TN)`, unlike the existing density-based pair smoother's
 `O(TN²)` score. The lower cost trades for greater resampling and genealogy variance;
-the existing Fisher score remains available.
+the existing Fisher score remains available. As for the Fisher score, only PARAMETER
+leaves of the prior, transition, and observation are scored (`parameter_paths`); for
+example `GaussianObservationModel`'s FIXED covariance and `GaussianStatePrior`'s
+derived sampling factor are excluded.
 
 `ParameterizedStateSpaceProblem` binds unconstrained global coordinates into the
 existing `StateSpaceStepContext.args` contract without defining a second model

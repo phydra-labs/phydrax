@@ -398,6 +398,40 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Fixed
+- Derivative admission refuses every request on a `STOPPED` route, including
+  hard-tree fits and meets of differing routes; differentiated regularity keeps
+  the conditions it was admitted under.
+- Solver-objective gradients, ML influence functions, particle Fisher and
+  genealogical scores, and neural implicit design states differentiate only the
+  declared parameter lane; influence solves use native linear algebra and report
+  rank, conditioning, and per-sample status. Linear-Gaussian priors, transition
+  parameterizations, and observation models declare their roles.
+- Training preflight rejects functions that read array-valued module globals
+  and hidden arrays beneath plain fixed state; only explicit freezes authorize
+  hidden artifact state, and such functions no longer receive a stateless
+  identity. Trainable provider bindings require a parameter leaf; lane layouts
+  are canonically ordered.
+- Training checkpoints bind the digest of every lane and cursor; objective
+  callables may hold only fixed arrays; zero-support objectives commit no
+  model-state transition.
+- Relative component error floors require a declared residual scale before a
+  nonlinear tolerance can be certified. Batched QP sensitivity reports
+  regularity per case, and MPC sensitivity refusals name the failing case and
+  window.
+- Models that declare ports must be bound with owner ports: feedback policies,
+  observation locations, step corrections, mesh proposers, rollout transitions,
+  and other learned slots derive them from their layouts. Model execution
+  contracts can record declared capabilities, which satisfy only
+  declaration-level requirements.
+- Discrete field transposes and duality evidence refuse invalid query routes;
+  external operator adapters derive their binding from the manifest; blockwise
+  dependency subsets are validated against declared dependencies.
+- The public API manifest discovers lazily exported submodules by module spec,
+  so it no longer depends on import history; it now lists 22 previously omitted
+  public modules.
+- Neural implicit geometry reports sampled sign and topology evidence only and
+  no longer claims certified topology or reliable sign; its design state holds
+  parameter leaves only.
 - The environment now matches the declared `equinox==0.13.8` pin. Declared
   `eqx.AbstractVar` fields are enforced as abstract, strict modules no longer
   carry an undeclared initialization flag in their pytree state, and domain

@@ -127,7 +127,10 @@ location of `GaussianObservationModel`, it stays a dynamic child whose arrays
 are PARAMETER under `partition_parameters`, and `component_contract()` binds it
 to the observation-model slot. An unbatched state is one model call, so the
 ensemble transform filter, which vectorizes over members itself, runs exactly
-the numerics of an equivalent location closure.
+the numerics of an equivalent location closure. A model declaring ports binds
+only through the location's declared `ports` (the state port of shape
+`state_shape`, then a scalar time port with `time_input`, and the observation
+port of shape `observation_shape`) and an explicit `port_mapping` in that order.
 
 ```python
 location = phx.stochastic.ModelObservationLocation(

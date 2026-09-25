@@ -26,7 +26,14 @@ from ..._differentiation import (
     DerivativeSurface,
 )
 from ..._fingerprint import canonical_fingerprint
-from ..._model import AbstractArrayModel, AbstractComponentSlot, bind_component
+from ..._model import (
+    AbstractArrayModel,
+    AbstractComponentSlot,
+    ComponentBinding,
+    ModelPorts,
+    PortMapping,
+)
+from ..._model._component import bind_positional_component
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._layout import InputLayout, StateLayout
@@ -104,6 +111,13 @@ class AbstractDiscreteModelRolloutTransition(AbstractComponentSlot):
     physical interpretation and acceptance of its output. Built-in transitions
     are fixed analytic interpretations and hold no learned component: the model
     is supplied at evaluation.
+
+    `owner_ports()` are the ports of the values the transition passes to and
+    reads from the model, in the order it packs them, derived from its layouts.
+    A model declaring ports binds to them only through the transition's explicit
+    `port_mapping`, in exactly that order (`component_binding`); a model without
+    ports takes no mapping. `validate_model` and every evaluation bind through
+    `component_binding`.
     """
 
     component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.MODEL
@@ -112,9 +126,15 @@ class AbstractDiscreteModelRolloutTransition(AbstractComponentSlot):
     transition_id: str = eqx.field(static=True)
     state_layout: StateLayout
     input_layout: InputLayout | None
+    port_mapping: eqx.AbstractVar[PortMapping | None]
     step_size: float = eqx.field(static=True)
     step_rtol: float = eqx.field(static=True)
     step_atol: float = eqx.field(static=True)
+
+    @abstractmethod
+    def owner_ports(self) -> ModelPorts:
+        """Return the ordered ports of the model values this transition owns."""
+        raise NotImplementedError
 
     @abstractmethod
     def validate_model(self, model: AbstractArrayModel, /) -> None:
@@ -134,6 +154,16 @@ class AbstractDiscreteModelRolloutTransition(AbstractComponentSlot):
         control: Any = None,
     ) -> DiscreteModelRolloutTransitionResult:
         raise NotImplementedError
+
+    def component_binding(self, model: AbstractArrayModel, /) -> ComponentBinding:
+        """Bind `model` to this slot through `owner_ports()` and `port_mapping`."""
+        return bind_positional_component(
+            model,
+            type(self),
+            self.owner_ports(),
+            self.port_mapping,
+            site=type(self).__name__,
+        )
 
     @property
     def supports_linear_refinement(self) -> bool:
@@ -164,7 +194,7 @@ class AbstractDiscreteModelRolloutTransition(AbstractComponentSlot):
         this slot. The model's parameters join `dependencies` so a rejected
         state that no longer depends on them is still poisoned.
         """
-        component = bind_component(model, type(self)).contract()
+        component = self.component_binding(model).contract()
         model_id = component.model_contract.evidence_model_id
         converged = jnp.asarray(physically_converged, dtype=jnp.bool_)
         header = AdmissibilityHeader(
@@ -216,7 +246,16 @@ class AbstractDiscreteModelRolloutTransition(AbstractComponentSlot):
 class DirectDiscreteModelRolloutTransition(
     AbstractDiscreteModelRolloutTransition, NonTrainableState
 ):
-    """Current direct next-state model semantics as an explicit rollout route."""
+    """Current direct next-state model semantics as an explicit rollout route.
+
+    The owner ports are those of `DiscreteModelTransition` with fixed steps:
+    `state_layout.value_port(role="point")`, then `input_layout.value_port()`
+    when an input layout is bound, as inputs, and the state point port as the
+    output. A model declaring ports requires `port_mapping` binding its ordered
+    ports to exactly that order.
+    """
+
+    port_mapping: PortMapping | None
 
     def __init__(
         self,
@@ -227,11 +266,14 @@ class DirectDiscreteModelRolloutTransition(
         step_size: float,
         step_rtol: float = 1e-7,
         step_atol: float = 1e-12,
+        port_mapping: PortMapping | None = None,
     ):
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
             raise TypeError("input_layout must be an InputLayout or None.")
+        if port_mapping is not None and not isinstance(port_mapping, PortMapping):
+            raise TypeError("port_mapping must be a PortMapping or None.")
         step = float(step_size)
         rtol = float(step_rtol)
         atol = float(step_atol)
@@ -241,6 +283,7 @@ class DirectDiscreteModelRolloutTransition(
             raise ValueError("Step tolerances must be finite and nonnegative.")
         self.state_layout = state_layout
         self.input_layout = input_layout
+        self.port_mapping = port_mapping
         self.step_size = step
         self.step_rtol = rtol
         self.step_atol = atol
@@ -255,6 +298,13 @@ class DirectDiscreteModelRolloutTransition(
             }
         )
 
+    def owner_ports(self) -> ModelPorts:
+        state = self.state_layout.value_port(role="point")
+        inputs = (state,)
+        if self.input_layout is not None:
+            inputs = inputs + (self.input_layout.value_port(),)
+        return ModelPorts(inputs=inputs, outputs=(state,))
+
     def validate_model(self, model: AbstractArrayModel, /) -> None:
         DiscreteModelTransition(
             model,
@@ -263,7 +313,9 @@ class DirectDiscreteModelRolloutTransition(
             step_size=self.step_size,
             step_rtol=self.step_rtol,
             step_atol=self.step_atol,
+            port_mapping=self.port_mapping,
         )
+        self.component_binding(model)
 
     def evaluate(
         self,

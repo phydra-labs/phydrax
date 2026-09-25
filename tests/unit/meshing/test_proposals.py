@@ -16,6 +16,7 @@ from phydrax.meshing._proposals import (
     prepare_mesh_proposal,
     project_mesh_proposal,
 )
+from tests._ported_models import full_port, in_order, PortedAffine
 
 
 def _source():
@@ -342,6 +343,41 @@ def test_learned_marking_cannot_bypass_native_projection_or_protection():
     )
     with pytest.raises(ValueError, match="finite"):
         nonfinite.propose(source, features)
+
+
+def test_port_declaring_proposer_binds_declared_feature_and_value_ports():
+    source = _source()
+    owner = phx.ModelPorts(
+        inputs=(full_port("cell.indicators", (4,)),),
+        outputs=(full_port("cell.marking-score", ()),),
+    )
+    model = PortedAffine(
+        owner, out_size="scalar", weight=jnp.asarray([[9.0, 1.0, 3.0, 2.0]])
+    )
+    with pytest.raises(ValueError, match="mesh-proposer'.*owner_ports"):
+        LearnedMeshProposer(model, kind="marking", proposer_id="ported")
+    with pytest.raises(ValueError, match="input ports must declare the event shapes"):
+        LearnedMeshProposer(
+            model,
+            kind="marking",
+            proposer_id="ported",
+            ports=phx.ModelPorts(
+                inputs=(full_port("cell.indicators", (3,)),), outputs=owner.outputs
+            ),
+        )
+
+    proposer = LearnedMeshProposer(
+        model,
+        kind="marking",
+        proposer_id="ported",
+        ports=owner,
+        port_mapping=in_order(owner, owner),
+    )
+    evidence = proposer.component_contract().port_binding
+    assert evidence.inputs == ((owner.inputs[0].port_id,) * 2,)
+    assert evidence.unverified == ()
+    proposal = proposer.propose(source, np.eye(4))
+    np.testing.assert_array_equal(proposal.values, (9.0, 1.0, 3.0, 2.0))
 
 
 def test_learned_size_proposal_is_clamped_by_the_trusted_projection():

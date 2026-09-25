@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from math import isfinite
+from numbers import Real
 from typing import Any
 
 import equinox as eqx
@@ -120,6 +121,17 @@ def _coarser_than(compute: str, reference: str, /) -> bool:
     )
 
 
+def _residual_scale(value: Any, /) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise TypeError("residual_scale must be a real number or None.")
+    scale = float(value)
+    if not isfinite(scale) or scale <= 0.0:
+        raise ValueError("residual_scale must be finite and positive.")
+    return scale
+
+
 class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
     """State, residual, reduction, decision, and output precision for nonlinear work.
 
@@ -130,6 +142,12 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
     residual floor. `model_dtype` may differ from explicit state and residual
     dtypes only when a residual-defining component computing in `model_dtype`
     declares its `cast_boundary_evidence`.
+
+    `residual_scale` is the declared residual magnitude (in residual norm
+    units) at which relative component floors are expressed in absolute
+    residual units. It is required whenever a residual-defining component
+    declares a `relative_error_floor`: a relative floor without a declared
+    magnitude cannot certify an absolute residual tolerance.
     """
 
     state_dtype: str | None = eqx.field(static=True)
@@ -142,6 +160,7 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
     output_dtype: str | None = eqx.field(static=True)
     linear: MixedPrecisionPolicy | None
     components: tuple[ComponentContract, ...]
+    residual_scale: float | None = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -157,8 +176,10 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
         output_dtype: Any | None = None,
         linear: MixedPrecisionPolicy | None = None,
         components: Iterable[ComponentContract] = (),
+        residual_scale: float | None = None,
     ):
         components_ = _residual_components(components)
+        scale = _residual_scale(residual_scale)
         model = None if model_dtype is None else precision_dtype_name(model_dtype)
         state = (
             model
@@ -282,6 +303,7 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
         self.output_dtype = output
         self.linear = linear
         self.components = components_
+        self.residual_scale = scale
         identity: dict[str, Any] = {
             "request": request.request_id,
             "linear": None if linear is None else repr(linear),
@@ -290,6 +312,8 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
             identity["components"] = [
                 component.bound_semantic_id for component in components_
             ]
+        if scale is not None:
+            identity["residual_scale"] = scale
         self.policy_id = canonical_fingerprint(identity)
 
     @property
@@ -359,22 +383,42 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
             return policy
         return eqx.tree_at(lambda value: value.precision, policy, self.linear)
 
-    def residual_floor(self, scale: float = 0.0, /) -> float | None:
+    def residual_floor(self, scale: float | None = None, /) -> float | None:
         """Return the residual error floor composed from the declared components.
 
         The floor is the sum of the declared `ComponentPrecisionContract` floors
         of the residual-defining (`MODEL`, `DISCRETIZATION`, `SURROGATE`)
-        components at residual magnitude `scale`, each expressed in residual
-        units. `ACCELERATOR` and `DECISION` components are excluded. The result is
-        `None` when no residual-defining component declares a floor; machine
-        epsilon is never substituted for an undeclared floor.
+        components at residual magnitude `scale` (default: the declared
+        `residual_scale`), each expressed in residual units. `ACCELERATOR` and
+        `DECISION` components are excluded. A declared `relative_error_floor`
+        with neither `scale` nor `residual_scale` raises `ValueError`: the
+        relative floor has no absolute value without a residual magnitude. The
+        result is `None` when no residual-defining component declares a floor;
+        machine epsilon is never substituted for an undeclared floor.
         """
-        floors = tuple(
-            floor
+        precisions = tuple(
+            component.model_contract.precision
             for component in self.components
             if _defines_residual(component)
-            if (floor := component.model_contract.precision.residual_floor(scale))
-            is not None
+        )
+        magnitude = self.residual_scale if scale is None else scale
+        if magnitude is None:
+            relative = tuple(
+                precision.relative_error_floor
+                for precision in precisions
+                if precision.relative_error_floor is not None
+            )
+            if relative:
+                raise ValueError(
+                    f"A residual-defining component declares relative_error_floor "
+                    f"{relative[0]:g}, which has no absolute value without a residual "
+                    "magnitude; declare NonlinearPrecisionPolicy(residual_scale=...)."
+                )
+            magnitude = 0.0
+        floors = tuple(
+            floor
+            for precision in precisions
+            if (floor := precision.residual_floor(magnitude)) is not None
         )
         return sum(floors) if floors else None
 
@@ -388,10 +432,13 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
         """Reject an absolute residual tolerance the declared precision cannot meet.
 
         A positive `tolerance` must not lie below certificate precision epsilon
-        or below the component floor `residual_floor()`. Against the residual
-        dtype (the declared `residual_dtype`, else the observed `residual_dtype`),
-        a residual-defining component computing in a coarser dtype must declare
-        an error floor: without one no achievable tolerance can be derived.
+        or below the component floor `residual_floor()` at the declared
+        `residual_scale`; a declared relative component floor without a
+        `residual_scale` is refused because it cannot certify any absolute
+        tolerance. Against the residual dtype (the declared `residual_dtype`,
+        else the observed `residual_dtype`), a residual-defining component
+        computing in a coarser dtype must declare an error floor: without one
+        no achievable tolerance can be derived.
         """
         value = float(tolerance)
         if not isfinite(value) or value < 0.0:

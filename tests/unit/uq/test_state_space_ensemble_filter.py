@@ -6,6 +6,7 @@ import pytest
 
 import phydrax as phx
 from phydrax.nn.models import MLP
+from tests._ported_models import full_port, in_order, PortedAffine
 
 
 def _problem(*, mask=None):
@@ -185,6 +186,36 @@ def test_model_observation_location_requires_exact_pointwise_sizes():
         phx.stochastic.ModelObservationLocation(
             network, state_shape=(1,), observation_shape=(1,)
         )
+
+
+def test_port_declaring_observation_location_binds_declared_owner_ports():
+    owner = phx.ModelPorts(
+        inputs=(full_port("latent.state", (1,)), full_port("latent.time", ())),
+        outputs=(full_port("sensor.reading", (1,)),),
+    )
+    model = PortedAffine(owner, out_size=1, weight=jnp.asarray([[2.0, 1.0]]))
+    arguments = dict(state_shape=(1,), observation_shape=(1,), time_input=True)
+    with pytest.raises(ValueError, match="observation-model'.*owner_ports"):
+        phx.stochastic.ModelObservationLocation(model, **arguments)
+    with pytest.raises(ValueError, match="output ports must declare the event shapes"):
+        phx.stochastic.ModelObservationLocation(
+            model,
+            **arguments,
+            ports=phx.ModelPorts(
+                inputs=owner.inputs, outputs=(full_port("sensor.reading", (2,)),)
+            ),
+            port_mapping=in_order(owner, owner),
+        )
+
+    location = phx.stochastic.ModelObservationLocation(
+        model, **arguments, ports=owner, port_mapping=in_order(owner, owner)
+    )
+    evidence = location.component_contract().port_binding
+    assert evidence.inputs == tuple((port.port_id,) * 2 for port in owner.inputs)
+    assert evidence.unverified == ()
+    assert jnp.allclose(
+        location(jnp.asarray([[0.5], [1.0]]), 0.25, None), jnp.asarray([[1.25], [2.25]])
+    )
 
 
 def test_high_dimensional_path_uses_ensemble_rank_not_state_covariance():

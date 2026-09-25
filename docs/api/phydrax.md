@@ -126,10 +126,12 @@ Training boundaries call `require_parameter_roles(tree, context=...)`, which
 raises a `ValueError` naming every violation and unclassified path with its
 remedy. It also rejects callables that hide inexact arrays from the tree: a
 callable reachable in a training tree must be a stateless function (no inexact
-array in its closure cells, defaults or bound arguments), a visible module whose
-arrays are role-declared leaves, a provider below an `ExplicitFreeze` holder, or
-a host-only callback that captures no inexact array. Arrays hidden in static
-fields are rejected the same way. `partition_parameters` applies the role check
+array in its closure cells, defaults, bound arguments, or the module globals its
+code reads; modules, classes, and scalar constants are fine), a visible module
+whose arrays are role-declared leaves, a provider below an `ExplicitFreeze`
+holder, or a host-only callback that captures no inexact array. Arrays hidden in
+static fields are rejected the same way, below plain `NonTrainableState` holders
+too: only `ExplicitFreeze` authorizes hidden numeric state. `partition_parameters` applies the role check
 and splits a tree into `(parameters, model_state, fixed)` lanes with `None`
 holes (terminal nodes stay whole in `fixed`); `combine_parameters` restores the
 tree. An explicit

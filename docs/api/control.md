@@ -148,7 +148,11 @@ binding with exact sizes (`in_size = prod(state_shape)` plus one for time,
 time, has an empty `parameter_shape` (coefficients are a `case_shape` token),
 and cannot be sampled open loop. It is JIT- and `vmap`-compatible, so
 `ControlProblem.evaluate` differentiates the rollout cost with respect to the
-policy parameters directly.
+policy parameters directly. A model declaring ports binds only through the
+policy's declared `ports` (the state port of shape `state_shape`, then a
+scalar time port with `time_input`, and the control port of shape
+`control_shape`) and an explicit `port_mapping` in that order;
+`component_contract().port_binding` holds the evidence.
 
 ```python
 policy = phx.control.NeuralFeedbackPolicy(
@@ -513,12 +517,13 @@ is zero. `DensePrimalDualQP` differentiates the window solution implicitly with
 `"algorithmic"`. `"barrier-kkt"` yields the explicitly smoothed window derivative at
 the audited window solution. Only affine-quadratic problems are supported.
 
-`stage_optimal` records `valid & OPTIMAL` per window and case, and
-`stage_regular` records each window QP's regularity: strict complementarity and a
-nonsingular reduced KKT system. If any window fails either test, `jvp` and `vjp`
-raise with the failing windows named in `refusal`. There is no partial or
-truncated derivative. A weakly active bound (zero multiplier on an active
-constraint) makes its window nonregular, because the solution map is not
+`stage_optimal` records `valid & OPTIMAL` and `stage_regular` records each window
+QP's regularity (strict complementarity and a nonsingular reduced KKT system), both
+with shape `case_shape + (windows,)`. If any stage fails either test, `jvp` and
+`vjp` raise with the failing stages named in `refusal`: window indices for an
+unbatched problem, `(case, window)` coordinates for batched cases. There is no
+partial or truncated derivative. A weakly active bound (zero multiplier on an
+active constraint) makes its window nonregular, because the solution map is not
 differentiable there.
 
 ### Affine SOCP constraints

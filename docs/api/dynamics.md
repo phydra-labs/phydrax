@@ -835,6 +835,14 @@ component. A learned correction of a native fixed-step method is instead a
 `DISCRETIZATION` slot, `phydrax.solver.LearnedStepCorrection` (see
 [Time integrators](solver/time_integrators.md#accepted-step-transforms-and-learned-step-correction)).
 
+Every transition derives `owner_ports()` from its layouts, in the order it
+packs model values: `DirectDiscreteModelRolloutTransition` uses the state point
+port (then the input layout port) as inputs and the state point port as the
+output. The model is bound through `component_binding(model)`, in
+`validate_model` and at every evaluation, so a model declaring ports needs the
+transition's explicit `port_mapping` binding its ordered ports to exactly that
+order.
+
 The result keeps candidate state, accepted training state, training usability,
 physical convergence, status, residual, and work count separate.
 `fit_discrete_model(..., transition=...)` recurrently uses only its accepted

@@ -87,6 +87,7 @@ class FrozenRealization(AbstractArrayModel):
             randomness=randomness,
             ports=contract.ports,
             certificates=contract.certificates,
+            declared_capabilities=contract.declared_capabilities,
             semantic_provenance=contract.semantic_provenance,
         )
 

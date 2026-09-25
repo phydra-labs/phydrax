@@ -275,6 +275,8 @@ class Domain(StrictModule):
                 raise ValueError(
                     f"Unknown dependency label {dep!r}; expected subset of {self.labels}."
                 )
+        if binding is not None:
+            binding.require_dependencies(tuple(deps_))
 
         def decorator(model):
             _reject_model_state(model, context="Domain.Model")

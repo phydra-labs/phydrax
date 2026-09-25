@@ -20,6 +20,7 @@ from phydrax.control import (
 from phydrax.dynamics import TimeGrid
 from phydrax.nn.models import MLP
 from tests._control_systems import make_discrete_control_dynamics
+from tests._ported_models import full_port, in_order, PortedAffine
 
 
 def _network(in_size=2, out_size=1, seed=0):
@@ -85,6 +86,35 @@ def test_policy_sizes_and_binding_are_exact():
     contract = policy.component_contract()
     assert contract.authority is phx.ComponentAuthority.DECISION
     assert contract.slot_semantic_id == AbstractControlParameterization.slot_semantic_id
+
+
+def test_port_declaring_policy_binds_only_to_declared_owner_ports():
+    owner = phx.ModelPorts(
+        inputs=(full_port("plant.state", (2,)), full_port("plant.time", ())),
+        outputs=(full_port("plant.control", (1,)),),
+    )
+    model = PortedAffine(owner, out_size=1, weight=jnp.asarray([[1.0, -2.0, 0.5]]))
+    arguments = dict(
+        state_shape=(2,), control_shape=(1,), policy_id="ported", time_input=True
+    )
+    with pytest.raises(ValueError, match="parameterization'.*owner_ports"):
+        NeuralFeedbackPolicy(model, **arguments)
+    with pytest.raises(ValueError, match="event shapes"):
+        NeuralFeedbackPolicy(
+            model,
+            **arguments,
+            ports=phx.ModelPorts(inputs=owner.inputs[:1], outputs=owner.outputs),
+        )
+
+    policy = NeuralFeedbackPolicy(
+        model, **arguments, ports=owner, port_mapping=in_order(owner, owner)
+    )
+    evidence = policy.component_contract().port_binding
+    assert evidence.inputs == tuple((port.port_id,) * 2 for port in owner.inputs)
+    assert evidence.outputs == ((owner.outputs[0].port_id,) * 2,)
+    assert evidence.unverified == ()
+    value = policy.evaluate(jnp.asarray(0.0), 0.5, state=jnp.asarray([1.0, 1.0]))
+    np.testing.assert_allclose(value, [1.0 - 2.0 + 0.25])
 
 
 def test_rollout_trains_only_the_policy_network():

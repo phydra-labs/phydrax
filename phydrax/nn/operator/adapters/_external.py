@@ -256,7 +256,8 @@ class ExternalOperatorAdapter(AbstractOperatorModel):
     framework-specific tensor conventions out of the operator/domain runtime.
 
     The runner is an opaque fixed artifact: ``capabilities`` declare how it
-    executes and ``binding`` identifies the loaded artifact. Every call is
+    executes and ``binding`` is derived from ``manifest.binding_identity()``, the
+    single authority identifying the loaded artifact. Every call is
     admitted against the capabilities before the input adapter or runner runs,
     so a host-only runner is refused under ``jit``, ``vmap``, ``grad``, ``jvp``,
     and ``vjp`` without being invoked. A host-only runner offers no derivative
@@ -283,7 +284,6 @@ class ExternalOperatorAdapter(AbstractOperatorModel):
         output_adapter: Callable[[Any, OperatorBatch, OperatorCheckpointManifest], Array],
         manifest: OperatorCheckpointManifest,
         capabilities: ExecutionCapabilities,
-        binding: ArtifactBindingIdentity,
         in_size: int | tuple[int, ...] | Literal["scalar"],
         out_size: int | tuple[int, ...] | Literal["scalar"],
     ):
@@ -297,14 +297,12 @@ class ExternalOperatorAdapter(AbstractOperatorModel):
             raise TypeError("manifest must be an OperatorCheckpointManifest.")
         if not isinstance(capabilities, ExecutionCapabilities):
             raise TypeError("capabilities must be ExecutionCapabilities.")
-        if not isinstance(binding, ArtifactBindingIdentity):
-            raise TypeError("binding must be an ArtifactBindingIdentity.")
         self.runner = runner
         self.input_adapter = input_adapter
         self.output_adapter = output_adapter
         self.manifest = manifest
         self.capabilities = capabilities
-        self.binding = binding
+        self.binding = manifest.binding_identity()
         self.in_size = in_size
         self.out_size = out_size
 
@@ -358,8 +356,8 @@ def load_external_operator_adapter(
 ) -> ExternalOperatorAdapter:
     """Verify a checkpoint before loading it behind the operator protocol.
 
-    The adapter is bound to `manifest.binding_identity()` of the verified
-    manifest and executes under the declared `capabilities`.
+    The adapter is bound to `binding_identity()` of the verified manifest and
+    executes under the declared `capabilities`.
     """
     manifest = load_operator_manifest(manifest_path)
     checkpoint = Path(checkpoint_path)
@@ -372,7 +370,6 @@ def load_external_operator_adapter(
         output_adapter=output_adapter,
         manifest=manifest,
         capabilities=capabilities,
-        binding=manifest.binding_identity(),
         in_size=in_size,
         out_size=out_size,
     )

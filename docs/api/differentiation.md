@@ -158,7 +158,11 @@ the certified answer does not depend on its parameters.
 
 Evidence kinds are not a total order. A `CapabilityRequirement` lists
 acceptable combinations of evidence kinds, and declaration alone never
-satisfies a safety-critical requirement.
+satisfies a safety-critical requirement. A model provides evidence through two
+distinct channels of its `ModelExecutionContract`: certificates record
+`CONSTRUCTED` or `RUNTIME_CHECKED` evidence, and `declared_capabilities` record
+`DECLARED` evidence. A requirement that accepts declaration is satisfied by a
+declared capability; a safety-critical requirement still needs a certificate.
 
 ::: phydrax.CapabilityEvidenceKind
     options:
@@ -224,8 +228,10 @@ records every aspect a side left undeclared in `PortBindingEvidence`.
 A `ModelExecutionContract` describes what a model is, independent of any owner:
 its `DerivativeContract` (whose regularity is the model's value regularity),
 `ExecutionCapabilities`, `ComponentPrecisionContract`, `RandomnessContract`,
-intrinsic ports, construction certificates, and semantic provenance. `None`
-means undeclared. It never declares authority.
+intrinsic ports, construction certificates, declared capabilities, and semantic
+provenance. `None` means undeclared. It never declares authority. Certificates
+never record `DECLARED` evidence; a capability claimed by declaration alone is
+listed in `declared_capabilities`, and `evidence` combines both channels.
 
 `AbstractArrayModel.model_execution_contract()` returns a conservative default:
 regularity, precision, and randomness are undeclared; `INPUT` and
@@ -311,6 +317,17 @@ identity, port mapping, and requirements are static. `ComponentBinding.contract(
 forms the bound `ComponentContract`, resolving ports through
 `resolve_port_mapping` and failing closed when a requirement lacks the
 required evidence. Binding validates the contract once at construction.
+
+A model declaring ports never binds without port evidence: binding it without
+`owner_ports` raises `ValueError` naming the slot, and binding it to owner ports
+needs an explicit `PortMapping`. Owner slots that consume models define their
+owner ports from their own value layouts: `NeuralFeedbackPolicy`,
+`ModelObservationLocation`, `LearnedStepCorrection`, and `LearnedMeshProposer`
+take declared `ports` checked against their value shapes, rollout transitions
+derive them from their state and input layouts, and a callable holding models
+(`LearnedInitialGuess`, `FunctionNonlinearUpdate`) binds a port-declaring model
+itself as a `ComponentBinding` with its own owner ports. A model without ports
+keeps the owners' size checks.
 
 ::: phydrax.AbstractComponentSlot
     options:

@@ -178,9 +178,10 @@ continuation. Resume requires the same problem, sampler/proposal, target
 factory identity and target kind, parameter structure, model static structure,
 complex mode, and step policy. Callables held in model static fields are
 identified by content: a plain module-level function contributes its module,
-name, code, and static defaults, and a callable module contributes its fields.
-Lambdas, closures, nested functions, bound methods, partials, and other opaque
-callables are rejected with `TypeError` when checkpoint compatibility is
+name, code, static defaults, and the scalar constants it reads from module
+globals, and a callable module contributes its fields. Lambdas, closures, nested
+functions, bound methods, partials, functions reading module-level arrays, and
+other opaque callables are rejected with `TypeError` when checkpoint compatibility is
 formed; define them as module-level functions or modules instead.
 
 `num_iterations` and final evaluation length are intentionally excluded from

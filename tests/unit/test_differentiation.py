@@ -118,6 +118,22 @@ def test_regularity_worked_cases():
     assert Regularity.discontinuous().admits_order(1) == (Level.NONE, ())
 
 
+def test_differentiated_regularity_carries_the_admitted_conditions():
+    elu = Regularity.piecewise_smooth(continuity=0, conditions=("interior",))
+    assert elu.admits_order(2) == (
+        Level.ALMOST_EVERYWHERE,
+        ("interior", "singular-part-ignored"),
+    )
+
+    second = elu.differentiate(2)
+    assert second.conditions == ("interior", "singular-part-ignored")
+    assert elu.differentiate(1).conditions == ("interior",)
+    assert elu.differentiate(1).differentiate(1).conditions == second.conditions
+    assert TANH.differentiate(3).conditions == ()
+    with pytest.raises(ValueError, match="degenerate"):
+        RELU.differentiate(2)
+
+
 def test_regularity_algebra_bounds_degree_and_continuity():
     cubic_c0 = Regularity.piecewise_polynomial(continuity=0, degree_bound=3)
     added = SQUARED_RELU.add(cubic_c0)
@@ -241,9 +257,40 @@ def test_route_mismatch_stops_unless_composition_route_is_declared():
     assert stopped.level(Surface.MODEL_PARAMETER) is Level.SMOOTH
     assert direct.compose(implicit).route is Route.STOPPED
 
+    request = _request(Surface.MODEL_PARAMETER)
+    refused = stopped.admit(request, policy=PERMISSIVE)
+    assert not refused.supported
+    assert refused.status == DERIVATIVE_UNSUPPORTED
+    assert refused.levels == (Level.NONE,)
+    assert refused.reasons == ("route-stopped",)
+    with pytest.raises(ValueError, match="route-stopped"):
+        stopped.require(request)
+    with pytest.raises(ValueError, match="route-stopped"):
+        direct.compose(implicit).require(request)
+
     declared = direct.meet(implicit, composition_route=Route.UNROLLED)
     assert declared.route is Route.UNROLLED
     assert declared.conditions == ()
+    assert declared.require(request).supported
+
+
+def test_stopped_route_admits_no_request_whatever_its_declared_levels():
+    stopped = DerivativeContract.smooth(
+        (Surface.INPUT, Surface.MODEL_PARAMETER, Surface.FIT_TARGETS),
+        route=Route.STOPPED,
+    )
+    for surfaces in ((Surface.MODEL_PARAMETER,), (Surface.INPUT, Surface.FIT_TARGETS)):
+        request = _request(*surfaces, authority=ComponentAuthority.SURROGATE)
+        admission = stopped.admit(request, policy=PERMISSIVE)
+        assert admission.status == DERIVATIVE_UNSUPPORTED
+        assert admission.levels == (Level.NONE,) * len(surfaces)
+        assert admission.reasons == ("route-stopped",)
+
+    bound = admit_regularity(
+        TANH, _request(Surface.MODEL_PARAMETER), route=Route.STOPPED, policy=PERMISSIVE
+    )
+    assert bound.levels == (Level.NONE,)
+    assert bound.reasons == ("route-stopped",)
 
 
 def test_compose_passes_upstream_derivatives_through_downstream_input():

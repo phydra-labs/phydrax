@@ -433,7 +433,10 @@ def _rebind_quadratic_program(
 
 
 class PreparedQPSensitivity(StrictModule):
-    """Reusable primal solution and linear sensitivity actions for one dense QP."""
+    """Reusable primal solution and linear sensitivity actions for one dense QP.
+
+    `regular` has the program's batch shape: one flag per batched QP case.
+    """
 
     primal: Array
     pushforward: Callable[[QuadraticProgram], Array]
@@ -2604,7 +2607,7 @@ def prepare_qp_sensitivity(
         lambda value: jnp.zeros_like(value) if eqx.is_inexact_array(value) else value,
         problem,
     )
-    regular = jnp.all(jnp.isfinite(pushforward(zero_tangent)))
+    regular = jnp.all(jnp.isfinite(pushforward(zero_tangent)), axis=-1)
 
     return PreparedQPSensitivity(
         primal,

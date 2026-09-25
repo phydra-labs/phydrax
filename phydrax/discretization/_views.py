@@ -617,7 +617,13 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
         derivative: tuple[int, ...] | None = None,
         side: FieldSideBinding | None = None,
     ) -> Array:
-        """Apply the exact algebraic transpose (scatter) of one query route."""
+        """Apply the exact algebraic transpose (scatter) of one query route.
+
+        Every query point must be valid: an invalid route (outside the support,
+        unresolved side, ill-conditioned, ...) has no transpose and raises
+        `ValueError` naming the invalid points and their status (traced queries
+        fail at runtime).
+        """
         route, dual = self._transpose_route(points, cotangent, derivative, side)
         return self.kernel.transpose(route, dual)
 
@@ -632,7 +638,10 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
         side: FieldSideBinding | None = None,
         tolerance: float = 1.0e-10,
     ) -> InterpolationTransposeEvidence:
-        """Check `<R c, w> = <c, R^T w>` on one shared query route."""
+        """Check `<R c, w> = <c, R^T w>` on one shared, fully valid query route.
+
+        Invalid query points raise `ValueError` as in `transpose`.
+        """
         values = self.validate_coefficients(coefficients)
         route, dual = self._transpose_route(points, cotangent, derivative, side)
         limit = float(tolerance)
@@ -660,7 +669,7 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
                 "algebraic transpose; differentiate it under its branch policy."
             )
         query = self._points(points)
-        route, _ = self.kernel.locate(
+        route, evidence = self.kernel.locate(
             query, self.derivative_index(derivative), self._side(side)
         )
         dual = jnp.asarray(cotangent)
@@ -669,7 +678,7 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
                 "Cotangent must have shape (points, *value_shape) = "
                 f"{(query.shape[0], *self.value_shape)}."
             )
-        return route, dual
+        return route, _checked_queries(dual, evidence)
 
 
 def _positive_int(value: Any, name: str, /) -> int:
@@ -686,6 +695,30 @@ def _nonnegative_int(value: Any, name: str, /) -> int:
     if value < 0:
         raise ValueError(f"{name} must be non-negative.")
     return int(value)
+
+
+def _checked_queries(value: Array, evidence: FieldQueryEvidence, /) -> Array:
+    """Return `value` only when every query point of `evidence` is valid.
+
+    Concrete evidence raises `ValueError` naming the invalid points and their
+    status; traced evidence fails through a runtime check.
+    """
+    if isinstance(evidence.status, jax_core.Tracer):
+        return eqx.error_if(value, ~evidence.valid, _INVALID_QUERY_MESSAGE)
+    valid = np.asarray(evidence.valid)
+    if not bool(np.all(valid)):
+        invalid = np.flatnonzero(~valid)
+        statuses = sorted(
+            {
+                FieldQueryStatus(int(status)).name
+                for status in np.asarray(evidence.status)[invalid]
+            }
+        )
+        raise ValueError(
+            f"{_INVALID_QUERY_MESSAGE} Invalid points {invalid.tolist()[:8]} "
+            f"with status {', '.join(statuses)}."
+        )
+    return value
 
 
 @partial(jax.custom_jvp, nondiff_argnums=(0, 1))
@@ -854,21 +887,12 @@ class DiscreteFieldEvaluator(StrictModule, NonTrainableState):
         if not isinstance(flat, jax_core.Tracer):
             # Eager queries are concrete: report invalid queries as a ValueError.
             # Traced queries fail through the runtime check in `_field_values`.
-            evidence = self.reconstruction.validity(
-                flat, derivative=self.derivative, side=self.side
+            _checked_queries(
+                flat,
+                self.reconstruction.validity(
+                    flat, derivative=self.derivative, side=self.side
+                ),
             )
-            if not bool(np.all(np.asarray(evidence.valid))):
-                invalid = np.flatnonzero(~np.asarray(evidence.valid))
-                statuses = sorted(
-                    {
-                        FieldQueryStatus(int(value)).name
-                        for value in np.asarray(evidence.status)[invalid]
-                    }
-                )
-                raise ValueError(
-                    f"{_INVALID_QUERY_MESSAGE} Invalid points {invalid.tolist()[:8]} "
-                    f"with status {', '.join(statuses)}."
-                )
         dynamic, static = eqx.partition((self.reconstruction, self.side), eqx.is_array)
         values = _field_values(static, self.derivative, dynamic, self.coefficients, flat)
         return values.reshape((*leading, *self.reconstruction.value_shape))

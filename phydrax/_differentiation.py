@@ -23,6 +23,7 @@ DERIVATIVE_SUPPORTED = "derivative-supported"
 DERIVATIVE_UNSUPPORTED = "derivative-unsupported"
 
 _SINGULAR_PART_IGNORED = "singular-part-ignored"
+_ROUTE_STOPPED = "route-stopped"
 _BRANCH_MARGIN = "branch-margin"
 _REGULARITY_UNDECLARED = "regularity-undeclared"
 
@@ -72,7 +73,8 @@ class DerivativeRoute(StrEnum):
     """Mechanism that forms the derivatives a contract declares.
 
     `STOPPED` records that no derivative mechanism is claimed for the combined
-    map. Declared surface levels are never altered by the route, and
+    map, so every differentiation request against it is unsupported with the
+    reason `"route-stopped"`, whatever levels its surfaces declare.
     `authority_admits` never admits `STOPPED`.
     """
 
@@ -452,12 +454,14 @@ class DerivativeRegularity(StrictModule, NonTrainableState):
         """Regularity of the order-`order` value derivative of this map.
 
         The derivative is the classical derivative inside pieces; singular parts on
-        the non-smooth locus are not represented (see `admits_order`). Continuity
-        drops by `order` (to at most `-1`), polynomial degree bounds drop by
-        `order`, and a proven-degenerate order raises `ValueError`.
+        the non-smooth locus are not represented, so the result carries the
+        conditions `admits_order` attaches to `order` (including
+        `"singular-part-ignored"`). Continuity drops by `order` (to at most `-1`),
+        polynomial degree bounds drop by `order`, and a proven-degenerate order
+        raises `ValueError`.
         """
         order_ = _derivative_order(order)
-        level, _ = self.admits_order(order_)
+        level, conditions = self.admits_order(order_)
         if level is GradientLevel.NONE:
             raise ValueError(
                 f"An order-{order_} derivative of this regularity is degenerate."
@@ -472,7 +476,7 @@ class DerivativeRegularity(StrictModule, NonTrainableState):
             continuity=continuity,
             pieces=self.pieces,
             degree_bound=degree,
-            conditions=self.conditions,
+            conditions=conditions,
             support=self.support,
         )
 
@@ -587,9 +591,10 @@ class DerivativeAdmission(StrictModule, NonTrainableState):
     """Audited answer to one differentiation request.
 
     `levels` align with `request.surfaces`. The admission is supported exactly
-    when no requested level is `NONE`; an unsupported admission names its
-    rejection `reasons`, and a supported admission carries none. `conditions`
-    qualify every admitted level (resolve them with `gradient_level_at_least`).
+    when no requested level is `NONE`; a `STOPPED` route admits no level. An
+    unsupported admission names its rejection `reasons`, and a supported
+    admission carries none. `conditions` qualify every admitted level (resolve
+    them with `gradient_level_at_least`).
     """
 
     request: DifferentiationRequest
@@ -618,6 +623,10 @@ class DerivativeAdmission(StrictModule, NonTrainableState):
         if len(levels_) != len(request.surfaces):
             raise ValueError("Admission levels must align with the requested surfaces.")
         route_ = _require_route(route)
+        if route_ is DerivativeRoute.STOPPED and any(
+            level is not GradientLevel.NONE for level in levels_
+        ):
+            raise ValueError("A stopped route admits no derivative level.")
         reasons_ = _identifier_set(reasons, "reasons")
         supported = all(level is not GradientLevel.NONE for level in levels_)
         if supported and reasons_:
@@ -721,7 +730,9 @@ def admit_regularity(
 ) -> DerivativeAdmission:
     """Admit the regularity a derivative request requires for its owner.
 
-    Regularity is required when the request touches a value surface (`INPUT`,
+    A `STOPPED` route claims no derivative mechanism: every requested level is
+    `NONE` with the reason `"route-stopped"`. Otherwise, regularity is required
+    when the request touches a value surface (`INPUT`,
     `PRIMAL_STATE`) or `route` is `IMPLICIT`; otherwise every level is `SMOOTH`,
     the identity of `weakest_level`. When required:
 
@@ -746,6 +757,13 @@ def admit_regularity(
     if not isinstance(policy, RegularityPolicy):
         raise TypeError("policy must be a RegularityPolicy.")
     implicit = route_ is DerivativeRoute.IMPLICIT
+    if route_ is DerivativeRoute.STOPPED:
+        return DerivativeAdmission(
+            request,
+            (GradientLevel.NONE,) * len(request.surfaces),
+            route=route_,
+            reasons=(_ROUTE_STOPPED,),
+        )
     touches_values = any(surface in _VALUE_SURFACES for surface in request.surfaces)
     if not (touches_values or implicit):
         return DerivativeAdmission(
@@ -967,8 +985,9 @@ class DerivativeContract(StrictModule, NonTrainableState):
         `admit_regularity` bound under `policy` (default `RegularityPolicy()`,
         which refuses almost-everywhere and undeclared claims where the authority
         requires permission). An undeclared surface is rejected with the reason
-        `"surface-unsupported:<surface>"`. Conditions collect the contract,
-        requested-surface, and regularity conditions.
+        `"surface-unsupported:<surface>"`, and a `STOPPED` contract rejects every
+        request with the reason `"route-stopped"`. Conditions collect the
+        contract, requested-surface, and regularity conditions.
         """
         if not isinstance(request, DifferentiationRequest):
             raise TypeError("request must be a DifferentiationRequest.")
@@ -1034,8 +1053,9 @@ class DerivativeContract(StrictModule, NonTrainableState):
         undeclared capability counts as `NONE`); owned surfaces take the weakest
         level over the participants that own them and stay absent when none does.
         Differing routes combine to `STOPPED` with a `"mixed-derivative-routes:"`
-        condition unless `composition_route` is supplied, which then becomes the
-        combined route. Regularity combines by `DerivativeRegularity.add` and is
+        condition, so the combination admits no derivative request, unless
+        `composition_route` is supplied, which then becomes the combined route.
+        Regularity combines by `DerivativeRegularity.add` and is
         undeclared if any participant's is. Conditions and nondifferentiable
         outputs are unions.
         """

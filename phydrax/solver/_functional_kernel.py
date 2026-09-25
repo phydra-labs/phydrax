@@ -139,7 +139,7 @@ class FunctionalKernelObjective(StrictModule):
     """Kernel objective function over the legacy functional lanes.
 
     `loss` must be a module-level function or a callable module whose arrays are
-    visible fields, so the kernel's callable preflight can see them.
+    visible FIXED fields, so the kernel's objective role preflight can see them.
     """
 
     loss: FunctionalLoss

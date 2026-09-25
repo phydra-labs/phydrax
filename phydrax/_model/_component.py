@@ -42,7 +42,13 @@ from .._fingerprint import canonical_fingerprint
 from .._identity import SemanticProvenance
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ._ports import ModelPorts, PortBindingEvidence, PortMapping, resolve_port_mapping
+from ._ports import (
+    ModelPorts,
+    PortBindingEvidence,
+    PortMapping,
+    require_mapped_order,
+    resolve_port_mapping,
+)
 
 
 if TYPE_CHECKING:
@@ -423,7 +429,10 @@ def _certificate_records(
         if not isinstance(kind, CapabilityEvidenceKind):
             raise TypeError("Certificate evidence kinds must be CapabilityEvidenceKind.")
         if kind is CapabilityEvidenceKind.DECLARED:
-            raise ValueError("A certificate records constructed or checked evidence.")
+            raise ValueError(
+                "A certificate records constructed or checked evidence; list a "
+                "capability claimed by declaration alone in declared_capabilities."
+            )
         records.add(
             (
                 _identifier(capability_id, "capability_id"),
@@ -432,6 +441,14 @@ def _certificate_records(
             )
         )
     return tuple(sorted(records))
+
+
+def _declared_capabilities(values: Iterable[str], /) -> tuple[str, ...]:
+    if isinstance(values, str):
+        raise TypeError(
+            "declared_capabilities must be a collection of capability IDs, not one ID."
+        )
+    return tuple(sorted({_identifier(value, "declared capability") for value in values}))
 
 
 def _precision_payload(precision: ComponentPrecisionContract | None, /) -> Any:
@@ -469,15 +486,21 @@ class ModelExecutionContract(StrictModule, NonTrainableState):
     It describes the model independent of any owner: its `derivative` contract
     (whose `regularity` is the model's value regularity), `execution`
     capabilities, `precision`, `randomness`, intrinsic `ports`, construction
-    `certificates`, and `semantic_provenance`. `None` means undeclared. It never
-    declares authority; binding to an owner slot does.
+    `certificates`, `declared_capabilities`, and `semantic_provenance`. `None`
+    means undeclared. It never declares authority; binding to an owner slot does.
 
-    Certificates are stored as sorted `(capability_id, certificate_id,
-    evidence_kind)` records; certificate instances record `CONSTRUCTED`
-    evidence. A host-only model offers no JAX derivative route: its contract
-    route is `EXTERNAL_ADJOINT` or `STOPPED`, or it declares no supported
-    surface. The `EXTERNAL_ADJOINT` route requires the `"external-adjoint"` tier.
-    `contract_id` content-addresses the contract.
+    Capability evidence has two distinct channels. Certificates are stored as
+    sorted `(capability_id, certificate_id, evidence_kind)` records of
+    `CONSTRUCTED` or `RUNTIME_CHECKED` evidence (certificate instances record
+    `CONSTRUCTED`); a certificate never records `DECLARED` evidence.
+    `declared_capabilities` are the sorted capability IDs the model claims by
+    declaration alone, each providing `DECLARED` evidence. `evidence` combines
+    both channels, so a requirement accepting declaration is satisfiable, while a
+    safety-critical requirement (which never accepts declaration alone) still
+    needs a certificate. A host-only model offers no JAX derivative route: its
+    contract route is `EXTERNAL_ADJOINT` or `STOPPED`, or it declares no
+    supported surface. The `EXTERNAL_ADJOINT` route requires the
+    `"external-adjoint"` tier. `contract_id` content-addresses the contract.
     """
 
     derivative: DerivativeContract
@@ -487,6 +510,7 @@ class ModelExecutionContract(StrictModule, NonTrainableState):
     ports: ModelPorts | None
     semantic_provenance: SemanticProvenance | None
     certificates: tuple[CertificateRecord, ...] = eqx.field(static=True)
+    declared_capabilities: tuple[str, ...] = eqx.field(static=True)
     contract_id: str = eqx.field(static=True)
 
     def __init__(
@@ -498,6 +522,7 @@ class ModelExecutionContract(StrictModule, NonTrainableState):
         randomness: RandomnessContract | None = None,
         ports: ModelPorts | None = None,
         certificates: Iterable[AbstractConstructionCertificate | CertificateRecord] = (),
+        declared_capabilities: Iterable[str] = (),
         semantic_provenance: SemanticProvenance | None = None,
     ):
         if not isinstance(derivative, DerivativeContract):
@@ -509,6 +534,7 @@ class ModelExecutionContract(StrictModule, NonTrainableState):
         _optional_type(ports, ModelPorts, "ports")
         _optional_type(semantic_provenance, SemanticProvenance, "semantic_provenance")
         records = _certificate_records(certificates)
+        declared = _declared_capabilities(declared_capabilities)
         route = derivative.route
         if (
             execution.host_only
@@ -532,6 +558,7 @@ class ModelExecutionContract(StrictModule, NonTrainableState):
         self.ports = ports
         self.semantic_provenance = semantic_provenance
         self.certificates = records
+        self.declared_capabilities = declared
         self.contract_id = canonical_fingerprint(
             {
                 "kind": "model-execution-contract",
@@ -547,6 +574,7 @@ class ModelExecutionContract(StrictModule, NonTrainableState):
                 "randomness": _randomness_payload(randomness),
                 "ports": None if ports is None else ports.ports_id,
                 "certificates": [list(record) for record in records],
+                "declared_capabilities": list(declared),
                 "semantic_provenance": (
                     None
                     if semantic_provenance is None
@@ -562,9 +590,19 @@ class ModelExecutionContract(StrictModule, NonTrainableState):
 
     @property
     def evidence(self) -> tuple[tuple[str, CapabilityEvidenceKind], ...]:
-        """Sorted unique `(capability_id, evidence_kind)` pairs of the certificates."""
+        """Sorted unique `(capability_id, evidence_kind)` pairs of both channels.
+
+        Each certificate contributes its evidence kind and each declared
+        capability contributes `DECLARED`.
+        """
         return tuple(
-            sorted({(capability, kind) for capability, _, kind in self.certificates})
+            sorted(
+                {(capability, kind) for capability, _, kind in self.certificates}
+                | {
+                    (capability, CapabilityEvidenceKind.DECLARED)
+                    for capability in self.declared_capabilities
+                }
+            )
         )
 
     @property
@@ -695,13 +733,16 @@ class ComponentContract(StrictModule, NonTrainableState):
 
     It records the conferred `authority`, the `slot_semantic_id` (`None` for an
     authority-only binding), the intrinsic `model_contract`, the
-    `port_binding` evidence (`None` when ports were not bound), the
-    admissibility `requirements`, and an optional `derivative_admission` made
-    for this authority. `evidence` holds the `(capability_id, evidence_kind)`
-    pairs the model provides. Construction fails closed: every requirement must
-    be satisfied by the evidence for its capability, and the admission must be
-    requested by this authority on the model's derivative route.
-    `bound_semantic_id` content-addresses the binding.
+    `port_binding` evidence, the admissibility `requirements`, and an optional
+    `derivative_admission` made for this authority. `port_binding` is present
+    exactly when the model declares ports and binds every one of them: a model
+    declaring ports is never bound without port evidence, and a model without
+    ports has none. `evidence` holds the `(capability_id, evidence_kind)` pairs
+    the model provides through its certificates and declared capabilities.
+    Construction fails closed: every requirement must be satisfied by the
+    evidence for its capability, and the admission must be requested by this
+    authority on the model's derivative route. `bound_semantic_id`
+    content-addresses the binding.
     """
 
     authority: ComponentAuthority = eqx.field(static=True)
@@ -730,6 +771,9 @@ class ComponentContract(StrictModule, NonTrainableState):
         _optional_type(port_binding, PortBindingEvidence, "port_binding")
         _optional_type(derivative_admission, DerivativeAdmission, "derivative_admission")
         requirements_ = _requirements(requirements)
+        _require_port_evidence(
+            model_contract.ports, port_binding, _binding_site(authority_, semantic_id)
+        )
         evidence = model_contract.evidence
         unsatisfied = tuple(
             requirement.capability_id
@@ -779,10 +823,45 @@ class ComponentContract(StrictModule, NonTrainableState):
         )
 
 
+def _binding_site(authority: ComponentAuthority, slot_semantic_id: str | None, /) -> str:
+    if slot_semantic_id is None:
+        return f"the {authority.value} authority binding"
+    return f"slot {slot_semantic_id!r}"
+
+
+def _require_port_evidence(
+    model_ports: ModelPorts | None,
+    evidence: PortBindingEvidence | None,
+    site: str,
+    /,
+) -> None:
+    if model_ports is None:
+        if evidence is not None:
+            raise ValueError(
+                f"{site} records port binding evidence for a model without ports."
+            )
+        return
+    if evidence is None:
+        raise ValueError(
+            f"{site} binds a model declaring ports without port binding evidence; "
+            "bind it to owner ports through an explicit PortMapping."
+        )
+    for direction, ports, pairs in (
+        ("input", model_ports.inputs, evidence.inputs),
+        ("output", model_ports.outputs, evidence.outputs),
+    ):
+        if tuple(model for model, _ in pairs) != tuple(port.port_id for port in ports):
+            raise ValueError(
+                f"{site} port binding evidence does not bind the model's ordered "
+                f"{direction} ports."
+            )
+
+
 def _port_binding(
     model_ports: ModelPorts | None,
     owner_ports: ModelPorts | None,
     mapping: PortMapping | None,
+    site: str,
     /,
 ) -> PortBindingEvidence | None:
     if model_ports is None:
@@ -790,7 +869,11 @@ def _port_binding(
             raise ValueError("A port mapping was supplied for a model without ports.")
         return None
     if owner_ports is None:
-        return None
+        raise ValueError(
+            f"Binding a model that declares ports to {site} requires owner_ports "
+            "and an explicit PortMapping; a port-declaring model never binds "
+            "without owner ports."
+        )
     if mapping is None:
         raise ValueError(
             "Binding a model with declared ports to owner ports requires an "
@@ -815,7 +898,12 @@ def _bound_contract(
         authority=authority,
         model_contract=model_contract,
         slot_semantic_id=slot_semantic_id,
-        port_binding=_port_binding(model_contract.ports, owner_ports, port_mapping),
+        port_binding=_port_binding(
+            model_contract.ports,
+            owner_ports,
+            port_mapping,
+            _binding_site(authority, slot_semantic_id),
+        ),
         requirements=requirements,
         derivative_admission=(
             None
@@ -833,8 +921,10 @@ class ComponentBinding(StrictModule):
     `ParameterOwner` model's arrays stay PARAMETER); the binding's authority,
     slot identity, port mapping, owner ports, and requirements are static
     metadata. Construction validates the binding by forming its contract, so
-    port and requirement violations fail at binding time. A mapping is required
-    exactly when the model declares ports and `owner_ports` are supplied.
+    port and requirement violations fail at binding time. A model declaring
+    ports binds only to `owner_ports` through an explicit `port_mapping`;
+    binding it without owner ports raises `ValueError` naming the slot. A model
+    without ports takes no mapping.
     """
 
     model: "AbstractArrayModel"
@@ -921,7 +1011,8 @@ def bind_component(
 
     A slot class confers its authority, semantic ID, and requirements, to which
     `requirements` are added; a bare `ComponentAuthority` binds without a slot
-    identity.
+    identity. A model declaring ports needs the owner's `owner_ports` and an
+    explicit `port_mapping` (see `ComponentBinding`).
     """
     if isinstance(slot, ComponentAuthority):
         slot_contract = ComponentSlotContract(slot)
@@ -941,6 +1032,38 @@ def bind_component(
     )
 
 
+def bind_positional_component(
+    model: "AbstractArrayModel",
+    slot: type[AbstractComponentSlot],
+    owner_ports: ModelPorts | None,
+    port_mapping: PortMapping | None,
+    /,
+    *,
+    site: str,
+) -> ComponentBinding:
+    """Bind `model` to `slot` for an owner that passes port values positionally.
+
+    The owner packs its input values and reads its output values in
+    `owner_ports` order and never repacks them, so a model declaring ports must
+    map its ordered ports to exactly that order (`require_mapped_order`). A
+    model declaring ports needs `owner_ports` and `port_mapping`; violations
+    raise `ValueError` naming `site` or the slot.
+    """
+    binding = bind_component(
+        model, slot, port_mapping=port_mapping, owner_ports=owner_ports
+    )
+    evidence = binding.contract().port_binding
+    if evidence is not None and owner_ports is not None:
+        for direction, ports in (
+            ("input", owner_ports.inputs),
+            ("output", owner_ports.outputs),
+        ):
+            require_mapped_order(
+                evidence, direction, tuple(port.port_id for port in ports), site=site
+            )
+    return binding
+
+
 def slot_component_contracts(
     slot: type[AbstractComponentSlot],
     tree: Any,
@@ -950,9 +1073,12 @@ def slot_component_contracts(
 ) -> tuple[tuple[str, ComponentContract], ...]:
     """Bind every model below `tree` to `slot`; return `(location, contract)` pairs.
 
-    A bare `AbstractArrayModel` is bound to `slot`; a `ComponentBinding` must
-    already carry the slot's authority and its slot identity (or none).
-    Locations are `scope` plus the PyTree path, in flattening order.
+    A bare `AbstractArrayModel` is bound to `slot` without owner ports, so a bare
+    model declaring ports is refused: the callable that invokes it owns its port
+    values and binds it as a `ComponentBinding` with those `owner_ports` and an
+    explicit mapping. A `ComponentBinding` must already carry the slot's
+    authority and its slot identity (or none). Locations are `scope` plus the
+    PyTree path, in flattening order.
     """
     from ._array import AbstractArrayModel
 

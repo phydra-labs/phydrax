@@ -856,7 +856,10 @@ acceptance decision; a rejected update is bitwise inert.
 
 `LearnedInitialGuess(function)` holds a callable module containing at least one
 model; every model is bound to the provider slot with `ACCELERATOR` authority
-and keeps its parameters. Production solves treat its proposal like any other.
+and keeps its parameters. A model declaring ports cannot be a bare child: the
+callable module, which owns the values it passes, holds it as
+`bind_component(model, LearnedInitialGuess, owner_ports=..., port_mapping=...)`.
+Production solves treat its proposal like any other.
 Training instead differentiates the raw `provider.propose(rhs, baseline)`
 passed as an ordinary guess to an `"algorithmic"` solve, whose executed work is
 the objective (see `AlgorithmicWorkObjective` in `phydrax.solver`).

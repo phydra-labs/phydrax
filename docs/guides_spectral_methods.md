@@ -92,8 +92,10 @@ Modal coefficients are always complex. For a real physical dtype the view
 returns the real part of the synthesis, as `reconstruct` does. The coefficient
 transpose is the exact bilinear transpose of the synthesis, and it satisfies
 `<R c, w> = Re(sum(c * R^T w))`, which `reconstruction.duality_evidence`
-checks. A `value_port` with `event_shape` declares trailing component axes, so
-the coefficients have shape `space.modal_shape + event_shape`.
+checks. Both refuse query routes with any invalid point (for example
+`OUTSIDE_SUPPORT`) with a `ValueError`. A `value_port` with `event_shape`
+declares trailing component axes, so the coefficients have shape
+`space.modal_shape + event_shape`.
 
 ## Axis domains and unbounded intervals
 

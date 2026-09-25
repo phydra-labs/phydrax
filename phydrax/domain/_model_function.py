@@ -48,12 +48,7 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
             raise TypeError("Domain models require an explicit ModelBinding.")
         if binding.batch_mode == "axis" and not isinstance(model, AxisModelEvaluator):
             raise TypeError("Axis-batch model bindings require an AxisModelEvaluator.")
-        undeclared = tuple(label for label in binding.output_labels if label not in deps)
-        if undeclared:
-            raise ValueError(
-                f"ModelBinding.output_labels {undeclared!r} are not model dependencies "
-                f"{tuple(deps)!r}."
-            )
+        binding.require_dependencies(tuple(deps))
         self.raw_model = model
         self.domain_labels = tuple(domain_labels)
         self.deps = tuple(deps)

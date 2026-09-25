@@ -6,6 +6,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax._admissibility import DOMAIN_REASON_SHIFT
@@ -38,6 +39,25 @@ class _ViscosityStressModel(AbstractArrayModel):
             3, dtype=strain.dtype
         )
         return (-2.0 * self.coefficient * deviatoric).reshape((self.out_size,))
+
+
+class _PortedStressModel(AbstractArrayModel):
+    stress: _ViscosityStressModel
+    ports: phx.ModelPorts
+    in_size: int = eqx.field(static=True)
+    out_size: int = eqx.field(static=True)
+
+    def __init__(self, stress, ports):
+        self.stress = stress
+        self.ports = ports
+        self.in_size = stress.in_size
+        self.out_size = stress.out_size
+
+    def __call__(self, values, /, *, key=None):
+        return self.stress(values, key=key)
+
+    def model_ports(self):
+        return self.ports
 
 
 def _periodic_prepared():
@@ -299,3 +319,54 @@ def test_periodic_transition_header_and_derivative_poisoning_on_failure():
         lambda candidate: jnp.sum(failing(candidate).accepted_state)
     )(model)
     assert bool(jnp.isnan(gradient.coefficient))
+
+
+def test_periodic_transition_binds_port_declaring_stress_models_to_plan_ports():
+    space, prepared, coordinates = _periodic_prepared()
+    plan = prepared.binding.plan
+    ports = phx.ModelPorts(
+        inputs=(plan.feature_schema.value_port(),),
+        outputs=(plan.output_contract.value_port(),),
+    )
+    model = _PortedStressModel(
+        _ViscosityStressModel(
+            0.1, space.physical_shape, jnp.dtype(space.plan.precision.physical_dtype)
+        ),
+        ports,
+    )
+    mapping = phx.PortMapping(
+        inputs=[(ports.inputs[0].port_id,) * 2], outputs=[(ports.outputs[0].port_id,) * 2]
+    )
+    arguments = dict(
+        base_rate_id="zero-periodic-base-rate",
+        state_layout=phx.dynamics.StateLayout((coordinates.coordinate_size,)),
+        step_size=0.01,
+    )
+
+    def zero_rate(time, modal, inputs):
+        del time, inputs
+        return jnp.zeros_like(modal)
+
+    Transition = (
+        phx.applications.incompressible_flow.PeriodicLearnedStressRolloutTransition
+    )
+    with pytest.raises(ValueError, match="explicit PortMapping"):
+        Transition(prepared, coordinates, zero_rate, **arguments).validate_model(model)
+
+    transition = Transition(
+        prepared, coordinates, zero_rate, **arguments, port_mapping=mapping
+    )
+    transition.validate_model(model)
+    assert transition.owner_ports() == ports
+    evidence = transition.component_binding(model).contract().port_binding
+    assert evidence.inputs == ((ports.inputs[0].port_id,) * 2,)
+    assert evidence.outputs == ((ports.outputs[0].port_id,) * 2,)
+    result = transition.evaluate(
+        model,
+        phx.dynamics.DiscreteStepContext(0.0, 0.01, 0),
+        _initial_state(space, prepared, coordinates),
+        None,
+        key=None,
+        iteration=jnp.asarray(0),
+    )
+    assert bool(result.training_usable)

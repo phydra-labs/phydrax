@@ -76,6 +76,19 @@ class ModelBinding:
                 "batch_mode='blockwise'."
             )
 
+    def require_dependencies(self, deps: tuple[str, ...], /) -> None:
+        """Require every declared `output_labels` entry to be one of `deps`.
+
+        Raises `ValueError` naming the unknown labels; a `"dependency_subset"`
+        output can only keep batch axes of the model's own dependencies.
+        """
+        unknown = tuple(label for label in self.output_labels if label not in deps)
+        if unknown:
+            raise ValueError(
+                f"ModelBinding.output_labels {unknown!r} are not model dependencies "
+                f"{tuple(deps)!r}."
+            )
+
     def pack_point(self, args: tuple[Any, ...], /) -> Any:
         """Pack one model invocation according to this binding's input contract."""
         if not args:

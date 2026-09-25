@@ -6,10 +6,14 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-import equinox as eqx
-import jax
-
-from .._trainable import ExplicitFreeze, NonTrainableState
+from .._strict import StrictModule
+from .._trainable import (
+    ArrayRole,
+    ExplicitFreeze,
+    NonTrainableState,
+    parameter_field,
+    resolve_array_roles,
+)
 from ._array import AbstractArrayModel
 from ._component import ModelExecutionContract
 
@@ -60,14 +64,22 @@ class FrozenModel(AbstractArrayModel, ExplicitFreeze):
         return self.model
 
 
+class _TrainableSlot(StrictModule):
+    """The `parameter_field` child a trainable binding holds its provider in."""
+
+    provider: Any = parameter_field()
+
+
 def trainable_provider(provider: Any, /) -> Any:
     """Return the trainable form of a frozen provider, refusing one without any.
 
     Frozen artifacts use it for their explicit trainable counterpart: a
     `FrozenModel` is unwrapped (without copying array leaves); any other
     terminal (`NonTrainableState`) provider cannot become trainable. The
-    provider must be callable and hold a visible inexact array leaf, which
-    becomes a PARAMETER in the trainable holder. Raises `ValueError` otherwise.
+    provider must be callable, and its roles, resolved as the `parameter_field`
+    child of a trainable holder, must include at least one PARAMETER leaf: a
+    provider whose arrays are all declared FIXED (or hidden from PyTree
+    flattening) would train nothing. Raises `ValueError` otherwise.
     """
     unwrapped = provider.as_trainable() if isinstance(provider, FrozenModel) else provider
     if not callable(unwrapped):
@@ -76,10 +88,12 @@ def trainable_provider(provider: Any, /) -> Any:
         raise ValueError(
             f"{type(unwrapped).__name__} is a fixed provider and cannot become trainable."
         )
-    if not jax.tree_util.tree_leaves(eqx.filter(unwrapped, eqx.is_inexact_array)):
+    if ArrayRole.PARAMETER not in resolve_array_roles(_TrainableSlot(unwrapped)).roles:
         raise ValueError(
-            f"{type(unwrapped).__name__} holds no visible inexact array to train; a "
-            "trainable binding needs a provider whose arrays are PyTree leaves."
+            f"{type(unwrapped).__name__} resolves to no PARAMETER leaf as the "
+            "parameter_field child of a trainable holder: its arrays are declared "
+            "fixed_field or model_state_field, or hidden from PyTree flattening. A "
+            "trainable binding needs at least one trainable array leaf."
         )
     return unwrapped
 

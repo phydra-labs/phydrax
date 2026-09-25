@@ -2,11 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Certified neural implicit regions whose weights live in the design state."""
+"""Neural implicit regions whose trainable weights live in the design state."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+import functools
+from dataclasses import dataclass
 from typing import Any, final
 
 import equinox as eqx
@@ -20,8 +21,7 @@ from ..._differentiation import CapabilityEvidenceKind, DerivativeRegularity
 from ..._fingerprint import canonical_fingerprint
 from ..._model._array import AbstractArrayModel
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
-from ...discretization._axis import TensorGridPlan, UniformAxisSpec
+from ..._trainable import fixed_field, NonTrainableState, partition_parameters
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -46,12 +46,8 @@ from ..design._schema import (
     ParameterBinding,
     ParameterId,
 )
-from ..simplicial import TriangleTopology
-from ._curve_discovery import discover_implicit_curve, ImplicitCurvePlan
-from ._discovery import discover_implicit_surface
 from ._policy import ImplicitSurfacePolicy
 from ._projection import _field_and_gradient
-from ._realization import ImplicitSurfacePlan
 
 
 _DEFAULT_POLICY = ImplicitSurfacePolicy()
@@ -85,7 +81,7 @@ def _activation_lipschitz(function: Any, /) -> float | None:
 @final
 @dataclass(frozen=True, slots=True)
 class ImplicitRegionTopology:
-    """Topological type of a certified implicit region.
+    """Topological type of an implicit region resolved on a sampling lattice.
 
     `betti_numbers` are the region's Betti numbers `(b0, b1)` in two dimensions
     and `(b0, b1, b2)` in three. `boundary_components` lists each closed
@@ -131,15 +127,18 @@ class ImplicitRegionTopology:
 
 @final
 class NeuralImplicitCertificate(StrictModule, NonTrainableState):
-    """Host-side certification evidence of one neural implicit region state.
+    """Host-side sampled evidence of one neural implicit region state.
 
-    `field` carries the Lipschitz upper bound, evaluation-error bound, and
-    topology identity; `lipschitz_evidence` records whether the Lipschitz bound
-    was `CONSTRUCTED` from the network or `DECLARED` by the caller.
-    `boundary_points` are the zero-set points of the discovered boundary on
-    which the gradient margin is certified, `clearance_points` the lattice
-    nodes on the declared bounds, and `evidence` the validity evidence at the
-    certified state.
+    The evidence is sampled, not a proof: `field` reports
+    `SignReliability.LOCAL`, `ZeroSetAccuracy.APPROXIMATE`, and no
+    `topology_identity`, and carries the Lipschitz upper bound and the declared
+    evaluation-error bound. `lipschitz_evidence` records whether the Lipschitz
+    bound was `CONSTRUCTED` from the network or `DECLARED` by the caller.
+    `topology` is the region topology resolved on the sampling lattice; a
+    zero-set feature between lattice nodes can escape it. `boundary_points` are
+    the lattice zero crossings at which the gradient margin is checked,
+    `clearance_points` the lattice nodes on the declared bounds, and `evidence`
+    the validity evidence at the checked state.
     """
 
     field: FieldCertificate = eqx.field(static=True)
@@ -161,9 +160,9 @@ class NeuralImplicitCertificate(StrictModule, NonTrainableState):
         clearance_points: Array,
         evidence: GeometryValidityEvidence,
     ):
-        if field.topology_identity != topology.topology_id:
+        if field.topology_identity is not None:
             raise ValueError(
-                "Field certificate topology identity must match the topology."
+                "Sampled neural implicit evidence carries no field topology identity."
             )
         self.field = field
         self.lipschitz_evidence = lipschitz_evidence
@@ -227,11 +226,29 @@ def _field_regularity(regularity: DerivativeRegularity | None, /) -> FieldRegula
 
 
 def _network_parts(network: AbstractArrayModel, /):
-    dynamic, static = eqx.partition(network, eqx.is_inexact_array)
-    flat, treedef = jax.tree_util.tree_flatten_with_path(dynamic)
+    """Split `network` by array role into design parameters and fixed data.
+
+    Returns the PARAMETER lane as `(names, leaves, treedef)`, the FIXED lane's
+    arrays (dynamic data, never design parameters), and its array-free
+    remainder (static structure).
+    """
+    parameters, model_state, fixed = partition_parameters(network)
+    if jax.tree_util.tree_leaves(model_state):
+        raise ValueError(
+            "Neural implicit geometry requires a network without model state."
+        )
+    flat, treedef = jax.tree_util.tree_flatten_with_path(parameters)
     names = tuple(jax.tree_util.keystr(path).lstrip(".") for path, _ in flat)
     leaves = tuple(leaf for _, leaf in flat)
-    return names, leaves, treedef, static
+    fixed_arrays, static = eqx.partition(fixed, eqx.is_array)
+    return names, leaves, treedef, fixed_arrays, static
+
+
+def _assemble_network(
+    treedef: Any, leaves: Any, fixed_arrays: Any, static: Any, /
+) -> AbstractArrayModel:
+    parameters = jax.tree_util.tree_unflatten(treedef, list(leaves))
+    return eqx.combine(parameters, eqx.combine(fixed_arrays, static))
 
 
 @eqx.filter_jit
@@ -247,8 +264,13 @@ def _evaluate_network(network: AbstractArrayModel, points: Array, dimension: int
 
 @final
 class _NeuralImplicitKernel(GeometryKernel):
-    """Region `{x in bounds : network(x; weights) <= 0}` with state-owned weights."""
+    """Region `{x in bounds : network(x; weights) <= 0}` with state-owned weights.
 
+    Only the network's PARAMETER lane is read from the design state; its FIXED
+    arrays are kernel data and its array-free remainder is static structure.
+    """
+
+    network_fixed: Any = fixed_field()
     network_static: Any = eqx.field(static=True)
     network_treedef: Any = eqx.field(static=True)
     bindings: tuple[ParameterBinding, ...] = eqx.field(static=True)
@@ -268,6 +290,7 @@ class _NeuralImplicitKernel(GeometryKernel):
     def __init__(
         self,
         *,
+        network_fixed: Any,
         network_static: Any,
         network_treedef: Any,
         bindings: tuple[ParameterBinding, ...],
@@ -284,6 +307,7 @@ class _NeuralImplicitKernel(GeometryKernel):
         capabilities: frozenset[GeometryCapability],
         source_id: str,
     ):
+        self.network_fixed = network_fixed
         self.network_static = network_static
         self.network_treedef = network_treedef
         self.bindings = bindings
@@ -321,9 +345,12 @@ class _NeuralImplicitKernel(GeometryKernel):
         return self.certificate
 
     def network(self, state: DesignState, /) -> AbstractArrayModel:
-        leaves = [binding.read(state) for binding in self.bindings]
-        dynamic = jax.tree_util.tree_unflatten(self.network_treedef, leaves)
-        return eqx.combine(dynamic, self.network_static)
+        return _assemble_network(
+            self.network_treedef,
+            [binding.read(state) for binding in self.bindings],
+            self.network_fixed,
+            self.network_static,
+        )
 
     def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         network = self.network(state)
@@ -383,8 +410,8 @@ class _NeuralImplicitKernel(GeometryKernel):
                 ]
             )
         )
-        # Sampled margins are rechecked at every state; the topology identity is
-        # established only at the certified weights, so any other state stays
+        # Sampled margins are rechecked at every state; the sampled topology is
+        # resolved only at the checked weights, so any other state stays
         # inconclusive until it is recertified.
         return GeometryValidityEvidence(
             finite=weights_finite & jnp.all(jnp.isfinite(margin_array)),
@@ -483,12 +510,13 @@ def _compile_kernel(
     clearance_points: Array,
     boundary_points: Array,
 ) -> _NeuralImplicitKernel:
-    names, leaves, treedef, static = _network_parts(network)
+    names, leaves, treedef, fixed, static = _network_parts(network)
     bindings = tuple(
         context.bind(ParameterId(feature_id, name), leaf, role="network_weight")
         for name, leaf in zip(names, leaves, strict=True)
     )
     return _NeuralImplicitKernel(
+        network_fixed=fixed,
         network_static=static,
         network_treedef=treedef,
         bindings=bindings,
@@ -520,103 +548,233 @@ def _require_accepted(evidence: GeometryValidityEvidence, /) -> None:
     )
     if failed or not bool(np.asarray(evidence.finite)):
         raise ValueError(
-            "Neural implicit certification failed: "
+            "Neural implicit sampled evidence failed: "
             + (", ".join(failed) if failed else "nonfinite weights")
             + "."
         )
 
 
-def _curve_topology(plan: ImplicitCurvePlan, /) -> ImplicitRegionTopology:
-    vertices = np.asarray(plan.base_vertices, dtype=np.float64)
-    edges = np.asarray(plan.edges, dtype=np.int32)
-    successor = {int(start): int(stop) for start, stop in edges}
-    if len(successor) != edges.shape[0] or set(successor.values()) != set(successor):
-        raise ValueError("Discovered implicit contour is not consistently oriented.")
-    remaining = set(successor)
-    components: list[tuple[str, int]] = []
-    while remaining:
-        current = min(remaining)
-        loop: list[int] = []
-        while current in remaining:
-            remaining.remove(current)
-            loop.append(current)
-            current = successor[current]
-        points = vertices[np.asarray(loop, dtype=np.int32)]
-        following = np.roll(points, -1, axis=0)
-        area = 0.5 * np.sum(
-            points[:, 0] * following[:, 1] - following[:, 0] * points[:, 1]
+# Square corners are cyclic; square edge k joins corners k and k + 1.
+_SQUARE_CORNERS = ((0, 0), (1, 0), (1, 1), (0, 1))
+_SQUARE_EDGES = ((0, 1), (1, 2), (3, 2), (0, 3))
+_CUBE_CORNERS = (
+    (0, 0, 0),
+    (1, 0, 0),
+    (1, 1, 0),
+    (0, 1, 0),
+    (0, 0, 1),
+    (1, 0, 1),
+    (1, 1, 1),
+    (0, 1, 1),
+)
+_CUBE_EDGES = (
+    (0, 1),
+    (1, 2),
+    (3, 2),
+    (0, 3),
+    (4, 5),
+    (5, 6),
+    (7, 6),
+    (4, 7),
+    (0, 4),
+    (1, 5),
+    (2, 6),
+    (3, 7),
+)
+# Each cube face as a cycle of cube corners.
+_CUBE_FACES = (
+    (0, 1, 2, 3),
+    (4, 5, 6, 7),
+    (0, 1, 5, 4),
+    (3, 2, 6, 7),
+    (0, 3, 7, 4),
+    (1, 2, 6, 5),
+)
+_BISECTION_STEPS = 64
+
+
+def _square_arcs(inside: tuple[bool, ...], /) -> tuple[tuple[int, int], ...]:
+    """Zero-set arcs of one lattice square as pairs of its cyclic edge indices.
+
+    An alternating (ambiguous) square keeps its inside corners apart, the
+    convention under which inside lattice corners connect only along edges.
+    """
+    crossing = tuple(k for k in range(4) if inside[k] != inside[(k + 1) % 4])
+    if len(crossing) == 4:
+        return tuple(((k - 1) % 4, k) for k in range(4) if inside[k])
+    return (crossing,) if crossing else ()
+
+
+@functools.cache
+def _cell_pieces(dimension: int, pattern: int, /) -> tuple[tuple[int, ...], ...]:
+    """Zero-set pieces of one lattice cell as tuples of local crossing-edge indices.
+
+    Bit `c` of `pattern` marks corner `c` inside. A square's pieces are its arcs;
+    a cube's pieces are the boundary loops of its surface patches, one disk per
+    loop, joined from the arcs of its six faces.
+    """
+    if dimension == 2:
+        return _square_arcs(tuple(bool(pattern >> c & 1) for c in range(4)))
+    edge_index = {frozenset(edge): k for k, edge in enumerate(_CUBE_EDGES)}
+    parent = list(range(len(_CUBE_EDGES)))
+
+    def root(k: int) -> int:
+        while parent[k] != k:
+            k = parent[k]
+        return k
+
+    crossing: set[int] = set()
+    for face in _CUBE_FACES:
+        local = tuple(
+            edge_index[frozenset((face[k], face[(k + 1) % 4]))] for k in range(4)
         )
-        if not np.isfinite(area) or area == 0.0:
-            raise ValueError("Discovered implicit contour encloses no area.")
-        # Discovery orients the outward field gradient to the right of each
-        # segment, so outer boundaries run counterclockwise and holes clockwise.
-        components.append(("outer" if area > 0.0 else "inner", 0))
-    outer = sum(role == "outer" for role, _ in components)
-    return ImplicitRegionTopology(
-        2,
-        (outer, len(components) - outer),
-        tuple(sorted(components)),
+        for first, second in _square_arcs(tuple(bool(pattern >> c & 1) for c in face)):
+            parent[root(local[first])] = root(local[second])
+            crossing.update((local[first], local[second]))
+    loops: dict[int, list[int]] = {}
+    for k in sorted(crossing):
+        loops.setdefault(root(k), []).append(k)
+    return tuple(tuple(loop) for loop in loops.values())
+
+
+def _crossing_ids(inside: np.ndarray, /) -> tuple[np.ndarray, ...]:
+    """Per axis, the index of every sign-changing lattice edge (`-1` elsewhere)."""
+    ids: list[np.ndarray] = []
+    count = 0
+    for axis in range(inside.ndim):
+        crossing = np.diff(inside.astype(np.int8), axis=axis) != 0
+        axis_ids = np.full(crossing.shape, -1, dtype=np.int64)
+        found = int(np.count_nonzero(crossing))
+        axis_ids[crossing] = np.arange(count, count + found, dtype=np.int64)
+        ids.append(axis_ids)
+        count += found
+    return tuple(ids)
+
+
+def _sampled_topology(
+    inside: np.ndarray, ids: tuple[np.ndarray, ...], /
+) -> ImplicitRegionTopology:
+    """Topology of the zero set resolved from lattice signs, as sampled evidence.
+
+    The zero set is taken to cross each sign-changing lattice edge once and no
+    other edge, with the piece structure of `_cell_pieces` in each cell. Its
+    components are closed curves (2D) or surfaces (3D). A surface's Euler
+    characteristic is `loops - crossings`: every crossing lies on four lattice
+    faces, so arcs number twice the crossings. A component is `"outer"` when
+    the region lies on its bounded side, decided by crossing parity along an
+    axis-0 lattice line entered from the positive bounds.
+    """
+    dimension = inside.ndim
+    count = sum(int(np.count_nonzero(axis_ids >= 0)) for axis_ids in ids)
+    corners, edges = (
+        (_SQUARE_CORNERS, _SQUARE_EDGES)
+        if dimension == 2
+        else (_CUBE_CORNERS, _CUBE_EDGES)
     )
-
-
-def _surface_topology(plan: ImplicitSurfacePlan, /) -> ImplicitRegionTopology:
-    vertices = np.asarray(plan.base_vertices, dtype=np.float64)
-    faces = np.asarray(plan.faces, dtype=np.int32)
-    topology = TriangleTopology(faces, num_vertices=vertices.shape[0])
-    component_ids = np.asarray(topology.face_component_ids)
-    components: list[tuple[str, int]] = []
-    genus_total = 0
-    for component in range(topology.num_face_components):
-        selected = faces[component_ids == component]
-        edges = np.sort(
-            np.concatenate(
-                (selected[:, [0, 1]], selected[:, [1, 2]], selected[:, [2, 0]])
-            ),
-            axis=1,
-        )
-        euler = (
-            np.unique(selected).size
-            - np.unique(edges, axis=0).shape[0]
-            + selected.shape[0]
-        )
-        if euler > 2 or euler % 2:
-            raise ValueError("Discovered implicit surface component is not orientable.")
-        triangles = vertices[selected]
-        volume = np.sum(
-            triangles[:, 0] * np.cross(triangles[:, 1], triangles[:, 2]), axis=-1
-        ).sum()
-        if not np.isfinite(volume) or volume == 0.0:
-            raise ValueError("Discovered implicit surface component encloses no volume.")
-        # Faces are oriented along the outward field gradient: outer shells
-        # enclose positive volume and cavity shells negative volume.
-        components.append(("outer" if volume > 0.0 else "inner", int(euler)))
-        genus_total += (2 - int(euler)) // 2
-    outer = sum(role == "outer" for role, _ in components)
-    return ImplicitRegionTopology(
-        3,
-        (outer, genus_total, len(components) - outer),
-        tuple(sorted(components)),
+    offsets = np.asarray(corners, dtype=np.int64)
+    cells = (
+        np.indices(tuple(size - 1 for size in inside.shape)).reshape((dimension, -1)).T
     )
+    pattern = np.zeros(cells.shape[0], dtype=np.int64)
+    for corner, offset in enumerate(offsets):
+        pattern |= inside[tuple((cells + offset).T)].astype(np.int64) << corner
+    local_ids = np.stack(
+        [
+            ids[int(np.flatnonzero(offsets[first] != offsets[second])[0])][
+                tuple((cells + np.minimum(offsets[first], offsets[second])).T)
+            ]
+            for first, second in edges
+        ],
+        axis=1,
+    )
+    parent = list(range(count))
+
+    def root(k: int) -> int:
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+
+    pieces: list[int] = []
+    full = (1 << len(corners)) - 1
+    for cell in np.flatnonzero((pattern != 0) & (pattern != full)).tolist():
+        for piece in _cell_pieces(dimension, int(pattern[cell])):
+            members = local_ids[cell, list(piece)].tolist()
+            for member in members[1:]:
+                parent[root(member)] = root(members[0])
+            pieces.append(members[0])
+    labels: dict[int, int] = {}
+    component = np.asarray(
+        [labels.setdefault(root(k), len(labels)) for k in range(count)],
+        dtype=np.int64,
+    )
+    crossings = np.bincount(component, minlength=len(labels))
+    loops = np.bincount(
+        component[np.asarray(pieces, dtype=np.int64)], minlength=len(labels)
+    )
+    first_axis = np.where(ids[0] >= 0, component[ids[0]], -1)
+    boundary: list[tuple[str, int]] = []
+    for label in range(len(labels)):
+        position = tuple(np.argwhere(first_axis == label)[0])
+        line = first_axis[(slice(None), *position[1:])]
+        parity = int(np.count_nonzero(line[: position[0]] == label)) % 2
+        # The lower node lies on the component's bounded side iff it is preceded
+        # by an odd number of the component's crossings along the line.
+        role = "outer" if bool(inside[position]) == (parity == 1) else "inner"
+        euler = 0 if dimension == 2 else int(loops[label] - crossings[label])
+        boundary.append((role, euler))
+    outer = sum(role == "outer" for role, _ in boundary)
+    inner = len(boundary) - outer
+    if dimension == 2:
+        betti = (outer, inner)
+    else:
+        betti = (outer, sum((2 - euler) // 2 for _, euler in boundary), inner)
+    return ImplicitRegionTopology(dimension, betti, tuple(sorted(boundary)))
 
 
-def _lattice(bounds: np.ndarray, resolution: tuple[int, ...], /):
+def _zero_crossings(
+    network: AbstractArrayModel,
+    nodes: np.ndarray,
+    values: np.ndarray,
+    ids: tuple[np.ndarray, ...],
+    /,
+) -> Array:
+    """Zero crossings of the field on every sign-changing lattice edge, by bisection."""
+    dimension = nodes.shape[-1]
+    lower = []
+    upper = []
+    for axis, axis_ids in enumerate(ids):
+        positions = np.argwhere(axis_ids >= 0)
+        lower.append(positions)
+        upper.append(positions + np.eye(dimension, dtype=np.int64)[axis])
+    lower_ = np.concatenate(lower)
+    upper_ = np.concatenate(upper)
+    left = jnp.asarray(nodes[tuple(lower_.T)])
+    right = jnp.asarray(nodes[tuple(upper_.T)])
+    left_inside = jnp.asarray(values[tuple(lower_.T)] < 0.0)
+    for _ in range(_BISECTION_STEPS):
+        middle = 0.5 * (left + right)
+        keep_left = (_evaluate_network(network, middle, dimension) < 0.0) != left_inside
+        left = jnp.where(keep_left[:, None], left, middle)
+        right = jnp.where(keep_left[:, None], middle, right)
+    return 0.5 * (left + right)
+
+
+def _lattice_nodes(bounds: np.ndarray, resolution: tuple[int, ...], /) -> np.ndarray:
     axes = tuple(
         np.linspace(bounds[0, axis], bounds[1, axis], count)
         for axis, count in enumerate(resolution)
     )
-    mesh = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)
-    indices = np.stack(
-        np.meshgrid(*(np.arange(count) for count in resolution), indexing="ij"),
-        axis=-1,
-    )
-    on_bounds = np.any(
-        (indices == 0) | (indices == np.asarray(resolution) - 1),
-        axis=-1,
-    )
-    grid = TensorGridPlan(tuple(UniformAxisSpec(count) for count in resolution)).prepare(
-        jnp.asarray(bounds)
-    )
-    return grid, mesh[on_bounds]
+    return np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)
+
+
+def _bounds_nodes(nodes: np.ndarray, /) -> np.ndarray:
+    shape = nodes.shape[:-1]
+    indices = np.indices(shape)
+    on_bounds = np.zeros(shape, dtype=bool)
+    for axis, count in enumerate(shape):
+        on_bounds |= (indices[axis] == 0) | (indices[axis] == count - 1)
+    return nodes[on_bounds]
 
 
 def _network_contract(network: AbstractArrayModel, dimension: int, /):
@@ -637,7 +795,7 @@ def _network_contract(network: AbstractArrayModel, dimension: int, /):
         raise ValueError(
             "Neural implicit geometry requires a declared deterministic network."
         )
-    _, leaves, _, _ = _network_parts(network)
+    _, leaves, _, _, _ = _network_parts(network)
     if not leaves or any(
         not np.issubdtype(np.asarray(leaf).dtype, np.floating) for leaf in leaves
     ):
@@ -669,28 +827,32 @@ def _lipschitz_evidence(
     return bound, CapabilityEvidenceKind.CONSTRUCTED
 
 
-def _discover_topology(
-    geometry: CompiledGeometry,
-    grid: Any,
+def _lattice_topology(
+    network: AbstractArrayModel,
+    nodes: np.ndarray,
     policy: ImplicitSurfacePolicy,
-    source_id: str,
     /,
-) -> tuple[ImplicitRegionTopology, np.ndarray]:
-    match geometry.ambient_dimension:
-        case 2:
-            plan = discover_implicit_curve(
-                geometry, grid, policy=policy, source_id=source_id
-            )
-            return _curve_topology(plan), np.asarray(plan.base_vertices)
-        case 3:
-            plan = discover_implicit_surface(
-                geometry, grid, policy=policy, source_id=source_id
-            )
-            return _surface_topology(plan), np.asarray(plan.projection.anchors)
-        case _:
-            raise ValueError(
-                "Neural implicit geometry is certified in two or three dimensions."
-            )
+) -> tuple[ImplicitRegionTopology, Array]:
+    """Sampled lattice topology and the zero crossings on the lattice edges."""
+    values = np.asarray(
+        _evaluate_network(network, jnp.asarray(nodes), nodes.shape[-1]),
+        dtype=np.float64,
+    )
+    if not np.all(np.isfinite(values)):
+        raise ValueError("Neural implicit lattice field values must be finite.")
+    if np.any(np.abs(values) <= policy.lattice_zero_tolerance):
+        raise ValueError(
+            "Neural implicit lattice node lies on the zero set; shift the bounds "
+            "or change discovery_resolution."
+        )
+    inside = values < 0.0
+    ids = _crossing_ids(inside)
+    count = sum(int(np.count_nonzero(axis_ids >= 0)) for axis_ids in ids)
+    if count == 0:
+        raise ValueError("Neural implicit lattice contains no zero crossing.")
+    if count > policy.maximum_crossings:
+        raise ValueError("Neural implicit lattice exceeds maximum_crossings.")
+    return _sampled_topology(inside, ids), _zero_crossings(network, nodes, values, ids)
 
 
 def _certify(
@@ -709,19 +871,29 @@ def _certify(
     policy: ImplicitSurfacePolicy,
     feature_id: str,
 ) -> NeuralImplicitCertificate:
-    """Establish every certificate host-side at the network's current weights."""
+    """Check the sampled evidence host-side at the network's current weights."""
     dimension = bounds.shape[1]
+    if dimension not in (2, 3):
+        raise ValueError(
+            "Neural implicit regions are defined in two or three dimensions."
+        )
     regularity = _network_contract(network, dimension)
     lipschitz, lipschitz_evidence = _lipschitz_evidence(network, lipschitz_upper_bound)
-    grid, clearance = _lattice(np.asarray(bounds), discovery_resolution)
-    clearance_points = jnp.asarray(clearance)
+    nodes = _lattice_nodes(np.asarray(bounds), discovery_resolution)
+    if nodes[..., 0].size > policy.maximum_lattice_points:
+        raise ValueError("Neural implicit lattice exceeds maximum_lattice_points.")
+    clearance_points = jnp.asarray(_bounds_nodes(nodes))
+    # No covering argument bounds the field between samples, so neither the
+    # sign nor the topology is certified: both are sampled evidence.
     field = FieldCertificate(
-        zero_set_accuracy=ZeroSetAccuracy.TOLERANCE_BOUND,
-        sign_reliability=SignReliability.RELIABLE,
+        zero_set_accuracy=ZeroSetAccuracy.APPROXIMATE,
+        sign_reliability=SignReliability.LOCAL,
         distance_semantics=DistanceSemantics.LEVEL_SET,
         regularity=_field_regularity(regularity),
         safe_step_factor=None,
-        validity_region="declared axis-aligned bounds at the certified design state",
+        validity_region=(
+            "declared axis-aligned bounds, sampled at the checked design state"
+        ),
         parameter_differentiable=True,
         provenance=("neural_implicit",),
         lipschitz_upper_bound=lipschitz,
@@ -758,13 +930,11 @@ def _certify(
         None,
     )
     _require_accepted(provisional.validity())
-    discovered, boundary = _discover_topology(
-        provisional, grid, policy, f"{feature_id}:certification"
-    )
-    if topology is not None and discovered != topology:
+    sampled, boundary_points = _lattice_topology(network, nodes, policy)
+    if topology is not None and sampled != topology:
         raise ValueError(
             "Neural implicit topology changed: expected Betti numbers "
-            f"{topology.betti_numbers}, discovered {discovered.betti_numbers}."
+            f"{topology.betti_numbers}, sampled {sampled.betti_numbers}."
         )
     normals = gradient_margin is not None and (
         regularity is not None
@@ -772,15 +942,13 @@ def _certify(
     )
     if normals:
         region_capabilities = region_capabilities | {GeometryCapability.BOUNDARY_NORMAL}
-    field = replace(field, topology_identity=discovered.topology_id)
-    boundary_points = jnp.asarray(boundary)
     certified = compiled(field, region_capabilities, boundary_points, gradient_margin)
     evidence = certified.validity()
     _require_accepted(evidence)
     return NeuralImplicitCertificate(
         field=field,
         lipschitz_evidence=lipschitz_evidence,
-        topology=discovered,
+        topology=sampled,
         capabilities=region_capabilities,
         boundary_points=boundary_points,
         clearance_points=clearance_points,
@@ -790,7 +958,7 @@ def _certify(
 
 def _points(value: Any, bounds: np.ndarray, name: str, /) -> Array:
     if value is None:
-        raise ValueError(f"Neural implicit certification requires {name}.")
+        raise ValueError(f"Neural implicit evidence requires {name}.")
     host = np.asarray(value, dtype=np.float64)
     if (
         host.ndim != 2
@@ -815,33 +983,40 @@ def _positive(value: Any, name: str, /) -> float:
 
 @final
 class NeuralImplicitRegion(GeometrySource):
-    r"""Region bounded by the zero set of a certified neural field.
+    r"""Region bounded by the zero set of a neural field, with sampled evidence.
 
     The region is $\{x \in B : \phi(x; w) \le 0\}$ for the declared
     axis-aligned bounds $B$ and the scalar network $\phi(\cdot; w)$, negative
-    inside. Every inexact weight array of `network` is registered as a design
-    parameter `ParameterId(feature_id, path)`, so the weights live in the
-    compiled `DesignState` and update through `with_parameters`/`with_state`
-    or a design-state objective; the compiled kernel keeps only static network
-    structure.
+    inside. The PARAMETER lane of `network` (its resolved array roles) is
+    registered as design parameters `ParameterId(feature_id, path)`, so the
+    trainable weights live in the compiled `DesignState` and update through
+    `with_parameters`/`with_state` or a design-state objective. FIXED arrays,
+    such as `fixed_field` data, stay fixed kernel data and are never design
+    parameters; networks with MODEL_STATE leaves are refused.
 
-    Construction certifies the current weights and refuses without every
-    required certificate:
+    Construction checks sampled evidence at the current weights and refuses
+    when a check fails:
 
     - `lipschitz_upper_bound`: constructed from a plain `MLP` as the product of
       layer Frobenius norms and activation Lipschitz constants, otherwise an
-      explicit declaration that must dominate the sampled gradient norms;
+      explicit declaration; either must dominate the sampled gradient norms;
     - `evaluation_error`: the declared absolute field evaluation-error bound;
     - sign margins: `interior_points` satisfy $\phi \le -m - \varepsilon$ and
       `exterior_points` and the lattice nodes on $\partial B$ satisfy
       $\phi \ge m + \varepsilon$ for `sign_margin` $m$;
-    - topology identity: the Betti numbers of the region discovered on a
-      uniform `discovery_resolution` lattice over $B$ by the implicit
-      curve/surface discovery. When `topology` is given, a different
-      discovered topology is refused.
+    - sampled topology: the Betti numbers and boundary components of the zero
+      set resolved from the field signs on a uniform `discovery_resolution`
+      lattice over $B$. When `topology` is given, a different sampled topology
+      is refused.
+
+    The evidence is sampled, not a proof: no covering argument bounds the field
+    between lattice nodes, so a zero-set component or sign change between
+    samples can go undetected. The field certificate therefore reports
+    `SignReliability.LOCAL`, `ZeroSetAccuracy.APPROXIMATE`, and no
+    `topology_identity`, whether the Lipschitz bound is constructed or declared.
 
     `BOUNDARY_NORMAL` is advertised only when the network regularity is at
-    least $C^1$ and `gradient_margin` is certified on the discovered zero set.
+    least $C^1$ and `gradient_margin` holds at the lattice zero crossings.
     Measures, boundary sampling, and closest points are not advertised.
     """
 
@@ -887,16 +1062,16 @@ class NeuralImplicitRegion(GeometrySource):
         interior = _points(interior_points, bounds_, "interior_points")
         exterior = _points(exterior_points, bounds_, "exterior_points")
         if sign_margin is None:
-            raise ValueError("Neural implicit certification requires sign_margin.")
+            raise ValueError("Neural implicit evidence requires sign_margin.")
         margin = _positive(sign_margin, "sign_margin")
         if evaluation_error is None:
-            raise ValueError("Neural implicit certification requires evaluation_error.")
+            raise ValueError("Neural implicit evidence requires evaluation_error.")
         error = float(evaluation_error)
         if not np.isfinite(error) or error < 0.0:
             raise ValueError("evaluation_error must be finite and non-negative.")
         if discovery_resolution is None:
             raise ValueError(
-                "Neural implicit topology identity requires discovery_resolution."
+                "Neural implicit sampled topology requires discovery_resolution."
             )
         resolution = (
             (discovery_resolution,) * dimension
@@ -950,23 +1125,24 @@ class NeuralImplicitRegion(GeometrySource):
 
     @property
     def parameter_ids(self) -> tuple[ParameterId, ...]:
-        """Design-state identities of the network weight arrays, in tree order."""
-        names, _, _, _ = _network_parts(self.network)
+        """Design-state identities of the network's PARAMETER arrays, in tree order."""
+        names, _, _, _, _ = _network_parts(self.network)
         return tuple(ParameterId(self.feature_id, name) for name in names)
 
     def recertify(self, state: DesignState, /) -> NeuralImplicitRegion:
-        """Certify the weights held by `state` under the same certificates.
+        """Recheck the sampled evidence at the weights held by `state`.
 
-        Reruns the Lipschitz, sign-margin, gradient-margin, and discovery
-        checks at the updated weights and refuses (`ValueError`) when a margin
-        fails or the discovered topology differs from the certified topology.
-        `state` may belong to any compiled geometry containing this region.
+        Reruns the Lipschitz, sign-margin, gradient-margin, and lattice
+        topology checks at the updated PARAMETER arrays, keeping the network's
+        FIXED data, and refuses (`ValueError`) when a margin fails or the
+        sampled topology differs from the recorded sampled topology. `state`
+        may belong to any compiled geometry containing this region.
         """
         if not isinstance(state, DesignState):
             raise TypeError("state must be a DesignState.")
-        _, _, treedef, static = _network_parts(self.network)
+        _, _, treedef, fixed, static = _network_parts(self.network)
         leaves = [state.values[state.schema.index(item)] for item in self.parameter_ids]
-        network = eqx.combine(jax.tree_util.tree_unflatten(treedef, leaves), static)
+        network = _assemble_network(treedef, leaves, fixed, static)
         return NeuralImplicitRegion(
             network,
             self.bounds,

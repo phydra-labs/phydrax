@@ -285,15 +285,18 @@ class LearnedLocalImplicitMaterial(AbstractLocalImplicitMaterial):
     child with its own array roles, so a `ParameterOwner` model trains through
     the root while a `FrozenModel` stays fixed; the root derivative with respect
     to the model parameters is the implicit-function derivative of the learned
-    residual. Optional owner `ports` (with an explicit `port_mapping` for a
-    model declaring ports) verify the model's ports, units included.
+    residual. Owner `ports` verify the model's ports, units included: a model
+    declaring ports requires `ports` and an explicit `port_mapping`, and binding
+    it without them fails; a model without ports may omit both.
 
     Construction admits the model for implicit use: first input and parameter
     derivatives under `MODEL` authority, classical `C^1` value regularity (or a
     branch-margin certificate), deterministic randomness, and a declared
     precision contract whose error floor `tolerance` does not undercut
     (`NonlinearPrecisionPolicy.validate_tolerance` against the model's output
-    dtype).
+    dtype). A model declaring a `relative_error_floor` requires
+    `residual_scale`, the declared local residual magnitude that expresses the
+    relative floor in absolute residual units.
 
     The response carries an `AdmissibilityHeader` whose margin is
     `tolerance - residual_norm` at the evaluated state, with the `NONFINITE`
@@ -309,6 +312,7 @@ class LearnedLocalImplicitMaterial(AbstractLocalImplicitMaterial):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     max_steps: int = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
+    residual_scale: float | None = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
@@ -323,6 +327,7 @@ class LearnedLocalImplicitMaterial(AbstractLocalImplicitMaterial):
         model_id: str,
         max_steps: int = 25,
         tolerance: float = 1.0e-10,
+        residual_scale: float | None = None,
         ports: ModelPorts | None = None,
         port_mapping: PortMapping | None = None,
     ):
@@ -337,7 +342,10 @@ class LearnedLocalImplicitMaterial(AbstractLocalImplicitMaterial):
         binding, contract = _bind_learned_law(
             model, AbstractLocalImplicitMaterial, ports, port_mapping, site
         )
-        NonlinearPrecisionPolicy(components=(contract,)).validate_tolerance(
+        precision = NonlinearPrecisionPolicy(
+            components=(contract,), residual_scale=residual_scale
+        )
+        precision.validate_tolerance(
             tolerance_, residual_dtype=contract.model_contract.precision.output_dtype
         )
         self.binding = binding
@@ -346,6 +354,7 @@ class LearnedLocalImplicitMaterial(AbstractLocalImplicitMaterial):
         self.state_shape = shape
         self.max_steps = steps
         self.tolerance = tolerance_
+        self.residual_scale = precision.residual_scale
         self.model_id = canonical_fingerprint(
             {
                 "kind": "learned-local-implicit-material",
@@ -355,6 +364,7 @@ class LearnedLocalImplicitMaterial(AbstractLocalImplicitMaterial):
                 "state_shape": list(shape),
                 "max_steps": steps,
                 "tolerance": tolerance_,
+                "residual_scale": precision.residual_scale,
             }
         )
         self.evidence_id = canonical_fingerprint(

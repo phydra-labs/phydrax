@@ -26,9 +26,13 @@ from .._model import (
     AbstractComponentSlot,
     bind_component,
     ComponentContract,
+    ModelPorts,
+    PortMapping,
 )
+from .._model._component import bind_positional_component
+from .._model._ports import require_port_shapes
 from .._strict import StrictModule
-from .._trainable import fixed_field, NonTrainableState
+from .._trainable import fixed_field, NonTrainableState, parameter_field
 from ._linear_gaussian import (
     degenerate_gaussian_log_prob,
     LinearGaussianDynamics,
@@ -331,11 +335,15 @@ class DistributionStatePrior(AbstractStatePrior):
 
 
 class GaussianStatePrior(AbstractStatePrior):
-    """Possibly singular Gaussian state prior with explicit covariance semantics."""
+    """Possibly singular Gaussian state prior with explicit covariance semantics.
 
-    mean: Array
-    covariance: Array
-    factor: Array
+    `mean` and `covariance` are PARAMETER; `factor` is the FIXED sampling factor
+    derived from `covariance` at construction.
+    """
+
+    mean: Array = parameter_field()
+    covariance: Array = parameter_field()
+    factor: Array = fixed_field()
     state_shape: tuple[int, ...] = eqx.field(static=True)
     batch_shape: tuple[int, ...] = eqx.field(static=True)
     prior_id: str = eqx.field(static=True)
@@ -1023,14 +1031,25 @@ class ModelObservationLocation(StrictModule):
     `observation_shape`. Leading state axes are batch axes evaluated pointwise;
     the context is never a model input and the model is evaluated without a key.
 
+    `ports` declare the scientific identity of the location's values: the state
+    port (event shape `state_shape`), then a scalar time port with
+    `time_input`, as inputs, and the observation port (event shape
+    `observation_shape`) as the output. A model declaring ports requires
+    `ports` and an explicit `port_mapping` binding its ordered ports to exactly
+    that owner order (values are packed, never repacked); a model without ports
+    keeps the size checks alone.
+
     The model is a dynamic child whose arrays keep their own roles, so a learned
     location held by `GaussianObservationModel` stays PARAMETER. It is bound to
     the `AbstractObservationModel` `MODEL` slot; `component_contract()` returns
-    the bound contract. Filters use the location exactly as any other location
-    callable: ensemble-transform numerics are unchanged.
+    the bound contract, whose `port_binding` holds the port evidence. Filters use
+    the location exactly as any other location callable: ensemble-transform
+    numerics are unchanged.
     """
 
     model: AbstractArrayModel
+    ports: ModelPorts | None
+    port_mapping: PortMapping | None
     state_shape: tuple[int, ...] = eqx.field(static=True)
     observation_shape: tuple[int, ...] = eqx.field(static=True)
     time_input: bool = eqx.field(static=True)
@@ -1043,6 +1062,8 @@ class ModelObservationLocation(StrictModule):
         state_shape: Sequence[int],
         observation_shape: Sequence[int],
         time_input: bool = False,
+        ports: ModelPorts | None = None,
+        port_mapping: PortMapping | None = None,
     ):
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
@@ -1066,15 +1087,31 @@ class ModelObservationLocation(StrictModule):
                 f"Model observation location out_size must produce shape "
                 f"{observations}; got {model.out_size!r}."
             )
-        bind_component(model, AbstractObservationModel)
+        site = "ModelObservationLocation"
+        owner_ports = require_port_shapes(
+            ports,
+            inputs=(states, ()) if time_input else (states,),
+            outputs=(observations,),
+            site=site,
+        )
+        bind_positional_component(
+            model, AbstractObservationModel, owner_ports, port_mapping, site=site
+        )
         self.model = model
+        self.ports = owner_ports
+        self.port_mapping = port_mapping
         self.state_shape = states
         self.observation_shape = observations
         self.time_input = time_input
 
     def component_contract(self) -> ComponentContract:
         """Return the model's contract bound to the observation-model slot."""
-        return bind_component(self.model, AbstractObservationModel).contract()
+        return bind_component(
+            self.model,
+            AbstractObservationModel,
+            owner_ports=self.ports,
+            port_mapping=self.port_mapping,
+        ).contract()
 
     def __call__(
         self, state: ArrayLike, time: ArrayLike, context: StateSpaceStepContext, /
@@ -1180,10 +1217,18 @@ class GaussianObservationModel(AbstractObservationModel):
         return values.reshape(samples + batch_shape + self.observation_shape)
 
 
-class LinearGaussianObservationModel(AbstractObservationModel, NonTrainableState):
-    matrix: Array | Callable[[Array, StateSpaceStepContext], ArrayLike]
-    offset: Array | Callable[[Array, StateSpaceStepContext], ArrayLike]
-    covariance: Array | Callable[[Array, StateSpaceStepContext], ArrayLike]
+class LinearGaussianObservationModel(AbstractObservationModel):
+    """Affine Gaussian observation whose array coefficients are PARAMETER."""
+
+    matrix: Array | Callable[[Array, StateSpaceStepContext], ArrayLike] = (
+        parameter_field()
+    )
+    offset: Array | Callable[[Array, StateSpaceStepContext], ArrayLike] = (
+        parameter_field()
+    )
+    covariance: Array | Callable[[Array, StateSpaceStepContext], ArrayLike] = (
+        parameter_field()
+    )
     state_shape: tuple[int, ...] = eqx.field(static=True)
     observation_shape: tuple[int, ...] = eqx.field(static=True)
     observation_id: str = eqx.field(static=True)

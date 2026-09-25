@@ -137,7 +137,8 @@ This is required for constrained, mixed, overdetermined, and gauge systems where
 a residual cannot be inferred from a similarly named field.
 The map identity is formed with the canonical callable payload: StrictModule
 operators and plain module-level functions are identified by content, while
-opaque operators (lambdas, closures, methods, partials) must declare
+opaque operators (lambdas, closures, methods, partials, and functions reading a
+numeric array from their defaults or module globals) must declare
 `operator_semantic_id` and `operator_numeric_id`; omitting them raises
 `TypeError`.
 
@@ -263,8 +264,10 @@ parameter shapes, dtypes, update rule, FIXED and model-state structure,
 discretization, and sharding as the executable signature. Restore rejects
 mismatched accumulation, training plans, target policies, discretization
 bundles, roles, objectives, update rules, array structures, and bindings
-recomputed from the restored parameters; checkpoints without a binding or
-written before the training kernel fail closed.
+recomputed from the restored parameters, and any array lane or cursor whose
+content differs from the kernel manifest's canonical content digest;
+checkpoints without a binding or written before the training kernel fail
+closed.
 Periodic checkpoints are published only at accepted-update boundaries; the
 final checkpoint of a run may follow a rejected attempt and records that.
 

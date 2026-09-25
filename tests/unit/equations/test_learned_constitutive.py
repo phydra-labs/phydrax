@@ -295,3 +295,74 @@ def test_learned_local_root_tolerance_respects_the_declared_error_floor():
         _root_material(_Cubic(1.0, 2.0, precision=coarse), tolerance=1e-10)
     material = _root_material(_Cubic(1.0, 2.0, precision=coarse), tolerance=1e-6)
     assert bool(material.evaluate(jnp.zeros(1), jnp.asarray([0.5])).valid)
+
+
+def test_learned_local_root_relative_floor_requires_a_declared_residual_scale():
+    relative = phx.ComponentPrecisionContract(
+        input_dtype="float64",
+        parameter_dtype="float64",
+        compute_dtype="float64",
+        accumulation_dtype="float64",
+        output_dtype="float64",
+        relative_error_floor=1e-3,
+    )
+    with pytest.raises(ValueError, match="residual_scale"):
+        _root_material(_Cubic(1.0, 2.0, precision=relative), tolerance=1e-10)
+    with pytest.raises(ValueError, match="below the declared component"):
+        _root_material(
+            _Cubic(1.0, 2.0, precision=relative), tolerance=1e-10, residual_scale=1.0
+        )
+    material = _root_material(
+        _Cubic(1.0, 2.0, precision=relative), tolerance=1e-3, residual_scale=1.0
+    )
+    assert material.residual_scale == 1.0
+    assert bool(material.evaluate(jnp.zeros(1), jnp.asarray([0.5])).valid)
+
+
+class _PortedCubic(phx.AbstractArrayModel):
+    cubic: _Cubic
+    ports: phx.ModelPorts
+    in_size: int = eqx.field(static=True)
+    out_size: int = eqx.field(static=True)
+
+    def __init__(self, cubic, ports):
+        self.cubic = cubic
+        self.ports = ports
+        self.in_size = cubic.in_size
+        self.out_size = cubic.out_size
+
+    def __call__(self, x, /, *, key=None):
+        return self.cubic(x, key=key)
+
+    def model_execution_contract(self):
+        contract = self.cubic.model_execution_contract()
+        return phx.ModelExecutionContract(
+            derivative=contract.derivative,
+            execution=contract.execution,
+            precision=contract.precision,
+            randomness=contract.randomness,
+            ports=self.ports,
+        )
+
+    def model_ports(self):
+        return self.ports
+
+
+def test_learned_local_root_binds_port_declaring_models_only_through_ports():
+    ports = phx.ModelPorts(
+        inputs=(_port("state", 1, _DIMENSIONLESS),),
+        outputs=(_port("response", 1, _PASCAL),),
+    )
+    model = _PortedCubic(_Cubic(1.0, 2.0), ports)
+    with pytest.raises(ValueError, match="local-implicit-material'.*owner_ports"):
+        _root_material(model)
+
+    mapping = phx.PortMapping(
+        inputs=[(ports.inputs[0].port_id,) * 2],
+        outputs=[(ports.outputs[0].port_id,) * 2],
+    )
+    material = _root_material(model, ports=ports, port_mapping=mapping)
+    evidence = material.binding.contract().port_binding
+    assert evidence.inputs == ((ports.inputs[0].port_id,) * 2,)
+    assert evidence.dimensions_verified
+    assert bool(material.evaluate(jnp.zeros(1), jnp.asarray([0.5])).valid)

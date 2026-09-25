@@ -10,7 +10,7 @@ import enum
 import hashlib
 import sys
 from collections.abc import Mapping, Sequence
-from types import CodeType, FunctionType
+from types import CodeType, FunctionType, ModuleType
 from typing import Any
 
 import equinox as eqx
@@ -19,6 +19,7 @@ import numpy as np
 
 from ._fingerprint import canonical_fingerprint, canonical_json
 from ._strict import StrictModule
+from ._trainable import _global_reads, _hidden_arrays
 
 
 RecordInput = Mapping[str, Any] | Sequence[tuple[str, Any]]
@@ -149,14 +150,67 @@ def _is_plain_function(value: Any, /) -> bool:
     """Return whether ``value`` is a stateless function importable by its name.
 
     Closures, lambdas, nested functions, methods, and rebound names are opaque:
-    their behavior is not determined by module, name, and code alone.
+    their behavior is not determined by module, name, and code alone. So is a
+    function whose defaults or read module globals (transitively, through the
+    same-module functions and the objects they reach) hold a numeric array:
+    array values are numeric state its code does not determine.
     """
     if not isinstance(value, FunctionType) or value.__closure__ is not None:
         return False
     if value.__qualname__ != value.__name__:
         return False
     module = sys.modules.get(value.__module__)
-    return module is not None and vars(module).get(value.__name__) is value
+    if module is None or vars(module).get(value.__name__) is not value:
+        return False
+    return not _hidden_arrays(value, eqx.is_array)
+
+
+def _global_payload(value: Any, path: str, /) -> Any:
+    """Identify one module global a plain function reads.
+
+    Scalar and container constants contribute their values; modules, classes,
+    and other objects contribute a reference. Numeric arrays never reach here
+    (`_is_plain_function` refuses functions that read them).
+    """
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, np.generic):
+        return _global_payload(value.item(), path)
+    if isinstance(value, float):
+        # Hex keeps non-finite sentinels (inf, nan) exact and encodable.
+        return {"kind": "float", "value": value.hex()}
+    if isinstance(value, complex):
+        return {"kind": "complex", "real": value.real.hex(), "imag": value.imag.hex()}
+    if isinstance(value, (bytes, enum.Enum, np.dtype)):
+        return _static_payload(value, path)
+    if isinstance(value, ModuleType):
+        return {"kind": "module", "name": value.__name__}
+    if isinstance(value, type):
+        return {"kind": "type", "name": f"{value.__module__}.{value.__qualname__}"}
+    if isinstance(value, FunctionType):
+        return {
+            "kind": "function-reference",
+            "module": value.__module__,
+            "qualname": value.__qualname__,
+        }
+    if isinstance(value, (tuple, list)):
+        return {
+            "kind": type(value).__name__,
+            "items": [
+                _global_payload(item, f"{path}[{index}]")
+                for index, item in enumerate(value)
+            ],
+        }
+    if isinstance(value, (frozenset, set)):
+        items = [_global_payload(item, path) for item in value]
+        return {"kind": "set", "items": sorted(items, key=canonical_json)}
+    if isinstance(value, Mapping):
+        items = [
+            [_global_payload(key, path), _global_payload(item, f"{path}[{key!r}]")]
+            for key, item in value.items()
+        ]
+        return {"kind": "mapping", "items": sorted(items, key=canonical_json)}
+    return {"kind": "reference", "type": _type_id(value)}
 
 
 def _code_constant_payload(value: Any, path: str, /) -> Any:
@@ -202,6 +256,10 @@ def _function_payload(value: FunctionType, path: str, /) -> dict[str, Any]:
         "keyword_defaults": _static_payload(
             value.__kwdefaults__, f"{path}.keyword_defaults"
         ),
+        "globals": [
+            [name, _global_payload(referenced, f"{path}.globals.{name}")]
+            for name, referenced in _global_reads(value)
+        ],
     }
 
 
@@ -355,10 +413,13 @@ def callable_payload(
 
     Callable StrictModules are content-addressed from their fields. A plain
     stateless function (module-level, importable by its name, without closure
-    cells) is content-addressed from its module, name, position-independent
-    code, and static defaults unless the caller declares both identities. Every
-    other callable (closure, lambda, nested function, method, partial, or
-    foreign callable object) is opaque and requires both identities explicitly.
+    cells, and reading no numeric array through its defaults or module globals)
+    is content-addressed from its module, name, position-independent code,
+    static defaults, and the values of the scalar constants and references of
+    the module globals it reads, unless the caller declares both identities.
+    Every other callable (closure, lambda, nested function, method, partial,
+    foreign callable object, or function reading array state) is opaque and
+    requires both identities explicitly.
     """
     if not callable(value):
         raise TypeError("callable_payload requires a callable value.")
@@ -387,7 +448,9 @@ def callable_payload(
         }
     if semantic_id is None or numeric_id is None:
         raise TypeError(
-            "Opaque callables require explicit semantic_id and numeric_id values."
+            "Opaque callables require explicit semantic_id and numeric_id values; "
+            "a function is opaque when it closes over state or reads a numeric "
+            "array from its defaults or module globals."
         )
     semantic_id_ = _identifier(semantic_id, "semantic_id")
     numeric_id_ = _identifier(numeric_id, "numeric_id")
@@ -533,9 +596,7 @@ def _fact_records(value: RecordInput, name: str, /) -> tuple[tuple[str, str], ..
     )
 
 
-def _static_callable_records(
-    value: RecordInput, /
-) -> tuple[tuple[str, str, str], ...]:
+def _static_callable_records(value: RecordInput, /) -> tuple[tuple[str, str, str], ...]:
     records: list[tuple[str, str, str]] = []
     for name, component in _named_records(value, "static_callables"):
         payload = callable_payload(component)
@@ -695,5 +756,3 @@ __all__ = [
     "SemanticProvenance",
     "strict_module_payload",
 ]
-
-

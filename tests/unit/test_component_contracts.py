@@ -18,6 +18,7 @@ from phydrax import (
     CapabilityEvidenceKind,
     CapabilityRequirement,
     ComponentAuthority,
+    ComponentContract,
     ComponentPrecisionContract,
     DerivativeContract,
     DerivativeRegularity,
@@ -47,6 +48,8 @@ from phydrax.nn.models import InputConvexNetwork, MLP
 INPUT = DerivativeSurface.INPUT
 PARAMETER = DerivativeSurface.MODEL_PARAMETER
 CONSTRUCTED = CapabilityEvidenceKind.CONSTRUCTED
+DECLARED = CapabilityEvidenceKind.DECLARED
+RUNTIME_CHECKED = CapabilityEvidenceKind.RUNTIME_CHECKED
 
 
 def _position(**overrides):
@@ -83,6 +86,50 @@ class _ConvexClosureSlot(AbstractComponentSlot):
     slot_semantic_id: ClassVar[str] = "test.convex-closure"
     slot_requirements: ClassVar[tuple[CapabilityRequirement, ...]] = (
         CapabilityRequirement("input-convex", [[CONSTRUCTED]], safety_critical=True),
+    )
+
+
+class _PortedSlot(AbstractComponentSlot):
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.MODEL
+    slot_semantic_id: ClassVar[str] = "test.ported-closure"
+
+
+class _DeclaredMonotoneModel(AbstractArrayModel):
+    weight: jax.Array
+    in_size: int = eqx.field(static=True)
+    out_size: int = eqx.field(static=True)
+
+    def __init__(self):
+        self.weight = jnp.ones((2,))
+        self.in_size = 2
+        self.out_size = 1
+
+    def __call__(self, x, /, *, key=None):
+        return self.weight @ x
+
+    def model_execution_contract(self):
+        return ModelExecutionContract(
+            derivative=DerivativeContract.smooth((INPUT, PARAMETER)),
+            execution=ExecutionCapabilities("native-jax"),
+            declared_capabilities=("monotone",),
+        )
+
+
+class _MonotoneSlot(AbstractComponentSlot):
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.MODEL
+    slot_semantic_id: ClassVar[str] = "test.monotone-closure"
+    slot_requirements: ClassVar[tuple[CapabilityRequirement, ...]] = (
+        CapabilityRequirement("monotone", [[DECLARED], [CONSTRUCTED]]),
+    )
+
+
+class _CriticalMonotoneSlot(AbstractComponentSlot):
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.MODEL
+    slot_semantic_id: ClassVar[str] = "test.critical-monotone-closure"
+    slot_requirements: ClassVar[tuple[CapabilityRequirement, ...]] = (
+        CapabilityRequirement(
+            "monotone", [[CONSTRUCTED], [DECLARED, RUNTIME_CHECKED]], safety_critical=True
+        ),
     )
 
 
@@ -294,6 +341,39 @@ def test_model_execution_contract_fingerprint_is_deterministic():
     assert changed.contract_id != first.contract_id
     with pytest.raises(ValueError, match="constructed or checked"):
         build((("claim", "c", CapabilityEvidenceKind.DECLARED),))
+    with pytest.raises(TypeError, match="not one ID"):
+        _execution_contract(declared_capabilities="monotone")
+
+
+def test_declared_capabilities_satisfy_declaration_requirements_only():
+    model = _DeclaredMonotoneModel()
+    contract = model.model_execution_contract()
+    assert contract.certificates == ()
+    assert contract.declared_capabilities == ("monotone",)
+    assert contract.evidence == (("monotone", DECLARED),)
+    assert contract.contract_id != _execution_contract().contract_id
+
+    bound = bind_component(model, _MonotoneSlot).contract()
+    assert bound.evidence == (("monotone", DECLARED),)
+    with pytest.raises(ValueError, match="monotone"):
+        bind_component(model, _CriticalMonotoneSlot)
+
+    # Declaration joined by runtime-checked evidence satisfies the critical
+    # alternative; the declaration never substitutes for the check.
+    checked = _execution_contract(
+        declared_capabilities=("monotone",),
+        certificates=(("monotone", "check-1", RUNTIME_CHECKED),),
+    )
+    critical = _CriticalMonotoneSlot.slot_contract().requirements
+    ComponentContract(
+        authority=ComponentAuthority.MODEL, model_contract=checked, requirements=critical
+    )
+    with pytest.raises(ValueError, match="monotone"):
+        ComponentContract(
+            authority=ComponentAuthority.MODEL,
+            model_contract=_execution_contract(declared_capabilities=("monotone",)),
+            requirements=critical,
+        )
 
 
 def test_default_model_execution_contract_is_conservative():
@@ -377,6 +457,39 @@ def test_component_binding_resolves_port_mapping():
             ComponentAuthority.MODEL,
             port_mapping=mapping,
             owner_ports=owner,
+        )
+
+
+def test_port_declaring_model_never_binds_without_owner_ports():
+    model = _PortedModel()
+    with pytest.raises(ValueError, match="'test.ported-closure'.*owner_ports"):
+        bind_component(model, _PortedSlot)
+    with pytest.raises(ValueError, match="model authority binding.*owner_ports"):
+        bind_component(model, ComponentAuthority.MODEL)
+    # A model without ports keeps binding without owner ports.
+    assert bind_component(_undeclared_mlp(), _PortedSlot).contract().port_binding is None
+
+    model_contract = model.model_execution_contract()
+    with pytest.raises(ValueError, match="without port binding evidence"):
+        ComponentContract(
+            authority=ComponentAuthority.MODEL, model_contract=model_contract
+        )
+    owner = ModelPorts(inputs=(_position(),), outputs=(_temperature(),))
+    mapping = PortMapping(
+        inputs=[(_position().port_id, _position().port_id)],
+        outputs=[(_temperature().port_id, _temperature().port_id)],
+    )
+    evidence = (
+        bind_component(model, _PortedSlot, owner_ports=owner, port_mapping=mapping)
+        .contract()
+        .port_binding
+    )
+    assert evidence.inputs == ((_position().port_id, _position().port_id),)
+    with pytest.raises(ValueError, match="model without ports"):
+        ComponentContract(
+            authority=ComponentAuthority.MODEL,
+            model_contract=_undeclared_mlp().model_execution_contract(),
+            port_binding=evidence,
         )
 
 

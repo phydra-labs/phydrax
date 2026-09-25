@@ -2392,10 +2392,12 @@ def test_g4_one_bound_model_drives_continuous_and_fixed_step_discrete_dynamics()
 
 
 def _g4_policy_cost(owner, initial):
-    plant, policy = owner
+    # The grid reaches the measure as visible FIXED objective state, never as a
+    # module global the callable reads.
+    plant, grid, policy = owner
     result = phx.control.ControlProblem(
         plant,
-        _G4_GRID,
+        grid,
         initial,
         running_cost=lambda time, state, control, args: (
             jnp.sum(state**2) + 0.1 * jnp.sum(control**2)
@@ -2427,8 +2429,8 @@ def test_g4_neural_feedback_policy_gradient_is_valid_and_trains_through_the_roll
         policy_id="g4-feedback",
     )
     objective = phx.solver.RolloutObjective(
-        plant,
-        lambda plant, policy: (plant, policy),
+        (plant, _G4_GRID),
+        lambda fixed, policy: (*fixed, policy),
         _g4_policy_cost,
         objective_id="g4-feedback-rollout",
         cases=jnp.asarray([[1.0, -0.5], [-0.8, 0.4], [0.3, 0.9]]),
@@ -2755,7 +2757,6 @@ def test_g6_host_only_models_run_eagerly_and_refuse_transforms_before_invocation
         output_adapter=lambda output, batch, manifest: output,
         manifest=_checkpoint_manifest(),
         capabilities=host.capabilities,
-        binding=host.binding,
         in_size="scalar",
         out_size="scalar",
     )

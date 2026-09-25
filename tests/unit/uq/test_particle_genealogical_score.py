@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
@@ -68,6 +69,52 @@ def test_genealogical_score_covers_complete_model_and_resampling(resampling_poli
     assert any(path.startswith(".observation") for path in score.parameter_paths)
     assert score.method_id == "particle-complete-model-genealogical-score"
     assert score.ancestry_gradient == "stopped-realized-ancestry"
+
+
+class _ScaledLocation(eqx.Module):
+    gain: jax.Array = phx.parameter_field()
+
+    def __call__(self, state, time, context):
+        del time, context
+        return self.gain * state
+
+
+def test_genealogical_score_excludes_fixed_observation_covariance():
+    problem = _problem()
+    observation = phx.stochastic.GaussianObservationModel(
+        _ScaledLocation(jnp.asarray(1.0)),
+        jnp.asarray([[0.3]]),
+        state_shape=(1,),
+        observation_shape=(1,),
+    )
+    model = phx.stochastic.StateSpaceModel(
+        problem.model.prior,
+        problem.model.transition,
+        observation,
+        model_id="fixed-covariance-model",
+    )
+    filtered = phx.uq.bootstrap_particle_filter(
+        jax.random.key(2),
+        phx.stochastic.StateSpaceProblem(
+            model, problem.observations, initial_time=0.0, problem_id="fixed-cov"
+        ),
+        num_particles=16,
+    )
+    score = phx.uq.particle_genealogical_score(filtered)
+
+    # The FIXED observation covariance and the prior's derived sampling factor
+    # are data, not scored parameters.
+    assert score.parameter_paths == (
+        ".prior.mean",
+        ".prior.covariance",
+        ".transition.parameterization.transition",
+        ".transition.parameterization.offset",
+        ".transition.parameterization.covariance",
+        ".observation.location_fn.gain",
+    )
+    assert score.score.observation.covariance is None
+    assert score.flat_score.shape == (6,)
+    assert jnp.all(jnp.isfinite(score.flat_score))
 
 
 def test_genealogical_score_replays_exactly_with_semantic_particle_keys():

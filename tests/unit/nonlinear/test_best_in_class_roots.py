@@ -738,6 +738,69 @@ def test_model_precision_below_state_precision_requires_declared_cast_boundary()
     assert policy.residual_floor() == pytest.approx(1e-5)
 
 
+def test_relative_component_floor_requires_a_declared_residual_scale():
+    relative = phx.ComponentPrecisionContract(
+        input_dtype="float64",
+        parameter_dtype="float32",
+        compute_dtype="float32",
+        accumulation_dtype="float64",
+        output_dtype="float64",
+        relative_error_floor=1e-3,
+        cast_boundary_evidence=("input-downcast",),
+    )
+    components = (_component(phx.ComponentAuthority.MODEL, relative),)
+    problem = nl.NonlinearSystemProblem(lambda state, target: state**3 - target)
+    target = jnp.asarray([2.0, 3.0])
+
+    def termination(tolerance):
+        return nl.NonlinearTermination(
+            absolute_residual=tolerance, relative_residual=0.0, maximum_steps=50
+        )
+
+    unscaled = nl.NonlinearPrecisionPolicy(
+        residual_dtype="float64", components=components
+    )
+    assert unscaled.residual_floor(2.0) == pytest.approx(2e-3)
+    with pytest.raises(ValueError, match="residual_scale"):
+        unscaled.validate_tolerance(1e-12)
+    with pytest.raises(ValueError, match="residual_scale"):
+        nl.NewtonKrylov().solve(
+            problem,
+            jnp.ones(2),
+            termination=termination(1e-12),
+            args=target,
+            precision=unscaled,
+        )
+    with pytest.raises(ValueError, match="residual_scale"):
+        nl.prepare_nonlinear(
+            problem,
+            jnp.ones(2),
+            termination=termination(1e-12),
+            args=target,
+            precision=unscaled,
+        )
+
+    scaled = nl.NonlinearPrecisionPolicy(
+        residual_dtype="float64", components=components, residual_scale=4.0
+    )
+    assert scaled.residual_floor() == pytest.approx(4e-3)
+    assert scaled.policy_id != unscaled.policy_id
+    with pytest.raises(ValueError, match="below the declared component"):
+        scaled.validate_tolerance(1e-12)
+    result = nl.NewtonKrylov().solve(
+        problem,
+        jnp.ones(2),
+        termination=termination(4e-3),
+        args=target,
+        precision=scaled,
+    )
+    assert bool(result.successful)
+    with pytest.raises(ValueError, match="finite and positive"):
+        nl.NonlinearPrecisionPolicy(components=components, residual_scale=0.0)
+    with pytest.raises(TypeError, match="real number"):
+        nl.NonlinearPrecisionPolicy(components=components, residual_scale=True)
+
+
 def test_solver_graduation_and_regression_gates():
     evidence = nl.SolverGraduationEvidence(
         0,
